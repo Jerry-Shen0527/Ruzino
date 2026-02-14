@@ -3576,7 +3576,7 @@ void ViewManipulate(
     static vec_t interpolationUp;
     static vec_t interpolationDir;
     static int interpolationFrames = 0;
-    const vec_t referenceUp = makeVect(0.f, 1.f, 0.f);
+    const vec_t referenceUp = makeVect(0.f, 0.f, 1.f);  // Z-up for USD scenes
 
     matrix_t svgView, svgProjection;
     svgView = gContext.mViewMat;
@@ -3796,13 +3796,46 @@ void ViewManipulate(
 
         // clamp
         vec_t planDir = Cross(viewInverse.v.right, referenceUp);
-        planDir.y = 0.f;
+        planDir.z = 0.f;  // Z-up: clamp horizontal plane
         planDir.Normalize();
         float dt = Dot(planDir, newDir);
         if (dt < 0.0f) {
             newDir += planDir * dt;
             newDir.Normalize();
         }
+
+        // Limit rotation to avoid gimbal lock singularity at poles
+        // We clamp the Z component to ensure the view direction never gets too
+        // close to the Up vector (Z-axis) This prevents LookAt from becoming
+        // unstable (Right = Forward x Up -> 0)
+        const float MAX_Z = 0.96f;  // ~16 degrees from pole. Safer margin to
+                                    // prevent flickering.
+
+        if (newDir.z > MAX_Z) {
+            newDir.z = MAX_Z;
+            // Renormalize x/y to maintain unit length
+            float currentXYLenSq = newDir.x * newDir.x + newDir.y * newDir.y;
+            if (currentXYLenSq > 1e-6f) {
+                float targetXYLen = sqrtf(1.0f - MAX_Z * MAX_Z);
+                float scale = targetXYLen / sqrtf(currentXYLenSq);
+                newDir.x *= scale;
+                newDir.y *= scale;
+            }
+        }
+        else if (newDir.z < -MAX_Z) {
+            newDir.z = -MAX_Z;
+            // Renormalize x/y to maintain unit length
+            float currentXYLenSq = newDir.x * newDir.x + newDir.y * newDir.y;
+            if (currentXYLenSq > 1e-6f) {
+                float targetXYLen = sqrtf(1.0f - MAX_Z * MAX_Z);
+                float scale = targetXYLen / sqrtf(currentXYLenSq);
+                newDir.x *= scale;
+                newDir.y *= scale;
+            }
+        }
+
+        // Ensure strictly normalized to avoid drift
+        newDir.Normalize();
 
         vec_t newEye = camTarget + newDir * length;
         LookAt(&newEye.x, &camTarget.x, &referenceUp.x, view);

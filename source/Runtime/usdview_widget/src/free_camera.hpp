@@ -248,6 +248,13 @@ class ThirdPersonCamera : public BaseCamera {
     }
     void SetRotation(double yaw, double pitch);
 
+    // Set camera state directly from position, direction and up vectors
+    // This is used by ViewManipulate to preserve the exact camera orientation
+    void SetCameraStateFromMatrix(
+        const pxr::GfVec3d& position,
+        const pxr::GfVec3d& direction,
+        const pxr::GfVec3d& up);
+
     double GetMaxDistance() const
     {
         return m_MaxDistance;

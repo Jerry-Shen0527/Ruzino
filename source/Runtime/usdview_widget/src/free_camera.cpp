@@ -417,7 +417,10 @@ void ThirdPersonCamera::MouseScrollUpdate(double xoffset, double yoffset)
         m_CameraDir = -offset.GetNormalized();
 
         pxr::GfVec3d world_up(0, 0, 1);
-        if (std::abs(m_Pitch) > 0.99 * M_PI / 2.0) {
+        if (cos(m_Pitch) < 0) {
+            world_up = pxr::GfVec3d(0, 0, -1);
+        }
+        if (std::abs(std::cos(m_Pitch)) < 0.02) {
             world_up = pxr::GfVec3d(-sin(m_Yaw), cos(m_Yaw), 0);
         }
         m_CameraRight = pxr::GfCross(m_CameraDir, world_up).GetNormalized();
@@ -456,6 +459,40 @@ void ThirdPersonCamera::SetRotation(double yaw, double pitch)
 {
     m_Yaw = yaw;
     m_Pitch = pitch;
+}
+
+void ThirdPersonCamera::SetCameraStateFromMatrix(
+    const pxr::GfVec3d& position,
+    const pxr::GfVec3d& direction,
+    const pxr::GfVec3d& up)
+{
+    // Compute the target position that would be "distance" units in front
+    // This allows us to use BaseLookAt while preserving the exact orientation
+    pxr::GfVec3d implicit_target = position + direction * m_Distance;
+
+    // Apply gimbal lock protection (same as Animate method)
+    pxr::GfVec3d protected_up = up;
+
+    // Check if we're near the poles (direction nearly parallel to Z-axis)
+    double dir_z_component = std::abs(direction[2]);
+    if (dir_z_component > 0.98) {  // Near vertical (< ~11 degrees from pole)
+        // Use a horizontal up vector to avoid gimbal lock
+        // Calculate it perpendicular to the view direction in XY plane
+        double dir_xy_length = std::sqrt(
+            direction[0] * direction[0] + direction[1] * direction[1]);
+        if (dir_xy_length > 0.01) {
+            // Use perpendicular in XY plane
+            protected_up =
+                pxr::GfVec3d(-direction[1], direction[0], 0.0).GetNormalized();
+        }
+        else {
+            // Almost exactly at pole, use arbitrary horizontal vector
+            protected_up = pxr::GfVec3d(1.0, 0.0, 0.0);
+        }
+    }
+
+    // Use BaseLookAt to set all internal vectors properly
+    BaseLookAt(position, implicit_target, protected_up);
 }
 
 void ThirdPersonCamera::SetView(const pxr::GfFrustum& view)
@@ -497,10 +534,18 @@ bool ThirdPersonCamera::AnimateOrbit(double deltaT)
     }
 
     m_Distance = std::clamp(m_Distance, m_MinDistance, m_MaxDistance);
+
     // Limit pitch to avoid gimbal lock at exact top/bottom (±90°)
     // Leave small margin to prevent camera flipping
-    const double PITCH_LIMIT = M_PI / 2.0 * 0.99;  // ~89.43°
+    const double PITCH_LIMIT =
+        M_PI / 2.0 * 0.98;  // ~88.2°, leaves margin before gimbal lock
     m_Pitch = std::clamp(m_Pitch, -PITCH_LIMIT, PITCH_LIMIT);
+
+    // Normalize yaw to keep it sane (pitch is already clamped)
+    if (m_Yaw > M_PI)
+        m_Yaw -= 2 * M_PI;
+    if (m_Yaw < -M_PI)
+        m_Yaw += 2 * M_PI;
 
     m_DeltaDistance = 0;
     m_DeltaYaw = 0;
@@ -551,8 +596,12 @@ void ThirdPersonCamera::Animate(double deltaT)
     // Build right and up vectors in Z-up world space
     pxr::GfVec3d world_up(0, 0, 1);
 
-    // Avoid gimbal lock when looking straight up/down
-    if (std::abs(m_Pitch) > 0.99 * M_PI / 2.0) {
+    if (cos(m_Pitch) < 0) {
+        world_up = pxr::GfVec3d(0, 0, -1);
+    }
+
+    // Avoid gimbal lock when looking straight up/down (Pitch near +/- 90, 270)
+    if (std::abs(std::cos(m_Pitch)) < 0.02) {
         world_up = pxr::GfVec3d(-sin(m_Yaw), cos(m_Yaw), 0);
     }
 
@@ -572,7 +621,10 @@ void ThirdPersonCamera::Animate(double deltaT)
 
     // Recalculate right and up
     world_up = pxr::GfVec3d(0, 0, 1);
-    if (std::abs(m_Pitch) > 0.99 * M_PI / 2.0) {
+    if (cos(m_Pitch) < 0) {
+        world_up = pxr::GfVec3d(0, 0, -1);
+    }
+    if (std::abs(std::cos(m_Pitch)) < 0.02) {
         world_up = pxr::GfVec3d(-sin(m_Yaw), cos(m_Yaw), 0);
     }
     m_CameraRight = pxr::GfCross(m_CameraDir, world_up).GetNormalized();
@@ -615,7 +667,10 @@ void ThirdPersonCamera::LookAt(
     m_CameraDir = -offset.GetNormalized();
 
     pxr::GfVec3d world_up(0, 0, 1);
-    if (std::abs(m_Pitch) > 0.99 * M_PI / 2.0) {
+    if (cos(m_Pitch) < 0) {
+        world_up = pxr::GfVec3d(0, 0, -1);
+    }
+    if (std::abs(std::cos(m_Pitch)) < 0.02) {
         world_up = pxr::GfVec3d(-sin(m_Yaw), cos(m_Yaw), 0);
     }
     m_CameraRight = pxr::GfCross(m_CameraDir, world_up).GetNormalized();
@@ -650,7 +705,10 @@ void ThirdPersonCamera::LookTo(
     m_CameraDir = -offset.GetNormalized();
 
     pxr::GfVec3d world_up(0, 0, 1);
-    if (std::abs(m_Pitch) > 0.99 * M_PI / 2.0) {
+    if (cos(m_Pitch) < 0) {
+        world_up = pxr::GfVec3d(0, 0, -1);
+    }
+    if (std::abs(std::cos(m_Pitch)) < 0.02) {
         world_up = pxr::GfVec3d(-sin(m_Yaw), cos(m_Yaw), 0);
     }
     m_CameraRight = pxr::GfCross(m_CameraDir, world_up).GetNormalized();
@@ -730,7 +788,10 @@ void ThirdPersonCamera::LoadState()
         m_CameraDir = -offset.GetNormalized();
 
         pxr::GfVec3d world_up(0, 0, 1);
-        if (std::abs(m_Pitch) > 0.99 * M_PI / 2.0) {
+        if (cos(m_Pitch) < 0) {
+            world_up = pxr::GfVec3d(0, 0, -1);
+        }
+        if (std::abs(std::cos(m_Pitch)) < 0.02) {
             world_up = pxr::GfVec3d(-sin(m_Yaw), cos(m_Yaw), 0);
         }
         m_CameraRight = pxr::GfCross(m_CameraDir, world_up).GetNormalized();

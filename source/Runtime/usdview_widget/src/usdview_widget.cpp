@@ -1321,24 +1321,34 @@ void UsdviewEngine::DrawViewManipulate(
         if (engine_status.cam_type == CamType::Third) {
             auto* third_camera =
                 static_cast<ThirdPersonCamera*>(free_camera_.get());
-            GfVec3d target = third_camera->GetTargetPosition();
+            GfVec3d original_target = third_camera->GetTargetPosition();
 
-            // Set new camera position while keeping target
-            double new_distance = (new_cam_pos - target).GetLength();
+            // Use the new SetCameraStateFromMatrix method to directly update
+            // camera state This preserves the full camera orientation including
+            // any roll component
+            third_camera->SetCameraStateFromMatrix(
+                new_cam_pos, new_cam_dir, new_cam_up);
+
+            // Now back-calculate Yaw/Pitch and Distance relative to the
+            // original target for state saving The camera's actual pose is
+            // already set by BaseLookAt above
+            double new_distance = (new_cam_pos - original_target).GetLength();
             third_camera->SetDistance(new_distance);
 
-            // Calculate azimuth and elevation from direction
-            GfVec3d to_camera = (new_cam_pos - target).GetNormalized();
+            GfVec3d offset = new_cam_pos - original_target;
             double azimuth, elevation, length;
             third_camera->CartesianToSpherical(
-                -to_camera, azimuth, elevation, length);
+                offset, azimuth, elevation, length);
+
+            // No clamping here - let the angles be what they are for state
+            // saving
             third_camera->SetRotation(azimuth, elevation);
 
-            // Force update of internal matrices and USD transform
-            third_camera->Animate(
-                0.0);  // Recalculate position/matrices based on new rotation
-            third_camera->UpdateUsdTransform();  // Write to USD
-            third_camera->SaveState();           // Write extra attributes
+            // Save state to USD attributes (SaveState writes
+            // Yaw/Pitch/Distance/Target to USD) Don't call Animate() as it
+            // would rebuild the camera from Yaw/Pitch, overwriting the exact
+            // pose we got from ViewManipulate
+            third_camera->SaveState();
         }
         else {
             // For first person camera
