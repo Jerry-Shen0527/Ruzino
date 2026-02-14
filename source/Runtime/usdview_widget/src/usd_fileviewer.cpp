@@ -551,7 +551,8 @@ void UsdFileViewer::EditValue()
                 xform_op[0].GetOpType() == UsdGeomXformOp::TypeTransform) {
                 auto trans = xform_op[0];
                 GfMatrix4d mat;
-                trans.Get(&mat);
+                // Use stage render time to match what Gizmo updates
+                trans.Get(&mat, stage->get_render_time());
 
                 // Decompose matrix into translation, rotation, scale
                 GfVec3d translation = mat.ExtractTranslation();
@@ -765,7 +766,8 @@ void UsdFileViewer::EditValue()
                     if (!std::isnan(newMat[0][0]) &&
                         !std::isnan(newMat[3][3])) {
                         try {
-                            trans.Set(newMat);
+                            // Write back to the same time code we read from
+                            trans.Set(newMat, stage->get_render_time());
                             // Set flag so we ignore the echoed event and don't
                             // clear our cache
                             s_InspectorTransformModified = true;

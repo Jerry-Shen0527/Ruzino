@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 
+#include "GUI/ImGuizmo.h"
 #include "GUI/widget.h"
 #include "nvrhi/nvrhi.h"
 #include "pxr/base/tf/token.h"
@@ -121,5 +122,17 @@ class USDVIEW_WIDGET_API UsdviewEngine final : public IWidget {
 
     // Cached frustum for raycast during camera switching
     pxr::GfFrustum cached_frustum_;
+
+    // ImGuizmo state
+    ImGuizmo::OPERATION gizmo_operation_ = ImGuizmo::TRANSLATE;
+    ImGuizmo::MODE gizmo_mode_ = ImGuizmo::WORLD;
+    bool gizmo_use_snap_ = false;
+    float gizmo_snap_[3] = { 1.0f, 1.0f, 1.0f };
+    float view_manipulate_size_ = 128.0f;
+
+    void DrawGizmo(const ImVec2& viewport_pos, const ImVec2& viewport_size);
+    void DrawViewManipulate(
+        const ImVec2& viewport_pos,
+        const ImVec2& viewport_size);
 };
 RUZINO_NAMESPACE_CLOSE_SCOPE

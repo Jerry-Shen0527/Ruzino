@@ -78,6 +78,12 @@ class BaseCamera : public pxr::UsdGeomCamera {
     // Update USD transform from current camera state
     void UpdateUsdTransform();
 
+    // Set the current time code for reading/writing USD data
+    void SetCurrentTime(pxr::UsdTimeCode time)
+    {
+        m_CurrentTime = time;
+    }
+
     // Check if there was user interaction in the last Animate() call
     bool HadInteractionLastFrame() const
     {
@@ -91,6 +97,7 @@ class BaseCamera : public pxr::UsdGeomCamera {
         pxr::GfVec3d cameraUp = pxr::GfVec3d{ 0.0, 0.0, 1.0 });  // Z-up
     void UpdateWorldToView();
 
+    pxr::UsdTimeCode m_CurrentTime = pxr::UsdTimeCode::Default();
     pxr::GfMatrix4d m_MatWorldToView = pxr::GfMatrix4d(1.0);
 
     pxr::GfVec3d m_CameraPos = pxr::GfVec3d(0.0);

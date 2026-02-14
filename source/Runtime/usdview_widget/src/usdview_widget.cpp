@@ -298,6 +298,55 @@ void UsdviewEngine::DrawMenuBar()
         ImGui::EndMenu();
     }
 
+    if (ImGui::BeginMenu("Gizmo")) {
+        ImGui::Text("Operation");
+        if (ImGui::RadioButton(
+                "Translate (T)", gizmo_operation_ == ImGuizmo::TRANSLATE)) {
+            gizmo_operation_ = ImGuizmo::TRANSLATE;
+        }
+        if (ImGui::RadioButton(
+                "Rotate (E)", gizmo_operation_ == ImGuizmo::ROTATE)) {
+            gizmo_operation_ = ImGuizmo::ROTATE;
+        }
+        if (ImGui::RadioButton(
+                "Scale (R)", gizmo_operation_ == ImGuizmo::SCALE)) {
+            gizmo_operation_ = ImGuizmo::SCALE;
+        }
+        ImGui::Separator();
+
+        if (gizmo_operation_ != ImGuizmo::SCALE) {
+            ImGui::Text("Mode");
+            if (ImGui::RadioButton("Local", gizmo_mode_ == ImGuizmo::LOCAL)) {
+                gizmo_mode_ = ImGuizmo::LOCAL;
+            }
+            if (ImGui::RadioButton("World", gizmo_mode_ == ImGuizmo::WORLD)) {
+                gizmo_mode_ = ImGuizmo::WORLD;
+            }
+            ImGui::Separator();
+        }
+
+        ImGui::Checkbox("Use Snap", &gizmo_use_snap_);
+        if (gizmo_use_snap_) {
+            switch (gizmo_operation_) {
+                case ImGuizmo::TRANSLATE:
+                    ImGui::InputFloat3("Snap", gizmo_snap_);
+                    break;
+                case ImGuizmo::ROTATE:
+                    ImGui::InputFloat("Angle Snap", &gizmo_snap_[0]);
+                    break;
+                case ImGuizmo::SCALE:
+                    ImGui::InputFloat("Scale Snap", &gizmo_snap_[0]);
+                    break;
+            }
+        }
+
+        ImGui::Separator();
+        ImGui::SliderFloat(
+            "View Manipulator Size", &view_manipulate_size_, 64.0f, 256.0f);
+
+        ImGui::EndMenu();
+    }
+
     ImGui::EndMenuBar();
 }
 
@@ -355,13 +404,31 @@ void UsdviewEngine::OnFrame(float delta_time)
         first_draw = false;
         return;
     }
+
+    // Handle Gizmo operation shortcuts (T, E, R)
+    if (is_active) {
+        if (ImGui::IsKeyPressed(ImGuiKey_T)) {
+            gizmo_operation_ = ImGuizmo::TRANSLATE;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_E)) {
+            gizmo_operation_ = ImGuizmo::ROTATE;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_R)) {
+            gizmo_operation_ = ImGuizmo::SCALE;
+        }
+    }
+
     DrawMenuBar();
 
     auto previous = data_->nvrhi_texture.Get();
 
     using namespace pxr;
+
+    // Use the current render time for camera query
+    UsdTimeCode current_render_time = stage_->get_render_time();
+
     GfFrustum frustum =
-        free_camera_->GetCamera(UsdTimeCode::Default()).GetFrustum();
+        free_camera_->GetCamera(current_render_time).GetFrustum();
 
     double fov, aspect_ratio, near_distance, far_distance;
 
@@ -397,26 +464,26 @@ void UsdviewEngine::OnFrame(float delta_time)
     _renderParams.enableSceneMaterials = true;
     _renderParams.showRender = true;
     _renderParams.highlight = true;  // CRITICAL: Enable selection highlighting!
-    if (timecode == 0)
-        _renderParams.frame = UsdTimeCode(0);
-    else {
-        _renderParams.frame = std::min(
-            UsdTimeCode(stage_->get_current_time()),
-            UsdTimeCode(timecode - 1.0f / 60.f));
-    }
+
+    // Ensure we render using the current stage time, match what the Gizmo is
+    // using Re-use variable defined above
+    if (current_render_time.IsDefault())
+        _renderParams.frame = pxr::UsdTimeCode::Default();
+    else
+        _renderParams.frame = current_render_time;
+
     _renderParams.drawMode = UsdImagingGLDrawMode::DRAW_WIREFRAME_ON_SURFACE;
     _renderParams.colorCorrectionMode = pxr::HdxColorCorrectionTokens->disabled;
 
     _renderParams.clearColor = GfVec4f(1.f, 1.f, 1.f, 1.f);
     // _renderParams.clearColor = GfVec4f(0.2f, 0.2f, 0.2f, 1.f);
 
-    for (int i = 0; i < free_camera_->GetCamera(UsdTimeCode::Default())
+    for (int i = 0; i < free_camera_->GetCamera(current_render_time)
                             .GetClippingPlanes()
                             .size();
          ++i) {
         _renderParams.clipPlanes[i] =
-            free_camera_->GetCamera(UsdTimeCode::Default())
-                .GetClippingPlanes()[i];
+            free_camera_->GetCamera(current_render_time).GetClippingPlanes()[i];
     }
 
     GlfSimpleLightVector lights;
@@ -458,7 +525,6 @@ void UsdviewEngine::OnFrame(float delta_time)
 
     ImGui::BeginChild("ViewPort", imgui_frame_size, 0, ImGuiWindowFlags_NoMove);
 
-    ImGui::GetIO().WantCaptureMouse = false;
     if (data_->nvrhi_texture.Get()) {
         persistent_texture = data_->nvrhi_texture;
         ImGui::Image(
@@ -473,13 +539,42 @@ void UsdviewEngine::OnFrame(float delta_time)
     is_active = ImGui::IsWindowFocused();
     is_hovered = ImGui::IsItemHovered();
 
+    // Save the viewport rect for Gizmo and ViewManipulate
+    ImVec2 viewport_pos = ImGui::GetItemRectMin();
+    ImVec2 viewport_size = ImGui::GetItemRectSize();
+
+    // Set ImGuizmo rect early so IsOver/IsViewManipulateHovered checks use
+    // correct coordinates
+    ImGuizmo::SetRect(
+        viewport_pos.x, viewport_pos.y, viewport_size.x, viewport_size.y);
+
+    // Prevent picking if Gizmo is being hovered/used
+    bool gizmo_hovered =
+        ImGuizmo::IsOver() || ImGuizmo::IsViewManipulateHovered();
+
+    // Key Fix: If we are hovering the viewport but NOT the gizmo/manipulator,
+    // tell ImGui we don't want to capture the mouse. This allows the
+    // application to process picking (which usually checks !WantCaptureMouse).
+    // If we ARE hovering the gizmo, we leave WantCaptureMouse as true (default
+    // for window) so ImGui/ImGuizmo handles the input.
+    if (is_hovered && !gizmo_hovered) {
+        ImGui::GetIO().WantCaptureMouse = false;
+    }
+
+    if (gizmo_hovered) {
+        if (left_mouse_pressed)
+            spdlog::info("Picking blocked because Gizmo is hovered");
+        left_mouse_pressed = false;
+    }
+
     // Left click picking
     if (left_mouse_pressed && is_hovered) {
+        spdlog::warn("Executing Raycast Picking Logic in OnFrame...");
         left_mouse_pressed = false;  // Reset flag
 
         auto mouse_pos_rel = ImGui::GetMousePos() - ImGui::GetItemRectMin();
 
-        spdlog::info(
+        spdlog::warn(
             "Mouse Position Relative: (%.2f, %.2f)",
             mouse_pos_rel.x,
             mouse_pos_rel.y);
@@ -554,7 +649,42 @@ void UsdviewEngine::OnFrame(float delta_time)
         }
     }
 
-    ImGui::GetIO().WantCaptureMouse = true;
+    // Draw ViewManipulate first (always visible)
+    DrawViewManipulate(viewport_pos, viewport_size);
+
+    // Draw Gizmo for selected object
+    DrawGizmo(viewport_pos, viewport_size);
+
+    // Update bounding box for selected prim to match current animation
+    // time/transform
+    if (!current_selected_path_.IsEmpty()) {
+        auto prim =
+            stage_->get_usd_stage()->GetPrimAtPath(current_selected_path_);
+        if (prim && prim.IsA<pxr::UsdGeomBoundable>()) {
+            pxr::UsdGeomBoundable boundable(prim);
+            pxr::VtArray<pxr::GfVec3f> extent;
+            if (boundable.GetExtentAttr().Get(&extent) && extent.size() == 2) {
+                pxr::GfRange3d range(
+                    pxr::GfVec3d(extent[0][0], extent[0][1], extent[0][2]),
+                    pxr::GfVec3d(extent[1][0], extent[1][1], extent[1][2]));
+
+                pxr::UsdGeomXformable xformable(prim);
+                pxr::GfMatrix4d xform;
+                bool reset;
+                // Use RENDER time to match viewport
+                xformable.GetLocalTransformation(
+                    &xform, &reset, stage_->get_render_time());
+
+                // Update the first bbox (assuming single selection for now)
+                if (!_renderParams.bboxes.empty()) {
+                    _renderParams.bboxes[0] = pxr::GfBBox3d(range, xform);
+                }
+                else {
+                    _renderParams.bboxes.push_back(pxr::GfBBox3d(range, xform));
+                }
+            }
+        }
+    }
 
     ImGui::EndChild();
     time_controller();
@@ -621,6 +751,11 @@ bool UsdviewEngine::MouseScrollUpdate(double xoffset, double yoffset)
 bool UsdviewEngine::MouseButtonUpdate(int button, int action, int mods)
 {
     ImGuiIO& io = ImGui::GetIO();
+
+    // If ImGui wants the mouse (including ImGuizmo), don't process picking
+    if (io.WantCaptureMouse)
+        return false;
+
     bool shift_pressed = io.KeyShift;
 
     // Left button: picking/selection only
@@ -657,6 +792,11 @@ bool UsdviewEngine::MouseButtonUpdate(int button, int action, int mods)
 
 void UsdviewEngine::Animate(float elapsed_time_seconds)
 {
+    // Ensure camera uses the correct time code for any transform updates
+    if (free_camera_) {
+        free_camera_->SetCurrentTime(stage_->get_render_time());
+    }
+
     free_camera_->Animate(elapsed_time_seconds);
 
     // Notify Inspector only if there was actual user interaction
@@ -708,6 +848,9 @@ UsdviewEngine::~UsdviewEngine()
 
 bool UsdviewEngine::BuildUI()
 {
+    // Initialize ImGuizmo for this frame
+    ImGuizmo::BeginFrame();
+
     // Subscribe to selection events on first frame
     subscribe_to_selection_events();
 
@@ -870,6 +1013,9 @@ void UsdviewEngine::on_camera_transform_modified()
     if (free_camera_) {
         bool isThirdPerson = (engine_status.cam_type == CamType::Third);
 
+        // Ensure we are reading from the correct time
+        free_camera_->SetCurrentTime(stage_->get_render_time());
+
         // Reload camera state from USD prim (this reads Inspector's
         // modifications) Inspector only modifies translation, rotation stays
         // the same
@@ -972,4 +1118,241 @@ void UsdviewEngine::on_prim_selected(const pxr::SdfPath& path)
         pxr::GfVec4f(1.0f, 0.7f, 0.0f, 1.0f);  // Orange
     _renderParams.bboxLineDashSize = 3.0f;
 }
+
+void UsdviewEngine::DrawGizmo(
+    const ImVec2& viewport_pos,
+    const ImVec2& viewport_size)
+{
+    using namespace pxr;
+
+    // Only show gizmo if there's a selected object
+    if (current_selected_path_.IsEmpty())
+        return;
+
+    auto prim = stage_->get_usd_stage()->GetPrimAtPath(current_selected_path_);
+    if (!prim || !prim.IsA<UsdGeomXformable>())
+        return;
+
+    UsdGeomXformable xformable(prim);
+
+    // Get world transform matrix using the RENDER time (not necessarily
+    // Default)
+    UsdTimeCode current_time = stage_->get_render_time();
+    GfMatrix4d object_matrix =
+        xformable.ComputeLocalToWorldTransform(current_time);
+
+    // Get camera matrices
+    GfFrustum frustum = free_camera_->GetCamera(current_time).GetFrustum();
+
+    // Maintain correct aspect ratio for Gizmo projection
+    double fov, aspect_ratio, near_distance, far_distance;
+    frustum.GetPerspective(&fov, &aspect_ratio, &near_distance, &far_distance);
+    frustum.SetPerspective(
+        fov,
+        float(render_buffer_size_[0]) / float(render_buffer_size_[1]),
+        near_distance,
+        far_distance);
+
+    GfMatrix4d viewMatrix = frustum.ComputeViewMatrix();
+    GfMatrix4d projectionMatrix = frustum.ComputeProjectionMatrix();
+
+    // Convert to float arrays for ImGuizmo
+    float view[16], projection[16], matrix[16];
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            view[i * 4 + j] = static_cast<float>(viewMatrix[i][j]);
+            projection[i * 4 + j] = static_cast<float>(projectionMatrix[i][j]);
+            matrix[i * 4 + j] = static_cast<float>(object_matrix[i][j]);
+        }
+    }
+
+    // Set ImGuizmo rect to match the viewport
+    ImGuizmo::SetRect(
+        viewport_pos.x, viewport_pos.y, viewport_size.x, viewport_size.y);
+    ImGuizmo::SetDrawlist();
+    ImGuizmo::Enable(true);
+
+    // Draw the gizmo
+    ImGuizmo::Manipulate(
+        view,
+        projection,
+        gizmo_operation_,
+        gizmo_mode_,
+        matrix,
+        nullptr,
+        gizmo_use_snap_ ? gizmo_snap_ : nullptr);
+
+    // If the gizmo was manipulated, update the USD transform
+    if (ImGuizmo::IsUsing()) {
+        // Convert back to GfMatrix4d
+        GfMatrix4d new_world_matrix;
+        for (int i = 0; i < 4; ++i) {
+            for (int j = 0; j < 4; ++j) {
+                new_world_matrix[i][j] = matrix[i * 4 + j];
+            }
+        }
+
+        // Convert world space transform to local space
+        GfMatrix4d parent_world_matrix(1.0);
+        UsdPrim parent = prim.GetParent();
+        if (parent && parent.IsA<UsdGeomXformable>()) {
+            UsdGeomXformable parent_xformable(parent);
+            parent_world_matrix =
+                parent_xformable.ComputeLocalToWorldTransform(current_time);
+        }
+
+        GfMatrix4d local_matrix =
+            new_world_matrix * parent_world_matrix.GetInverse();
+
+        // Optimize: Check if we can update an existing TransformOp instead of
+        // clearing/recreating This prevents massive schema churn and helps with
+        // "drifting" (update lag)
+        bool op_set = false;
+        bool resets = false;
+        std::vector<UsdGeomXformOp> ops = xformable.GetOrderedXformOps(&resets);
+
+        if (ops.size() == 1 &&
+            ops[0].GetOpType() == UsdGeomXformOp::TypeTransform) {
+            spdlog::warn(
+                "Setting Transform Op at TimeCode: {}",
+                current_time.GetValue());
+            ops[0].Set(local_matrix, current_time);
+            op_set = true;
+        }
+        else {
+            // If complex stack, fallback to collapse strategy
+            xformable.ClearXformOpOrder();
+            UsdGeomXformOp transformOp = xformable.MakeMatrixXform();
+            spdlog::warn(
+                "Setting New Transform Op at TimeCode: {}",
+                current_time.GetValue());
+            transformOp.Set(local_matrix, current_time);
+            op_set = true;
+        }
+
+        // Notify that transform was modified via Gizmo
+        if (op_set && window) {
+            window->events().emit_any("camera_transform_modified", std::any());
+        }
+    }
+}
+
+void UsdviewEngine::DrawViewManipulate(
+    const ImVec2& viewport_pos,
+    const ImVec2& viewport_size)
+{
+    using namespace pxr;
+
+    // Get camera matrices using current render time
+    UsdTimeCode current_time = stage_->get_render_time();
+    GfFrustum frustum = free_camera_->GetCamera(current_time).GetFrustum();
+    GfMatrix4d viewMatrix = frustum.ComputeViewMatrix();
+
+    // Convert to float array for ImGuizmo
+    float view[16];
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            view[i * 4 + j] = static_cast<float>(viewMatrix[i][j]);
+        }
+    }
+
+    // Place the view manipulator in top-right corner of viewport
+    float view_manipulate_right = viewport_pos.x + viewport_size.x;
+    float view_manipulate_top = viewport_pos.y;
+
+    // Calculate camera distance for ViewManipulate
+    GfVec3d cam_pos = free_camera_->GetPosition();
+    GfVec3d target_pos(0, 0, 0);
+    if (engine_status.cam_type == CamType::Third) {
+        auto* third_camera =
+            static_cast<ThirdPersonCamera*>(free_camera_.get());
+        target_pos = third_camera->GetTargetPosition();
+    }
+    else {
+        // For first person, use a point in front of the camera
+        target_pos = cam_pos + free_camera_->GetDir() * 10.0;
+    }
+    float distance = static_cast<float>((target_pos - cam_pos).GetLength());
+
+    // Setup ImGuizmo environment for this draw call
+    ImGuizmo::SetRect(
+        viewport_pos.x, viewport_pos.y, viewport_size.x, viewport_size.y);
+    ImGuizmo::SetDrawlist();
+
+    // Draw the view manipulator in the top-right corner (using 0x00000000 for
+    // transparent background) 0x10101010 was very faint. 0x00000000 is fully
+    // transparent background.
+    ImGuizmo::ViewManipulate(
+        view,
+        distance,
+        ImVec2(
+            view_manipulate_right - view_manipulate_size_ - 10,
+            view_manipulate_top + 10),
+        ImVec2(view_manipulate_size_, view_manipulate_size_),
+        0x00000000);
+
+    // If the view was manipulated, update the camera
+    if (ImGuizmo::IsUsingViewManipulate()) {
+        // Convert back to GfMatrix4d
+        GfMatrix4d new_view_matrix;
+        for (int i = 0; i < 4; ++i) {
+            for (int j = 0; j < 4; ++j) {
+                new_view_matrix[i][j] = view[i * 4 + j];
+            }
+        }
+
+        // Extract camera orientation from view matrix
+        // View matrix transforms from world to camera space
+        // We need to invert it to get camera-to-world transform
+        GfMatrix4d camera_matrix = new_view_matrix.GetInverse();
+
+        // Extract position and direction from camera matrix
+        GfVec3d new_cam_pos(
+            camera_matrix[3][0], camera_matrix[3][1], camera_matrix[3][2]);
+        GfVec3d new_cam_dir(
+            -camera_matrix[2][0], -camera_matrix[2][1], -camera_matrix[2][2]);
+        GfVec3d new_cam_up(
+            camera_matrix[1][0], camera_matrix[1][1], camera_matrix[1][2]);
+
+        new_cam_dir.Normalize();
+        new_cam_up.Normalize();
+
+        // Update camera based on type
+        if (engine_status.cam_type == CamType::Third) {
+            auto* third_camera =
+                static_cast<ThirdPersonCamera*>(free_camera_.get());
+            GfVec3d target = third_camera->GetTargetPosition();
+
+            // Set new camera position while keeping target
+            double new_distance = (new_cam_pos - target).GetLength();
+            third_camera->SetDistance(new_distance);
+
+            // Calculate azimuth and elevation from direction
+            GfVec3d to_camera = (new_cam_pos - target).GetNormalized();
+            double azimuth, elevation, length;
+            third_camera->CartesianToSpherical(
+                -to_camera, azimuth, elevation, length);
+            third_camera->SetRotation(azimuth, elevation);
+
+            // Force update of internal matrices and USD transform
+            third_camera->Animate(
+                0.0);  // Recalculate position/matrices based on new rotation
+            third_camera->UpdateUsdTransform();  // Write to USD
+            third_camera->SaveState();           // Write extra attributes
+        }
+        else {
+            // For first person camera
+            auto* first_camera =
+                static_cast<FirstPersonCamera*>(free_camera_.get());
+            first_camera->LookTo(new_cam_pos, new_cam_dir, new_cam_up);
+            first_camera->UpdateUsdTransform();  // Ensure we write back to USD
+        }
+
+        // Notify changes
+        if (window) {
+            window->events().emit_any("camera_transform_modified", std::any());
+        }
+    }
+}
+
 RUZINO_NAMESPACE_CLOSE_SCOPE

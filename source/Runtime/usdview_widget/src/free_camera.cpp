@@ -41,9 +41,9 @@ void BaseCamera::UpdateUsdTransform()
     if (!xform_op) {
         xform_op = AddTransformOp();
     }
-    // Set the transform op
+    // Set the transform op using current time
     pxr::GfMatrix4d worldToCamera = m_MatWorldToView.GetInverse();
-    xform_op.Set(worldToCamera);
+    xform_op.Set(worldToCamera, m_CurrentTime);
 }
 
 BaseCamera::BaseCamera(const pxr::UsdGeomCamera& camera)
@@ -52,9 +52,10 @@ BaseCamera::BaseCamera(const pxr::UsdGeomCamera& camera)
     pxr::UsdGeomXformOp transform_op = camera.GetTransformOp();
     if (transform_op) {
         pxr::GfMatrix4d transform_mat;
-        transform_op.Get(&transform_mat);
+        transform_op.Get(&transform_mat, m_CurrentTime);
 
         m_CameraPos = transform_mat.ExtractTranslation();
+
         m_CameraDir = -transform_mat.ExtractRotation().TransformDir(
             pxr::GfVec3d(0.0, 0.0, 1.0));
         m_CameraUp = transform_mat.ExtractRotation().TransformDir(
@@ -76,9 +77,10 @@ void BaseCamera::ReloadFromUsd()
     if (transform_op) {
         pxr::GfMatrix4d transform_mat;
         transform_mat.SetIdentity();
-        transform_op.Get(&transform_mat);
+        transform_op.Get(&transform_mat, m_CurrentTime);
 
         m_CameraPos = transform_mat.ExtractTranslation();
+
         m_CameraDir = -transform_mat.ExtractRotation().TransformDir(
             pxr::GfVec3d(0.0, 0.0, 1.0));
         m_CameraUp = transform_mat.ExtractRotation().TransformDir(
