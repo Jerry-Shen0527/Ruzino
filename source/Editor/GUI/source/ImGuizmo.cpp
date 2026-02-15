@@ -3808,7 +3808,7 @@ void ViewManipulate(
         // We clamp the Z component to ensure the view direction never gets too
         // close to the Up vector (Z-axis) This prevents LookAt from becoming
         // unstable (Right = Forward x Up -> 0)
-        const float MAX_Z = 0.96f;  // ~16 degrees from pole. Safer margin to
+        const float MAX_Z = 0.98f;  // ~16 degrees from pole. Safer margin to
                                     // prevent flickering.
 
         if (newDir.z > MAX_Z) {

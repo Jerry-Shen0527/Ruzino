@@ -569,15 +569,10 @@ void UsdviewEngine::OnFrame(float delta_time)
 
     // Left click picking
     if (left_mouse_pressed && is_hovered) {
-        spdlog::warn("Executing Raycast Picking Logic in OnFrame...");
         left_mouse_pressed = false;  // Reset flag
 
         auto mouse_pos_rel = ImGui::GetMousePos() - ImGui::GetItemRectMin();
 
-        spdlog::warn(
-            "Mouse Position Relative: (%.2f, %.2f)",
-            mouse_pos_rel.x,
-            mouse_pos_rel.y);
         // Normalize the mouse position to be in the range [0, 1]
         ImVec2 mousePosNorm = ImVec2(
             mouse_pos_rel.x / render_buffer_size_[0],
@@ -1213,9 +1208,6 @@ void UsdviewEngine::DrawGizmo(
 
         if (ops.size() == 1 &&
             ops[0].GetOpType() == UsdGeomXformOp::TypeTransform) {
-            spdlog::warn(
-                "Setting Transform Op at TimeCode: {}",
-                current_time.GetValue());
             ops[0].Set(local_matrix, current_time);
             op_set = true;
         }
@@ -1223,9 +1215,6 @@ void UsdviewEngine::DrawGizmo(
             // If complex stack, fallback to collapse strategy
             xformable.ClearXformOpOrder();
             UsdGeomXformOp transformOp = xformable.MakeMatrixXform();
-            spdlog::warn(
-                "Setting New Transform Op at TimeCode: {}",
-                current_time.GetValue());
             transformOp.Set(local_matrix, current_time);
             op_set = true;
         }

@@ -81,7 +81,8 @@ NODE_EXECUTION_FUNCTION(rasterize)
         .set_depth_stencil_target(output_depth)
         .finish_setting_frame_buffer();
 
-    context.set_viewport(get_size(params)).finish_setting_pso();
+    auto size = get_size(params);
+    context.set_viewport(size[0], size[1]).finish_setting_pso();
 
     instance_collection->draw_indirect_pool.compress();
 
