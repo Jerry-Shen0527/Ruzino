@@ -45,6 +45,8 @@
 //
 // -------------------------------------------------------------------------------------------
 // Example
+#pragma once
+#include "api.h"
 #if 0
 void EditTransform(const Camera& camera, matrix_t& matrix)
 {
@@ -109,13 +111,6 @@ void EditTransform(const Camera& camera, matrix_t& matrix)
 
 #include "imgui.h"
 
-#ifdef USE_IMGUI_API
-#include "imconfig.h"
-#endif
-#ifndef IMGUI_API
-#define IMGUI_API
-#endif
-
 #ifndef IMGUIZMO_NAMESPACE
 #define IMGUIZMO_NAMESPACE ImGuizmo
 #endif
@@ -126,36 +121,36 @@ namespace IMGUIZMO_NAMESPACE {
 // call inside your own window and before Manipulate() in order to draw gizmo to
 // that window. Or pass a specific ImDrawList to draw to (e.g.
 // ImGui::GetForegroundDrawList()).
-IMGUI_API void SetDrawlist(ImDrawList* drawlist = nullptr);
+GUI_API void SetDrawlist(ImDrawList* drawlist = nullptr);
 
 // call BeginFrame right after ImGui_XXXX_NewFrame();
-IMGUI_API void BeginFrame();
+GUI_API void BeginFrame();
 
 // this is necessary because when imguizmo is compiled into a dll, and imgui
 // into another globals are not shared between them. More details at
 // https://stackoverflow.com/questions/19373061/what-happens-to-global-and-static-variables-in-a-shared-library-when-it-is-dynam
 // expose method to set imgui context
-IMGUI_API void SetImGuiContext(ImGuiContext* ctx);
+GUI_API void SetImGuiContext(ImGuiContext* ctx);
 
 // return true if mouse cursor is over any gizmo control (axis, plan or screen
 // component)
-IMGUI_API bool IsOver();
+GUI_API bool IsOver();
 
 // return true if mouse IsOver or if the gizmo is in moving state
-IMGUI_API bool IsUsing();
+GUI_API bool IsUsing();
 
 // return true if the view gizmo is in moving state
-IMGUI_API bool IsUsingViewManipulate();
+GUI_API bool IsUsingViewManipulate();
 // only check if your mouse is over the view manipulator - no matter whether
 // it's active or not
-IMGUI_API bool IsViewManipulateHovered();
+GUI_API bool IsViewManipulateHovered();
 
 // return true if any gizmo is in moving state
-IMGUI_API bool IsUsingAny();
+GUI_API bool IsUsingAny();
 
 // enable/disable the gizmo. Stay in the state until next call to Enable.
 // gizmo is rendered with gray half transparent color when disabled
-IMGUI_API void Enable(bool enable);
+GUI_API void Enable(bool enable);
 
 // helper functions for manualy editing translation/rotation/scale with an input
 // float translation, rotation and scale float points to 3 floats each Angles
@@ -170,29 +165,29 @@ IMGUI_API void Enable(bool enable);
 //
 // These functions have some numerical stability issues for now. Use with
 // caution.
-IMGUI_API void DecomposeMatrixToComponents(
+GUI_API void DecomposeMatrixToComponents(
     const float* matrix,
     float* translation,
     float* rotation,
     float* scale);
-IMGUI_API void RecomposeMatrixFromComponents(
+GUI_API void RecomposeMatrixFromComponents(
     const float* translation,
     const float* rotation,
     const float* scale,
     float* matrix);
 
-IMGUI_API void SetRect(float x, float y, float width, float height);
+GUI_API void SetRect(float x, float y, float width, float height);
 // default is false
-IMGUI_API void SetOrthographic(bool isOrthographic);
+GUI_API void SetOrthographic(bool isOrthographic);
 
 // Render a cube with face color corresponding to face normal. Usefull for
 // debug/tests
-IMGUI_API void DrawCubes(
+GUI_API void DrawCubes(
     const float* view,
     const float* projection,
     const float* matrices,
     int matrixCount);
-IMGUI_API void DrawGrid(
+GUI_API void DrawGrid(
     const float* view,
     const float* projection,
     const float* matrix,
@@ -234,7 +229,7 @@ inline OPERATION operator|(OPERATION lhs, OPERATION rhs)
 
 enum MODE { LOCAL, WORLD };
 
-IMGUI_API bool Manipulate(
+GUI_API bool Manipulate(
     const float* view,
     const float* projection,
     OPERATION operation,
@@ -250,7 +245,7 @@ IMGUI_API bool Manipulate(
 // patent in the US. I don't think it will bring troubles using it as other
 // software are using the same mechanics. But just in case, you are now warned!
 //
-IMGUI_API void ViewManipulate(
+GUI_API void ViewManipulate(
     float* view,
     float length,
     ImVec2 position,
@@ -259,7 +254,7 @@ IMGUI_API void ViewManipulate(
 
 // use this version if you did not call Manipulate before and you are just using
 // ViewManipulate
-IMGUI_API void ViewManipulate(
+GUI_API void ViewManipulate(
     float* view,
     const float* projection,
     OPERATION operation,
@@ -270,10 +265,10 @@ IMGUI_API void ViewManipulate(
     ImVec2 size,
     ImU32 backgroundColor);
 
-IMGUI_API void SetAlternativeWindow(ImGuiWindow* window);
+GUI_API void SetAlternativeWindow(ImGuiWindow* window);
 
 [[deprecated("Use PushID/PopID instead.")]]
-IMGUI_API void SetID(int id);
+GUI_API void SetID(int id);
 
 // ID stack/scopes
 // Read the FAQ (docs/FAQ.md or http://dearimgui.org/faq) for more details about
@@ -293,43 +288,43 @@ IMGUI_API void SetID(int id);
 // string that will be displayed + used as an ID,
 //   whereas "str_id" denote a string that is only used as an ID and not
 //   normally displayed.
-IMGUI_API void PushID(
+GUI_API void PushID(
     const char* str_id);  // push string into the ID stack (will hash string).
-IMGUI_API void PushID(
+GUI_API void PushID(
     const char* str_id_begin,
     const char*
         str_id_end);  // push string into the ID stack (will hash string).
-IMGUI_API void PushID(
+GUI_API void PushID(
     const void* ptr_id);  // push pointer into the ID stack (will hash pointer).
-IMGUI_API void PushID(
-    int int_id);         // push integer into the ID stack (will hash integer).
-IMGUI_API void PopID();  // pop from the ID stack.
-IMGUI_API ImGuiID
+GUI_API void PushID(
+    int int_id);       // push integer into the ID stack (will hash integer).
+GUI_API void PopID();  // pop from the ID stack.
+GUI_API ImGuiID
 GetID(const char* str_id);  // calculate unique ID (hash of whole ID stack +
                             // given parameter). e.g. if you want to query into
                             // ImGuiStorage yourself
-IMGUI_API ImGuiID GetID(const char* str_id_begin, const char* str_id_end);
-IMGUI_API ImGuiID GetID(const void* ptr_id);
+GUI_API ImGuiID GetID(const char* str_id_begin, const char* str_id_end);
+GUI_API ImGuiID GetID(const void* ptr_id);
 
 // return true if the cursor is over the operation's gizmo
-IMGUI_API bool IsOver(OPERATION op);
-IMGUI_API void SetGizmoSizeClipSpace(float value);
+GUI_API bool IsOver(OPERATION op);
+GUI_API void SetGizmoSizeClipSpace(float value);
 
 // Allow axis to flip
 // When true (default), the guizmo axis flip for better visibility
 // When false, they always stay along the positive world/local axis
-IMGUI_API void AllowAxisFlip(bool value);
+GUI_API void AllowAxisFlip(bool value);
 
 // Configure the limit where axis are hidden
-IMGUI_API void SetAxisLimit(float value);
+GUI_API void SetAxisLimit(float value);
 // Set an axis mask to permanently hide a given axis (true -> hidden, false ->
 // shown)
-IMGUI_API void SetAxisMask(bool x, bool y, bool z);
+GUI_API void SetAxisMask(bool x, bool y, bool z);
 // Configure the limit where planes are hiden
-IMGUI_API void SetPlaneLimit(float value);
+GUI_API void SetPlaneLimit(float value);
 // from a x,y,z point in space and using Manipulation view/projection matrix,
 // check if mouse is in pixel radius distance of that projected point
-IMGUI_API bool IsOver(float* position, float pixelRadius);
+GUI_API bool IsOver(float* position, float pixelRadius);
 
 enum COLOR {
     DIRECTION_X,       // directionColor[0]
@@ -351,7 +346,7 @@ enum COLOR {
 };
 
 struct Style {
-    IMGUI_API Style();
+    GUI_API Style();
 
     float TranslationLineThickness;  // Thickness of lines for translation gizmo
     float TranslationLineArrowSize;  // Size of arrow at the end of lines for
@@ -369,5 +364,5 @@ struct Style {
     ImVec4 Colors[COLOR::COUNT];
 };
 
-IMGUI_API Style& GetStyle();
+GUI_API Style& GetStyle();
 }  // namespace IMGUIZMO_NAMESPACE

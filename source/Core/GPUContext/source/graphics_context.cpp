@@ -3,13 +3,8 @@
 #include <spdlog/spdlog.h>
 
 #include "nvrhi/utils.h"
-#if RUZINO_WITH_OPENUSD
-#include "pxr/base/gf/vec2f.h"
-#include "pxr/base/gf/vec3f.h"
-#endif
 
 RUZINO_NAMESPACE_OPEN_SCOPE
-
 GraphicsContext::GraphicsContext(
     ResourceAllocator& resource_allocator,
     ProgramVars& vars)
@@ -165,19 +160,17 @@ GraphicsContext& GraphicsContext::finish_setting_frame_buffer()
     return *this;
 }
 
-#if RUZINO_WITH_OPENUSD
-GraphicsContext& GraphicsContext::set_viewport(pxr::GfVec2f size)
+GraphicsContext& GraphicsContext::set_viewport(float x, float y)
 {
     viewport.scissorRects.resize(1);
-    viewport.scissorRects[0].maxX = static_cast<int>(size[0]);
-    viewport.scissorRects[0].maxY = static_cast<int>(size[1]);
+    viewport.scissorRects[0].maxX = static_cast<int>(x);
+    viewport.scissorRects[0].maxY = static_cast<int>(y);
     viewport.viewports.resize(1);
-    viewport.viewports[0].maxX = size[0];
-    viewport.viewports[0].maxY = size[1];
+    viewport.viewports[0].maxX = x;
+    viewport.viewports[0].maxY = y;
 
     return *this;
 }
-#endif
 
 GraphicsContext& GraphicsContext::add_vertex_buffer_desc(
     std::string name,
