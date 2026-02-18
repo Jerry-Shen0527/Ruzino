@@ -1,4 +1,5 @@
 #pragma once
+#include <type_traits>
 #include "nvrhi/nvrhi.h"
 #include "nvrhi_patch.hpp"
 #include "resources.hpp"
@@ -393,8 +394,12 @@ struct hash<nvrhi::rt::PipelineShaderDesc> {
     }
 };
 
+// Generic hash for std::vector<T> - excluded for bool since std::hash<vector<bool>> 
+// is already specialized in the standard library and would cause ambiguity.
+// For vector<bool>, the standard library specialization will be used.
+namespace detail {
 template<typename T>
-struct hash<std::vector<T>> {
+struct vector_hash {
     std::size_t operator()(std::vector<T> const& v) const noexcept
     {
         std::size_t seed = 0;
@@ -404,6 +409,12 @@ struct hash<std::vector<T>> {
         return seed;
     }
 };
+}
+
+// Specialize std::hash for vector<T> only for non-bool types using C++20 requires
+template<typename T>
+requires (!std::is_same_v<T, bool>)
+struct hash<std::vector<T>> : detail::vector_hash<T> {};
 
 template<>
 struct hash<nvrhi::rt::PipelineDesc> {

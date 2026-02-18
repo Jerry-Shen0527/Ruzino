@@ -5,7 +5,7 @@ Test Runner Script for Ruzino Project
 This script:
 1. Recursively finds all 'tests/' folders under './source/'
 2. Runs pytest on any 'test_*.py' files found
-3. Runs corresponding '*_test.exe' files from './Binaries/Release/' for any '.cpp' files
+3. Runs corresponding '*_test' executables from './Binaries/Release/' for any '.cpp' files
 
 Usage:
     python run_all_tests.py                    # Run all tests
@@ -15,8 +15,19 @@ Usage:
 import os
 import sys
 import subprocess
+import platform
 from pathlib import Path
 from typing import List, Tuple, Optional
+
+# Platform detection
+IS_WINDOWS = platform.system() == 'Windows'
+EXE_SUFFIX = '.exe' if IS_WINDOWS else ''
+
+# Tests to skip in headless environment (UI/rendering related)
+HEADLESS_SKIP_PATTERNS = [
+    'gui', 'editor', 'render', 'window', 'imgui', 'nvrhi',
+    'opengl', 'vulkan', 'dx12', 'cuda', 'rhi'
+]
 
 
 
@@ -48,14 +59,14 @@ def cpp_to_exe_name(cpp_file: Path) -> str:
     """Convert cpp filename to expected exe name.
     
     For example:
-    - some_file.cpp -> some_file_test.exe
-    - renderer.cpp -> renderer_test.exe
+    - some_file.cpp -> some_file_test (Linux) or some_file_test.exe (Windows)
+    - renderer.cpp -> renderer_test (Linux) or renderer_test.exe (Windows)
     """
     base_name = cpp_file.stem
     if base_name.endswith('_test'):
-        return f"{base_name}.exe"
+        return f"{base_name}{EXE_SUFFIX}"
     else:
-        return f"{base_name}_test.exe"
+        return f"{base_name}_test{EXE_SUFFIX}"
 
 
 def should_run_test(exe_name: str, test_filter: Optional[str]) -> bool:
@@ -63,11 +74,20 @@ def should_run_test(exe_name: str, test_filter: Optional[str]) -> bool:
     if test_filter is None:
         return True
     
-    # Match test name (with or without _test.exe suffix)
-    test_base = exe_name.replace('_test.exe', '').replace('.exe', '')
+    # Match test name (with or without _test suffix and .exe extension)
+    test_base = exe_name.replace('_test', '').replace('.exe', '')
     filter_base = test_filter.replace('_test', '').replace('.exe', '')
     
     return filter_base.lower() in test_base.lower()
+
+
+def should_skip_headless_test(exe_name: str) -> bool:
+    """Check if a test should be skipped in headless environment."""
+    exe_lower = exe_name.lower()
+    for pattern in HEADLESS_SKIP_PATTERNS:
+        if pattern in exe_lower:
+            return True
+    return False
 
 
 def run_pytest(test_dir: Path, test_filter: Optional[str] = None) -> Tuple[int, int, List[Tuple[str, str]]]:
@@ -130,17 +150,23 @@ def run_pytest(test_dir: Path, test_filter: Optional[str] = None) -> Tuple[int, 
     return passed, failed, failed_tests
 
 
-def run_cpp_tests(test_dir: Path, binaries_dir: Path, test_filter: Optional[str] = None) -> Tuple[int, int, List[Tuple[str, str]]]:
+def run_cpp_tests(test_dir: Path, binaries_dir: Path, test_filter: Optional[str] = None, skip_headless: bool = False) -> Tuple[int, int, int, List[Tuple[str, str]]]:
     """Run C++ test executables corresponding to cpp files in test_dir.
     
+    Args:
+        test_dir: Directory containing cpp test files
+        binaries_dir: Directory containing compiled test executables
+        test_filter: Optional filter to run only matching tests
+        skip_headless: If True, skip UI/rendering tests in headless environment
+    
     Returns:
-        Tuple of (passed, failed, failed_test_info)
+        Tuple of (passed, failed, skipped, failed_test_info)
         where failed_test_info is a list of (test_name, output) tuples
     """
     cpp_files = find_cpp_test_files(test_dir)
     
     if not cpp_files:
-        return 0, 0, []
+        return 0, 0, 0, []
     
     print(f"\n{'='*80}")
     print(f"Running C++ tests from: {test_dir}")
@@ -148,6 +174,7 @@ def run_cpp_tests(test_dir: Path, binaries_dir: Path, test_filter: Optional[str]
     
     passed = 0
     failed = 0
+    skipped = 0
     failed_tests = []
     
     for cpp_file in cpp_files:
@@ -157,12 +184,19 @@ def run_cpp_tests(test_dir: Path, binaries_dir: Path, test_filter: Optional[str]
         if test_filter and not should_run_test(exe_name, test_filter):
             continue
         
+        # Skip UI/rendering tests in headless environment
+        if skip_headless and should_skip_headless_test(exe_name):
+            print(f"\n--- Skipping: {exe_name} (headless environment) ---")
+            skipped += 1
+            continue
+        
         exe_path = binaries_dir / exe_name
         
         print(f"\n--- Running: {exe_name} (from {cpp_file.name}) ---")
         
         if not exe_path.exists():
             print(f"⚠ SKIPPED: {exe_name} not found in {binaries_dir}")
+            skipped += 1
             continue
         
         try:
@@ -193,16 +227,28 @@ def run_cpp_tests(test_dir: Path, binaries_dir: Path, test_filter: Optional[str]
             failed += 1
             failed_tests.append((exe_name, f"ERROR: {str(e)}"))
     
-    return passed, failed, failed_tests
+    return passed, failed, skipped, failed_tests
 
 
 def main():
     """Main test runner."""
+    import argparse
+    
     # Parse command line arguments
-    test_filter = None
-    if len(sys.argv) > 1:
-        test_filter = sys.argv[1]
+    parser = argparse.ArgumentParser(description='Run Ruzino tests')
+    parser.add_argument('test_filter', nargs='?', help='Filter to run specific tests')
+    parser.add_argument('--no-skip-headless', action='store_true', 
+                        help='Do not skip UI/rendering tests in headless environment')
+    args = parser.parse_args()
+    
+    test_filter = args.test_filter
+    skip_headless = not args.no_skip_headless
+    
+    if test_filter:
         print(f"Running tests matching: {test_filter}")
+    
+    if skip_headless:
+        print("Skipping UI/rendering tests (headless environment)")
     
     # Setup paths - script is in scripts/ directory, so go up one level to project root
     project_root = Path(__file__).parent.parent  # Go up from scripts/ to project root
@@ -210,6 +256,7 @@ def main():
     binaries_dir = project_root / 'Binaries' / 'Release'
     
     print(f"Starting test run...")
+    print(f"Platform: {platform.system()} ({'Windows' if IS_WINDOWS else 'Linux/macOS'})")
     print(f"Searching for tests in: {source_dir}")
     print("-" * 80)
     
@@ -222,6 +269,7 @@ def main():
     total_pytest_failed = 0
     total_cpp_passed = 0
     total_cpp_failed = 0
+    total_cpp_skipped = 0
     all_failed_tests = []
     
     for test_dir in test_dirs:
@@ -237,22 +285,25 @@ def main():
             print(f"  Python tests: {pytest_passed} passed, {pytest_failed} failed")
         
         # Run C++ tests
-        cpp_passed, cpp_failed, cpp_failed_tests = run_cpp_tests(test_dir, binaries_dir, test_filter)
+        cpp_passed, cpp_failed, cpp_skipped, cpp_failed_tests = run_cpp_tests(
+            test_dir, binaries_dir, test_filter, skip_headless
+        )
         total_cpp_passed += cpp_passed
         total_cpp_failed += cpp_failed
+        total_cpp_skipped += cpp_skipped
         all_failed_tests.extend(cpp_failed_tests)
         
-        if cpp_passed + cpp_failed > 0:
-            print(f"  C++ tests: {cpp_passed} passed, {cpp_failed} failed")
+        if cpp_passed + cpp_failed + cpp_skipped > 0:
+            print(f"  C++ tests: {cpp_passed} passed, {cpp_failed} failed, {cpp_skipped} skipped")
     
     # Print summary to console
     print("\n" + "="*80)
     print("TEST SUMMARY")
     print("="*80)
     print(f"Python Tests: {total_pytest_passed} passed, {total_pytest_failed} failed")
-    print(f"C++ Tests:    {total_cpp_passed} passed, {total_cpp_failed} failed")
+    print(f"C++ Tests:    {total_cpp_passed} passed, {total_cpp_failed} failed, {total_cpp_skipped} skipped")
     print(f"Overall:      {total_pytest_passed + total_cpp_passed} passed, "
-          f"{total_pytest_failed + total_cpp_failed} failed")
+          f"{total_pytest_failed + total_cpp_failed} failed, {total_cpp_skipped} skipped")
     
     # Print failed tests if any
     if all_failed_tests:

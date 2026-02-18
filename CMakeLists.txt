@@ -182,7 +182,7 @@ endif()
 
 add_subdirectory(external)
 
-option(USTC_HOMEWORK_PLUGINS "Enable USTC Homework Plugins" ON)
+option(USTC_HOMEWORK_PLUGINS "Enable USTC Homework Plugins" OFF)
 if(USTC_HOMEWORK_PLUGINS)
   set(ENABLE_GL_BASED_RENDERER ON)
   set(ENABLE_EMBREE_BASED_RENDERER ON)

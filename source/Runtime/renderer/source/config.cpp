@@ -30,7 +30,7 @@
 #include "pxr/base/tf/instantiateSingleton.h"
 
 // Instantiate the config singleton.
-namespace pxrInternal_v0_24_11__pxrReserved__ {
+namespace pxrInternal_v0_25_5__pxrReserved__ {
 TF_INSTANTIATE_SINGLETON(Ruzino::Hd_RUZINO_Config);
 }
 

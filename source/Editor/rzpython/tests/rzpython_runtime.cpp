@@ -9,6 +9,18 @@
 #include "rzpython/rzpython.hpp"
 #include "rzpython/usd_extensions.hpp"
 
+// Check if we're running in a headless environment
+bool is_headless_environment()
+{
+#ifdef _WIN32
+    return false;  // Windows usually has a display
+#else
+    // On Linux, check if DISPLAY environment variable is set
+    const char* display = std::getenv("DISPLAY");
+    return display == nullptr || std::string(display).empty();
+#endif
+}
+
 using namespace Ruzino;
 
 // Test fixture that initializes Python once for all tests
@@ -51,6 +63,12 @@ class RZPythonRuntimeTest : public ::testing::Test {
 
 TEST_F(RZPythonRuntimeTest, RHI_package)
 {
+    // Skip in headless environment as RHI requires graphics context
+    if (is_headless_environment())
+    {
+        GTEST_SKIP() << "Skipping RHI test in headless environment";
+    }
+
     python::import("RHI_py");
     int result = python::call<int>("RHI_py.init()");
     EXPECT_EQ(result, 0);
@@ -71,6 +89,12 @@ TEST_F(RZPythonRuntimeTest, RHI_package)
 
 TEST_F(RZPythonRuntimeTest, GUI_package)
 {
+    // Skip in headless environment as GUI requires graphics context
+    if (is_headless_environment())
+    {
+        GTEST_SKIP() << "Skipping GUI test in headless environment";
+    }
+
     python::import("GUI_py");
 
     Window window;
@@ -120,6 +144,12 @@ TEST_F(RZPythonRuntimeTest, ListToVector_conversion)
 
 TEST_F(RZPythonRuntimeTest, VectorToList_conversion)
 {
+    // Skip in headless environment as GUI_py requires graphics context
+    if (is_headless_environment())
+    {
+        GTEST_SKIP() << "Skipping GUI test in headless environment";
+    }
+
     python::import("GUI_py");
 
     // Test sending C++ vector<int> to Python list
@@ -163,6 +193,12 @@ TEST_F(RZPythonRuntimeTest, VectorToList_conversion)
 
 TEST_F(RZPythonRuntimeTest, NumPy_ndarray_conversion)
 {
+    // Skip in headless environment as GUI_py requires graphics context
+    if (is_headless_environment())
+    {
+        GTEST_SKIP() << "Skipping GUI test in headless environment";
+    }
+
     python::import("GUI_py");
 
     try {
@@ -420,6 +456,12 @@ TEST_F(RZPythonRuntimeTest, USD_VtArray_Vec4f_conversion)
 
 TEST_F(RZPythonRuntimeTest, PyTorch_tensor_conversion)
 {
+    // Skip in headless environment as GUI_py requires graphics context
+    if (is_headless_environment())
+    {
+        GTEST_SKIP() << "Skipping GUI test in headless environment";
+    }
+
     python::import("GUI_py");
 
     try {

@@ -1,6 +1,7 @@
 #pragma once
 #include <RHI/rhi.hpp>
 #include <algorithm>
+#include <memory>
 #include <mutex>
 #include <sstream>
 
