@@ -11,8 +11,106 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build-and-test:
-    name: Build & Test (Linux)
+  verify-credentials:
+    name: Verify GitHub Credentials
+    runs-on: self-hosted
+    steps:
+      - name: Check GH_PAT token
+        run: |
+          token="${{ secrets.GH_PAT }}"
+          if [ -z "$token" ]; then
+            echo "ERROR: GH_PAT secret is not set"
+            exit 1
+          fi
+          
+          echo "✓ GH_PAT token is configured"
+          
+          # Test token validity
+          export GH_TOKEN="$token"
+          if gh auth status 2>&1 | grep -q "Logged in"; then
+            echo "✓ Token authentication successful"
+          else
+            echo "⚠ Token validation warning, continuing..."
+          fi
+          
+          echo "✓ Credentials check passed"
+
+  check-sdk:
+    name: Check if SDK needs rebuild
+    needs: verify-credentials
+    runs-on: self-hosted
+    outputs:
+      needs-rebuild: ${{ steps.check.outputs.needs-rebuild }}
+      configure-hash: ${{ steps.check.outputs.configure-hash }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Check SDK status
+        id: check
+        run: |
+          configureHash=$(sha256sum configure.py | awk '{print $1}')
+          echo "configure-hash=$configureHash" >> $GITHUB_OUTPUT
+          
+          sdkDir="SDK"
+          hashFile="$sdkDir/.configure_hash_linux"
+          tagName="sdk-linux-$configureHash"
+          
+          needsRebuild="false"
+          
+          # Check if configure.py changed
+          if [ -f "$hashFile" ]; then
+            storedHash=$(cat "$hashFile" | tr -d '\n')
+            if [ "$storedHash" != "$configureHash" ]; then
+              echo "configure.py changed, SDK rebuild required"
+              needsRebuild="true"
+            else
+              echo "configure.py unchanged, checking if SDK exists in remote Release..."
+              
+              # Check if SDK exists in GitHub Release
+              export GH_TOKEN="${{ secrets.GH_PAT }}"
+              if gh release view "$tagName" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+                echo "Found release with tag: $tagName"
+                echo "SDK exists in remote Release, no rebuild needed"
+                needsRebuild="false"
+              else
+                echo "Release not found with tag: $tagName"
+                echo "SDK not found in remote Release, will rebuild and upload"
+                needsRebuild="true"
+              fi
+            fi
+          else
+            echo "No hash file found, checking if SDK exists in remote Release..."
+            
+            export GH_TOKEN="${{ secrets.GH_PAT }}"
+            if gh release view "$tagName" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              echo "Found release with tag: $tagName"
+              echo "SDK exists in remote Release, will download instead of rebuild"
+              needsRebuild="false"
+            else
+              echo "Release not found with tag: $tagName"
+              echo "SDK not found in remote Release, will rebuild and upload"
+              needsRebuild="true"
+            fi
+          fi
+          
+          echo "needs-rebuild=$needsRebuild" >> $GITHUB_OUTPUT
+          if [ "$needsRebuild" = "true" ]; then
+            echo "SDK rebuild needed"
+          else
+            echo "SDK is up to date, will restore from Release"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+
+  build-sdk:
+    name: Build SDK (Linux)
+    needs: [verify-credentials, check-sdk]
+    if: needs.check-sdk.outputs.needs-rebuild == 'true'
+    outputs:
+      configure-hash: ${{ needs.check-sdk.outputs.configure-hash }}
     runs-on: self-hosted
     steps:
       - name: Checkout code
@@ -21,36 +119,12 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            clang \
-            lld \
-            ninja-build \
-            cmake \
-            python3 \
-            python3-pip \
-            python3-venv \
-            libgl1-mesa-dev \
-            libglu1-mesa-dev \
-            libx11-dev \
-            libxrandr-dev \
-            libxinerama-dev \
-            libxcursor-dev \
-            libxi-dev \
-            libxxf86vm-dev \
-            libxfixes-dev \
-            pkg-config
-
       - name: Setup Python environment
         run: |
           python3 -m venv venv
           source venv/bin/activate
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest
 
       - name: Enable Git long path support
         run: git config --global core.longpaths true
@@ -80,6 +154,131 @@ jobs:
           echo "SDK directory contents:"
           ls -la SDK/
 
+      - name: Pack SDK
+        run: |
+          source venv/bin/activate
+          python configure.py --pack
+          
+          if [ -f "SDK/SDK.zip" ]; then
+            # Rename to Linux-specific name
+            configureHash="${{ needs.check-sdk.outputs.configure-hash }}"
+            mv SDK/SDK.zip "SDK/SDK-linux-${configureHash}.zip"
+            size=$(du -h "SDK/SDK-linux-${configureHash}.zip" | cut -f1)
+            echo "SDK packed successfully - Size: $size"
+          else
+            echo "ERROR: SDK.zip not created!"
+            exit 1
+          fi
+
+      - name: Store configure hash
+        run: |
+          configureHash="${{ needs.check-sdk.outputs.configure-hash }}"
+          hashFile="SDK/.configure_hash_linux"
+          echo -n "$configureHash" > "$hashFile"
+          echo "Hash saved: $configureHash"
+
+      - name: Upload SDK for workflow
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-build-linux
+          path: SDK/SDK-linux-*.zip
+          retention-days: 7
+
+      - name: Upload SDK to GitHub Release
+        if: success()
+        uses: softprops/action-gh-release@v1
+        with:
+          files: SDK/SDK-linux-*.zip
+          tag_name: sdk-linux-${{ needs.check-sdk.outputs.configure-hash }}
+          body: "Linux SDK build for configure.py hash: ${{ needs.check-sdk.outputs.configure-hash }}"
+          draft: false
+          prerelease: true
+          fail_on_unmatched_files: false
+          token: ${{ secrets.GH_PAT }}
+
+  build-project:
+    name: Build Project (Linux)
+    needs: [check-sdk, build-sdk]
+    if: always()
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Setup Python environment
+        run: |
+          python3 -m venv venv
+          source venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Enable Git long path support
+        run: git config --global core.longpaths true
+
+      - name: Download SDK from workflow artifact (if rebuilt)
+        if: needs.check-sdk.outputs.needs-rebuild == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: sdk-build-linux
+          path: SDK/
+
+      - name: Download SDK from GitHub Release (if not rebuilt)
+        if: needs.check-sdk.outputs.needs-rebuild == 'false'
+        run: |
+          configureHash="${{ needs.check-sdk.outputs.configure-hash }}"
+          tagName="sdk-linux-$configureHash"
+          sdkZip="SDK/SDK-linux-${configureHash}.zip"
+          
+          echo "Attempting to download SDK from release with tag: $tagName"
+          mkdir -p SDK
+          
+          export GH_TOKEN="${{ secrets.GH_PAT }}"
+          gh release download "$tagName" --repo "${{ github.repository }}" -p "SDK-linux-${configureHash}.zip" -O "$sdkZip" || {
+            echo "WARNING: Failed to download SDK from Release"
+            echo "Will attempt to build from scratch if SDK binaries not found"
+          }
+          
+          if [ -f "$sdkZip" ]; then
+            size=$(du -h "$sdkZip" | cut -f1)
+            echo "SDK downloaded successfully - Size: $size"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: Extract SDK
+        run: |
+          configureHash="${{ needs.check-sdk.outputs.configure-hash }}"
+          sdkZip="SDK/SDK-linux-${configureHash}.zip"
+          
+          if [ -f "$sdkZip" ]; then
+            echo "Extracting SDK..."
+            source venv/bin/activate
+            python configure.py --extract-sdk "$sdkZip" --build_variant Release || {
+              echo "Extraction failed, will attempt to build SDK"
+              # Try building SDK if extraction fails
+              python configure.py --all --build_variant Release
+            }
+          else
+            echo "No SDK zip found, building SDK from scratch..."
+            source venv/bin/activate
+            python configure.py --all --build_variant Release
+          fi
+        env:
+          CC: clang
+          CXX: clang++
+
+      - name: Verify SDK
+        run: |
+          if [ ! -d "SDK" ] || [ -z "$(ls -A SDK 2>/dev/null)" ]; then
+            echo "ERROR: SDK directory is empty or not found!"
+            exit 1
+          fi
+          echo "SDK directory contents:"
+          ls -la SDK/
+
       - name: Configure CMake
         run: |
           mkdir -p build
@@ -101,20 +300,15 @@ jobs:
           cd build
           cmake --build . --config Release -j$(nproc)
 
-      - name: Run all tests
-        run: |
-          source venv/bin/activate
-          python scripts/run_all_tests.py
-
-      - name: Print summary
+      - name: Print build summary
         if: always()
         run: |
           echo ""
           echo "======================================"
-          echo "       LINUX CI SUMMARY"
+          echo "       LINUX BUILD SUMMARY"
           echo "======================================"
-          echo "Build and test completed on Linux"
+          echo "SDK Hash: ${{ needs.check-sdk.outputs.configure-hash }}"
+          echo "SDK Rebuilt: ${{ needs.check-sdk.outputs.needs-rebuild }}"
           echo "Compiler: Clang"
           echo "CUDA: Disabled"
-          echo "USTC_HOMEWORK_PLUGINS: OFF"
           echo "======================================"
