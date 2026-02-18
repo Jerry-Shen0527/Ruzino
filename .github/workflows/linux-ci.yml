@@ -1,0 +1,120 @@
+name: Linux CI
+
+on:
+  push:
+    branches: [ agent-dev ]
+  pull_request:
+    branches: [ agent-dev ]
+
+concurrency:
+  group: linux-ci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-test:
+    name: Build & Test (Linux)
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            clang \
+            lld \
+            ninja-build \
+            cmake \
+            python3 \
+            python3-pip \
+            python3-venv \
+            libgl1-mesa-dev \
+            libglu1-mesa-dev \
+            libx11-dev \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxxf86vm-dev \
+            libxfixes-dev \
+            pkg-config
+
+      - name: Setup Python environment
+        run: |
+          python3 -m venv venv
+          source venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Enable Git long path support
+        run: git config --global core.longpaths true
+
+      - name: Build SDK (Debug)
+        run: |
+          source venv/bin/activate
+          python configure.py --all --build_variant Debug
+        env:
+          CC: clang
+          CXX: clang++
+
+      - name: Build SDK (Release)
+        run: |
+          source venv/bin/activate
+          python configure.py --all --build_variant Release
+        env:
+          CC: clang
+          CXX: clang++
+
+      - name: Verify SDK build output
+        run: |
+          if [ ! -d "SDK" ] || [ -z "$(ls -A SDK 2>/dev/null)" ]; then
+            echo "ERROR: SDK directory is empty or not found!"
+            exit 1
+          fi
+          echo "SDK directory contents:"
+          ls -la SDK/
+
+      - name: Configure CMake
+        run: |
+          mkdir -p build
+          cd build
+          cmake -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_CXX_FLAGS="-Wno-enum-constexpr-conversion" \
+            -DUSTC_HOMEWORK_PLUGINS=OFF \
+            -DRUZINO_WITH_CUDA=OFF \
+            ..
+        env:
+          CC: clang
+          CXX: clang++
+
+      - name: Build
+        run: |
+          cd build
+          cmake --build . --config Release -j$(nproc)
+
+      - name: Run all tests
+        run: |
+          source venv/bin/activate
+          python scripts/run_all_tests.py
+
+      - name: Print summary
+        if: always()
+        run: |
+          echo ""
+          echo "======================================"
+          echo "       LINUX CI SUMMARY"
+          echo "======================================"
+          echo "Build and test completed on Linux"
+          echo "Compiler: Clang"
+          echo "CUDA: Disabled"
+          echo "USTC_HOMEWORK_PLUGINS: OFF"
+          echo "======================================"
