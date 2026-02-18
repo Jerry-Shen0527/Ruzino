@@ -850,4 +850,11 @@ void Stage::on_prim_changed(const pxr::SdfPath& path)
 #include <pxr/usd/usdLux/sphereLight.h>
 template pxr::UsdLuxSphereLight Stage::create_prim<pxr::UsdLuxSphereLight>(const pxr::SdfPath&, const std::string&) const;
 
+// Explicit template instantiation for UsdLuxSphereLight (needed for Linux
+// linking)
+#include <pxr/usd/usdLux/sphereLight.h>
+template pxr::UsdLuxSphereLight Stage::create_prim<pxr::UsdLuxSphereLight>(
+    const pxr::SdfPath&,
+    const std::string&) const;
+
 RUZINO_NAMESPACE_CLOSE_SCOPE
