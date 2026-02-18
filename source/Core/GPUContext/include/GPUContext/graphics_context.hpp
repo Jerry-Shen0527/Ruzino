@@ -3,7 +3,9 @@
 #include "context.hpp"
 #include "nvrhi/nvrhi.h"
 #include "program_vars.hpp"
+#if RUZINO_WITH_OPENUSD
 #include "pxr/base/gf/vec2f.h"
+#endif
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 struct GraphicsRenderState {
@@ -65,7 +67,9 @@ class GPUCONTEXT_API GraphicsContext : public GPUContext {
         uint32_t draw_count);
 
     GraphicsContext& finish_setting_frame_buffer();
+#if RUZINO_WITH_OPENUSD
     GraphicsContext& set_viewport(pxr::GfVec2f size);
+#endif
 
     GraphicsContext& add_vertex_buffer_desc(
         std::string name,

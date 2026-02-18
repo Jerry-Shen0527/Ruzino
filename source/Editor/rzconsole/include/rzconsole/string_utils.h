@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <cstring>
 #include <glm/glm.hpp>
 #include <optional>
 #include <sstream>

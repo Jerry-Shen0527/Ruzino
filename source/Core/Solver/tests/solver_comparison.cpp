@@ -1,4 +1,7 @@
-#include <corecrt_math_defines.h>
+#ifndef _WIN32
+#define _USE_MATH_DEFINES
+#endif
+#include <cmath>
 #include <gtest/gtest.h>
 
 #include <Eigen/Eigen>

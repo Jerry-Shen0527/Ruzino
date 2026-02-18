@@ -76,7 +76,9 @@ int init(bool with_window, bool use_dx12)
 #endif
 
     params.swapChainFormat = nvrhi::Format::RGBA8_UNORM;
+#ifdef _WIN32
     params.featureLevel = D3D_FEATURE_LEVEL_12_2;
+#endif
 #ifdef _DEBUG
     // params.enableNvrhiValidationLayer = true;
     params.enableDebugRuntime = true;
@@ -184,7 +186,7 @@ std::tuple<nvrhi::TextureHandle, nvrhi::StagingTextureHandle> load_texture(
     return std::make_tuple(texture, stagingTexture);
 }
 
-inline void copy_from_texture(
+void copy_from_texture(
     nvrhi::TextureHandle& texture,
     nvrhi::ITexture* source,
     nvrhi::ICommandList* command_list)

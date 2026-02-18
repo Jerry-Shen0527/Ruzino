@@ -1,6 +1,7 @@
 #pragma once
 #include <pxr/usd/usd/prim.h>
 #include <stage/api.h>
+#include <mutex>
 
 #include "nodes/core/node_exec.hpp"
 #include "nodes/system/node_system.hpp"

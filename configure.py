@@ -1,9 +1,61 @@
 import zipfile
 import shutil
 import os
+import sys
+import platform
 import requests
 from tqdm import tqdm
 import argparse
+
+
+def get_platform():
+    """
+    Returns the current platform as a string: 'windows', 'linux', or 'macos'
+    """
+    system = platform.system().lower()
+    if system == 'windows':
+        return 'windows'
+    elif system == 'linux':
+        return 'linux'
+    elif system == 'darwin':
+        return 'macos'
+    else:
+        return system
+
+
+def get_binary_extension():
+    """
+    Returns the appropriate binary extension for the current platform.
+    Windows: .dll, Linux: .so, macOS: .dylib
+    """
+    plat = get_platform()
+    if plat == 'windows':
+        return '.dll'
+    elif plat == 'linux':
+        return '.so'
+    elif plat == 'macos':
+        return '.dylib'
+    return ''
+
+
+def get_executable_extension():
+    """
+    Returns the appropriate executable extension for the current platform.
+    Windows: .exe, Linux/macOS: '' (no extension)
+    """
+    return '.exe' if get_platform() == 'windows' else ''
+
+
+def is_windows():
+    return get_platform() == 'windows'
+
+
+def is_linux():
+    return get_platform() == 'linux'
+
+
+def is_macos():
+    return get_platform() == 'macos'
 
 
 def copytree_common_to_binaries(folder, target="Debug", dst=None, dry_run=False):
@@ -24,7 +76,9 @@ def copytree_common_to_binaries(folder, target="Debug", dst=None, dry_run=False)
             dst_dir = os.path.join(dst_path, relative_path)
             os.makedirs(dst_dir, exist_ok=True)
             for file in files:
-                if file.endswith(".lib"):
+                # Skip static/import libraries (not needed at runtime)
+                # Windows: .lib (import libraries), Linux/macOS: .a (static archives)
+                if file.endswith(".lib") or file.endswith(".a"):
                     print(f"Skipping {os.path.join(root, file)}")
                     continue
                 src_file = os.path.join(root, file)
@@ -112,59 +166,87 @@ def copy_python_dlls_to_binaries(targets, dry_run=False):
 
 
 def copy_cuda_runtime_dlls_to_binaries(targets, dry_run=False):
-    """Copy CUDA runtime DLLs to Binaries/{target}/ if available"""
-    # Try to find CUDA installation from environment variable
+    """
+    Copy CUDA runtime libraries to Binaries/{target}/ if available.
+    Supports both Windows (.dll) and Linux (.so) platforms.
+    """
     cuda_path = os.environ.get("CUDA_PATH")
+    if not cuda_path and is_linux():
+        cuda_path = os.environ.get("CUDA_HOME")
     
-    # If not found, silently skip (CUDA is optional)
     if not cuda_path:
-        print("  CUDA_PATH not set, skipping CUDA runtime DLLs")
+        env_var = "CUDA_PATH" if is_windows() else "CUDA_PATH/CUDA_HOME"
+        print(f"  {env_var} not set, skipping CUDA runtime libraries")
         return
     
-    # Define the DLLs we need
-    cuda_dlls = [
-        "cudart64_12.dll",
-        "nvrtc64_120_0.dll",
-        "cudart64_13.dll",
-        "nvrtc64_130_0.dll",
-    ]
+    # Define platform-specific library names
+    if is_windows():
+        cuda_libs = [
+            "cudart64_12.dll",
+            "nvrtc64_120_0.dll",
+            "cudart64_13.dll",
+            "nvrtc64_130_0.dll",
+        ]
+        lib_dirs = [
+            os.path.join(cuda_path, "bin"),
+            os.path.join(cuda_path, "bin", "x64"),
+        ]
+    elif is_linux():
+        cuda_libs = [
+            "libcudart.so.12",
+            "libnvrtc.so.12",
+            "libcudart.so.13",
+            "libnvrtc.so.13",
+        ]
+        lib_dirs = [
+            os.path.join(cuda_path, "lib64"),
+            os.path.join(cuda_path, "lib"),
+            "/usr/local/cuda/lib64",
+            "/usr/lib/x86_64-linux-gnu",
+        ]
+    elif is_macos():
+        cuda_libs = [
+            "libcudart.12.dylib",
+            "libnvrtc.12.dylib",
+            "libcudart.13.dylib",
+            "libnvrtc.13.dylib",
+        ]
+        lib_dirs = [
+            os.path.join(cuda_path, "lib"),
+            "/usr/local/cuda/lib",
+        ]
+    else:
+        print(f"  Unsupported platform for CUDA, skipping")
+        return
     
-    # Possible bin directories to search
-    bin_dirs = [
-        os.path.join(cuda_path, "bin"),
-        os.path.join(cuda_path, "bin", "x64"),
-    ]
-    
-    # Copy each DLL to Binaries/{target}
     for target in targets:
         target_dir = os.path.join(os.getcwd(), "Binaries", target)
         
-        for dll_name in cuda_dlls:
-            # Try to find the DLL in any of the bin directories
-            src_dll = None
-            for bin_dir in bin_dirs:
-                potential_path = os.path.join(bin_dir, dll_name)
+        for lib_name in cuda_libs:
+            src_lib = None
+            for lib_dir in lib_dirs:
+                potential_path = os.path.join(lib_dir, lib_name)
                 if os.path.exists(potential_path):
-                    src_dll = potential_path
+                    src_lib = potential_path
                     break
             
-            # Skip if DLL doesn't exist in any location
-            if not src_dll:
-                print(f"  ⚠ {dll_name} not found in {cuda_path}/bin or {cuda_path}/bin/x64, skipping")
+            if not src_lib:
+                search_paths = ", ".join(lib_dirs)
+                print(f"  ⚠ {lib_name} not found in {search_paths}, skipping")
                 continue
             
-            dst_dll = os.path.join(target_dir, dll_name)
+            dst_lib = os.path.join(target_dir, lib_name)
             
             if dry_run:
-                print(f"  [DRY RUN] Would copy {dll_name} to Binaries/{target}/")
+                print(f"  [DRY RUN] Would copy {lib_name} to Binaries/{target}/")
             else:
                 os.makedirs(target_dir, exist_ok=True)
                 try:
-                    shutil.copy2(src_dll, dst_dll)
-                    file_size_mb = os.path.getsize(dst_dll) / (1024 * 1024)
-                    print(f"  ✓ Copied {dll_name} ({file_size_mb:.2f} MB) to Binaries/{target}/")
+                    shutil.copy2(src_lib, dst_lib)
+                    file_size_mb = os.path.getsize(dst_lib) / (1024 * 1024)
+                    print(f"  ✓ Copied {lib_name} ({file_size_mb:.2f} MB) to Binaries/{target}/")
                 except Exception as e:
-                    print(f"  ✗ Failed to copy {dll_name}: {e}")
+                    print(f"  ✗ Failed to copy {lib_name}: {e}")
 
 
 def download_with_progress(url, zip_path, dry_run=False):
@@ -186,27 +268,38 @@ def download_with_progress(url, zip_path, dry_run=False):
 
 
 def download_and_extract(url, extract_path, folder, targets, dry_run=False):
-    zip_path = os.path.dirname(__file__) + "/SDK/cache/" + url.split("/")[-1]
-    if os.path.exists(zip_path):
-        print(f"Using cached file {zip_path}")
+    """
+    Download and extract an archive file (supports .zip and .tar.gz).
+    Cross-platform: handles both Windows .zip and Linux .tar.gz archives.
+    """
+    import tarfile
+    
+    archive_path = os.path.join(os.path.dirname(__file__), "SDK", "cache", url.split("/")[-1])
+    if os.path.exists(archive_path):
+        print(f"Using cached file {archive_path}")
     else:
         if not dry_run:
             print(f"Downloading from {url}...")
-        download_with_progress(url, zip_path, dry_run)
+        download_with_progress(url, archive_path, dry_run)
 
     if dry_run:
-        print(f"[DRY RUN] Would extract {zip_path} to {extract_path}")
+        print(f"[DRY RUN] Would extract {archive_path} to {extract_path}")
         return
 
     print(f"Extracting to {extract_path}...")
     try:
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(extract_path)
+        # Detect archive type and extract accordingly
+        if archive_path.endswith('.tar.gz') or archive_path.endswith('.tgz'):
+            with tarfile.open(archive_path, "r:gz") as tar_ref:
+                tar_ref.extractall(extract_path)
+        else:
+            with zipfile.ZipFile(archive_path, "r") as zip_ref:
+                zip_ref.extractall(extract_path)
         print(f"Downloaded and extracted successfully.")
         for target in targets:
             copytree_common_to_binaries(folder, target=target, dry_run=dry_run)
     except Exception as e:
-        print(f"Error extracting {zip_path}: {e}")
+        print(f"Error extracting {archive_path}: {e}")
 
 
 openusd_version = "25.05.01"
@@ -287,7 +380,7 @@ def process_usd(targets, dry_run=False, keep_original_files=True, copy_only=Fals
             openvdb_args = 'OpenVDB,"-DUSE_EXPLICIT_INSTANTIATION=OFF -DOPENVDB_BUILD_NANOVDB=ON" '
             no_tbb_linkage = "-DCMAKE_CXX_FLAGS=-D__TBB_NO_IMPLICIT_LINKAGE=1"
             openimageio_args = f"OpenImageIO,{no_tbb_linkage} "
-            build_command = f'python {build_script} --build-args USD,"-DPXR_ENABLE_GL_SUPPORT=ON" {openvdb_args}{openimageio_args}--openvdb {use_debug_python}--ptex --openimageio --opencolorio --no-examples --no-tutorials {generator_ninja}--build-variant {build_variant} {os.path.dirname(__file__)}/SDK/OpenUSD/{target} -v'
+            build_command = f'python3 {build_script} --build-args USD,"-DPXR_ENABLE_GL_SUPPORT=ON" {openvdb_args}{openimageio_args}--openvdb {use_debug_python}--ptex --openimageio --opencolorio --no-examples --no-tutorials --no-usdview {generator_ninja}--build-variant {build_variant} {os.path.dirname(__file__)}/SDK/OpenUSD/{target} -v'
 
             if dry_run:
                 print(f"[DRY RUN] Would run: {build_command}")
@@ -427,7 +520,7 @@ def extract_and_setup_sdk(sdk_zip_path, targets=None, dry_run=False):
             )
         
         # Copy D3D12 (Windows only)
-        if os.name == "nt":
+        if is_windows():
             for target in targets:
                 copytree_common_to_binaries(
                     folders["d3d12"], target=target, dry_run=dry_run
@@ -467,16 +560,20 @@ def extract_and_setup_sdk(sdk_zip_path, targets=None, dry_run=False):
 
 def pack_sdk(dry_run=False):
     src_dir = os.path.join(os.path.dirname(__file__), "SDK")
-    dst_dir = os.path.join(os.path.dirname(__file__), "SDK\\SDK_pack_temp")
+    dst_dir = os.path.join(os.path.dirname(__file__), "SDK", "SDK_pack_temp")
 
-    # Path that need to be replaced
-    where_python = (
-        subprocess.check_output(["where", "python"]).decode("utf-8").split("\n")[0]
-    )
-    python_dir_backward_slash = os.path.dirname(where_python).replace("/", "\\")
-    python_dir_forward_slash = python_dir_backward_slash.replace("\\", "/")
-    framework3d_dir_backward_slash = os.getcwd().replace("/", "\\")
-    framework3d_dir_forward_slash = framework3d_dir_backward_slash.replace("\\", "/")
+    # Find Python installation path using platform-appropriate command
+    if is_windows():
+        where_python = (
+            subprocess.check_output(["where", "python"]).decode("utf-8").split("\n")[0].strip()
+        )
+    else:
+        where_python = (
+            subprocess.check_output(["which", "python3"]).decode("utf-8").strip()
+        )
+    
+    python_dir = os.path.dirname(where_python)
+    framework3d_dir = os.getcwd()
     
     # Define replacements for GridBuilder.h
     gridbuilder_replacements = {
@@ -494,18 +591,16 @@ def pack_sdk(dry_run=False):
             except (UnicodeDecodeError, IOError) as e:
                 return
             filedata_0 = filedata
-            filedata = filedata.replace(
-                python_dir_backward_slash, "${Python3_ROOT_DIR}"
-            )
-            filedata = filedata.replace(
-                python_dir_forward_slash, "${Python3_ROOT_DIR}"
-            )
-            filedata = filedata.replace(
-                framework3d_dir_backward_slash, "${FRAMEWORK3D_DIR}"
-            )
-            filedata = filedata.replace(
-                framework3d_dir_forward_slash, "${FRAMEWORK3D_DIR}"
-            )
+            
+            # Replace Python path with placeholder (handle both forward and backslash variants)
+            filedata = filedata.replace(python_dir, "${Python3_ROOT_DIR}")
+            filedata = filedata.replace(python_dir.replace("\\", "/"), "${Python3_ROOT_DIR}")
+            filedata = filedata.replace(python_dir.replace("/", "\\"), "${Python3_ROOT_DIR}")
+            
+            # Replace Framework3D path with placeholder (handle both forward and backslash variants)
+            filedata = filedata.replace(framework3d_dir, "${FRAMEWORK3D_DIR}")
+            filedata = filedata.replace(framework3d_dir.replace("\\", "/"), "${FRAMEWORK3D_DIR}")
+            filedata = filedata.replace(framework3d_dir.replace("/", "\\"), "${FRAMEWORK3D_DIR}")
             
             # Remove brackets around paths containing placeholders
             import re
@@ -523,7 +618,7 @@ def pack_sdk(dry_run=False):
                             lambda m: m.group(1).replace('\\', '/'), filedata)
             
             # Handle GridBuilder.h replacements
-            # Only replace in the specific path: SDK\OpenUSD\<variant>\include\nanovdb\util\GridBuilder.h
+            # Only replace in the specific path: SDK/OpenUSD/<variant>/include/nanovdb/util/GridBuilder.h
             if ("GridBuilder.h" in dst_file and 
                 "include" in dst_file and 
                 "nanovdb" in dst_file and 
@@ -540,7 +635,10 @@ def pack_sdk(dry_run=False):
                     print(f"Found and replaced path in {dst_file}")
 
     def copy_python_installation(python_dir, dst_python_dir):
-        """Copy essential Python installation files"""
+        """
+        Copy essential Python installation files.
+        Works cross-platform: Windows (.exe, .dll), Linux/macOS (extensionless executables, .so/.dylib)
+        """
         if dry_run:
             print(f"[DRY RUN] Would copy Python installation from {python_dir} to {dst_python_dir}")
             return
@@ -548,36 +646,46 @@ def pack_sdk(dry_run=False):
         print(f"Copying Python installation from {python_dir} to {dst_python_dir}")
         os.makedirs(dst_python_dir, exist_ok=True)
         
-        # Copy python.exe and python_d.exe if exists
-        for exe_name in ["python.exe", "python_d.exe", "pythonw.exe"]:
+        # Copy Python executables (platform-specific names)
+        if is_windows():
+            exe_names = ["python.exe", "python_d.exe", "pythonw.exe"]
+        else:
+            exe_names = ["python3", "python", "python3.d"]
+        
+        for exe_name in exe_names:
             exe_path = os.path.join(python_dir, exe_name)
             if os.path.exists(exe_path):
                 shutil.copy2(exe_path, dst_python_dir)
         
-        # Copy all DLLs in python directory
+        # Copy shared libraries in python directory (platform-specific extensions)
+        lib_extension = get_binary_extension()
         for file in os.listdir(python_dir):
-            if file.endswith(".dll"):
+            if file.endswith(lib_extension) or (is_linux() and ".so" in file):
                 shutil.copy2(os.path.join(python_dir, file), dst_python_dir)
         
-        # Copy DLLs directory if exists
-        dlls_dir = os.path.join(python_dir, "DLLs")
-        if os.path.exists(dlls_dir):
-            dst_dlls_dir = os.path.join(dst_python_dir, "DLLs")
-            shutil.copytree(dlls_dir, dst_dlls_dir, dirs_exist_ok=True)
+        # Copy DLLs/lib directory if exists (Windows: DLLs, Linux: lib-dynload)
+        dynload_dirs = ["DLLs", "lib-dynload", "lib/python*/lib-dynload"]
+        for dynload_name in dynload_dirs:
+            dynload_dir = os.path.join(python_dir, dynload_name)
+            if os.path.exists(dynload_dir):
+                dst_dynload_dir = os.path.join(dst_python_dir, dynload_name)
+                shutil.copytree(dynload_dir, dst_dynload_dir, dirs_exist_ok=True)
         
-        # Copy libs directory (contains python3.lib and other static libraries)
+        # Copy libs directory (contains python3.lib/python3.a and other static libraries)
         libs_dir = os.path.join(python_dir, "libs")
         if os.path.exists(libs_dir):
             dst_libs_dir = os.path.join(dst_python_dir, "libs")
             shutil.copytree(libs_dir, dst_libs_dir, dirs_exist_ok=True)
-            print(f"Copied libs directory (including python3.lib)")
+            print(f"Copied libs directory")
         
-        # Copy Scripts directory (contains pip and other tools)
-        scripts_dir = os.path.join(python_dir, "Scripts")
-        if os.path.exists(scripts_dir):
-            dst_scripts_dir = os.path.join(dst_python_dir, "Scripts")
-            shutil.copytree(scripts_dir, dst_scripts_dir, dirs_exist_ok=True)
-            print(f"Copied Scripts directory (including pip)")
+        # Copy Scripts/bin directory (contains pip and other tools)
+        scripts_names = ["Scripts", "bin"]
+        for scripts_name in scripts_names:
+            scripts_dir = os.path.join(python_dir, scripts_name)
+            if os.path.exists(scripts_dir):
+                dst_scripts_dir = os.path.join(dst_python_dir, scripts_name)
+                shutil.copytree(scripts_dir, dst_scripts_dir, dirs_exist_ok=True)
+                print(f"Copied {scripts_name} directory (including pip)")
         
         # Copy Lib directory but exclude site-packages and other third-party packages
         lib_dir = os.path.join(python_dir, "Lib")
@@ -618,12 +726,13 @@ def pack_sdk(dry_run=False):
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = []
+        # Platform-specific directory separators for skip detection
+        sep = os.sep
+        skip_patterns = [f"{sep}build", f"{sep}cache", f"{sep}src", f"{sep}source"]
+        
         for root, dirs, files in os.walk(src_dir):
             # Skip build, cache directories and anything under */src/
-            if any(
-                skip_dir in root
-                for skip_dir in ["\\build", "\\cache", "\\src", "\\source"]
-            ):
+            if any(skip_pattern in root for skip_pattern in skip_patterns):
                 continue
 
             # Create corresponding directory in destination
@@ -633,7 +742,11 @@ def pack_sdk(dry_run=False):
                 os.makedirs(dst_path, exist_ok=True)
 
             for file in files:
-                if file.endswith(".pdb") or file == "libopenvdb.lib":
+                # Skip PDB files (Windows-only debug symbols)
+                if is_windows() and file.endswith(".pdb"):
+                    print(f"Skipping {os.path.join(root, file)}")
+                    continue
+                if file == "libopenvdb.lib":
                     print(f"Skipping {os.path.join(root, file)}")
                     continue
 
@@ -646,13 +759,14 @@ def pack_sdk(dry_run=False):
 
         # Copy Python installation
         python_dst_dir = os.path.join(dst_dir, "python")
-        copy_python_installation(python_dir_backward_slash, python_dst_dir)
+        copy_python_installation(python_dir, python_dst_dir)
 
         # Pack the SDK_temp directory into SDK.zip
+        sdk_archive_path = os.path.join(os.path.dirname(__file__), "SDK", "SDK")
         if dry_run:
             print(f"[DRY RUN] Would pack {dst_dir} into SDK.zip")
         else:
-            shutil.make_archive("SDK\\SDK", "zip", dst_dir)
+            shutil.make_archive(sdk_archive_path, "zip", dst_dir)
             print(f"Packed {dst_dir} into SDK.zip")
 
         # Delete the SDK_temp directory with retry logic
@@ -664,16 +778,16 @@ def pack_sdk(dry_run=False):
             retry_count = 0
             while retry_count < max_retries:
                 try:
-                    def remove_readonly(func, path, exc):
-                        """Error handler for shutil.rmtree to handle read-only files"""
+                    def on_rm_error(func, path, exc):
+                        """Error handler for shutil.rmtree to handle read-only files (cross-platform)"""
                         import stat
                         if not os.access(path, os.W_OK):
-                            os.chmod(path, stat.S_IWUSR | stat.S_IREAD)
+                            os.chmod(path, stat.S_IWUSR | stat.S_IREAD | stat.S_IRGRP | stat.S_IROTH)
                             func(path)
                         else:
                             raise
                     
-                    shutil.rmtree(dst_dir, onerror=remove_readonly)
+                    shutil.rmtree(dst_dir, onerror=on_rm_error)
                     print(f"Deleted {dst_dir}")
                     break
                 except Exception as e:
@@ -835,7 +949,9 @@ def main():
             exit(1)
 
     if args.all:
-        args.library = ["openusd", "slang", "d3d12", "dxc", "embree"]
+        args.library = ["openusd", "slang", "dxc", "embree"]
+        if is_windows():
+            args.library.append("d3d12")
     elif not args.library:
         print(
             "No library specified and --all not set. No libraries will be configured."
@@ -847,24 +963,34 @@ def main():
     if dry_run:
         print(f"[DRY RUN] Selected build variants: {targets}")
 
-    if os.name == "nt":
+    # Platform-specific SDK download URLs
+    # D3D12 is Windows-only, other libraries have platform-specific downloads
+    plat = get_platform()
+    if plat == 'windows':
         urls = {
             "slang": "https://github.com/shader-slang/slang/releases/download/v2025.22.1/slang-2025.22.1-windows-x86_64.zip",
             "d3d12": "https://globalcdn.nuget.org/packages/microsoft.direct3d.d3d12.1.616.1.nupkg",
             "dxc": "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2505.1/dxc_2025_07_14.zip",
             "embree": "https://github.com/RenderKit/embree/releases/download/v4.4.0/embree-4.4.0.x64.windows.zip",
         }
-    elif os.name == "posix":
-        urls = {
-            "slang": "https://github.com/shader-slang/slang/releases/download/v2025.22.1/slang-2025.22.1-macos-x86_64.zip",
-            "dxc": "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2505.1/dxc_2025_07_14.zip",
-            "embree": "https://github.com/RenderKit/embree/releases/download/v4.4.0/embree-4.4.0.x64.windows.zip",
-        }
-    else:
+    elif plat == 'linux':
         urls = {
             "slang": "https://github.com/shader-slang/slang/releases/download/v2025.22.1/slang-2025.22.1-linux-x86_64.zip",
             "dxc": "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2505.1/dxc_2025_07_14.zip",
-            "embree": "https://github.com/RenderKit/embree/releases/download/v4.4.0/embree-4.4.0.x64.windows.zip",
+            "embree": "https://github.com/RenderKit/embree/releases/download/v4.4.0/embree-4.4.0.x86_64.linux.tar.gz",
+        }
+    elif plat == 'macos':
+        urls = {
+            "slang": "https://github.com/shader-slang/slang/releases/download/v2025.22.1/slang-2025.22.1-macos-x86_64.zip",
+            "dxc": "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2505.1/dxc_2025_07_14.zip",
+            "embree": "https://github.com/RenderKit/embree/releases/download/v4.4.0/embree-4.4.0.x64.macos.zip",
+        }
+    else:
+        print(f"Warning: Unsupported platform '{plat}', using Linux URLs as fallback")
+        urls = {
+            "slang": "https://github.com/shader-slang/slang/releases/download/v2025.22.1/slang-2025.22.1-linux-x86_64.zip",
+            "dxc": "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2505.1/dxc_2025_07_14.zip",
+            "embree": "https://github.com/RenderKit/embree/releases/download/v4.4.0/embree-4.4.0.x64.linux.tar.gz",
         }
     folders = {"slang": "slang/bin", "d3d12": "d3d12/bin", "dxc": "dxc/bin/x64", "embree": "embree/bin"}
 
@@ -872,10 +998,10 @@ def main():
     for lib in args.library:
         if lib == "openusd":
             process_usd(targets, dry_run, keep_original_files, copy_only)
-        elif lib == "d3d12" and os.name == "nt":
+        elif lib == "d3d12" and is_windows():
             if not copy_only:
                 # Download the nupkg file 
-                nupkg_path = os.path.dirname(__file__) + "/SDK/cache/d3d12.nupkg"
+                nupkg_path = os.path.join(os.path.dirname(__file__), "SDK", "cache", "d3d12.nupkg")
                 download_with_progress(urls[lib], nupkg_path, dry_run)
 
                 # Rename to zip and extract
@@ -889,7 +1015,7 @@ def main():
                         print(f"Renamed {nupkg_path} to {zip_path}")
 
                 # Extract the zip file
-                extract_path = os.path.dirname(__file__) + "/SDK/d3d12"
+                extract_path = os.path.join(os.path.dirname(__file__), "SDK", "d3d12")
                 if dry_run:
                     print(f"[DRY RUN] Would extract {zip_path} to {extract_path}")
                 else:
@@ -925,8 +1051,8 @@ def main():
         elif lib == "dxc":
             if not copy_only:
                 # Download and extract DXC
-                extract_path = os.path.dirname(__file__) + "/SDK/dxc"
-                zip_path = os.path.dirname(__file__) + "/SDK/cache/dxc.zip"
+                extract_path = os.path.join(os.path.dirname(__file__), "SDK", "dxc")
+                zip_path = os.path.join(os.path.dirname(__file__), "SDK", "cache", "dxc.zip")
                 download_with_progress(urls[lib], zip_path, dry_run)
 
                 if dry_run:
@@ -942,14 +1068,13 @@ def main():
                             zip_ref.extractall(extract_path)
                         print(f"Downloaded and extracted DXC successfully.")
 
-                        # Find and move binaries to bin directory
+                        # Find and move binaries to bin directory (cross-platform)
                         for root, _, files in os.walk(extract_path):
                             for file in files:
-                                if (
-                                    file.endswith(".exe")
-                                    or file.endswith(".dll")
-                                    or file.endswith(".lib")
-                                ):
+                                # Check for platform-specific binary extensions
+                                bin_exts = (".exe", ".dll", ".lib") if is_windows() else (".so", ".a", "")
+                                if any(file.endswith(ext) for ext in bin_exts if ext) or (not is_windows() and not os.path.splitext(file)[1]):
+                                    # On Linux, also consider extensionless files as potential binaries
                                     src_file = os.path.join(root, file)
                                     dst_file = os.path.join(bin_dir, file)
                                     if src_file != dst_file:
@@ -966,7 +1091,7 @@ def main():
             if not copy_only:
                 download_and_extract(
                     urls[lib],
-                    os.path.dirname(__file__) + "/SDK/embree",
+                    os.path.join(os.path.dirname(__file__), "SDK", "embree"),
                     folders[lib],
                     targets,
                     dry_run,

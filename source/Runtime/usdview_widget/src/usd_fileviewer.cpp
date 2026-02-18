@@ -4,6 +4,18 @@
 
 #include <spdlog/spdlog.h>
 
+// Cross-platform string copy macro
+#ifdef _WIN32
+#define STRNCPY_SAFE(dest, src, size) strncpy_s(dest, size, src, _TRUNCATE)
+#else
+#define STRNCPY_SAFE(dest, src, size) do { \
+    if (size > 0) { \
+        strncpy(dest, src, size - 1); \
+        dest[size - 1] = '\0'; \
+    } \
+} while(0)
+#endif
+
 #include <algorithm>
 #include <filesystem>
 #include <future>
@@ -1025,9 +1037,7 @@ void UsdFileViewer::EditValue()
                             else {
                                 // Normal string input
                                 char buffer[512];
-                                strncpy_s(
-                                    buffer, value.c_str(), sizeof(buffer) - 1);
-                                buffer[sizeof(buffer) - 1] = '\0';
+                                STRNCPY_SAFE(buffer, value.c_str(), sizeof(buffer));
                                 if (ImGui::InputText(
                                         "##value", buffer, sizeof(buffer))) {
                                     attr.Set(std::string(buffer));
@@ -1039,9 +1049,7 @@ void UsdFileViewer::EditValue()
                             SdfAssetPath assetPath = v.Get<SdfAssetPath>();
                             std::string pathStr = assetPath.GetAssetPath();
                             char buffer[512];
-                            strncpy_s(
-                                buffer, pathStr.c_str(), sizeof(buffer) - 1);
-                            buffer[sizeof(buffer) - 1] = '\0';
+                            STRNCPY_SAFE(buffer, pathStr.c_str(), sizeof(buffer));
                             if (ImGui::InputText(
                                     "##value", buffer, sizeof(buffer))) {
                                 attr.Set(SdfAssetPath(std::string(buffer)));
@@ -1052,9 +1060,7 @@ void UsdFileViewer::EditValue()
                             TfToken token = v.Get<TfToken>();
                             std::string tokenStr = token.GetString();
                             char buffer[512];
-                            strncpy_s(
-                                buffer, tokenStr.c_str(), sizeof(buffer) - 1);
-                            buffer[sizeof(buffer) - 1] = '\0';
+                            STRNCPY_SAFE(buffer, tokenStr.c_str(), sizeof(buffer));
                             if (ImGui::InputText(
                                     "##value", buffer, sizeof(buffer))) {
                                 attr.Set(TfToken(std::string(buffer)));

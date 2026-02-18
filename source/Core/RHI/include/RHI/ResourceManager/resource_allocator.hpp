@@ -3,6 +3,7 @@
 #include <RHI/internal/map.h>
 
 #include <iterator>
+#include <list>
 #include <unordered_map>
 
 #ifdef RUZINO_BACKEND_GL

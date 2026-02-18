@@ -207,8 +207,8 @@ function(RUZINO_ADD_LIB LIB_NAME)
         # Apply the same compile definitions to Python bindings
         target_compile_definitions(${name}_py PRIVATE ${RUZINO_ADD_LIB_COMPILE_DEFS})
 
-        # target_link_libraries(${name}_py PRIVATE Python3::Python)
-        # target_link_libraries(nanobind-static PRIVATE Python3::Python)
+        target_link_libraries(${name}_py PRIVATE Python3::Python)
+        target_link_libraries(nanobind PRIVATE Python3::Python)
         if(Python3_LIBRARY MATCHES "_d.lib$")
             target_compile_definitions(${name}_py PRIVATE Py_DEBUG)
         endif()

@@ -291,7 +291,7 @@ namespace fem_bem {
         return total_integral;
     }
     // Integration methods
-    template<typename MappingExpr = std::nullptr_t>
+    template<typename MappingExpr>
     real integrate_over_simplex(
         const Expression& expr,
         const std::vector<const char*>& barycentric_names,

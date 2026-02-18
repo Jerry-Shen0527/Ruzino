@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.29.6) 
+cmake_minimum_required(VERSION 3.28) 
 
 #
 # Project details
@@ -8,6 +8,9 @@ project(
   VERSION 1.0
   LANGUAGES C CXX
 )
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Set the relative path to the project root
@@ -164,7 +167,9 @@ set(SLANG_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/SDK/slang)
 find_package(Slang REQUIRED COMPONENTS slang slang-rt gfx)
 
 set(AgilitySDK_ROOT_DIR SDK/d3d12)
-find_package(AgilitySDK REQUIRED)
+if(WIN32)
+  find_package(AgilitySDK REQUIRED)
+endif()
 
 # Find Embree from SDK
 set(embree_DIR ${CMAKE_CURRENT_SOURCE_DIR}/SDK/embree/lib/cmake/embree-4.4.0)
