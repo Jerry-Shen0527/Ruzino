@@ -17,7 +17,7 @@ env:
 jobs:
   check-sdk:
     name: Check if SDK needs rebuild
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux]
     outputs:
       needs-rebuild: ${{ steps.check.outputs.needs-rebuild }}
       configure-hash: ${{ steps.check.outputs.configure-hash }}
@@ -56,7 +56,7 @@ jobs:
     if: needs.check-sdk.outputs.needs-rebuild == 'true'
     outputs:
       configure-hash: ${{ needs.check-sdk.outputs.configure-hash }}
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -137,7 +137,7 @@ jobs:
     name: Build Project (Linux)
     needs: [check-sdk, build-sdk]
     if: always()
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
