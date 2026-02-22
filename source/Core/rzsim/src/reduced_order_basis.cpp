@@ -8,11 +8,14 @@
 
 #include <Eigen/Eigenvalues>
 #include <Eigen/Sparse>
+#include <glm/glm.hpp>
+#include <glm/gtx/norm.hpp>
 #include <iostream>
 #include <set>
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 
+using glm::dvec3;
 using PolyMesh = OpenMesh::PolyMesh_ArrayKernelT<>;
 using VolumeMesh = OpenVolumeMesh::GeometricTetrahedralMeshV3d;
 
@@ -146,12 +149,12 @@ void ReducedOrderedBasis::assemble_laplacian_3d(void* mesh_ptr)
     for (auto c_it = mesh->cells_begin(); c_it != mesh->cells_end(); ++c_it) {
         // Get the four vertices of the tetrahedron
         std::vector<int> vertex_ids;
-        std::vector<pxr::GfVec3d> positions;
+        std::vector<dvec3> positions;
 
         for (auto cv_it = mesh->cv_iter(*c_it); cv_it.valid(); ++cv_it) {
             vertex_ids.push_back((*cv_it).idx());
             auto pt = mesh->vertex(*cv_it);
-            positions.push_back(pxr::GfVec3d(pt[0], pt[1], pt[2]));
+            positions.push_back(dvec3(pt[0], pt[1], pt[2]));
         }
 
         if (vertex_ids.size() != 4)
@@ -166,12 +169,12 @@ void ReducedOrderedBasis::assemble_laplacian_3d(void* mesh_ptr)
         // L[0] = edge 3-0, L[1] = edge 3-1, L[2] = edge 3-2
         // L[3] = edge 1-2, L[4] = edge 2-0, L[5] = edge 0-1
         double l[6];
-        l[0] = (p3 - p0).GetLength();
-        l[1] = (p3 - p1).GetLength();
-        l[2] = (p3 - p2).GetLength();
-        l[3] = (p1 - p2).GetLength();
-        l[4] = (p2 - p0).GetLength();
-        l[5] = (p0 - p1).GetLength();
+        l[0] = glm::length(p3 - p0);
+        l[1] = glm::length(p3 - p1);
+        l[2] = glm::length(p3 - p2);
+        l[3] = glm::length(p1 - p2);
+        l[4] = glm::length(p2 - p0);
+        l[5] = glm::length(p0 - p1);
 
         // Compute face areas following libigl's numbering:
         // Face 0 (opposite vertex 0): triangle 1-2-3, uses edges l[1], l[2],
@@ -194,7 +197,7 @@ void ReducedOrderedBasis::assemble_laplacian_3d(void* mesh_ptr)
 
         // Compute volume
         double vol =
-            std::abs(((p1 - p0) * pxr::GfCross(p2 - p0, p3 - p0))) / 6.0;
+            std::abs(glm::dot(p1 - p0, glm::cross(p2 - p0, p3 - p0))) / 6.0;
 
         if (vol < 1e-12)
             continue;
@@ -469,12 +472,12 @@ void ReducedOrderedBasis::assemble_laplacian_2d(void* mesh_ptr)
     for (auto f_it : mesh->faces()) {
         // Get vertices of the face
         std::vector<int> vertex_ids;
-        std::vector<pxr::GfVec3d> positions;
+        std::vector<dvec3> positions;
 
         for (auto fv_it : mesh->fv_range(f_it)) {
             vertex_ids.push_back(fv_it.idx());
             auto pt = mesh->point(fv_it);
-            positions.push_back(pxr::GfVec3d(pt[0], pt[1], pt[2]));
+            positions.push_back(dvec3(pt[0], pt[1], pt[2]));
         }
 
         int num_verts = vertex_ids.size();
@@ -519,7 +522,7 @@ void ReducedOrderedBasis::assemble_laplacian_2d(void* mesh_ptr)
             // Triangle 1: v0, v1, v2
             for (int tri = 0; tri < 2; tri++) {
                 std::vector<int> tri_verts;
-                std::vector<pxr::GfVec3d> tri_pos;
+                std::vector<dvec3> tri_pos;
 
                 if (tri == 0) {
                     tri_verts = { vertex_ids[0], vertex_ids[1], vertex_ids[2] };
