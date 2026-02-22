@@ -463,8 +463,10 @@ void UsdviewEngine::OnFrame(float delta_time)
     _renderParams.enableLighting = true;
     _renderParams.enableSceneMaterials = true;
     _renderParams.showRender = true;
-    _renderParams.highlight = true;  // CRITICAL: Enable selection highlighting!
-
+    if (engine_status.renderer_id == 0)
+        _renderParams.highlight = true;
+    else
+        _renderParams.highlight = false;
     // Ensure we render using the current stage time, match what the Gizmo is
     // using Re-use variable defined above
     if (current_render_time.IsDefault())
@@ -650,36 +652,36 @@ void UsdviewEngine::OnFrame(float delta_time)
     // Draw Gizmo for selected object
     DrawGizmo(viewport_pos, viewport_size);
 
-    // Update bounding box for selected prim to match current animation
-    // time/transform
-    if (!current_selected_path_.IsEmpty()) {
-        auto prim =
-            stage_->get_usd_stage()->GetPrimAtPath(current_selected_path_);
-        if (prim && prim.IsA<pxr::UsdGeomBoundable>()) {
-            pxr::UsdGeomBoundable boundable(prim);
-            pxr::VtArray<pxr::GfVec3f> extent;
-            if (boundable.GetExtentAttr().Get(&extent) && extent.size() == 2) {
-                pxr::GfRange3d range(
-                    pxr::GfVec3d(extent[0][0], extent[0][1], extent[0][2]),
-                    pxr::GfVec3d(extent[1][0], extent[1][1], extent[1][2]));
+    //// Update bounding box for selected prim to match current animation
+    //// time/transform
+    //if (!current_selected_path_.IsEmpty()) {
+    //    auto prim =
+    //        stage_->get_usd_stage()->GetPrimAtPath(current_selected_path_);
+    //    if (prim && prim.IsA<pxr::UsdGeomBoundable>()) {
+    //        pxr::UsdGeomBoundable boundable(prim);
+    //        pxr::VtArray<pxr::GfVec3f> extent;
+    //        if (boundable.GetExtentAttr().Get(&extent) && extent.size() == 2) {
+    //            pxr::GfRange3d range(
+    //                pxr::GfVec3d(extent[0][0], extent[0][1], extent[0][2]),
+    //                pxr::GfVec3d(extent[1][0], extent[1][1], extent[1][2]));
 
-                pxr::UsdGeomXformable xformable(prim);
-                pxr::GfMatrix4d xform;
-                bool reset;
-                // Use RENDER time to match viewport
-                xformable.GetLocalTransformation(
-                    &xform, &reset, stage_->get_render_time());
+    //            pxr::UsdGeomXformable xformable(prim);
+    //            pxr::GfMatrix4d xform;
+    //            bool reset;
+    //            // Use RENDER time to match viewport
+    //            xformable.GetLocalTransformation(
+    //                &xform, &reset, stage_->get_render_time());
 
-                // Update the first bbox (assuming single selection for now)
-                if (!_renderParams.bboxes.empty()) {
-                    _renderParams.bboxes[0] = pxr::GfBBox3d(range, xform);
-                }
-                else {
-                    _renderParams.bboxes.push_back(pxr::GfBBox3d(range, xform));
-                }
-            }
-        }
-    }
+    //            // Update the first bbox (assuming single selection for now)
+    //            if (!_renderParams.bboxes.empty()) {
+    //                _renderParams.bboxes[0] = pxr::GfBBox3d(range, xform);
+    //            }
+    //            else {
+    //                _renderParams.bboxes.push_back(pxr::GfBBox3d(range, xform));
+    //            }
+    //        }
+    //    }
+    //}
 
     ImGui::EndChild();
     time_controller();
@@ -1083,35 +1085,36 @@ void UsdviewEngine::on_prim_selected(const pxr::SdfPath& path)
     }
     renderer_->SetSelected(selected_paths);
 
-    // Show bounding box for selected prim
-    pxr::UsdImagingGLRenderParams::BBoxVector bboxes;
-    if (!path.IsEmpty()) {
-        auto prim = stage_->get_usd_stage()->GetPrimAtPath(path);
-        if (prim && prim.IsA<pxr::UsdGeomBoundable>()) {
-            pxr::UsdGeomBoundable boundable(prim);
-            pxr::VtArray<pxr::GfVec3f> extent;
-            if (boundable.GetExtentAttr().Get(&extent) && extent.size() == 2) {
-                // Create bounding box from extent
-                pxr::GfRange3d range(
-                    pxr::GfVec3d(extent[0][0], extent[0][1], extent[0][2]),
-                    pxr::GfVec3d(extent[1][0], extent[1][1], extent[1][2]));
+    //// Show bounding box for selected prim
+    // pxr::UsdImagingGLRenderParams::BBoxVector bboxes;
+    // if (!path.IsEmpty()) {
+    //     auto prim = stage_->get_usd_stage()->GetPrimAtPath(path);
+    //     if (prim && prim.IsA<pxr::UsdGeomBoundable>()) {
+    //         pxr::UsdGeomBoundable boundable(prim);
+    //         pxr::VtArray<pxr::GfVec3f> extent;
+    //         if (boundable.GetExtentAttr().Get(&extent) && extent.size() == 2)
+    //         {
+    //             // Create bounding box from extent
+    //             pxr::GfRange3d range(
+    //                 pxr::GfVec3d(extent[0][0], extent[0][1], extent[0][2]),
+    //                 pxr::GfVec3d(extent[1][0], extent[1][1], extent[1][2]));
 
-                // Get world transform
-                pxr::UsdGeomXformable xformable(prim);
-                pxr::GfMatrix4d xform;
-                bool reset;
-                xformable.GetLocalTransformation(
-                    &xform, &reset, stage_->get_current_time());
+    //            // Get world transform
+    //            pxr::UsdGeomXformable xformable(prim);
+    //            pxr::GfMatrix4d xform;
+    //            bool reset;
+    //            xformable.GetLocalTransformation(
+    //                &xform, &reset, stage_->get_current_time());
 
-                bboxes.push_back(pxr::GfBBox3d(range, xform));
-            }
-        }
-    }
+    //            bboxes.push_back(pxr::GfBBox3d(range, xform));
+    //        }
+    //    }
+    //}
 
-    _renderParams.bboxes = bboxes;
-    _renderParams.bboxLineColor =
-        pxr::GfVec4f(1.0f, 0.7f, 0.0f, 1.0f);  // Orange
-    _renderParams.bboxLineDashSize = 3.0f;
+    //_renderParams.bboxes = bboxes;
+    //_renderParams.bboxLineColor =
+    //    pxr::GfVec4f(1.0f, 0.7f, 0.0f, 1.0f);  // Orange
+    //_renderParams.bboxLineDashSize = 3.0f;
 }
 
 void UsdviewEngine::DrawGizmo(
