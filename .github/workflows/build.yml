@@ -13,7 +13,7 @@ concurrency:
 jobs:
   verify-credentials:
     name: Verify GitHub Credentials
-    runs-on: self-hosted
+    runs-on: [self-hosted, windows]
     steps:
       - name: Check GH_PAT token
         shell: powershell
@@ -62,7 +62,7 @@ jobs:
   check-sdk:
     name: Check if SDK needs rebuild
     needs: verify-credentials
-    runs-on: self-hosted
+    runs-on: [self-hosted, windows]
     outputs:
       needs-rebuild: ${{ steps.check.outputs.needs-rebuild }}
       configure-hash: ${{ steps.check.outputs.configure-hash }}
@@ -163,7 +163,7 @@ jobs:
     if: needs.check-sdk.outputs.needs-rebuild == 'true'
     outputs:
       configure-hash: ${{ needs.check-sdk.outputs.configure-hash }}
-    runs-on: self-hosted
+    runs-on: [self-hosted, windows]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -338,7 +338,7 @@ jobs:
     name: Build Project (No CUDA)
     needs: [check-sdk, build-sdk]
     if: always()
-    runs-on: self-hosted
+    runs-on: [self-hosted, windows]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -462,7 +462,7 @@ jobs:
     name: Build & Test Project (With CUDA)
     needs: [check-sdk, build-sdk]
     if: always()
-    runs-on: self-hosted
+    runs-on: [self-hosted, windows]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -666,7 +666,7 @@ jobs:
     name: Build & Test Summary
     needs: [build-without-cuda, build-and-test-with-cuda]
     if: always()
-    runs-on: self-hosted
+    runs-on: [self-hosted, windows]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
