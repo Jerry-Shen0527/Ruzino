@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <rzpython/interpreter.hpp>
 #include <rzpython/rzpython.hpp>
+#include <rzpython/tcp_server.hpp>
 
 #include "GCore/algorithms/intersection.h"
 #include "GCore/geom_payload.hpp"
@@ -235,6 +236,19 @@ int main(int argc, char* argv[])
     // Add Python reference to window for console access
     python::reference("window", window.get());
     python::reference("stage", stage.get());
+
+    // Start Python TCP server on port 5555
+    auto tcp_server = python::create_python_tcp_server(5555);
+    tcp_server->set_execute_callback(
+        [](const std::string& code) -> std::string {
+            auto [success, error] = python::execute_with_error(code);
+            python::flush_python_output();
+            if (success) {
+                return "OK\n";
+            }
+            return std::string("ERROR: ") + error + "\n";
+        });
+    tcp_server->start();
 
     // Register File menu actions
     window->register_menu_action("file_open", [&stage, &window]() {
@@ -679,6 +693,7 @@ int main(int argc, char* argv[])
     window->SetMaximized(true);
     window->run();
 
+    tcp_server->stop();
     unregister_cpp_type();
 
 #ifdef GPU_GEOM_ALGORITHM

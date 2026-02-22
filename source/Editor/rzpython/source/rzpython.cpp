@@ -282,6 +282,97 @@ void call<void>(const std::string& code)
     Py_DECREF(result);
 }
 
+std::string get_last_error()
+{
+    if (!PyErr_Occurred()) {
+        return "";
+    }
+
+    PyObject *type, *value, *traceback;
+    PyErr_Fetch(&type, &value, &traceback);
+    PyErr_NormalizeException(&type, &value, &traceback);
+
+    std::string error_msg;
+
+    if (value) {
+        PyObject* str = PyObject_Str(value);
+        if (str) {
+            const char* msg = PyUnicode_AsUTF8(str);
+            if (msg) {
+                error_msg = msg;
+            }
+            Py_DECREF(str);
+        }
+    }
+
+    if (traceback) {
+        PyObject* tb_module = PyImport_ImportModule("traceback");
+        if (tb_module) {
+            PyObject* format_tb =
+                PyObject_GetAttrString(tb_module, "format_tb");
+            if (format_tb && PyCallable_Check(format_tb)) {
+                PyObject* args = PyTuple_Pack(1, traceback);
+                PyObject* tb_list = PyObject_CallObject(format_tb, args);
+                Py_DECREF(args);
+
+                if (tb_list) {
+                    PyObject* join = PyObject_GetAttrString(tb_list, "join");
+                    if (join && PyCallable_Check(join)) {
+                        PyObject* empty_str = PyUnicode_FromString("");
+                        PyObject* tb_str = PyObject_CallMethodObjArgs(
+                            tb_list,
+                            PyUnicode_FromString("join"),
+                            empty_str,
+                            NULL);
+                        Py_DECREF(empty_str);
+
+                        if (tb_str) {
+                            const char* tb_cstr = PyUnicode_AsUTF8(tb_str);
+                            if (tb_cstr) {
+                                error_msg += "\nTraceback:\n";
+                                error_msg += tb_cstr;
+                            }
+                            Py_DECREF(tb_str);
+                        }
+                    }
+                    if (join)
+                        Py_DECREF(join);
+                    Py_DECREF(tb_list);
+                }
+            }
+            if (format_tb)
+                Py_DECREF(format_tb);
+            Py_DECREF(tb_module);
+        }
+    }
+
+    Py_XDECREF(type);
+    Py_XDECREF(value);
+    Py_XDECREF(traceback);
+
+    return error_msg;
+}
+
+std::pair<bool, std::string> execute_with_error(const std::string& code)
+{
+    if (!initialized) {
+        return { false, "Python interpreter not initialized" };
+    }
+
+    PyObject* result =
+        PyRun_String(code.c_str(), Py_file_input, main_dict, main_dict);
+    if (!result) {
+        std::string error = get_last_error();
+        if (error.empty()) {
+            error = "Unknown Python error";
+        }
+        return { false, error };
+    }
+
+    Py_DECREF(result);
+    return { true, "" };
+}
+
 }  // namespace python
 
 RUZINO_NAMESPACE_CLOSE_SCOPE
