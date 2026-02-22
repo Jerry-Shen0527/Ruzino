@@ -311,6 +311,9 @@ pxr::UsdLuxDomeLight Stage::create_dome_light(const pxr::SdfPath& path) const
     auto light = create_prim<pxr::UsdLuxDomeLight>(path, "dome_light");
     light.GetIntensityAttr().Set(1.0f);
 
+    light.GetTextureFileAttr().Set(
+        pxr::SdfAssetPath("usd/hd_RUZINO/resources/textures/default_dome.png"));
+
     // Add custom shader_path attribute for dome light callable shader
     auto shader_path_attr = light.GetPrim().CreateAttribute(
         pxr::TfToken("shader_path"), pxr::SdfValueTypeNames->String, false);
