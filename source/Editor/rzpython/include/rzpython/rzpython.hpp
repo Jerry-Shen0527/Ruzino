@@ -4,6 +4,7 @@
 #include <nanobind/ndarray.h>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "api.h"
@@ -101,6 +102,13 @@ T get(const std::string& name);
 
 // Flush Python's stdout/stderr and print to C++ console
 RZPYTHON_API void flush_python_output();
+
+// Get the last Python error as a string (returns empty if no error)
+RZPYTHON_API std::string get_last_error();
+
+// Execute Python code and return result or error message
+RZPYTHON_API std::pair<bool, std::string> execute_with_error(
+    const std::string& code);
 
 }  // namespace python
 
