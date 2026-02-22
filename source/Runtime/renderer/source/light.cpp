@@ -16,7 +16,6 @@
 #include "pxr/usdImaging/usdImaging/tokens.h"
 #include "renderParam.h"
 
-
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
 void Hd_RUZINO_Light::Sync(
@@ -814,13 +813,20 @@ void Hd_RUZINO_Dome_Light::Sync(
             int height = env_texture.image->GetHeight();
             auto hioFormat = env_texture.image->GetFormat();
 
+            auto image = env_texture.image;
+
+            auto storage_byte_size = image->GetBytesPerPixel();
+
+            std::vector<uint8_t> data(
+                image->GetWidth() * image->GetHeight() * storage_byte_size, 0);
+
             // Read image data
             HioImage::StorageSpec storage;
             storage.width = width;
             storage.height = height;
             storage.format = hioFormat;
             storage.flipped = false;
-            storage.data = nullptr;
+            storage.data = data.data();
 
             env_texture.image->Read(storage);
 
