@@ -31,3 +31,6 @@
 [submodule "external/spectra"]
 	path = external/spectra
 	url = https://github.com/yixuan/spectra.git
+[submodule "source/Editor/rzpython/ext/asio"]
+	path = source/Editor/rzpython/ext/asio
+	url = https://github.com/chriskohlhoff/asio.git
