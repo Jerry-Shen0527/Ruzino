@@ -647,24 +647,23 @@ void ThirdPersonCamera::LookAt(
     pxr::GfVec3d cameraPos,
     pxr::GfVec3d cameraTarget)
 {
-    pxr::GfVec3d cameraDir = cameraTarget - cameraPos;
+    pxr::GfVec3d cameraToTarget = cameraTarget - cameraPos;
+    pxr::GfVec3d offset = -cameraToTarget;
 
     double azimuth, elevation, dirLength;
-    CartesianToSpherical(cameraDir, azimuth, elevation, dirLength);
+    CartesianToSpherical(offset, azimuth, elevation, dirLength);
 
     SetTargetPosition(cameraTarget);
     SetDistance(dirLength);
-    azimuth = -(azimuth + M_PI / 2.0f);
     SetRotation(azimuth, elevation);
 
-    // Update camera position and direction immediately
     double x = m_Distance * cos(m_Pitch) * cos(m_Yaw);
     double y = m_Distance * cos(m_Pitch) * sin(m_Yaw);
     double z = m_Distance * sin(m_Pitch);
-    pxr::GfVec3d offset(x, y, z);
+    pxr::GfVec3d new_offset(x, y, z);
 
-    m_CameraPos = m_TargetPos + offset;
-    m_CameraDir = -offset.GetNormalized();
+    m_CameraPos = m_TargetPos + new_offset;
+    m_CameraDir = -new_offset.GetNormalized();
 
     pxr::GfVec3d world_up(0, 0, 1);
     if (cos(m_Pitch) < 0) {
@@ -692,10 +691,8 @@ void ThirdPersonCamera::LookTo(
     double const distance = targetDistance.value_or(GetDistance());
     SetTargetPosition(cameraPos + cameraDir * distance);
     SetDistance(distance);
-    azimuth = -(azimuth + M_PI / 2.0f);
     SetRotation(azimuth, elevation);
 
-    // Update camera position and direction immediately
     double x = m_Distance * cos(m_Pitch) * cos(m_Yaw);
     double y = m_Distance * cos(m_Pitch) * sin(m_Yaw);
     double z = m_Distance * sin(m_Pitch);

@@ -1,6 +1,7 @@
 #include "light.h"
 
 #include <spdlog/spdlog.h>
+
 #include "pxr/base/gf/plane.h"
 #include "pxr/base/gf/ray.h"
 #include "pxr/base/gf/rotation.h"
@@ -149,8 +150,9 @@ Color Hd_RUZINO_Sphere_Light::Sample(
 Color Hd_RUZINO_Sphere_Light::Intersect(const GfRay& ray, float& depth)
 {
     double distance;
-    if (ray.Intersect(GfRange3d{ position - GfVec3d{ radius },
-                                 position + GfVec3d{ radius } })) {
+    if (ray.Intersect(
+            GfRange3d{ position - GfVec3d{ radius },
+                       position + GfVec3d{ radius } })) {
         if (ray.Intersect(position, radius, &distance)) {
             depth = distance;
 
@@ -265,9 +267,7 @@ Color Hd_RUZINO_Dome_Light::Le(const GfVec3f& dir)
             return GfCompMult(Color{ value[0], value[1], value[2] }, radiance);
         }
     }
-    else {
-        return radiance;
-    }
+    return radiance;
 }
 
 void Hd_RUZINO_Dome_Light::Finalize(HdRenderParam* renderParam)

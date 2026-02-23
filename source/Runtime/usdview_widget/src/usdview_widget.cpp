@@ -654,16 +654,17 @@ void UsdviewEngine::OnFrame(float delta_time)
 
     //// Update bounding box for selected prim to match current animation
     //// time/transform
-    //if (!current_selected_path_.IsEmpty()) {
-    //    auto prim =
-    //        stage_->get_usd_stage()->GetPrimAtPath(current_selected_path_);
-    //    if (prim && prim.IsA<pxr::UsdGeomBoundable>()) {
-    //        pxr::UsdGeomBoundable boundable(prim);
-    //        pxr::VtArray<pxr::GfVec3f> extent;
-    //        if (boundable.GetExtentAttr().Get(&extent) && extent.size() == 2) {
-    //            pxr::GfRange3d range(
-    //                pxr::GfVec3d(extent[0][0], extent[0][1], extent[0][2]),
-    //                pxr::GfVec3d(extent[1][0], extent[1][1], extent[1][2]));
+    // if (!current_selected_path_.IsEmpty()) {
+    //     auto prim =
+    //         stage_->get_usd_stage()->GetPrimAtPath(current_selected_path_);
+    //     if (prim && prim.IsA<pxr::UsdGeomBoundable>()) {
+    //         pxr::UsdGeomBoundable boundable(prim);
+    //         pxr::VtArray<pxr::GfVec3f> extent;
+    //         if (boundable.GetExtentAttr().Get(&extent) && extent.size() == 2)
+    //         {
+    //             pxr::GfRange3d range(
+    //                 pxr::GfVec3d(extent[0][0], extent[0][1], extent[0][2]),
+    //                 pxr::GfVec3d(extent[1][0], extent[1][1], extent[1][2]));
 
     //            pxr::UsdGeomXformable xformable(prim);
     //            pxr::GfMatrix4d xform;
@@ -677,7 +678,8 @@ void UsdviewEngine::OnFrame(float delta_time)
     //                _renderParams.bboxes[0] = pxr::GfBBox3d(range, xform);
     //            }
     //            else {
-    //                _renderParams.bboxes.push_back(pxr::GfBBox3d(range, xform));
+    //                _renderParams.bboxes.push_back(pxr::GfBBox3d(range,
+    //                xform));
     //            }
     //        }
     //    }
@@ -739,7 +741,7 @@ bool UsdviewEngine::MousePosUpdate(double xpos, double ypos)
 
 bool UsdviewEngine::MouseScrollUpdate(double xoffset, double yoffset)
 {
-    if (is_active && is_hovered) {
+    if (is_hovered) {
         free_camera_->MouseScrollUpdate(xoffset, yoffset);
     }
     return false;
@@ -747,6 +749,18 @@ bool UsdviewEngine::MouseScrollUpdate(double xoffset, double yoffset)
 
 bool UsdviewEngine::MouseButtonUpdate(int button, int action, int mods)
 {
+    // Middle button: camera control (orbit or pan based on Shift)
+    // PRESS only inside widget, RELEASE anywhere to prevent stuck state
+    if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
+        if (action == GLFW_PRESS && is_hovered) {
+            free_camera_->MouseButtonUpdate(button, action, mods);
+        }
+        else if (action == GLFW_RELEASE) {
+            free_camera_->MouseButtonUpdate(button, action, mods);
+        }
+        return false;
+    }
+
     ImGuiIO& io = ImGui::GetIO();
 
     // If ImGui wants the mouse (including ImGuizmo), don't process picking
@@ -775,12 +789,6 @@ bool UsdviewEngine::MouseButtonUpdate(int button, int action, int mods)
         if (window) {
             window->events().emit_any("viewport_prim_picked", pxr::SdfPath());
         }
-        return false;
-    }
-
-    // Middle button: camera control (orbit or pan based on Shift)
-    if (button == GLFW_MOUSE_BUTTON_MIDDLE && is_hovered) {
-        free_camera_->MouseButtonUpdate(button, action, mods);
         return false;
     }
 
