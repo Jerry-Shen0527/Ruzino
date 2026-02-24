@@ -15,6 +15,7 @@ add_nodes(
 )
 
 target_link_libraries(node_points_to_mesh PRIVATE usd hioOpenVDB)
+target_link_libraries(node_texture_io PRIVATE stb_image)
 
 add_library(tetgen STATIC ${CMAKE_CURRENT_SOURCE_DIR}/tetgen/tetgen.cxx ${CMAKE_CURRENT_SOURCE_DIR}/tetgen/tetgen.h ${CMAKE_CURRENT_SOURCE_DIR}/tetgen/predicates.cxx)
 set_target_properties(tetgen PROPERTIES ${OUTPUT_DIR})
