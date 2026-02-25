@@ -93,6 +93,7 @@ Stage::Stage(const std::string& stage_path)
     stage = pxr::UsdStage::Open(abs_path.string());
     if (stage) {
         initialize_ecs_systems();
+        load_modifier_layer();
         return;
     }
     stage = pxr::UsdStage::CreateNew(abs_path.string());
@@ -106,7 +107,7 @@ Stage::~Stage()
 {
     remove_prim(pxr::SdfPath("/scratch_buffer"));
     if (stage && !m_stage_path.empty() && save_on_destruct) {
-        stage->Export(m_stage_path);
+        stage->GetRootLayer()->Save();
         save_modifier_layer();
     }
 
@@ -476,7 +477,7 @@ void Stage::set_prim_render_time(
 void Stage::Save()
 {
     if (stage && !m_stage_path.empty()) {
-        stage->Export(m_stage_path);
+        stage->GetRootLayer()->Save();
         spdlog::info("Stage saved to: {}", m_stage_path);
 
         save_modifier_layer();
@@ -493,20 +494,29 @@ void Stage::SaveAs(const std::string& new_path)
     std::filesystem::path abs_path =
         std::filesystem::path(new_path).lexically_normal();
 
-    // Export will automatically clean up redundant data
-    if (stage->Export(abs_path.string())) {
-        m_stage_path = abs_path.string();
-        // Reopen the stage at the new location
-        stage = pxr::UsdStage::Open(m_stage_path);
-        spdlog::info("Stage saved as: {}", m_stage_path);
+    // 1. Export current session layer to NEW modifier path BEFORE switching stages
+    auto session_layer = stage->GetSessionLayer();
+    if (session_layer) {
+        // Calculate new modifier path based on new_path
+        std::filesystem::path new_modifier_path = abs_path;
+        std::string stem = abs_path.stem().string();
+        std::string ext = abs_path.extension().string();
+        new_modifier_path = abs_path.parent_path() / (stem + "_modifiers" + ext);
+        
+        session_layer->Export(new_modifier_path.string());
+        spdlog::info("[Stage] Exported session layer to: {}", new_modifier_path.string());
+    }
 
-        // Clear old modifier layer and create new one for new path
-        modifier_layer_ = nullptr;
-        save_modifier_layer();
-    }
-    else {
-        spdlog::error("Failed to save stage to: {}", abs_path.string());
-    }
+    // 2. Export root layer to new location
+    stage->GetRootLayer()->Export(abs_path.string());
+    m_stage_path = abs_path.string();
+    
+    // 3. Reset and reopen stage
+    modifier_layer_ = nullptr;
+    stage = pxr::UsdStage::Open(m_stage_path);
+    load_modifier_layer();
+    
+    spdlog::info("Stage saved as: {}", m_stage_path);
 }
 
 std::string Stage::get_modifier_layer_path() const
@@ -517,67 +527,27 @@ std::string Stage::get_modifier_layer_path() const
 
     std::filesystem::path stage_path(m_stage_path);
     std::filesystem::path modifier_path = stage_path;
-    modifier_path.replace_extension(".modifiers.usda");
+    std::string stem = stage_path.stem().string();
+    std::string ext = stage_path.extension().string();
+    modifier_path = stage_path.parent_path() / (stem + "_modifiers" + ext);
     return modifier_path.string();
 }
 
 pxr::SdfLayerHandle Stage::get_modifier_layer()
 {
     if (!stage) {
+        spdlog::error("[Stage] get_modifier_layer: stage is null");
         return nullptr;
     }
 
     if (!modifier_layer_) {
-        std::string modifier_path = get_modifier_layer_path();
-
-        if (!modifier_path.empty()) {
-            // Convert to absolute path
-            std::filesystem::path abs_modifier_path =
-                std::filesystem::absolute(modifier_path);
-            modifier_path = abs_modifier_path.string();
-
-            if (std::filesystem::exists(modifier_path)) {
-                modifier_layer_ = pxr::SdfLayer::FindOrOpen(modifier_path);
-                if (modifier_layer_) {
-                    spdlog::debug(
-                        "[Stage] Loaded existing modifier layer: {}",
-                        modifier_path);
-                }
-            }
-
-            if (!modifier_layer_) {
-                modifier_layer_ = pxr::SdfLayer::CreateNew(modifier_path);
-                if (modifier_layer_) {
-                    spdlog::debug(
-                        "[Stage] Created new modifier layer: {}",
-                        modifier_path);
-                }
-                else {
-                    spdlog::warn(
-                        "[Stage] Failed to create modifier layer at: {}, using "
-                        "anonymous",
-                        modifier_path);
-                }
-            }
+        modifier_layer_ = stage->GetSessionLayer();
+        if (modifier_layer_) {
+            spdlog::info("[Stage] Using session layer as modifier layer");
         }
-
-        // Fallback to anonymous layer if file-based layer failed or no path
-        if (!modifier_layer_) {
-            modifier_layer_ = pxr::SdfLayer::CreateAnonymous("modifier_layer");
-            if (modifier_layer_) {
-                spdlog::debug("[Stage] Using anonymous modifier layer");
-            }
+        else {
+            spdlog::error("[Stage] Failed to get session layer");
         }
-
-        if (!modifier_layer_) {
-            spdlog::error("[Stage] Failed to create any modifier layer");
-            return nullptr;
-        }
-
-        auto root_layer = stage->GetRootLayer();
-        auto sublayers = root_layer->GetSubLayerPaths();
-        sublayers.push_back(modifier_layer_->GetIdentifier());
-        root_layer->SetSubLayerPaths(sublayers);
     }
 
     return modifier_layer_;
@@ -585,7 +555,7 @@ pxr::SdfLayerHandle Stage::get_modifier_layer()
 
 void Stage::save_modifier_layer()
 {
-    if (!modifier_layer_ || modifier_layer_->IsAnonymous()) {
+    if (!modifier_layer_) {
         return;
     }
 
@@ -594,8 +564,8 @@ void Stage::save_modifier_layer()
         return;
     }
 
-    modifier_layer_->Save();
-    spdlog::debug("[Stage] Saved modifier layer to: {}", modifier_path);
+    modifier_layer_->Export(modifier_path);
+    spdlog::info("[Stage] Exported modifier layer to: {}", modifier_path);
 }
 
 void Stage::load_modifier_layer()
@@ -603,28 +573,28 @@ void Stage::load_modifier_layer()
     std::string modifier_path = get_modifier_layer_path();
 
     if (modifier_path.empty() || !std::filesystem::exists(modifier_path)) {
+        spdlog::info("[Stage] No modifier file to load: {}", modifier_path);
         return;
     }
 
-    modifier_layer_ = pxr::SdfLayer::FindOrOpen(modifier_path);
-    if (!modifier_layer_) {
+    auto file_layer = pxr::SdfLayer::FindOrOpen(modifier_path);
+    if (!file_layer) {
         spdlog::warn(
             "[Stage] Failed to load modifier layer: {}", modifier_path);
         return;
     }
 
-    auto root_layer = stage->GetRootLayer();
-    auto sublayers = root_layer->GetSubLayerPaths();
-
-    for (const auto& sublayer : sublayers) {
-        if (sublayer == modifier_layer_->GetIdentifier()) {
-            return;
-        }
+    auto session_layer = stage->GetSessionLayer();
+    if (!session_layer) {
+        spdlog::error("[Stage] Failed to get session layer");
+        return;
     }
 
-    sublayers.push_back(modifier_layer_->GetIdentifier());
-    root_layer->SetSubLayerPaths(sublayers);
-    spdlog::info("[Stage] Loaded modifier layer: {}", modifier_path);
+    std::string content;
+    file_layer->ExportToString(&content);
+    session_layer->ImportFromString(content);
+    
+    spdlog::info("[Stage] Imported modifier layer into session layer: {}", modifier_path);
 }
 
 bool Stage::OpenStage(const std::string& path)

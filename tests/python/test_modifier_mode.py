@@ -147,28 +147,22 @@ def test_modifier_layer_creation():
         
         print(f"After execution, root layer sublayers: {sublayers}")
         
-        # Check for modifier layer
-        has_modifier_layer = any('modifier_layer' in str(s) for s in sublayers)
+        # Check session layer (this is where modifier data goes)
+        session_layer = stage.GetSessionLayer()
+        print(f"Session layer identifier: {session_layer.identifier}")
         
-        if has_modifier_layer:
-            print("SUCCESS: Modifier layer was created")
-            
-            # Export and check the layer content
-            print(f"\nRoot layer content:")
-            print(root_layer.ExportToString()[:500])
-            
-            # Check if over spec exists
-            for sublayer_path in sublayers:
-                if 'modifier_layer' in str(sublayer_path):
-                    sublayer = Sdf.Layer.Find(sublayer_path)
-                    if sublayer:
-                        print(f"\nModifier layer content:")
-                        print(sublayer.ExportToString()[:1000])
+        session_content = session_layer.ExportToString()
+        print(f"Session layer content:\n{session_content[:1000] if session_content else '(empty)'}")
+        
+        has_modifier_data = len(session_content) > 20  # More than just header
+        
+        if has_modifier_data:
+            print("SUCCESS: Modifier data was written to session layer")
         else:
-            print("FAILED: No modifier layer was created")
+            print("FAILED: No modifier data in session layer")
             print("This means the geometry was written directly to the prim, overwriting original data")
         
-        return has_modifier_layer
+        return has_modifier_data
         
     finally:
         # Cleanup
@@ -259,12 +253,12 @@ def test_input_geometry_node():
         # Execute
         system.execute()
         
-        # Check result
-        root_layer = stage.GetRootLayer()
-        sublayers = root_layer.subLayerPaths
-        print(f"Sublayers after execution: {sublayers}")
+        # Check result - use session layer
+        session_layer = stage.GetSessionLayer()
+        session_content = session_layer.ExportToString()
+        print(f"Session layer content:\n{session_content[:500] if session_content else '(empty)'}")
         
-        has_modifier = any('modifier_layer' in str(s) for s in sublayers)
+        has_modifier = len(session_content) > 20
         print(f"SUCCESS: Modifier layer created" if has_modifier else "FAILED: No modifier layer")
         
         return has_modifier
@@ -319,28 +313,31 @@ def test_modifier_preserves_original():
         
         # Check that original attributes are still there
         # In modifier mode, the cylinder attributes should NOT be overwritten
-        # because the grid output goes to a modifier layer
+        # because the grid output goes to a modifier layer (session layer)
         
-        # Get the root layer content
+        # Get the root layer content - original cylinder should still be there
         root_content = stage.GetRootLayer().ExportToString()
         
         # The original radius=5 and height=10 should still be in the root layer
-        has_original_radius = '5' in root_content and 'float radius' in root_content
-        has_original_height = '10' in root_content and 'float height' in root_content
+        has_original_radius = 'radius = 5' in root_content or 'float radius' in root_content
+        has_original_height = 'height = 10' in root_content or 'float height' in root_content
         
-        # Check for modifier layer
-        sublayers = stage.GetRootLayer().subLayerPaths
-        has_modifier = any('modifier_layer' in str(s) for s in sublayers)
+        # Check session layer for modifier data
+        session_layer = stage.GetSessionLayer()
+        session_content = session_layer.ExportToString()
+        has_modifier = len(session_content) > 20
         
         print(f"Original data preserved in root: radius={has_original_radius}, height={has_original_height}")
-        print(f"Modifier layer exists: {has_modifier}")
+        print(f"Modifier data in session layer: {has_modifier}")
+        if has_modifier:
+            print(f"Session layer content preview:\n{session_content[:300]}")
         
-        success = has_modifier  # At minimum, modifier layer should exist
+        success = has_modifier  # At minimum, modifier data should exist in session layer
         
         if success:
-            print("SUCCESS: Original data structure is preserved")
+            print("SUCCESS: Modifier data written to session layer")
         else:
-            print("FAILED: Original data may have been overwritten")
+            print("FAILED: No modifier data in session layer")
         
         return success
         

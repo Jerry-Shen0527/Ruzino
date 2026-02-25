@@ -142,6 +142,32 @@ NB_MODULE(stage_py, m)
             &GeomPayload::current_modifier_index,
             "Current modifier index in stack");
 
+    // Helper to set modifier layer on payload
+    m.def(
+        "set_payload_modifier_layer",
+        [](GeomPayload& payload, nb::handle py_layer) {
+            if (py_layer.is_none()) {
+                payload.modifier_layer = nullptr;
+                return;
+            }
+            // Try to extract SdfLayerHandle from pxr.Sdf.Layer
+            // pxr.Sdf.Layer is a Boost.Python wrapper
+            try {
+                bp::object layer_obj(bp::handle<>(bp::borrowed(py_layer.ptr())));
+                bp::extract<pxr::SdfLayerHandle> extractor(layer_obj);
+                if (extractor.check()) {
+                    payload.modifier_layer = extractor();
+                    return;
+                }
+            } catch (...) {
+            }
+            throw std::runtime_error(
+                "Could not extract SdfLayerHandle from Python object");
+        },
+        nb::arg("payload"),
+        nb::arg("layer"),
+        "Set modifier layer on GeomPayload from pxr.Sdf.Layer");
+
     // Helper functions for setting USD types on GeomPayload
     m.def(
         "set_payload_stage_and_prim",
@@ -205,6 +231,16 @@ NB_MODULE(stage_py, m)
             },
             nb::arg("path"),
             "Open a USD stage and load modifier layer")
+        .def(
+            "get_modifier_layer_identifier",
+            [](Stage& stage) -> std::string {
+                auto layer = stage.get_modifier_layer();
+                if (layer) {
+                    return layer->GetIdentifier();
+                }
+                return "";
+            },
+            "Get the modifier layer identifier string for use with Sdf.Layer.Find()")
         .def(
             "export_to_string",
             [](const Stage& stage) { return stage.stage_content(); },
