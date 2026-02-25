@@ -119,10 +119,7 @@ NB_MODULE(stage_py, m)
         "Stage module with TRUE USD interoperability (Boost.Python + nanobind)";
     nb::class_<GeomPayload>(m, "GeomPayload")
         .def(nb::init<>())
-        // Don't bind USD types - they cause cross-binding issues
-        // .def_rw("stage", &GeomPayload::stage, "USD stage pointer")
-        // .def_rw("current_time", &GeomPayload::current_time, "Current USD time
-        // code") .def_rw("prim_path", &GeomPayload::prim_path, "USD prim path")
+        // Don't bind USD types directly - they cause cross-binding issues
         .def_rw("pick", &GeomPayload::pick, "Pick event data")
         .def_rw(
             "delta_time", &GeomPayload::delta_time, "Delta time for simulation")
@@ -135,9 +132,48 @@ NB_MODULE(stage_py, m)
             &GeomPayload::is_simulating,
             "Whether currently simulating")
         .def_rw(
-            "stage_filepath_",
-            &GeomPayload::stage_filepath_,
-            "Stage file path");
+            "stage_filepath_", &GeomPayload::stage_filepath_, "Stage file path")
+        .def_rw(
+            "is_modifier_mode",
+            &GeomPayload::is_modifier_mode,
+            "Whether in modifier mode")
+        .def_rw(
+            "current_modifier_index",
+            &GeomPayload::current_modifier_index,
+            "Current modifier index in stack");
+
+    // Helper functions for setting USD types on GeomPayload
+    m.def(
+        "set_payload_stage_and_prim",
+        [](GeomPayload& payload,
+           nb::handle py_stage,
+           const std::string& prim_path) {
+            pxr::UsdStageRefPtr cpp_stage =
+                extract_stage_from_boost_python(py_stage.ptr());
+            if (!cpp_stage) {
+                throw std::runtime_error("Extracted stage is null");
+            }
+            payload.stage = cpp_stage;
+            payload.prim_path = pxr::SdfPath(prim_path);
+            payload.current_time = pxr::UsdTimeCode(0);
+        },
+        nb::arg("payload"),
+        nb::arg("stage"),
+        nb::arg("prim_path"),
+        "Set stage and prim_path on GeomPayload from pxr.Usd.Stage");
+
+    m.def(
+        "set_payload_modifier_paths",
+        [](GeomPayload& payload,
+           const std::string& output_path,
+           const std::string& input_path) {
+            payload.modifier_output_path = pxr::SdfPath(output_path);
+            payload.modifier_input_path = pxr::SdfPath(input_path);
+        },
+        nb::arg("payload"),
+        nb::arg("output_path"),
+        nb::arg("input_path"),
+        "Set modifier input/output paths on GeomPayload");
 
     // Stage class binding
     nb::class_<Stage>(m, "Stage")
@@ -156,11 +192,19 @@ NB_MODULE(stage_py, m)
                 auto usd_stage = stage.get_usd_stage();
                 if (usd_stage) {
                     usd_stage->GetRootLayer()->Save();
+                    stage.save_modifier_layer();
                     return true;
                 }
                 return false;
             },
-            "Save the stage to file")
+            "Save the stage and modifier layer to file")
+        .def(
+            "open_stage",
+            [](Stage& stage, const std::string& path) {
+                return stage.OpenStage(path);
+            },
+            nb::arg("path"),
+            "Open a USD stage and load modifier layer")
         .def(
             "export_to_string",
             [](const Stage& stage) { return stage.stage_content(); },
@@ -285,8 +329,10 @@ NB_MODULE(stage_py, m)
 
     /**
      * Create meta_any from GeomPayload for use with
+     *
      * NodeSystem::set_global_params This is the bridge function that allows
-     * type-erased parameter passing
+
+     * * type-erased parameter passing
      */
     m.def(
         "create_meta_any_from_payload",
@@ -311,4 +357,20 @@ NB_MODULE(stage_py, m)
         "Create entt::meta_any from GeomPayload for use with "
         "NodeSystem::set_global_params. "
         "This automatically registers the type if not already registered.");
+
+    /**
+     * Directly set GeomPayload as global params on a NodeSystem
+     *
+     * This is a convenience function that handles the meta_any conversion
+     * internally
+     */
+    m.def(
+        "set_global_payload",
+        [](NodeSystem& system, const GeomPayload& payload) {
+            Ruzino::register_cpp_type<GeomPayload>();
+            system.set_global_params(payload);
+        },
+        nb::arg("system"),
+        nb::arg("payload"),
+        "Set GeomPayload as global parameters on a NodeSystem");
 }

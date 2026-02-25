@@ -106,10 +106,8 @@ Stage::~Stage()
 {
     remove_prim(pxr::SdfPath("/scratch_buffer"));
     if (stage && !m_stage_path.empty() && save_on_destruct) {
-        std::filesystem::path path(m_stage_path);
-        {
-            stage->Export(m_stage_path);
-        }
+        stage->Export(m_stage_path);
+        save_modifier_layer();
     }
 
     animatable_prims.clear();
@@ -480,6 +478,8 @@ void Stage::Save()
     if (stage && !m_stage_path.empty()) {
         stage->Export(m_stage_path);
         spdlog::info("Stage saved to: {}", m_stage_path);
+
+        save_modifier_layer();
     }
 }
 
@@ -499,10 +499,132 @@ void Stage::SaveAs(const std::string& new_path)
         // Reopen the stage at the new location
         stage = pxr::UsdStage::Open(m_stage_path);
         spdlog::info("Stage saved as: {}", m_stage_path);
+
+        // Clear old modifier layer and create new one for new path
+        modifier_layer_ = nullptr;
+        save_modifier_layer();
     }
     else {
         spdlog::error("Failed to save stage to: {}", abs_path.string());
     }
+}
+
+std::string Stage::get_modifier_layer_path() const
+{
+    if (m_stage_path.empty()) {
+        return "";
+    }
+
+    std::filesystem::path stage_path(m_stage_path);
+    std::filesystem::path modifier_path = stage_path;
+    modifier_path.replace_extension(".modifiers.usda");
+    return modifier_path.string();
+}
+
+pxr::SdfLayerHandle Stage::get_modifier_layer()
+{
+    if (!stage) {
+        return nullptr;
+    }
+
+    if (!modifier_layer_) {
+        std::string modifier_path = get_modifier_layer_path();
+
+        if (!modifier_path.empty()) {
+            // Convert to absolute path
+            std::filesystem::path abs_modifier_path =
+                std::filesystem::absolute(modifier_path);
+            modifier_path = abs_modifier_path.string();
+
+            if (std::filesystem::exists(modifier_path)) {
+                modifier_layer_ = pxr::SdfLayer::FindOrOpen(modifier_path);
+                if (modifier_layer_) {
+                    spdlog::debug(
+                        "[Stage] Loaded existing modifier layer: {}",
+                        modifier_path);
+                }
+            }
+
+            if (!modifier_layer_) {
+                modifier_layer_ = pxr::SdfLayer::CreateNew(modifier_path);
+                if (modifier_layer_) {
+                    spdlog::debug(
+                        "[Stage] Created new modifier layer: {}",
+                        modifier_path);
+                }
+                else {
+                    spdlog::warn(
+                        "[Stage] Failed to create modifier layer at: {}, using "
+                        "anonymous",
+                        modifier_path);
+                }
+            }
+        }
+
+        // Fallback to anonymous layer if file-based layer failed or no path
+        if (!modifier_layer_) {
+            modifier_layer_ = pxr::SdfLayer::CreateAnonymous("modifier_layer");
+            if (modifier_layer_) {
+                spdlog::debug("[Stage] Using anonymous modifier layer");
+            }
+        }
+
+        if (!modifier_layer_) {
+            spdlog::error("[Stage] Failed to create any modifier layer");
+            return nullptr;
+        }
+
+        auto root_layer = stage->GetRootLayer();
+        auto sublayers = root_layer->GetSubLayerPaths();
+        sublayers.push_back(modifier_layer_->GetIdentifier());
+        root_layer->SetSubLayerPaths(sublayers);
+    }
+
+    return modifier_layer_;
+}
+
+void Stage::save_modifier_layer()
+{
+    if (!modifier_layer_ || modifier_layer_->IsAnonymous()) {
+        return;
+    }
+
+    std::string modifier_path = get_modifier_layer_path();
+    if (modifier_path.empty()) {
+        return;
+    }
+
+    modifier_layer_->Save();
+    spdlog::debug("[Stage] Saved modifier layer to: {}", modifier_path);
+}
+
+void Stage::load_modifier_layer()
+{
+    std::string modifier_path = get_modifier_layer_path();
+
+    if (modifier_path.empty() || !std::filesystem::exists(modifier_path)) {
+        return;
+    }
+
+    modifier_layer_ = pxr::SdfLayer::FindOrOpen(modifier_path);
+    if (!modifier_layer_) {
+        spdlog::warn(
+            "[Stage] Failed to load modifier layer: {}", modifier_path);
+        return;
+    }
+
+    auto root_layer = stage->GetRootLayer();
+    auto sublayers = root_layer->GetSubLayerPaths();
+
+    for (const auto& sublayer : sublayers) {
+        if (sublayer == modifier_layer_->GetIdentifier()) {
+            return;
+        }
+    }
+
+    sublayers.push_back(modifier_layer_->GetIdentifier());
+    root_layer->SetSubLayerPaths(sublayers);
+    spdlog::info("[Stage] Loaded modifier layer: {}", modifier_path);
 }
 
 bool Stage::OpenStage(const std::string& path)
@@ -528,6 +650,10 @@ bool Stage::OpenStage(const std::string& path)
     // Replace the current stage
     stage = new_stage;
     m_stage_path = abs_path.string();
+
+    // Clear and load modifier layer
+    modifier_layer_ = nullptr;
+    load_modifier_layer();
 
     // Reset time codes
     current_time_code = pxr::UsdTimeCode(0.0f);
