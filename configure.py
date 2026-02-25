@@ -133,6 +133,16 @@ def copy_cuda_runtime_dlls_to_binaries(targets, dry_run=False):
         "nvrtc64_120_0.dll",
         "cudart64_13.dll",
         "nvrtc64_130_0.dll",
+        "cublas64_12.dll",
+        "cublasLt64_12.dll",
+        "cusparse64_12.dll",
+        "cusolver64_12.dll",
+        "cusolverMg64_12.dll",
+        "cublas64_13.dll",
+        "cublasLt64_13.dll",
+        "cusparse64_13.dll",
+        "cusolver64_13.dll",
+        "cusolverMg64_13.dll",
     ]
 
     # Possible bin directories to search

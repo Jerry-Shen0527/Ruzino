@@ -186,7 +186,7 @@ def run_cpp_tests(test_dir: Path, binaries_dir: Path, test_filter: Optional[str]
         except subprocess.TimeoutExpired as e:
             print(f"✗ TIMEOUT: {exe_name}")
             failed += 1
-            output = (e.stdout or b'').decode('utf-8', errors='ignore') + (e.stderr or b'').decode('utf-8', errors='ignore')
+            output = (e.stdout or '') + (e.stderr or '')
             failed_tests.append((exe_name, f"TIMEOUT after 300s\n{output}"))
         except Exception as e:
             print(f"✗ ERROR: {exe_name} - {str(e)}")
