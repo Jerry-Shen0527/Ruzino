@@ -24,6 +24,9 @@
 #include "nodes/system/node_system.hpp"
 #include "nodes/ui/imgui.hpp"
 #include "pxr/base/tf/setenv.h"
+#include "pxr/usd/sdf/layer.h"
+#include "pxr/usd/sdf/primSpec.h"
+#include "pxr/usd/sdf/propertySpec.h"
 #include "pxr/usd/usd/stage.h"
 #include "stage/stage.hpp"
 #include "usd_nodejson.hpp"
@@ -622,65 +625,124 @@ int main(int argc, char* argv[])
             // This would create a MaterialXDocumentViewer widget
         });
 
-    window->register_function_after_frame(
-        [&stage, render_bare_ptr](Window* window) {
-            pxr::SdfPath json_path;
-            if (stage->consume_editor_creation(json_path)) {
-                auto system = create_dynamic_loading_system();
-                /* Load the node system */
-                auto loaded = system->load_configuration("geometry_nodes.json");
-                loaded = system->load_configuration("basic_nodes.json");
+    window->register_function_after_frame([&stage,
+                                           render_bare_ptr](Window* window) {
+        pxr::SdfPath json_path;
+        if (stage->consume_editor_creation(json_path)) {
+            auto system = create_dynamic_loading_system();
+            /* Load the node system */
+            auto loaded = system->load_configuration("geometry_nodes.json");
+            loaded = system->load_configuration("basic_nodes.json");
 
-                // iterate over path Plugin (not recursively), get all the json
-                // and load them
+            // iterate over path Plugin (not recursively), get all the json
+            // and load them
 
-                auto plugin_path = std::filesystem::path("./Plugins");
+            auto plugin_path = std::filesystem::path("./Plugins");
 
-                if (std::filesystem::exists(plugin_path))
-                    for (auto& p :
-                         std::filesystem::directory_iterator(plugin_path)) {
-                        if (p.path().extension() == ".json") {
-                            system->load_configuration(p.path().string());
+            if (std::filesystem::exists(plugin_path))
+                for (auto& p :
+                     std::filesystem::directory_iterator(plugin_path)) {
+                    if (p.path().extension() == ".json") {
+                        system->load_configuration(p.path().string());
+                    }
+                }
+
+            system->init();
+            system->set_node_tree_executor(create_node_tree_executor({}));
+            /* Done! */
+            UsdBasedNodeWidgetSettings desc;
+
+            desc.json_path = json_path;
+            desc.system = system;
+            desc.stage = stage.get();
+
+            std::unique_ptr<IWidget> node_widget =
+                std::move(create_node_imgui_widget(desc));
+            node_widget->SetCallBack([&stage,
+                                      json_path,
+                                      system,
+                                      render_bare_ptr](Window*, IWidget*) {
+                GeomPayload geom_global_params;
+#ifdef GEOM_USD_EXTENSION
+                geom_global_params.stage = stage->get_usd_stage();
+                geom_global_params.prim_path = json_path;
+
+                // Set up modifier mode for non-destructive editing
+                geom_global_params.is_modifier_mode = true;
+                geom_global_params.current_modifier_index = 0;
+                geom_global_params.modifier_layer = stage->get_modifier_layer();
+                geom_global_params.modifier_input_path = json_path;
+                geom_global_params.modifier_output_path = json_path;
+
+                // Detect node graph changes and clear old modifier
+                // output
+                static std::string last_node_graph;
+                std::string current_node_graph =
+                    stage->load_string_from_usd(json_path);
+
+                if (current_node_graph != last_node_graph) {
+                    spdlog::warn(
+                        "[MODIFIER_DEBUG] Node graph changed! "
+                        "Clearing old modifier output for: {}",
+                        json_path.GetString());
+
+                    auto modifier_layer = stage->get_modifier_layer();
+                    if (modifier_layer) {
+                        auto prim_spec =
+                            modifier_layer->GetPrimAtPath(json_path);
+                        if (prim_spec) {
+                            // Remove all properties
+                            std::vector<pxr::SdfPropertySpecHandle>
+                                props_to_remove;
+                            for (auto it = prim_spec->GetProperties().begin();
+                                 it != prim_spec->GetProperties().end();
+                                 ++it) {
+                                if (*it) {
+                                    props_to_remove.push_back(*it);
+                                }
+                            }
+                            for (auto& prop : props_to_remove) {
+                                prim_spec->RemoveProperty(prop);
+                            }
+                            // Clear type name
+                            prim_spec->SetTypeName(pxr::TfToken());
+                            spdlog::warn(
+                                "[MODIFIER_DEBUG] Cleared {} "
+                                "properties and type name",
+                                props_to_remove.size());
                         }
                     }
+                    last_node_graph = current_node_graph;
+                }
 
-                system->init();
-                system->set_node_tree_executor(create_node_tree_executor({}));
-                /* Done! */
-                UsdBasedNodeWidgetSettings desc;
-
-                desc.json_path = json_path;
-                desc.system = system;
-                desc.stage = stage.get();
-
-                std::unique_ptr<IWidget> node_widget =
-                    std::move(create_node_imgui_widget(desc));
-                node_widget->SetCallBack(
-                    [&stage, json_path, system, render_bare_ptr](
-                        Window*, IWidget*) {
-                        GeomPayload geom_global_params;
-#ifdef GEOM_USD_EXTENSION
-                        geom_global_params.stage = stage->get_usd_stage();
-                        geom_global_params.prim_path = json_path;
+                spdlog::warn(
+                    "[MODIFIER_DEBUG] GUI callback: modifier_layer={}, "
+                    "is_anonymous={}",
+                    geom_global_params.modifier_layer
+                        ? geom_global_params.modifier_layer->GetIdentifier()
+                        : "null",
+                    geom_global_params.modifier_layer
+                        ? geom_global_params.modifier_layer->IsAnonymous()
+                        : false);
 #endif
 
-                        geom_global_params.has_simulation = false;
+                geom_global_params.has_simulation = false;
 
-                        // Pass pick event from UI to geometry payload
-                        if (*render_bare_ptr) {
-                            geom_global_params.pick =
-                                (*render_bare_ptr)->consume_pick_event();
-                        }
+                // Pass pick event from UI to geometry payload
+                if (*render_bare_ptr) {
+                    geom_global_params.pick =
+                        (*render_bare_ptr)->consume_pick_event();
+                }
 
-                        system->set_global_params(geom_global_params);
-                        // if (geom_global_params.pick) {
-                        //     system->execute();
-                        // }
-                    });
+                system->set_global_params(geom_global_params);
+                // if (geom_global_params.pick) {
+                //     system->execute();
+                // }
+            });
 
-                window->register_widget(std::move(node_widget));
-            }
-        });
+            window->register_widget(std::move(node_widget));
+        }
+    });
 
     window->register_function_after_frame([render_bare_ptr](Window* window) {
         if (*render_bare_ptr) {

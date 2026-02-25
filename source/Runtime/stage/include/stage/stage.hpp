@@ -107,6 +107,14 @@ class STAGE_API Stage {
     bool OpenStage(const std::string& path);
 
     // ========================================================================
+    // Modifier Layer (Persistent Sidecar File)
+    // ========================================================================
+    pxr::SdfLayerHandle get_modifier_layer();
+    std::string get_modifier_layer_path() const;
+    void save_modifier_layer();
+    void load_modifier_layer();
+
+    // ========================================================================
     // ECS Interface
     // ========================================================================
 
@@ -202,6 +210,9 @@ class STAGE_API Stage {
 
     // Stage listener
     std::unique_ptr<class StageListener> stage_listener_;
+
+    // Persistent modifier layer (sidecar file)
+    pxr::SdfLayerHandle modifier_layer_;
 
     // Prevent circular loop: sync writes to USD -> notice -> on_prim_changed ->
     // mark dirty -> next sync writes again

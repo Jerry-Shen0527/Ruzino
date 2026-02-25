@@ -1,7 +1,10 @@
 #pragma once
+#include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/usd/prim.h>
 #include <stage/api.h>
 #include <mutex>
+
+#include <vector>
 
 #include "nodes/core/node_exec.hpp"
 #include "nodes/system/node_system.hpp"
@@ -12,6 +15,35 @@ class Stage;
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 namespace animation {
+
+// ============================================================================
+// Modifier Stack Support
+// ============================================================================
+
+struct ModifierInfo {
+    std::string name;
+    int order = 0;
+    bool enabled = true;
+    std::string node_graph_json;
+};
+
+struct ModifierStack {
+    std::vector<ModifierInfo> modifiers;
+    pxr::SdfLayerHandle modifier_layer;
+
+    bool empty() const
+    {
+        return modifiers.empty();
+    }
+    size_t size() const
+    {
+        return modifiers.size();
+    }
+};
+
+// ============================================================================
+// Dynamic Logic Base Classes
+// ============================================================================
 
 class STAGE_API WithDynamicLogic {
    public:
@@ -63,7 +95,14 @@ class STAGE_API WithDynamicLogicPrim : public WithDynamicLogic {
     void clear_time_samples(const pxr::UsdPrim& prim) const;
 
    private:
+    void update_single_modifier(float delta_time) const;
+    void update_modifier_stack(float delta_time) const;
+    ModifierStack load_modifier_stack(const pxr::UsdPrim& prim) const;
+    void ensure_modifier_layer() const;
+
     mutable bool simulation_begun = false;
+    mutable bool use_modifier_mode = false;
+    mutable ModifierStack modifier_stack_;
 
     pxr::UsdPrim prim;
 
