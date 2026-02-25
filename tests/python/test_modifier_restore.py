@@ -12,9 +12,10 @@ import sys
 import json
 import tempfile
 
-os.chdir('C:/Users/Pengfei/WorkSpace/Ruzino/Binaries/Release')
+binary_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'Binaries', 'Release'))
+os.chdir(binary_dir)
 sys.path.insert(0, '.')
-os.environ['PXR_USD_WINDOWS_DLL_PATH'] = 'C:/Users/Pengfei/WorkSpace/Ruzino/Binaries/Release'
+os.environ['PXR_USD_WINDOWS_DLL_PATH'] = binary_dir
 
 from pxr import Usd, Sdf, UsdGeom, Gf
 import stage_py
@@ -111,7 +112,7 @@ def test_modifier_restore():
         # Step 2: Apply create_grid -> write_usd
         print("\n[Step 2] Applying create_grid -> write_usd...")
         
-        binary_dir = 'C:/Users/Pengfei/WorkSpace/Ruzino/Binaries/Release'
+        binary_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'Binaries', 'Release'))
         system = nodes_system_py.create_dynamic_loading_system()
         system.load_configuration(os.path.join(binary_dir, "geometry_nodes.json"))
         system.load_configuration(os.path.join(binary_dir, "basic_nodes.json"))

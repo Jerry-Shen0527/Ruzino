@@ -118,10 +118,6 @@ WithDynamicLogicPrim& WithDynamicLogicPrim::operator=(
 
 void WithDynamicLogicPrim::update(float delta_time) const
 {
-    spdlog::warn(
-        "[MODIFIER_DEBUG] update() called for prim: {}",
-        prim.GetPath().GetString());
-    // Always use modifier mode for non-destructive editing
     update_modifier_stack(delta_time);
 }
 
@@ -199,16 +195,7 @@ void WithDynamicLogicPrim::update_single_modifier(float delta_time) const
 
 void WithDynamicLogicPrim::update_modifier_stack(float delta_time) const
 {
-    spdlog::warn(
-        "[MODIFIER_DEBUG] update_modifier_stack START for prim: {}",
-        prim.GetPath().GetString());
-
-    // Reload modifier stack to check for changes
     auto new_stack = load_modifier_stack(prim);
-
-    spdlog::warn(
-        "[MODIFIER_DEBUG] load_modifier_stack returned, size: {}",
-        new_stack.modifiers.size());
 
     // If no modifier_*_json found, check for legacy node_json
     if (new_stack.empty()) {
@@ -223,41 +210,29 @@ void WithDynamicLogicPrim::update_modifier_stack(float delta_time) const
             mod.enabled = true;
             mod.node_graph_json = json_value.Get<std::string>();
             new_stack.modifiers.push_back(mod);
-            spdlog::warn("[MODIFIER_DEBUG] Found legacy node_json");
         }
     }
 
-    spdlog::warn(
-        "[MODIFIER_DEBUG] update_modifier_stack for prim: {}, new_stack size: "
-        "{}, old_stack size: {}",
-        prim.GetPath().GetString(),
-        new_stack.modifiers.size(),
-        modifier_stack_.modifiers.size());
+    bool stack_changed = false;
 
-    bool stack_changed =
-        (new_stack.modifiers.size() != modifier_stack_.modifiers.size());
+    if (!modifier_stack_.modifiers.empty()) {
+        stack_changed =
+            (new_stack.modifiers.size() != modifier_stack_.modifiers.size());
 
-    if (!stack_changed) {
-        for (size_t i = 0; i < new_stack.modifiers.size(); ++i) {
-            if (new_stack.modifiers[i].node_graph_json !=
-                modifier_stack_.modifiers[i].node_graph_json) {
-                stack_changed = true;
-                spdlog::warn(
-                    "[MODIFIER_DEBUG] Node graph changed at index {}", i);
-                break;
+        if (!stack_changed) {
+            for (size_t i = 0; i < new_stack.modifiers.size(); ++i) {
+                if (new_stack.modifiers[i].node_graph_json !=
+                    modifier_stack_.modifiers[i].node_graph_json) {
+                    stack_changed = true;
+                    break;
+                }
             }
         }
     }
 
-    spdlog::warn("[MODIFIER_DEBUG] stack_changed: {}", stack_changed);
-
     if (stack_changed) {
         modifier_stack_ = new_stack;
         ensure_modifier_layer();
-
-        spdlog::warn(
-            "[MODIFIER_DEBUG] modifier_layer valid: {}",
-            (bool)modifier_stack_.modifier_layer);
 
         // Clear modifier layer's over specs when modifier stack changes
         // This ensures original geometry is shown when modifier graph is
@@ -267,15 +242,7 @@ void WithDynamicLogicPrim::update_modifier_stack(float delta_time) const
             auto prim_spec =
                 modifier_stack_.modifier_layer->GetPrimAtPath(prim.GetPath());
 
-            spdlog::warn(
-                "[MODIFIER_DEBUG] prim_spec exists: {}", (bool)prim_spec);
-
             if (prim_spec) {
-                // Log current type name before removal
-                spdlog::warn(
-                    "[MODIFIER_DEBUG] Current type name: {}",
-                    prim_spec->GetTypeName().GetString());
-
                 // Collect property specs first (can't iterate while removing)
                 std::vector<pxr::SdfPropertySpecHandle> props_to_remove;
                 for (auto it = prim_spec->GetProperties().begin();
@@ -288,21 +255,11 @@ void WithDynamicLogicPrim::update_modifier_stack(float delta_time) const
 
                 // Remove each property
                 for (auto& prop : props_to_remove) {
-                    spdlog::warn(
-                        "[MODIFIER_DEBUG] Removing property: {}",
-                        prop->GetName());
                     prim_spec->RemoveProperty(prop);
                 }
 
-                spdlog::warn(
-                    "[MODIFIER_DEBUG] Removed {} properties from prim",
-                    props_to_remove.size());
-
                 // Clear the type name too - this is critical!
                 prim_spec->SetTypeName(pxr::TfToken());
-                spdlog::warn(
-                    "[MODIFIER_DEBUG] Cleared type name, now: {}",
-                    prim_spec->GetTypeName().GetString());
             }
         }
 

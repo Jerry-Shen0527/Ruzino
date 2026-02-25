@@ -676,16 +676,17 @@ int main(int argc, char* argv[])
 
                 // Detect node graph changes and clear old modifier
                 // output
-                static std::string last_node_graph;
+                static std::map<pxr::SdfPath, std::string> last_node_graph_map;
+                
                 std::string current_node_graph =
                     stage->load_string_from_usd(json_path);
 
-                if (current_node_graph != last_node_graph) {
-                    spdlog::warn(
-                        "[MODIFIER_DEBUG] Node graph changed! "
-                        "Clearing old modifier output for: {}",
-                        json_path.GetString());
+                auto it = last_node_graph_map.find(json_path);
+                bool is_initial_load = (it == last_node_graph_map.end());
+                bool node_graph_changed = 
+                    !is_initial_load && (it->second != current_node_graph);
 
+                if (node_graph_changed) {
                     auto modifier_layer = stage->get_modifier_layer();
                     if (modifier_layer) {
                         auto prim_spec =
@@ -706,24 +707,11 @@ int main(int argc, char* argv[])
                             }
                             // Clear type name
                             prim_spec->SetTypeName(pxr::TfToken());
-                            spdlog::warn(
-                                "[MODIFIER_DEBUG] Cleared {} "
-                                "properties and type name",
-                                props_to_remove.size());
                         }
                     }
-                    last_node_graph = current_node_graph;
+                    last_node_graph_map[json_path] = current_node_graph;
                 }
 
-                spdlog::warn(
-                    "[MODIFIER_DEBUG] GUI callback: modifier_layer={}, "
-                    "is_anonymous={}",
-                    geom_global_params.modifier_layer
-                        ? geom_global_params.modifier_layer->GetIdentifier()
-                        : "null",
-                    geom_global_params.modifier_layer
-                        ? geom_global_params.modifier_layer->IsAnonymous()
-                        : false);
 #endif
 
                 geom_global_params.has_simulation = false;

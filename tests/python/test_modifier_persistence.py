@@ -6,9 +6,10 @@ import sys
 import json
 import tempfile
 
-os.chdir('C:/Users/Pengfei/WorkSpace/Ruzino/Binaries/Release')
+binary_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'Binaries', 'Release'))
+os.chdir(binary_dir)
 sys.path.insert(0, '.')
-os.environ['PXR_USD_WINDOWS_DLL_PATH'] = 'C:/Users/Pengfei/WorkSpace/Ruzino/Binaries/Release'
+os.environ['PXR_USD_WINDOWS_DLL_PATH'] = binary_dir
 
 from pxr import Usd, Sdf, UsdGeom, Gf
 import stage_py
@@ -55,7 +56,7 @@ def test_modifier_persistence():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         usd_path = os.path.join(tmpdir, "test_scene.usda")
-        modifier_path = usd_path.replace(".usda", ".modifiers.usda")
+        modifier_path = usd_path.replace(".usda", "_modifiers.usda")
 
         print(f"\nUSD path: {usd_path}")
         print(f"Expected modifier path: {modifier_path}")
@@ -86,8 +87,19 @@ def test_modifier_persistence():
         # Use C++ Stage class for proper modifier layer management
         cpp_stage = stage_py.Stage(usd_path)
         usd_stage = cpp_stage.get_pxr_stage()  # Get pxr.Usd.Stage object
+        
+        # Get the modifier layer from C++ Stage (this is the key!)
+        modifier_layer_id = cpp_stage.get_modifier_layer_identifier()
+        print(f"  Modifier layer ID: {modifier_layer_id}")
+        
+        if modifier_layer_id:
+            modifier_layer = Sdf.Layer.Find(modifier_layer_id)
+            print(f"  Found modifier layer: {modifier_layer.identifier if modifier_layer else 'null'}")
+        else:
+            modifier_layer = None
+            print("  WARNING: No modifier layer available!")
 
-        binary_dir = 'C:/Users/Pengfei/WorkSpace/Ruzino/Binaries/Release'
+        binary_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'Binaries', 'Release'))
         system = nodes_system_py.create_dynamic_loading_system()
         system.load_configuration(os.path.join(binary_dir, "geometry_nodes.json"))
         system.load_configuration(os.path.join(binary_dir, "basic_nodes.json"))
@@ -98,6 +110,8 @@ def test_modifier_persistence():
         payload = stage_py.GeomPayload()
         stage_py.set_payload_stage_and_prim(payload, usd_stage, '/test_sphere')
         payload.is_modifier_mode = True
+        if modifier_layer:
+            stage_py.set_payload_modifier_layer(payload, modifier_layer)
         stage_py.set_global_payload(system, payload)
 
         system.execute()
@@ -113,12 +127,12 @@ def test_modifier_persistence():
         print(f"\n[Step 3] Checking modifier file before save...")
         print(f"  Modifier file exists: {os.path.exists(modifier_path)}")
 
-        # Step 4: Save stage (should save modifier layer too)
-        print("\n[Step 4] Saving stage...")
-        cpp_stage.save()
+        # Step 4: Delete cpp_stage to trigger destructor save
+        print("\n[Step 4] Deleting cpp_stage (triggers destructor save)...")
+        del cpp_stage
 
-        # Step 5: Check modifier file after save
-        print(f"\n[Step 5] Checking modifier file after save...")
+        # Step 5: Check modifier file after destructor save
+        print(f"\n[Step 5] Checking modifier file after destructor save...")
         print(f"  Modifier file exists: {os.path.exists(modifier_path)}")
 
         if not os.path.exists(modifier_path):
@@ -135,24 +149,71 @@ def test_modifier_persistence():
         cpp_stage2.open_stage(usd_path)
         usd_stage2 = cpp_stage2.get_pxr_stage()  # Get pxr.Usd.Stage object
 
-        # Check sublayers
-        root_layer = usd_stage2.GetRootLayer()
-        sublayers = root_layer.subLayerPaths
-        print(f"  Sublayers: {sublayers}")
+        # Check session layer (modifier is loaded into session layer)
+        session_layer = usd_stage2.GetSessionLayer()
+        session_content = session_layer.ExportToString()
+        has_modifier_content = "points" in session_content.lower() and len(session_content) > 100
+        print(f"  Session layer has modifier content: {has_modifier_content}")
 
-        has_modifier_sublayer = any("modifiers.usda" in s for s in sublayers)
-        if not has_modifier_sublayer:
-            print("  ✗ Modifier layer was NOT added as sublayer")
+        if not has_modifier_content:
+            print("  ✗ Modifier content was NOT loaded into session layer")
+            print(f"  Session layer content (first 200 chars): {session_content[:200]}")
             return False
 
-        print("  ✓ Modifier layer is in sublayers")
+        print("  ✓ Modifier content is in session layer")
 
-        # Verify geometry is still modified
+        # Verify geometry is modified (9 points)
         restored_points = get_points_count(usd_stage2, '/test_sphere')
-        print(f"  Restored geometry: {restored_points} points")
-
+        print(f"  After reopen, geometry: {restored_points} points")
         if restored_points != 9:
-            print(f"  ✗ Expected 9 points, got {restored_points}")
+            print(f"  ✗ Expected 9 points after reopen, got {restored_points}")
+            return False
+
+        # Step 7: Use input_geometry to restore original sphere
+        print("\n[Step 7] Restoring original geometry with input_geometry...")
+        
+        def create_input_geom_node_graph():
+            return {
+                "links_info": {"1": {"ID": 1, "StartPinID": 2, "EndPinID": 3}},
+                "nodes_info": {
+                    "1": {"ID": 1, "id_name": "input_geometry", "inputs": None, "outputs": {"0": 2}},
+                    "2": {"ID": 2, "id_name": "write_usd", "inputs": {"0": 3, "1": 4}, "outputs": None}
+                },
+                "sockets_info": {
+                    "2": {"ID": 2, "id_name": "class Ruzino::Geometry", "identifier": "Geometry", "in_out": 0, "optional": False, "ui_name": "Geometry"},
+                    "3": {"ID": 3, "id_name": "class Ruzino::Geometry", "identifier": "Geometry", "in_out": 1, "optional": False, "ui_name": "Geometry"},
+                    "4": {"ID": 4, "id_name": "class std::basic_string<char,struct std::char_traits<char>,class std::allocator<char> >", "identifier": "Sub Path", "in_out": 1, "optional": True, "ui_name": "Sub Path", "value": ""}
+                },
+                "nodes": {"node:1": {"location": {"x": 100, "y": 100}}, "node:2": {"location": {"x": 300, "y": 100}}},
+                "selection": None,
+                "view": {"scroll": {"x": 0, "y": 0}, "visible_rect": {"min": {"x": 0, "y": 0}, "max": {"x": 500, "y": 300}}, "zoom": 1}
+            }
+        
+        # Get session layer as modifier layer
+        modifier_layer_id = cpp_stage2.get_modifier_layer_identifier()
+        modifier_layer2 = Sdf.Layer.Find(modifier_layer_id) if modifier_layer_id else None
+        
+        system2 = nodes_system_py.create_dynamic_loading_system()
+        system2.load_configuration(os.path.join(binary_dir, "geometry_nodes.json"))
+        system2.load_configuration(os.path.join(binary_dir, "basic_nodes.json"))
+        system2.init()
+        system2.get_node_tree().deserialize(json.dumps(create_input_geom_node_graph()))
+        
+        payload2 = stage_py.GeomPayload()
+        stage_py.set_payload_stage_and_prim(payload2, usd_stage2, '/test_sphere')
+        payload2.is_modifier_mode = True
+        payload2.current_modifier_index = 0  # input_geometry should read from root layer
+        if modifier_layer2:
+            stage_py.set_payload_modifier_layer(payload2, modifier_layer2)
+        stage_py.set_global_payload(system2, payload2)
+        
+        system2.execute()
+        
+        final_points = get_points_count(usd_stage2, '/test_sphere')
+        print(f"  After input_geometry, geometry: {final_points} points")
+        
+        if final_points != 6:
+            print(f"  ✗ Expected 6 points (original sphere), got {final_points}")
             return False
 
         print("\n✓ Modifier persistence test passed!")
