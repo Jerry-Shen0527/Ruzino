@@ -2,16 +2,20 @@
 Test full tree generation pipeline: generate -> to_mesh -> write_usd
 """
 import os
+import sys
+
+test_dir = os.path.dirname(os.path.abspath(__file__))
+binary_dir = os.path.join(test_dir, '..', '..', '..', '..', 'Binaries', 'Release')
+binary_dir = os.path.abspath(binary_dir)
+sys.path.insert(0, binary_dir)
+
+rznode_python = os.path.join(test_dir, '..', '..', '..', 'Core', 'rznode', 'python')
+sys.path.insert(0, os.path.abspath(rznode_python))
+os.chdir(binary_dir)
+
 from ruzino_graph import RuzinoGraph
 import stage_py
-import geometry_py  # This triggers geometry nodes loading
-
-
-def get_binary_dir():
-    """Get the binary directory path"""
-    test_dir = os.path.dirname(os.path.abspath(__file__))
-    binary_dir = os.path.join(test_dir, '..', '..', '..', '..', 'Binaries', 'Release')
-    return os.path.abspath(binary_dir)
+import geometry_py
 
 
 def test_full_tree_generation():
@@ -20,7 +24,6 @@ def test_full_tree_generation():
     print("TEST: Full Plastic Trees Pipeline (generate -> to_mesh -> USD)")
     print("="*70)
     
-    binary_dir = get_binary_dir()
     output_file = os.path.join(binary_dir, "plastic_tree.usdc")
     
     g = RuzinoGraph("PlasticTreeFullTest")
@@ -98,16 +101,32 @@ def test_full_tree_generation():
         file_size = os.path.getsize(output_file)
         print(f"✓ USD file created: {file_size} bytes")
         
-        if file_size > 1000:
-            print("\n" + "="*70)
-            print(f"✅ TEST PASSED: Plastic Tree USD file generated ({file_size} bytes)!")
-            print(f"Output: {output_file}")
-            print("   Trees adapt to environment with leaf cluster illumination!")
-            print("="*70)
-            assert file_size > 1000, f"File too small: {file_size} bytes"
+        # Check modifier layer file (where actual data is stored)
+        modifier_file = os.path.join(binary_dir, "plastic_tree_modifiers.usdc")
+        
+        if os.path.exists(modifier_file):
+            modifier_size = os.path.getsize(modifier_file)
+            print(f"✓ Modifier layer: {modifier_file} ({modifier_size} bytes)")
+            
+            if modifier_size > 1000:
+                print("\n" + "="*70)
+                print(f"✅ TEST PASSED: Plastic Tree USD file generated ({modifier_size} bytes)!")
+                print(f"Output: {output_file}")
+                print("   Trees adapt to environment with leaf cluster illumination!")
+                print("="*70)
+            else:
+                print(f"\n✗ TEST FAILED: Modifier file too small: {modifier_size} bytes")
+                assert False, f"Modifier file too small: {modifier_size} bytes"
         else:
-            print(f"\n✗ TEST FAILED: USD file too small: {file_size} bytes")
-            assert False, f"File too small: {file_size} bytes"
+            if file_size > 1000:
+                print("\n" + "="*70)
+                print(f"✅ TEST PASSED: Plastic Tree USD file generated ({file_size} bytes)!")
+                print(f"Output: {output_file}")
+                print("   Trees adapt to environment with leaf cluster illumination!")
+                print("="*70)
+            else:
+                print(f"\n✗ TEST FAILED: USD file too small: {file_size} bytes")
+                assert False, f"File too small: {file_size} bytes"
     else:
         print(f"✗ USD file not found: {output_file}")
         assert False, f"File not created: {output_file}"

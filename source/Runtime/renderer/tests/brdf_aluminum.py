@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-Test BRDF on Aluminum (no transmission) to isolate reflection/diffuse PDF issues
+BRDF Aluminum Analysis Script
+
+Analyzes BRDF on Aluminum (no transmission) to isolate reflection/diffuse PDF issues.
+Run directly: python brdf_aluminum.py <material_folder>
 """
 
 import sys

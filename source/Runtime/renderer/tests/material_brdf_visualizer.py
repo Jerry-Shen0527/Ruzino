@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Material BRDF Visualizer Test
+Material BRDF Visualizer Script
 
 Analyzes material BRDF properties:
 1. BRDF Eval distribution
@@ -8,6 +8,7 @@ Analyzes material BRDF properties:
 3. Sample frequency distribution
 
 Outputs three visualization images for analysis.
+Run directly: python material_brdf_visualizer.py <material_folder>
 """
 
 import sys

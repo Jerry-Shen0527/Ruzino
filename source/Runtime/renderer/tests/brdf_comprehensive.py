@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-Comprehensive BRDF Testing Suite
+Comprehensive BRDF Testing Script
 
 Tests all MaterialX materials with structured JSON logging:
 1. Normalized eval vs normalized sample comparison
 2. Importance test variance (non-zero pixels, mean-normalized)
 3. Multiple UV positions for textured materials
 4. Multiple incident light directions
+
+Run directly: python brdf_comprehensive.py <material_folder>
 """
 
 import sys

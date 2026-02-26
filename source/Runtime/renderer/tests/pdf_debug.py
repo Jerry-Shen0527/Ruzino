@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
-Debug PDF calculation by sampling specific directions and checking PDF values
+PDF Debug Script
+
+Debug PDF calculation by sampling specific directions and checking PDF values.
+This is a diagnostic/utility script, not a test.
+Run directly: python pdf_debug.py
 """
 
 import sys

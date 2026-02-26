@@ -4,16 +4,20 @@ Tests procedural tree generation based on Stava et al. 2014
 """
 import os
 import sys
+
+test_dir = os.path.dirname(os.path.abspath(__file__))
+binary_dir = os.path.join(test_dir, '..', '..', '..', '..', 'Binaries', 'Release')
+binary_dir = os.path.abspath(binary_dir)
+sys.path.insert(0, binary_dir)
+
+rznode_python = os.path.join(test_dir, '..', '..', '..', 'Core', 'rznode', 'python')
+sys.path.insert(0, os.path.abspath(rznode_python))
+os.chdir(binary_dir)
+
 from ruzino_graph import RuzinoGraph
 import stage_py
 import geometry_py as geom
 
-
-def get_binary_dir():
-    """Get the binary directory path"""
-    test_dir = os.path.dirname(os.path.abspath(__file__))
-    binary_dir = os.path.join(test_dir, '..', '..', '..', '..', 'Binaries', 'Release')
-    return os.path.abspath(binary_dir)
 
 def test_tree_generation():
     """Test full procedural tree generation with Plastic Trees"""
@@ -21,7 +25,6 @@ def test_tree_generation():
     print("TEST: Plastic Trees - Procedural Generation (Pirk et al. 2012)")
     print("="*70)
     
-    binary_dir = get_binary_dir()
     g = RuzinoGraph("PlasticTreeTest")
     config_path = os.path.join(binary_dir, "Plugins", "TreeGen_geometry_nodes.json")
     
@@ -109,7 +112,6 @@ def test_parameter_variations():
     print("TEST: Plastic Trees Environmental Adaptation")
     print("="*70)
     
-    binary_dir = get_binary_dir()
     g = RuzinoGraph("PlasticityTest")
     config_path = os.path.join(binary_dir, "Plugins", "TreeGen_geometry_nodes.json")
     g.loadConfiguration(config_path)
@@ -201,7 +203,6 @@ def test_tree_with_leaves_to_mesh():
     print("TEST: Plastic Trees with Leaf Clusters to Mesh")
     print("="*70)
     
-    binary_dir = get_binary_dir()
     g = RuzinoGraph("PlasticTreeLeavesTest")
     config_path = os.path.join(binary_dir, "Plugins", "TreeGen_geometry_nodes.json")
     

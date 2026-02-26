@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-Batch BRDF Testing with Multiprocessing
+Batch BRDF Testing Script with Multiprocessing
 
 Scans all materials in matx_library and tests them in parallel,
 then aggregates individual JSON results into a summary report.
+
+Run directly: python brdf_batch.py
 """
 
 import sys
@@ -22,7 +24,7 @@ binary_dir = workspace_root / "Binaries" / "Release"
 assets_dir = workspace_root / "Assets"
 
 # Test script path
-test_script = script_dir / "test_brdf_comprehensive.py"
+test_script = script_dir / "brdf_comprehensive.py"
 
 
 def find_all_material_folders():
@@ -43,7 +45,7 @@ def find_all_material_folders():
 
 def test_single_material(material_folder):
     """
-    Test a single material by calling test_brdf_comprehensive.py
+    Test a single material by calling brdf_comprehensive.py
     
     Returns:
         tuple: (material_name, success, elapsed_time)

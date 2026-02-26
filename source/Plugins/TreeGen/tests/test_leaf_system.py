@@ -3,16 +3,48 @@ Test the improved leaf generation system
 Tests terminal branch detection, leaf orientation, and new parameters
 """
 import os
+import sys
+
+test_dir = os.path.dirname(os.path.abspath(__file__))
+binary_dir = os.path.join(test_dir, '..', '..', '..', '..', 'Binaries', 'Release')
+binary_dir = os.path.abspath(binary_dir)
+sys.path.insert(0, binary_dir)
+
+rznode_python = os.path.join(test_dir, '..', '..', '..', 'Core', 'rznode', 'python')
+sys.path.insert(0, os.path.abspath(rznode_python))
+os.chdir(binary_dir)
+
 from ruzino_graph import RuzinoGraph
 import stage_py
 import geometry_py as geom
 
 
-def get_binary_dir():
-    """Get the binary directory path"""
-    test_dir = os.path.dirname(os.path.abspath(__file__))
-    binary_dir = os.path.join(test_dir, '..', '..', '..', '..', 'Binaries', 'Release')
-    return os.path.abspath(binary_dir)
+def get_modifier_file_path(usd_file):
+    """Get the modifier file path for a USD file."""
+    dir_path = os.path.dirname(usd_file)
+    filename = os.path.basename(usd_file)
+    stem = os.path.splitext(filename)[0]
+    ext = os.path.splitext(filename)[1]
+    return os.path.join(dir_path, stem + "_modifiers" + ext)
+
+
+def check_usd_file_size(output_file, min_size=1000):
+    """Check if USD file (or its modifier file) has at least min_size bytes."""
+    if not os.path.exists(output_file):
+        return False, 0
+    
+    file_size = os.path.getsize(output_file)
+    modifier_file = get_modifier_file_path(output_file)
+    
+    if os.path.exists(modifier_file):
+        modifier_size = os.path.getsize(modifier_file)
+        if modifier_size >= min_size:
+            return True, modifier_size
+        return False, modifier_size
+    
+    if file_size >= min_size:
+        return True, file_size
+    return False, file_size
 
 
 def test_terminal_leaves_only():
@@ -21,7 +53,6 @@ def test_terminal_leaves_only():
     print("TEST: Terminal Leaves Only")
     print("="*70)
     
-    binary_dir = get_binary_dir()
     output_file = os.path.join(binary_dir, "terminal_leaves_test.usdc")
     
     g = RuzinoGraph("TerminalLeavesTest")
@@ -79,9 +110,9 @@ def test_terminal_leaves_only():
         assert num_leaves > 0, "Should have leaves on terminal branches"
     
     if os.path.exists(output_file):
-        file_size = os.path.getsize(output_file)
-        print(f"✓ Exported to USD: {file_size} bytes")
-        assert file_size > 1000
+        success, size = check_usd_file_size(output_file)
+        print(f"✓ Exported to USD: {size} bytes")
+        assert success, f"File too small: {size} bytes"
     
     print("✅ Terminal leaves test passed!")
 
@@ -92,7 +123,6 @@ def test_leaf_parameters():
     print("TEST: Leaf Parameter Variations")
     print("="*70)
     
-    binary_dir = get_binary_dir()
     output_dir = os.path.join(binary_dir, "leaf_param_tests")
     os.makedirs(output_dir, exist_ok=True)
     
@@ -166,9 +196,9 @@ def test_leaf_parameters():
         stage.save()
         
         if os.path.exists(output_file):
-            file_size = os.path.getsize(output_file)
-            print(f"  ✓ Created {test_case['name']}: {file_size} bytes")
-            assert file_size > 1000
+            success, size = check_usd_file_size(output_file)
+            print(f"  ✓ Created {test_case['name']}: {size} bytes")
+            assert success, f"File too small: {size} bytes"
     
     print("\n✅ All leaf parameter tests passed!")
 
@@ -179,7 +209,6 @@ def test_leaf_density_comparison():
     print("TEST: Leaf Density Comparison")
     print("="*70)
     
-    binary_dir = get_binary_dir()
     output_file = os.path.join(binary_dir, "leaf_density_comparison.usdc")
     
     g = RuzinoGraph("LeafDensityTest")
@@ -229,9 +258,9 @@ def test_leaf_density_comparison():
     stage.save()
     
     if os.path.exists(output_file):
-        file_size = os.path.getsize(output_file)
-        print(f"\n✓ Created comparison file: {file_size} bytes")
-        assert file_size > 1000
+        success, size = check_usd_file_size(output_file)
+        print(f"\n✓ Created comparison file: {size} bytes")
+        assert success, f"File too small: {size} bytes"
     
     print("✅ Leaf density comparison test passed!")
 
