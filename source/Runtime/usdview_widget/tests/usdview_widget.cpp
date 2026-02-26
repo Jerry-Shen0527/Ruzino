@@ -16,7 +16,7 @@ int main()
     spdlog::set_level(spdlog::level::debug);
     spdlog::set_pattern("%^[%T] %n: %v%$");
 
-    auto stage = create_global_stage();
+    auto stage = create_global_stage("../../Assets/test_scene.usd");
     stage->create_sphere(pxr::SdfPath("/sphere"));
 
     auto widget = std::make_unique<UsdFileViewer>(stage.get());
