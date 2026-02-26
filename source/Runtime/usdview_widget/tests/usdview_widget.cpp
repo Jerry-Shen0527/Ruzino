@@ -8,14 +8,15 @@
 #include "pxr/usd/usdGeom/sphere.h"
 #include "stage/stage.hpp"
 #include "widgets/usdtree/usd_fileviewer.h"
+
 using namespace Ruzino;
+
 int main()
 {
     spdlog::set_level(spdlog::level::debug);
     spdlog::set_pattern("%^[%T] %n: %v%$");
 
     auto stage = create_global_stage();
-    // Add a sphere
     stage->create_sphere(pxr::SdfPath("/sphere"));
 
     auto widget = std::make_unique<UsdFileViewer>(stage.get());
