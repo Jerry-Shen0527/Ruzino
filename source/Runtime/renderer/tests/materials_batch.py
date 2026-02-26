@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Batch Material Testing - Test multiple MaterialX materials with headless_render.exe
+Batch Material Testing Script - Test multiple MaterialX materials with headless_render.exe
 
 This script:
 1. Finds all .mtlx materials in Assets/matx_library
@@ -11,11 +11,11 @@ This script:
 3. Reports success/failure statistics
 
 Usage:
-    python test_materials_batch.py          # Test first 10 materials
-    python test_materials_batch.py 5        # Test first 5 materials
-    python test_materials_batch.py all      # Test all materials
-    python test_materials_batch.py -v       # Verbose mode with detailed output
-    python test_materials_batch.py -j 4     # Use 4 worker processes
+    python materials_batch.py          # Test first 10 materials
+    python materials_batch.py 5        # Test first 5 materials
+    python materials_batch.py all      # Test all materials
+    python materials_batch.py -v       # Verbose mode with detailed output
+    python materials_batch.py -j 4     # Use 4 worker processes
 """
 
 import sys

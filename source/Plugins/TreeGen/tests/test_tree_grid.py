@@ -6,16 +6,48 @@ Each dimension varies a different parameter:
 - Z axis: Apical Control (0.2-1.0)
 """
 import os
+import sys
+
+test_dir = os.path.dirname(os.path.abspath(__file__))
+binary_dir = os.path.join(test_dir, '..', '..', '..', '..', 'Binaries', 'Release')
+binary_dir = os.path.abspath(binary_dir)
+sys.path.insert(0, binary_dir)
+
+rznode_python = os.path.join(test_dir, '..', '..', '..', 'Core', 'rznode', 'python')
+sys.path.insert(0, os.path.abspath(rznode_python))
+os.chdir(binary_dir)
+
 from ruzino_graph import RuzinoGraph
 import stage_py
 import geometry_py
 
 
-def get_binary_dir():
-    """Get the binary directory path"""
-    test_dir = os.path.dirname(os.path.abspath(__file__))
-    binary_dir = os.path.join(test_dir, '..', '..', '..', '..', 'Binaries', 'Release')
-    return os.path.abspath(binary_dir)
+def get_modifier_file_path(usd_file):
+    """Get the modifier file path for a USD file."""
+    dir_path = os.path.dirname(usd_file)
+    filename = os.path.basename(usd_file)
+    stem = os.path.splitext(filename)[0]
+    ext = os.path.splitext(filename)[1]
+    return os.path.join(dir_path, stem + "_modifiers" + ext)
+
+
+def check_usd_file_size(output_file, min_size=1000):
+    """Check if USD file (or its modifier file) has at least min_size bytes."""
+    if not os.path.exists(output_file):
+        return False, 0
+    
+    file_size = os.path.getsize(output_file)
+    modifier_file = get_modifier_file_path(output_file)
+    
+    if os.path.exists(modifier_file):
+        modifier_size = os.path.getsize(modifier_file)
+        if modifier_size >= min_size:
+            return True, modifier_size
+        return False, modifier_size
+    
+    if file_size >= min_size:
+        return True, file_size
+    return False, file_size
 
 
 def test_tree_grid_5x5x5():
@@ -24,7 +56,6 @@ def test_tree_grid_5x5x5():
     print("TEST: 5×5×5 Tree Grid Generation")
     print("="*70)
     
-    binary_dir = get_binary_dir()
     output_file = os.path.join(binary_dir, "tree_grid_5x5x5.usdc")
     
     g = RuzinoGraph("TreeGrid5x5x5")
@@ -125,18 +156,18 @@ def test_tree_grid_5x5x5():
     
     # Check file size
     if os.path.exists(output_file):
-        file_size = os.path.getsize(output_file)
-        file_size_mb = file_size / (1024 * 1024)
+        success, size = check_usd_file_size(output_file, min_size=100000)
+        file_size_mb = size / (1024 * 1024)
         print(f"\n{'='*70}")
         print(f"✅ SUCCESS: 5×5×5 Tree Grid Generated!")
         print(f"{'='*70}")
         print(f"Total trees: {tree_count}")
-        print(f"File size: {file_size:,} bytes ({file_size_mb:.2f} MB)")
+        print(f"File size: {size:,} bytes ({file_size_mb:.2f} MB)")
         print(f"Output: {output_file}")
         print(f"{'='*70}")
         
         # Verify reasonable file size (should be substantial with 125 trees)
-        assert file_size > 100000, f"File unexpectedly small: {file_size} bytes"
+        assert success, f"File unexpectedly small: {size} bytes"
         print(f"\n✓ File size validation passed")
         
     else:

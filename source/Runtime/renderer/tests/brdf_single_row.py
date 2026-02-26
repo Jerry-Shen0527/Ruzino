@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-Test single row of BRDF hemisphere to visualize eval, sample, and importance distributions
+BRDF Single Row Visualization Script
+
+Analyzes a single row of BRDF hemisphere to visualize eval, sample, and importance distributions.
+Run directly: python brdf_single_row.py <material_folder>
 """
 
 import sys

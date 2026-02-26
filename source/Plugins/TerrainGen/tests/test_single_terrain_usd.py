@@ -3,15 +3,19 @@ Test single terrain generation with USD output
 Simplified test that doesn't require merge nodes
 """
 import os
+import sys
+
+test_dir = os.path.dirname(os.path.abspath(__file__))
+binary_dir = os.path.join(test_dir, '..', '..', '..', '..', 'Binaries', 'Release')
+binary_dir = os.path.abspath(binary_dir)
+sys.path.insert(0, binary_dir)
+
+rznode_python = os.path.join(test_dir, '..', '..', '..', 'Core', 'rznode', 'python')
+sys.path.insert(0, os.path.abspath(rznode_python))
+os.chdir(binary_dir)
+
 from ruzino_graph import RuzinoGraph
 import stage_py
-
-
-def get_binary_dir():
-    """Get the binary directory path"""
-    test_dir = os.path.dirname(os.path.abspath(__file__))
-    binary_dir = os.path.join(test_dir, '..', '..', '..', '..', 'Binaries', 'Release')
-    return os.path.abspath(binary_dir)
 
 
 def test_single_terrain():
@@ -20,7 +24,6 @@ def test_single_terrain():
     print("TEST: Single Terrain USD Generation")
     print("="*70)
     
-    binary_dir = get_binary_dir()
     output_file = os.path.join(binary_dir, "terrain_single.usdc")
     
     g = RuzinoGraph("SingleTerrain")
@@ -76,17 +79,36 @@ def test_single_terrain():
     # Check file size
     if os.path.exists(output_file):
         file_size = os.path.getsize(output_file)
-        file_size_mb = file_size / (1024 * 1024)
-        print(f"\n{'='*70}")
-        print(f"✅ SUCCESS: Single Terrain Generated!")
-        print(f"{'='*70}")
-        print(f"Resolution: 128×128 vertices")
-        print(f"File size: {file_size:,} bytes ({file_size_mb:.2f} MB)")
-        print(f"Output: {output_file}")
-        print(f"{'='*70}")
         
-        # Verify reasonable file size
-        assert file_size > 10000, f"File unexpectedly small: {file_size} bytes"
+        # Check modifier layer file (where actual data is stored)
+        modifier_file = os.path.join(binary_dir, "terrain_single_modifiers.usdc")
+        
+        if os.path.exists(modifier_file):
+            modifier_size = os.path.getsize(modifier_file)
+            file_size_mb = modifier_size / (1024 * 1024)
+            print(f"\n{'='*70}")
+            print(f"✅ SUCCESS: Single Terrain Generated!")
+            print(f"{'='*70}")
+            print(f"Resolution: 128×128 vertices")
+            print(f"File size: {file_size:,} bytes (main) + {modifier_size:,} bytes (modifier)")
+            print(f"Total: {modifier_size:,} bytes ({file_size_mb:.2f} MB)")
+            print(f"Output: {output_file}")
+            print(f"{'='*70}")
+            
+            # Verify modifier file has reasonable size
+            assert modifier_size > 10000, f"Modifier file unexpectedly small: {modifier_size} bytes"
+        else:
+            file_size_mb = file_size / (1024 * 1024)
+            print(f"\n{'='*70}")
+            print(f"✅ SUCCESS: Single Terrain Generated!")
+            print(f"{'='*70}")
+            print(f"Resolution: 128×128 vertices")
+            print(f"File size: {file_size:,} bytes ({file_size_mb:.2f} MB)")
+            print(f"Output: {output_file}")
+            print(f"{'='*70}")
+            
+            assert file_size > 10000, f"File unexpectedly small: {file_size} bytes"
+        
         print(f"\n✓ File size validation passed")
         
     else:

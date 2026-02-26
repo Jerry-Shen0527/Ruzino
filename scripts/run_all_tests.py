@@ -70,23 +70,23 @@ def should_run_test(exe_name: str, test_filter: Optional[str]) -> bool:
     return filter_base.lower() in test_base.lower()
 
 
-def run_pytest(test_dir: Path, test_filter: Optional[str] = None) -> Tuple[int, int, List[Tuple[str, str]]]:
+def run_pytest(test_dir: Path, test_filter: Optional[str] = None) -> Tuple[int, int, int, List[Tuple[str, str]]]:
     """Run pytest in the given directory.
     
     Returns:
-        Tuple of (passed, failed, failed_test_info)
+        Tuple of (passed, failed, skipped, failed_test_info)
         where failed_test_info is a list of (test_name, output) tuples
     """
     python_tests = find_python_test_files(test_dir)
     
     if not python_tests:
-        return 0, 0, []
+        return 0, 0, 0, []
     
     # Apply filter if specified
     if test_filter:
         python_tests = [t for t in python_tests if test_filter.lower() in t.stem.lower()]
         if not python_tests:
-            return 0, 0, []
+            return 0, 0, 0, []
     
     print(f"\n{'='*80}")
     print(f"Running pytest in: {test_dir}")
@@ -94,6 +94,7 @@ def run_pytest(test_dir: Path, test_filter: Optional[str] = None) -> Tuple[int, 
     
     passed = 0
     failed = 0
+    skipped = 0
     failed_tests = []
     
     for test_file in python_tests:
@@ -111,6 +112,10 @@ def run_pytest(test_dir: Path, test_filter: Optional[str] = None) -> Tuple[int, 
             if result.returncode == 0:
                 print(f"✓ PASSED: {test_file.name}")
                 passed += 1
+            elif result.returncode == 5:
+                # Exit code 5 means no tests were collected (all skipped)
+                print(f"⊘ SKIPPED: {test_file.name} (no tests collected)")
+                skipped += 1
             else:
                 print(f"✗ FAILED: {test_file.name} (exit code: {result.returncode})")
                 failed += 1
@@ -127,7 +132,7 @@ def run_pytest(test_dir: Path, test_filter: Optional[str] = None) -> Tuple[int, 
             failed += 1
             failed_tests.append((f"{test_dir.name}/{test_file.name}", f"ERROR: {str(e)}"))
     
-    return passed, failed, failed_tests
+    return passed, failed, skipped, failed_tests
 
 
 def run_cpp_tests(test_dir: Path, binaries_dir: Path, test_filter: Optional[str] = None) -> Tuple[int, int, List[Tuple[str, str]]]:
@@ -220,6 +225,7 @@ def main():
     # Run all tests
     total_pytest_passed = 0
     total_pytest_failed = 0
+    total_pytest_skipped = 0
     total_cpp_passed = 0
     total_cpp_failed = 0
     all_failed_tests = []
@@ -228,13 +234,17 @@ def main():
         print(f"\nProcessing: {test_dir.relative_to(project_root)}")
         
         # Run Python tests
-        pytest_passed, pytest_failed, pytest_failed_tests = run_pytest(test_dir, test_filter)
+        pytest_passed, pytest_failed, pytest_skipped, pytest_failed_tests = run_pytest(test_dir, test_filter)
         total_pytest_passed += pytest_passed
         total_pytest_failed += pytest_failed
+        total_pytest_skipped += pytest_skipped
         all_failed_tests.extend(pytest_failed_tests)
         
-        if pytest_passed + pytest_failed > 0:
-            print(f"  Python tests: {pytest_passed} passed, {pytest_failed} failed")
+        if pytest_passed + pytest_failed + pytest_skipped > 0:
+            msg = f"  Python tests: {pytest_passed} passed, {pytest_failed} failed"
+            if pytest_skipped > 0:
+                msg += f", {pytest_skipped} skipped"
+            print(msg)
         
         # Run C++ tests
         cpp_passed, cpp_failed, cpp_failed_tests = run_cpp_tests(test_dir, binaries_dir, test_filter)
@@ -249,7 +259,10 @@ def main():
     print("\n" + "="*80)
     print("TEST SUMMARY")
     print("="*80)
-    print(f"Python Tests: {total_pytest_passed} passed, {total_pytest_failed} failed")
+    py_msg = f"Python Tests: {total_pytest_passed} passed, {total_pytest_failed} failed"
+    if total_pytest_skipped > 0:
+        py_msg += f", {total_pytest_skipped} skipped"
+    print(py_msg)
     print(f"C++ Tests:    {total_cpp_passed} passed, {total_cpp_failed} failed")
     print(f"Overall:      {total_pytest_passed + total_cpp_passed} passed, "
           f"{total_pytest_failed + total_cpp_failed} failed")

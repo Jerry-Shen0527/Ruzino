@@ -218,6 +218,10 @@ NB_MODULE(stage_py, m)
                 auto usd_stage = stage.get_usd_stage();
                 if (usd_stage) {
                     usd_stage->GetRootLayer()->Save();
+                    // Ensure modifier_layer_ is initialized before saving
+                    // This handles the case where write_usd node wrote to session layer
+                    // directly without going through Stage::get_modifier_layer()
+                    stage.get_modifier_layer();
                     stage.save_modifier_layer();
                     return true;
                 }
