@@ -104,17 +104,6 @@ UsdviewEngine::UsdviewEngine(Stage* stage) : stage_(stage)
     }
     auto plugins = renderer_->GetRendererPlugins();
 
-    // Find the best renderer to use (prefer RUZINO renderers over Storm)
-    unsigned selected_renderer = 0;
-    for (unsigned i = 0; i < plugins.size(); ++i) {
-        const std::string& name = plugins[i].GetString();
-        if (name == "Hd_RUZINO_RendererPlugin" || name == "Hd_RUZINO_GL_RendererPlugin") {
-            selected_renderer = i;
-            break;
-        }
-    }
-    engine_status.renderer_id = selected_renderer;
-
     ChooseRenderer(plugins, engine_status.renderer_id);
 
     // Set selection highlight color to bright orange
