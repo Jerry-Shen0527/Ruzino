@@ -127,16 +127,9 @@ NODE_EXECUTION_FUNCTION(input_geometry)
 
     if (global_payload.is_modifier_mode) {
         should_read_from_root = (global_payload.current_modifier_index == 0);
-        spdlog::warn(
-            "[input_geometry] is_modifier_mode={}, current_modifier_index={}, "
-            "should_read_from_root={}, prim_path={}",
-            global_payload.is_modifier_mode,
-            global_payload.current_modifier_index,
-            should_read_from_root,
-            input_path.GetString());
     }
     else {
-        spdlog::warn(
+        spdlog::debug(
             "[input_geometry] NOT in modifier mode, prim_path={}",
             input_path.GetString());
         auto session_layer = global_payload.stage->GetSessionLayer();
@@ -144,7 +137,7 @@ NODE_EXECUTION_FUNCTION(input_geometry)
             auto session_prim_spec = session_layer->GetPrimAtPath(input_path);
             if (session_prim_spec) {
                 should_read_from_root = true;
-                spdlog::warn(
+                spdlog::debug(
                     "[input_geometry] Non-modifier mode but session layer has "
                     "over specs, reading from root layer");
             }
