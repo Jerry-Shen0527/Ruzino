@@ -1,6 +1,7 @@
 #include "free_camera.hpp"
 
 #include <pxr/base/gf/matrix4d.h>
+#include <pxr/usd/usd/editContext.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -41,9 +42,10 @@ void BaseCamera::UpdateUsdTransform()
     if (!xform_op) {
         xform_op = AddTransformOp();
     }
-    // Set the transform op using current time
+    pxr::UsdEditContext edit_ctx(
+        GetPrim().GetStage(), GetPrim().GetStage()->GetRootLayer());
     pxr::GfMatrix4d worldToCamera = m_MatWorldToView.GetInverse();
-    xform_op.Set(worldToCamera, m_CurrentTime);
+    xform_op.Set(worldToCamera, pxr::UsdTimeCode::Default());
 }
 
 BaseCamera::BaseCamera(const pxr::UsdGeomCamera& camera)
@@ -738,6 +740,9 @@ void ThirdPersonCamera::SaveState()
     auto prim = GetPrim();
     if (!prim)
         return;
+
+    // Use UsdEditContext to ensure we write to root layer, not session layer
+    UsdEditContext edit_ctx(prim.GetStage(), prim.GetStage()->GetRootLayer());
 
     prim.CreateAttribute(
             TfToken("third_person:target"), SdfValueTypeNames->Double3)

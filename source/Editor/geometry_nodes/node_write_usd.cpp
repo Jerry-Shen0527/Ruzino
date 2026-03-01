@@ -109,6 +109,14 @@ NODE_EXECUTION_FUNCTION(write_usd)
 
         spdlog::debug(
             "[MODIFIER] write_geometry_as_over_spec result: {}", write_success);
+
+        // Set Animatable attribute on root layer (not modifier layer)
+        pxr::UsdPrim prim = stage->GetPrimAtPath(sdf_path);
+        if (prim) {
+            prim.CreateAttribute(
+                    pxr::TfToken("Animatable"), pxr::SdfValueTypeNames->Bool)
+                .Set(global_payload.has_simulation);
+        }
     }
     else {
         spdlog::debug(
