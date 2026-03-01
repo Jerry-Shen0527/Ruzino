@@ -74,13 +74,13 @@ WithDynamicLogicPrim::WithDynamicLogicPrim(
             mod.enabled = true;
             mod.node_graph_json = json.Get<std::string>();
             modifier_stack_.modifiers.push_back(mod);
+        }
+    }
 
-            tree_desc_cache = mod.node_graph_json;
-            node_tree->deserialize(tree_desc_cache);
-        }
-        else {
-            return;  // No node graph at all
-        }
+    // Deserialize the first modifier's node graph
+    if (!modifier_stack_.empty()) {
+        tree_desc_cache = modifier_stack_.modifiers[0].node_graph_json;
+        node_tree->deserialize(tree_desc_cache);
     }
 
     // Always use modifier mode for non-destructive editing
@@ -213,19 +213,15 @@ void WithDynamicLogicPrim::update_modifier_stack(float delta_time) const
         }
     }
 
-    bool stack_changed = false;
+    bool stack_changed =
+        (new_stack.modifiers.size() != modifier_stack_.modifiers.size());
 
-    if (!modifier_stack_.modifiers.empty()) {
-        stack_changed =
-            (new_stack.modifiers.size() != modifier_stack_.modifiers.size());
-
-        if (!stack_changed) {
-            for (size_t i = 0; i < new_stack.modifiers.size(); ++i) {
-                if (new_stack.modifiers[i].node_graph_json !=
-                    modifier_stack_.modifiers[i].node_graph_json) {
-                    stack_changed = true;
-                    break;
-                }
+    if (!stack_changed) {
+        for (size_t i = 0; i < new_stack.modifiers.size(); ++i) {
+            if (new_stack.modifiers[i].node_graph_json !=
+                modifier_stack_.modifiers[i].node_graph_json) {
+                stack_changed = true;
+                break;
             }
         }
     }
@@ -233,6 +229,13 @@ void WithDynamicLogicPrim::update_modifier_stack(float delta_time) const
     if (stack_changed) {
         modifier_stack_ = new_stack;
         ensure_modifier_layer();
+
+        // Load the first modifier's node graph (or single modifier case)
+        if (!modifier_stack_.modifiers.empty()) {
+            node_tree->deserialize(
+                modifier_stack_.modifiers[0].node_graph_json);
+            node_tree_executor->mark_tree_structure_changed();
+        }
 
         // Clear modifier layer's over specs when modifier stack changes
         // This ensures original geometry is shown when modifier graph is
@@ -243,18 +246,16 @@ void WithDynamicLogicPrim::update_modifier_stack(float delta_time) const
                 modifier_stack_.modifier_layer->GetPrimAtPath(prim.GetPath());
 
             if (prim_spec) {
-                // Collect property specs first (can't iterate while removing)
+                // Collect property handles first (can't iterate while removing)
                 std::vector<pxr::SdfPropertySpecHandle> props_to_remove;
-                for (auto it = prim_spec->GetProperties().begin();
-                     it != prim_spec->GetProperties().end();
-                     ++it) {
-                    if (*it) {
-                        props_to_remove.push_back(*it);
+                for (const auto& prop : prim_spec->GetProperties()) {
+                    if (prop) {
+                        props_to_remove.push_back(prop);
                     }
                 }
 
                 // Remove each property
-                for (auto& prop : props_to_remove) {
+                for (const auto& prop : props_to_remove) {
                     prim_spec->RemoveProperty(prop);
                 }
 
@@ -287,10 +288,6 @@ void WithDynamicLogicPrim::update_modifier_stack(float delta_time) const
         if (!mod.enabled) {
             continue;
         }
-
-        // Load this modifier's node graph
-        node_tree->deserialize(mod.node_graph_json);
-        node_tree_executor->mark_tree_structure_changed();
 
         auto& payload = node_tree_executor->get_global_payload<GeomPayload&>();
         payload.delta_time = delta_time;
