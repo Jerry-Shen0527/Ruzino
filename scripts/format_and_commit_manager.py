@@ -714,8 +714,9 @@ def process_repository_non_interactive(
         print("No changes detected.")
         return 0, 0, False
 
-    # Auto-checkout main branch if requested
-    if auto_checkout_main:
+    # Auto-checkout main branch if requested (only for submodules, not root repo)
+    is_root_repo = repo_path == project_root
+    if auto_checkout_main and not is_root_repo:
         if not ensure_on_main_branch(repo_path):
             print("✗ Could not checkout main branch. Skipping")
             return 0, 0, False
