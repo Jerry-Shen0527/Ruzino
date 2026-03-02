@@ -153,13 +153,15 @@ NB_MODULE(stage_py, m)
             // Try to extract SdfLayerHandle from pxr.Sdf.Layer
             // pxr.Sdf.Layer is a Boost.Python wrapper
             try {
-                bp::object layer_obj(bp::handle<>(bp::borrowed(py_layer.ptr())));
+                bp::object layer_obj(
+                    bp::handle<>(bp::borrowed(py_layer.ptr())));
                 bp::extract<pxr::SdfLayerHandle> extractor(layer_obj);
                 if (extractor.check()) {
                     payload.modifier_layer = extractor();
                     return;
                 }
-            } catch (...) {
+            }
+            catch (...) {
             }
             throw std::runtime_error(
                 "Could not extract SdfLayerHandle from Python object");
@@ -219,8 +221,9 @@ NB_MODULE(stage_py, m)
                 if (usd_stage) {
                     usd_stage->GetRootLayer()->Save();
                     // Ensure modifier_layer_ is initialized before saving
-                    // This handles the case where write_usd node wrote to session layer
-                    // directly without going through Stage::get_modifier_layer()
+                    // This handles the case where write_usd node wrote to
+                    // session layer directly without going through
+                    // Stage::get_modifier_layer()
                     stage.get_modifier_layer();
                     stage.save_modifier_layer();
                     return true;
@@ -244,7 +247,8 @@ NB_MODULE(stage_py, m)
                 }
                 return "";
             },
-            "Get the modifier layer identifier string for use with Sdf.Layer.Find()")
+            "Get the modifier layer identifier string for use with "
+            "Sdf.Layer.Find()")
         .def(
             "export_to_string",
             [](const Stage& stage) { return stage.stage_content(); },
@@ -261,7 +265,14 @@ NB_MODULE(stage_py, m)
                 // Wrap in nanobind object
                 return nb::borrow<nb::object>(pxr_stage);
             },
-            "Get pxr.Usd.Stage (Boost.Python) object - TRUE INTEROP!");
+            "Get pxr.Usd.Stage (Boost.Python) object - TRUE INTEROP!")
+        .def(
+            "traverse_stage",
+            [](const Stage& stage, int max_depth) {
+                return stage.traverse_stage(max_depth);
+            },
+            nb::arg("max_depth") = -1,
+            "Traverse stage and return prim information for debugging");
 
     // USD Stage interoperability functions
 

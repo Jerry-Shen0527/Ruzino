@@ -140,6 +140,9 @@ class STAGE_API Stage {
     // Load all prims from USD to ECS
     void load_prims_to_ecs();
 
+    // Traverse stage and return prim information for debugging
+    std::string traverse_stage(int max_depth = -1) const;
+
     // Get systems
     ecs::AnimationSystem* get_animation_system()
     {

@@ -494,28 +494,32 @@ void Stage::SaveAs(const std::string& new_path)
     std::filesystem::path abs_path =
         std::filesystem::path(new_path).lexically_normal();
 
-    // 1. Export current session layer to NEW modifier path BEFORE switching stages
+    // 1. Export current session layer to NEW modifier path BEFORE switching
+    // stages
     auto session_layer = stage->GetSessionLayer();
     if (session_layer) {
         // Calculate new modifier path based on new_path
         std::filesystem::path new_modifier_path = abs_path;
         std::string stem = abs_path.stem().string();
         std::string ext = abs_path.extension().string();
-        new_modifier_path = abs_path.parent_path() / (stem + "_modifiers" + ext);
-        
+        new_modifier_path =
+            abs_path.parent_path() / (stem + "_modifiers" + ext);
+
         session_layer->Export(new_modifier_path.string());
-        spdlog::info("[Stage] Exported session layer to: {}", new_modifier_path.string());
+        spdlog::info(
+            "[Stage] Exported session layer to: {}",
+            new_modifier_path.string());
     }
 
     // 2. Export root layer to new location
     stage->GetRootLayer()->Export(abs_path.string());
     m_stage_path = abs_path.string();
-    
+
     // 3. Reset and reopen stage
     modifier_layer_ = nullptr;
     stage = pxr::UsdStage::Open(m_stage_path);
     load_modifier_layer();
-    
+
     spdlog::info("Stage saved as: {}", m_stage_path);
 }
 
@@ -593,8 +597,10 @@ void Stage::load_modifier_layer()
     std::string content;
     file_layer->ExportToString(&content);
     session_layer->ImportFromString(content);
-    
-    spdlog::info("[Stage] Imported modifier layer into session layer: {}", modifier_path);
+
+    spdlog::info(
+        "[Stage] Imported modifier layer into session layer: {}",
+        modifier_path);
 }
 
 bool Stage::OpenStage(const std::string& path)
@@ -844,6 +850,81 @@ void Stage::on_prim_changed(const pxr::SdfPath& path)
 
         spdlog::info("[Stage] Marked prim as dirty: {}", path.GetString());
     }
+}
+
+std::string Stage::traverse_stage(int max_depth) const
+{
+    if (!stage) {
+        return "[ERROR] Stage is null";
+    }
+
+    std::stringstream ss;
+    ss << "=== Stage Traverse Report ===\n";
+    ss << "Stage path: " << m_stage_path << "\n";
+    ss << "Max depth: "
+       << (max_depth < 0 ? "unlimited" : std::to_string(max_depth)) << "\n\n";
+
+    // Get the root prim
+    pxr::UsdPrim root = stage->GetPseudoRoot();
+
+    std::function<void(const pxr::UsdPrim&, int)> traverse_prim;
+    traverse_prim = [&](const pxr::UsdPrim& prim, int depth) {
+        if (max_depth >= 0 && depth > max_depth) {
+            return;
+        }
+
+        std::string indent(depth * 2, ' ');
+        std::string type_name = prim.GetTypeName().GetString();
+        std::string specifier;
+
+        switch (prim.GetSpecifier()) {
+            case pxr::SdfSpecifierDef: specifier = "def"; break;
+            case pxr::SdfSpecifierOver: specifier = "over"; break;
+            case pxr::SdfSpecifierClass: specifier = "class"; break;
+            default: specifier = "unknown";
+        }
+
+        ss << indent << specifier << " " << type_name << " \""
+           << prim.GetPath().GetString() << "\"";
+
+        // Check if prim is active
+        if (!prim.IsActive()) {
+            ss << " [INACTIVE]";
+        }
+
+        // Check if prim is defined (has specs)
+        if (prim.HasAuthoredReferences()) {
+            ss << " [HAS_REFS]";
+        }
+
+        // Check for geometry
+        if (prim.IsA<pxr::UsdGeomMesh>()) {
+            pxr::UsdGeomMesh mesh(prim);
+            pxr::VtIntArray face_vertex_counts;
+            pxr::UsdAttribute fvc_attr = mesh.GetFaceVertexCountsAttr();
+            if (fvc_attr.HasAuthoredValue()) {
+                fvc_attr.Get(&face_vertex_counts);
+                ss << " [MESH: " << face_vertex_counts.size() << " faces]";
+            }
+        }
+
+        ss << "\n";
+
+        // Traverse children
+        for (const auto& child : prim.GetFilteredChildren(
+                 pxr::UsdPrimIsActive && pxr::UsdPrimIsDefined &&
+                 pxr::UsdPrimIsLoaded)) {
+            traverse_prim(child, depth + 1);
+        }
+    };
+
+    traverse_prim(root, 0);
+
+    ss << "\n=== Summary ===\n";
+    ss << "Entity-to-path mappings: " << entity_to_path_.size() << "\n";
+    ss << "Path-to-entity mappings: " << path_to_entity_.size() << "\n";
+
+    return ss.str();
 }
 
 RUZINO_NAMESPACE_CLOSE_SCOPE
