@@ -152,6 +152,7 @@ def test_tree_grid_5x5x5():
                 inputs[(transform, "Translate X")] = pos_x
                 inputs[(transform, "Translate Y")] = pos_y
                 inputs[(transform, "Translate Z")] = pos_z
+                inputs[(transform, "Rotate X")] = 90.0
 
                 # Progress indicator
                 if tree_count % 25 == 0:
@@ -159,23 +160,22 @@ def test_tree_grid_5x5x5():
 
     print(f"✓ Created all {tree_count} tree nodes in graph")
 
-    # Create Stage and convert to GeomPayload
+    # Create Stage
     stage = stage_py.Stage(output_file)
 
-    # IMPORTANT: Create a def Mesh in root layer first
-    # This ensures the modifier layer can use "over" to override it
-    pxr_stage = stage.get_pxr_stage()
+    # Create prim first
     from pxr import UsdGeom
 
-    root_mesh = UsdGeom.Mesh.Define(pxr_stage, "/tree_grid")
+    UsdGeom.Mesh.Define(stage.get_pxr_stage(), "/tree_grid")
     print(f"✓ Created def Mesh '/tree_grid' in root layer")
 
-    geom_payload = stage_py.create_payload_from_stage(stage, "/tree_grid")
-    g.setGlobalParams(geom_payload)
+    # Apply node graph to prim with inputs - saves everything!
+    g.apply_to_stage(stage, "/tree_grid", inputs=inputs)
+    print(f"✓ Applied node graph to /tree_grid (with all input values)")
 
     print(f"\nExecuting graph (this may take a moment)...")
 
-    # Execute
+    # Execute (inputs already set, but can pass again)
     g.prepare_and_execute(inputs, required_node=write_node)
     print(f"✓ Executed graph")
 
