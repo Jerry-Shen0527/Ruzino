@@ -1,7 +1,9 @@
-#ifndef _WIN32
 #define _USE_MATH_DEFINES
-#endif
 #include <cmath>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 #include <gtest/gtest.h>
 
 #include <Eigen/Eigen>
@@ -361,9 +363,7 @@ TEST_F(LargeScaleTest, Poisson2DScaling)
     std::cout << "\n=== 2D Poisson Matrix Scaling Test ===" << std::endl;
     printHeader();
 
-    std::vector<int> grid_sizes = {
-        32, 64, 100, 141
-    };  // n = 1K, 4K, 10K, 20K
+    std::vector<int> grid_sizes = { 32, 64, 100, 141 };  // n = 1K, 4K, 10K, 20K
     auto available_types = SolverFactory::getAvailableTypes();
 
     for (int grid_size : grid_sizes) {
@@ -402,9 +402,9 @@ TEST_F(LargeScaleTest, RandomSparseScaling)
     printHeader();
 
     std::vector<std::pair<int, float>> test_cases = {
-        { 2000, 0.01f },    // 2K x 2K, 1% density
-        { 5000, 0.005f },   // 5K x 5K, 0.5% density
-        { 10000, 0.002f }   // 10K x 10K, 0.2% density
+        { 2000, 0.01f },   // 2K x 2K, 1% density
+        { 5000, 0.005f },  // 5K x 5K, 0.5% density
+        { 10000, 0.002f }  // 10K x 10K, 0.2% density
     };
 
     auto available_types = SolverFactory::getAvailableTypes();
