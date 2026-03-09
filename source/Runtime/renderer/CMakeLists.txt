@@ -20,7 +20,7 @@ RUZINO_ADD_LIB(
 	PYTHON_WRAP_DIR python
 )
 
-target_compile_definitions(hd_RUZINO PRIVATE HOST_CODE=1)
+target_compile_definitions(hd_RUZINO PRIVATE HOST_CODE=1 _USE_MATH_DEFINES)
 target_compile_definitions(hd_RUZINO PRIVATE GPU_ASSEMBLER_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/source/shaders/")
 target_compile_definitions(hd_RUZINO PUBLIC RUZINO_BACKEND_NVRHI)
 target_compile_definitions(hd_RUZINO_py PRIVATE NOMINMAX)

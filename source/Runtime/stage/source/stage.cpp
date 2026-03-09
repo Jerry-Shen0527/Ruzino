@@ -1,4 +1,7 @@
 #include "stage/stage.hpp"
+#include <filesystem>
+#include <functional>
+#include <sstream>
 
 #include <pxr/base/gf/rotation.h>
 #include <pxr/pxr.h>
@@ -340,6 +343,34 @@ std::string Stage::stage_content() const
     std::string str;
     stage->GetRootLayer()->ExportToString(&str);
     return str;
+}
+
+
+std::string Stage::traverse_stage(int max_depth) const
+{
+    std::stringstream ss;
+    ss << "Stage traversal (max_depth=" << max_depth << "):\n";
+    
+    if (!stage) {
+        ss << "  Stage is null\n";
+        return ss.str();
+    }
+    
+    std::function<void(const pxr::UsdPrim&, int)> traverse;
+    traverse = [&](const pxr::UsdPrim& prim, int depth) {
+        if (max_depth >= 0 && depth > max_depth) return;
+        
+        std::string indent(depth * 2, ' ');
+        ss << indent << prim.GetPath().GetString() 
+           << " (type: " << prim.GetTypeName() << ")\n";
+        
+        for (const auto& child : prim.GetChildren()) {
+            traverse(child, depth + 1);
+        }
+    };
+    
+    traverse(stage->GetPseudoRoot(), 0);
+    return ss.str();
 }
 
 pxr::UsdStageRefPtr Stage::get_usd_stage() const
