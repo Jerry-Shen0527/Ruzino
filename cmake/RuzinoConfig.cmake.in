@@ -1,0 +1,98 @@
+# RuzinoConfig.cmake - CMake configuration file for Ruzino
+
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Set variables using PACKAGE_PREFIX_DIR which correctly resolves to the install root
+set_and_check(RUZINO_INCLUDE_DIR "${PACKAGE_PREFIX_DIR}/include")
+set_and_check(RUZINO_LIB_DIR "${PACKAGE_PREFIX_DIR}/lib")
+set_and_check(RUZINO_BIN_DIR "${PACKAGE_PREFIX_DIR}/bin")
+
+set(RUZINO_FOUND TRUE)
+set(RUZINO_VERSION @PROJECT_VERSION@)
+
+message(STATUS "Ruzino version: ${RUZINO_VERSION}")
+message(STATUS "Ruzino include dir: ${RUZINO_INCLUDE_DIR}")
+message(STATUS "Ruzino lib dir: ${RUZINO_LIB_DIR}")
+message(STATUS "Ruzino bin dir: ${RUZINO_BIN_DIR}")
+
+# Find bundled dependencies that have their own cmake configs
+list(APPEND CMAKE_PREFIX_PATH "${PACKAGE_PREFIX_DIR}")
+find_dependency(Eigen3 QUIET)
+find_dependency(EnTT QUIET)
+find_dependency(autodiff QUIET)
+find_dependency(OpenVolumeMesh QUIET)
+find_dependency(glfw3 QUIET)
+
+# Create IMPORTED targets for all installed Ruzino libraries
+if(WIN32)
+    set(_ruzino_lib_suffix ".lib")
+    set(_ruzino_bin_suffix ".dll")
+else()
+    set(_ruzino_lib_suffix ".so")
+    set(_ruzino_bin_suffix ".so")
+endif()
+
+# List of Ruzino-owned libraries (auto-created as IMPORTED targets under Ruzino:: namespace)
+set(_ruzino_own_libs
+    RZSolver
+    RHI
+    GPUContext
+    nodes_core
+    nodes_system
+    nodes_ui_imgui
+    blueprints
+    GUI
+    rzconsole
+    rzpython
+    geometry
+    MCore
+    stage
+    stage_listener
+    hd_RUZINO
+    usdview_widget
+    polyscope_widget
+    rzsim
+    RZFemBem
+    BPM
+    light_field
+    TreeGen
+    TerrainGen
+)
+
+foreach(_lib ${_ruzino_own_libs})
+    if(NOT TARGET Ruzino::${_lib})
+        set(_lib_file "${RUZINO_LIB_DIR}/${_lib}${_ruzino_lib_suffix}")
+        set(_bin_file "${RUZINO_BIN_DIR}/${_lib}${_ruzino_bin_suffix}")
+        if(EXISTS "${_lib_file}")
+            add_library(Ruzino::${_lib} SHARED IMPORTED)
+            set_target_properties(Ruzino::${_lib} PROPERTIES
+                INTERFACE_INCLUDE_DIRECTORIES "${RUZINO_INCLUDE_DIR}"
+                IMPORTED_IMPLIB "${_lib_file}"
+            )
+            if(EXISTS "${_bin_file}")
+                set_target_properties(Ruzino::${_lib} PROPERTIES
+                    IMPORTED_LOCATION "${_bin_file}"
+                )
+            endif()
+        elseif(EXISTS "${_bin_file}")
+            # Linux/macOS: only .so file, no separate import lib
+            add_library(Ruzino::${_lib} SHARED IMPORTED)
+            set_target_properties(Ruzino::${_lib} PROPERTIES
+                INTERFACE_INCLUDE_DIRECTORIES "${RUZINO_INCLUDE_DIR}"
+                IMPORTED_LOCATION "${_bin_file}"
+            )
+        endif()
+    endif()
+endforeach()
+unset(_lib_file)
+unset(_bin_file)
+unset(_ruzino_own_libs)
+unset(_ruzino_lib_suffix)
+unset(_ruzino_bin_suffix)
+
+# Check if all required components are found
+if(Ruzino_FIND_REQUIRED)
+    # Add any required dependency checks here
+endif()

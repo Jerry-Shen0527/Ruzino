@@ -60,6 +60,9 @@ if(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   set(OUTPUT_DIR ${OUTPUT_DIR} PARENT_SCOPE)
 endif()
 
+set(RZNODE_CUDA_EXTRA_FLAGS "--forward-unknown-to-host-compiler;-c" CACHE STRING "Extra CUDA compiler flags for Ruzino" FORCE)
+
+set(RZNODE_LINK_PYTHON_TO_NANOBIND ON CACHE BOOL "Link Python3::Python to nanobind targets" FORCE)
 
 include(cmake/AddLibrary.cmake)
 
@@ -217,3 +220,60 @@ if (ENABLE_SUBMISSION)
       add_subdirectory(${ABS_SUBMISSION} "OuterSubmissions")
     endif ()
 endif ()
+
+# ========== Package Configuration for find_package ==========
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    include(CMakePackageConfigHelpers)
+    
+    # Generate the version file
+    write_basic_package_version_file(
+        "${CMAKE_CURRENT_BINARY_DIR}/RuzinoConfigVersion.cmake"
+        VERSION ${PROJECT_VERSION}
+        COMPATIBILITY SameMajorVersion
+    )
+    
+    # Set install directories
+    set(CMAKE_INSTALL_INCLUDEDIR "include")
+    set(CMAKE_INSTALL_LIBDIR "lib")
+    set(CMAKE_INSTALL_BINDIR "bin")
+    
+    # Configure the config file
+    configure_package_config_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RuzinoConfig.cmake.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/RuzinoConfig.cmake"
+        INSTALL_DESTINATION lib/cmake/Ruzino
+        PATH_VARS CMAKE_INSTALL_INCLUDEDIR CMAKE_INSTALL_LIBDIR CMAKE_INSTALL_BINDIR
+    )
+    
+    # Install config files
+    install(FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/RuzinoConfig.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/RuzinoConfigVersion.cmake"
+        DESTINATION lib/cmake/Ruzino
+    )
+    
+    # Install build tools for plugin development
+    # Install AddLibrary.cmake
+    install(FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/AddLibrary.cmake"
+        DESTINATION lib/cmake/Ruzino
+    )
+    
+    # Install node system build tools
+    install(FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/source/Core/rznode/cmake/AddLibrary.cmake"
+        "${CMAKE_CURRENT_SOURCE_DIR}/source/Core/rznode/cmake/AddNodes.cmake"
+        "${CMAKE_CURRENT_SOURCE_DIR}/source/Core/rznode/cmake/nodes_json.py"
+        DESTINATION lib/cmake/Ruzino/rznode/cmake
+    )
+    
+    # Install Find modules
+    install(DIRECTORY
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/"
+        DESTINATION lib/cmake/Ruzino
+        FILES_MATCHING PATTERN "Find*.cmake"
+    )
+    
+    message(STATUS "Install prefix: ${CMAKE_INSTALL_PREFIX}")
+    message(STATUS "Build tools will be installed for plugin development")
+endif()

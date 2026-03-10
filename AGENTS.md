@@ -2,6 +2,12 @@
 
 This document describes the build and test workflow for the Ruzino Framework3D project.
 
+## Project Structure
+
+- `cmake/AddLibrary.cmake`: Thin wrapper (7 lines) that delegates to `source/Core/rznode/cmake/AddLibrary.cmake`
+- Configuration flags (`RZNODE_CUDA_EXTRA_FLAGS`, `RZNODE_LINK_PYTHON_TO_NANOBIND`) are set in root `CMakeLists.txt`
+- `source/Core/rznode/cmake/AddLibrary.cmake`: Canonical source containing all build logic
+
 ## Build Process
 
 ### Prerequisites
