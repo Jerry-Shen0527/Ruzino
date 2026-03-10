@@ -60,7 +60,11 @@ if(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   set(OUTPUT_DIR ${OUTPUT_DIR} PARENT_SCOPE)
 endif()
 
-set(RZNODE_CUDA_EXTRA_FLAGS "--forward-unknown-to-host-compiler;-c" CACHE STRING "Extra CUDA compiler flags for Ruzino" FORCE)
+if(NOT WIN32)
+  set(RZNODE_CUDA_EXTRA_FLAGS "--forward-unknown-to-host-compiler" CACHE STRING "Extra CUDA compiler flags for Ruzino" FORCE)
+else()
+  set(RZNODE_CUDA_EXTRA_FLAGS "" CACHE STRING "Extra CUDA compiler flags for Ruzino" FORCE)
+endif()
 
 set(RZNODE_LINK_PYTHON_TO_NANOBIND ON CACHE BOOL "Link Python3::Python to nanobind targets" FORCE)
 
