@@ -91,7 +91,53 @@ set_target_properties(uninstall PROPERTIES FOLDER "ThirdParty")
 add_library(exprtk INTERFACE)
 target_include_directories(exprtk INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/exprtk")
 
+set(NB_CREATE_INSTALL_RULES OFF CACHE BOOL "Disable nanobind install rules" FORCE)
 add_subdirectory(nanobind)
+
+# ========== Install external dependencies ==========
+# These external libraries are built as shared libraries but may not have install rules.
+# We need to install them so that the install directory is self-contained.
+
+# Install glfw
+install(TARGETS glfw
+    RUNTIME DESTINATION bin
+    LIBRARY DESTINATION bin
+    ARCHIVE DESTINATION lib
+)
+
+# Install imgui
+install(TARGETS imgui
+    RUNTIME DESTINATION bin
+    LIBRARY DESTINATION bin
+    ARCHIVE DESTINATION lib
+)
+
+# Install nanobind (conditional - target may not exist)
+if(TARGET nanobind)
+    install(TARGETS nanobind
+        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION bin
+        ARCHIVE DESTINATION lib
+    )
+endif()
+
+# Install nvrhi
+if(TARGET nvrhi)
+    install(TARGETS nvrhi
+        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION bin
+        ARCHIVE DESTINATION lib
+    )
+endif()
+
+# Install autodiff
+if(TARGET autodiff)
+    install(TARGETS autodiff
+        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION bin
+        ARCHIVE DESTINATION lib
+    )
+endif()
 
 
 # polyscope

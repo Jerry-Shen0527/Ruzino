@@ -235,6 +235,41 @@ def install_dependencies(
     else:
         print(f"  ⚠ imgui.ini not found at {src_file}")
 
+    # Copy built DLLs from Binaries to install directory
+    print("\n9. Copying built DLLs to install directory...")
+    binaries_dir = project_root / "Binaries" / build_type
+
+    if binaries_dir.exists():
+        # List of important DLLs that might not be installed by CMake
+        important_dlls = [
+            "nanobind.dll",
+            "spdlog.dll",
+            "glfw3.dll",
+            "imgui.dll",
+            "nvrhi.dll",
+        ]
+
+        copied_count = 0
+        for dll_name in important_dlls:
+            src_dll = binaries_dir / dll_name
+            if src_dll.exists():
+                dst_dll = bin_dir / dll_name
+                if dry_run:
+                    print(f"  [DRY RUN] Would copy {dll_name}")
+                else:
+                    shutil.copy2(src_dll, dst_dll)
+                    print(f"  ✓ Copied {dll_name}")
+                    copied_count += 1
+            else:
+                print(f"  ℹ {dll_name} not found in {binaries_dir}")
+
+        if copied_count > 0:
+            print(f"  ✓ Copied {copied_count} built DLLs")
+        else:
+            print(f"  ℹ No built DLLs found to copy")
+    else:
+        print(f"  ⚠ Binaries directory not found: {binaries_dir}")
+
     # Summary
     print("\n" + "=" * 80)
     print("DEPENDENCY INSTALLATION SUMMARY")
