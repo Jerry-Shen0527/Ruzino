@@ -89,7 +89,8 @@ def install_dependencies(
             print(f"  [DRY RUN] Would copy {folder} to {dst_path}")
             return
 
-            # Copy files,        for root, dirs, files in os.walk(src_path):
+        # Copy files
+        for root, dirs, files in os.walk(src_path):
             relative_path = os.path.relpath(root, src_path)
             dst_dir = dst_path / relative_path
             os.makedirs(dst_dir, exist_ok=True)

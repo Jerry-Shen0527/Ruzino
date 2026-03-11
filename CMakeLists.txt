@@ -252,6 +252,11 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     )
     
     # Install config files
+    install(FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/RuzinoConfig.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/RuzinoConfigVersion.cmake"
+        DESTINATION lib/cmake/Ruzino
+    )
     # Install geometry_nodes headers for plugin development
     install(FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/source/Editor/geometry_nodes/geom_node_base.h"

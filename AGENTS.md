@@ -57,6 +57,60 @@ To check if build is ready:
 - Verify `build/build.ninja` exists
 - Verify `build/CMakeCache.txt` exists
 
+### Automated Build and Install
+
+For a complete SDK-style installation, use the `build_and_install.py` script:
+
+```bash
+# Basic installation
+python scripts/build_and_install.py --install-dir ../RuzinoInstall
+
+# Installation with tests
+python scripts/build_and_install.py --install-dir ../RuzinoInstall --with-tests
+
+# Custom build type
+python scripts/build_and_install.py --install-dir ../RuzinoInstall --build-type Debug
+
+```
+
+This script performs:
+1. Configure CMake with the specified install prefix
+2. Build the project using cmake --build
+3. Install all targets (executables, libraries, headers)
+4. Copy all runtime dependencies (DLLs, resources, Python, CUDA, etc.)
+5. Optionally run tests to verify the installation
+
+Result: A self-contained SDK directory usable via CMake's `find_package(Ruzino)`.
+
+### Manual Installation Process
+
+For manual control over the installation process:
+
+1. **Configure with install prefix**:
+   ```bash
+   cmake -DCMAKE_INSTALL_PREFIX=/path/to/install -DRUZINO_INSTALL_TESTS=ON ..
+   ```
+
+2. **Build and install**:
+   ```bash
+   cmake --build .
+   cmake --install .
+   ```
+
+3. **Install dependencies** (SDK runtime libraries):
+   ```bash
+   python scripts/install_deps.py --install-dir /path/to/install --build-type Release
+   ```
+
+This script will:
+1. Configure CMake with the specified install prefix
+2. Build the project
+3. Install all targets (executables, libraries, headers)
+4. Copy all runtime dependencies (DLLs, resources, Python, CUDA, etc.)
+5. Optionally run tests to verify the installation
+
+The result is a self-contained SDK directory that can be used by other projects via CMake's `find_package(Ruzino)`.
+
 ## Test Process
 
 ### Running All Tests

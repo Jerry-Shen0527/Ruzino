@@ -1,9 +1,39 @@
 # CMake Installation Guide
 
 ## Overview
-The Ruzino project now supports full CMake installation with applications, tests, dependencies, and resources.
 
-## Installation Steps
+The Ruzino project supports full CMake installation with applications, tests, dependencies, and resources.
+
+**Recommended Method:** Use the `build_and_install.py` script for a complete automated installation.
+
+## Quick Start (Recommended)
+
+The easiest way to build and install Ruzino is using the provided script:
+
+```bash
+# Basic installation
+python scripts/build_and_install.py --install-dir /path/to/RuzinoInstall
+
+# Installation with tests
+python scripts/build_and_install.py --install-dir /path/to/RuzinoInstall --with-tests
+
+# With CUDA support
+python scripts/build_and_install.py --install-dir /path/to/RuzinoInstall --with-cuda
+
+# Dry run to see what would happen
+python scripts/build_and_install.py --install-dir /path/to/RuzinoInstall --dry-run
+```
+
+The script will:
+1. Configure CMake with proper installation prefix
+2. Build the project using Ninja
+3. Install CMake targets (executables, libraries, headers)
+4. Install all runtime dependencies (DLLs, resources, Python, etc.)
+5. Run tests if `--with-tests` is specified
+
+## Manual Installation Steps
+
+If you prefer manual installation or need more control:
 
 ### 1. Configure with Install Prefix
 ```bash
@@ -30,6 +60,21 @@ cmake --install .
 ```bash
 python scripts/install_deps.py --install-dir /path/to/RuzinoInstall --build-type Release
 ```
+
+## Build and Install Script Options
+
+The `build_and_install.py` script supports the following options:
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--install-dir` | Installation directory (required) | - |
+| `--build-type` | Build type: Release, Debug, RelWithDebInfo | Release |
+| `--with-tests` | Install and run tests | Off |
+| `--with-cuda` | Enable CUDA support | Off |
+| `--build-dir` | Build directory | build |
+| `--dry-run` | Print actions without executing | Off |
+| `--skip-prerequisites` | Skip prerequisites check | Off |
+| `--no-color` | Disable colored output | Off |
 
 ## What Gets Installed
 
@@ -143,6 +188,20 @@ RuzinoInstall/
 5. **Headless Testing**: UI/rendering tests are automatically skipped in headless environments.
 
 ## Example Complete Installation
+
+### Using the Automated Script (Recommended)
+
+```bash
+# Full installation with tests
+python scripts/build_and_install.py \
+  --install-dir ../RuzinoInstall \
+  --with-tests \
+  --build-type Release
+
+# The script handles all steps automatically
+```
+
+### Manual Installation
 
 ```bash
 # 1. Configure
