@@ -6,10 +6,56 @@
 #include <rzpython/interpreter.hpp>
 #include <rzpython/rzpython.hpp>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include "rzconsole/string_utils.h"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 namespace python {
+
+namespace {
+    std::filesystem::path get_scripts_dir()
+    {
+        static std::filesystem::path cached_path;
+        static bool initialized = false;
+
+        if (initialized) {
+            return cached_path;
+        }
+        initialized = true;
+
+        std::filesystem::path exe_dir;
+
+#ifdef _WIN32
+        char path_buf[MAX_PATH];
+        DWORD len = GetModuleFileNameA(NULL, path_buf, MAX_PATH);
+        if (len > 0 && len < MAX_PATH) {
+            exe_dir = std::filesystem::path(path_buf).parent_path();
+        }
+#else
+        exe_dir = std::filesystem::current_path();
+#endif
+
+        std::vector<std::filesystem::path> search_paths = {
+            exe_dir / "scripts",
+            exe_dir / ".." / ".." / "source" / "Plugins" / "scripts",
+        };
+
+        for (const auto& p : search_paths) {
+            if (std::filesystem::exists(p) &&
+                std::filesystem::is_directory(p)) {
+                cached_path = std::filesystem::canonical(p);
+                spdlog::debug("Scripts directory: {}", cached_path.string());
+                return cached_path;
+            }
+        }
+
+        cached_path = "scripts";
+        return cached_path;
+    }
+}  // namespace
 
 PythonInterpreter::PythonInterpreter() : python_initialized_(false)
 {
@@ -54,9 +100,8 @@ PythonInterpreter::PythonInterpreter() : python_initialized_(false)
 
                 // If path is relative, search in default scripts directory
                 if (script_path.is_relative()) {
-                    std::filesystem::path default_dir =
-                        "../../source/Plugins/scripts";
-                    std::filesystem::path full_path = default_dir / script_path;
+                    std::filesystem::path scripts_dir = get_scripts_dir();
+                    std::filesystem::path full_path = scripts_dir / script_path;
                     if (std::filesystem::exists(full_path)) {
                         script_path = full_path;
                     }
@@ -498,7 +543,7 @@ std::vector<std::string> PythonInterpreter::SuggestExecCompletion(
     std::string prefix = cmd_str.substr(arg_start);
 
     // Get default scripts directory
-    std::filesystem::path scripts_dir = "../../source/Plugins/scripts";
+    std::filesystem::path scripts_dir = get_scripts_dir();
 
     try {
         if (std::filesystem::exists(scripts_dir) &&

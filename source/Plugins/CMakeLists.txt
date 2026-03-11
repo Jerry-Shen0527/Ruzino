@@ -10,3 +10,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/hd_RUZINO_GL)
 
 # add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/light_field)
 # add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/optimization)
+
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/scripts/
+    DESTINATION bin/scripts
+    FILES_MATCHING PATTERN "*.py")
