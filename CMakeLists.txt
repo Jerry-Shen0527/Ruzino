@@ -205,6 +205,8 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/source/Plugins)
 add_subdirectory(tests)
 
 option(ENABLE_SUBMISSION "Enable USTC Homework Submission" OFF)
+option(RUZINO_INSTALL_TESTS "Install test executables" OFF)
+option(RUZINO_INSTALL_TESTS "Install test executables along with the project" OFF)
 # submission directory
 if (ENABLE_SUBMISSION)
     set(editor_dir ${CMAKE_CURRENT_SOURCE_DIR}/source/Editor)
@@ -250,17 +252,11 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     )
     
     # Install config files
+    # Install geometry_nodes headers for plugin development
     install(FILES
-        "${CMAKE_CURRENT_BINARY_DIR}/RuzinoConfig.cmake"
-        "${CMAKE_CURRENT_BINARY_DIR}/RuzinoConfigVersion.cmake"
-        DESTINATION lib/cmake/Ruzino
-    )
-    
-    # Install build tools for plugin development
-    # Install AddLibrary.cmake
-    install(FILES
-        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/AddLibrary.cmake"
-        DESTINATION lib/cmake/Ruzino
+        "${CMAKE_CURRENT_SOURCE_DIR}/source/Editor/geometry_nodes/geom_node_base.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/source/Editor/geometry_nodes/macro_map.h"
+        DESTINATION include/geometry_nodes
     )
     
     # Install node system build tools
@@ -276,6 +272,13 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/"
         DESTINATION lib/cmake/Ruzino
         FILES_MATCHING PATTERN "Find*.cmake"
+    )
+    
+    # Install geometry_nodes headers for plugin development
+    install(FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/source/Editor/geometry_nodes/geom_node_base.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/source/Editor/geometry_nodes/macro_map.h"
+        DESTINATION include/geometry_nodes
     )
     
     message(STATUS "Install prefix: ${CMAKE_INSTALL_PREFIX}")

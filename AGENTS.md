@@ -129,6 +129,44 @@ cd ..
 python scripts/run_all_tests.py
 ```
 
+## Installation Process
+
+### CMake Install
+
+The project supports full installation via CMake:
+
+1. **Configure with install prefix**:
+   ```bash
+   cmake -DRUZINO_INSTALL_TESTS=ON -DCMAKE_INSTALL_PREFIX=/path/to/install ..
+   ```
+
+2. **Build and install**:
+   ```bash
+   cmake --build .
+   cmake --install .
+   ```
+
+3. **Install dependencies** (SDK runtime libraries):
+   ```bash
+   python scripts/install_deps.py --install-dir /path/to/install --build-type Release
+   ```
+
+### Installation Structure
+
+- `bin/`: Applications (Ruzino.exe, node_editor.exe, etc.) and DLLs
+- `bin/tests/`: Test executables (when `RUZINO_INSTALL_TESTS=ON`)
+- `lib/`: Static libraries and CMake config files
+- `include/`: Public headers
+
+### Testing Installation
+
+Run tests from installation directory:
+```bash
+python scripts/run_all_tests.py --install-dir /path/to/install
+```
+
+See `INSTALL.md` for detailed installation documentation.
+
 ## Notes for AI Agents
 
 When making code changes:
@@ -138,6 +176,7 @@ When making code changes:
 3. **Use the test runner** instead of running individual tests manually
 4. **Review test output** carefully - failed tests will show detailed error messages
 5. **Build type matters** - ensure you're building the same type (Release/Debug) as the test runner expects
+6. **Installation support** - Use `scripts/install_deps.py` to copy dependencies to install directory
 
 ## Troubleshooting
 
