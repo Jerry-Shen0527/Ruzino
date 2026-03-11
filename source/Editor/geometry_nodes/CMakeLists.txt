@@ -4,9 +4,6 @@ if(ENABLE_GEOM_USD_EXTENSION)
 	list(APPEND GEOMETRY_NODES_COMPILE_DEFS GEOM_USD_EXTENSION=1)
 endif()
 
-# Add shader directory definition
-list(APPEND GEOMETRY_NODES_COMPILE_DEFS GEOM_NODES_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/")
-
 add_nodes(
 	TARGET_NAME geometry_nodes 
 	SRC_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
@@ -16,6 +13,12 @@ add_nodes(
 
 target_link_libraries(node_points_to_mesh PRIVATE usd hioOpenVDB)
 target_link_libraries(node_texture_io PRIVATE stb_image)
+
+# Install geometry nodes shader files
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/SPH/shaders/
+	DESTINATION bin/shaders/geom_nodes/SPH
+	PATTERN ".git" EXCLUDE
+)
 
 add_library(tetgen STATIC ${CMAKE_CURRENT_SOURCE_DIR}/tetgen/tetgen.cxx ${CMAKE_CURRENT_SOURCE_DIR}/tetgen/tetgen.h ${CMAKE_CURRENT_SOURCE_DIR}/tetgen/predicates.cxx)
 set_target_properties(tetgen PROPERTIES ${OUTPUT_DIR})

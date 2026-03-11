@@ -5,9 +5,16 @@
 #include "slang.h"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
-class SlangShaderCompiler {
+
+enum class ShaderDirType { Renderer, GPUAssembler, GeomNodes };
+
+class RHI_API SlangShaderCompiler {
    public:
     static std::filesystem::path find_root(const std::filesystem::path& p);
+
+    // Get shader directory based on type (works in both development and
+    // installed environments)
+    static std::filesystem::path get_shader_dir(ShaderDirType type);
 
     static void save_file(const std::string& filename, const char* data);
 

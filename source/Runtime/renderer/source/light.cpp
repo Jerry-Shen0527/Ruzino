@@ -4,6 +4,7 @@
 
 #include <filesystem>
 
+#include "../../../Core/RHI/source/shaderCompiler.h"
 #include "../nodes/shaders/shaders/Scene/Lights/LightData.slang"
 #include "RHI/Hgi/format_conversion.hpp"
 #include "pxr/imaging/glf/simpleLight.h"
@@ -750,8 +751,10 @@ void Hd_RUZINO_Dome_Light::Sync(
             // If not absolute, prepend RENDERER_SHADER_DIR (same logic as
             // path_tracing.cpp)
             if (!shader_file_path.is_absolute()) {
-                shader_file_path =
-                    std::filesystem::path(RENDERER_SHADER_DIR) / shader_path;
+                shader_file_path = std::filesystem::path(
+                                       SlangShaderCompiler::get_shader_dir(
+                                           ShaderDirType::Renderer)) /
+                                   shader_path;
             }
 
             if (std::filesystem::exists(shader_file_path) &&

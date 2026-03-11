@@ -2,7 +2,7 @@ add_library(shaders_interface INTERFACE)
 target_include_directories(shaders_interface INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/nodes/shaders/shaders)
 target_include_directories(shaders_interface INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/nodes/render_node_base)
 target_include_directories(shaders_interface INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/nodes/)
-target_compile_definitions(shaders_interface INTERFACE RENDERER_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/nodes/shaders/" NOMINMAX)
+target_compile_definitions(shaders_interface INTERFACE NOMINMAX)
 
 # Skip hd_RUZINO (NVRHI backend) compilation in homework mode to avoid conflicts with GL backend
 if(NOT USTC_HOMEWORK_PLUGINS)
@@ -21,13 +21,23 @@ RUZINO_ADD_LIB(
 )
 
 target_compile_definitions(hd_RUZINO PRIVATE HOST_CODE=1 _USE_MATH_DEFINES)
-target_compile_definitions(hd_RUZINO PRIVATE GPU_ASSEMBLER_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/source/shaders/")
 target_compile_definitions(hd_RUZINO PUBLIC RUZINO_BACKEND_NVRHI)
 target_compile_definitions(hd_RUZINO_py PRIVATE NOMINMAX)
 target_link_libraries(hd_RUZINO_py PRIVATE shaders_interface)
 target_include_directories(hd_RUZINO PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/nodes/shaders/shaders)
 target_include_directories(hd_RUZINO PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/source)
 
+# Install renderer shader files
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/nodes/shaders/shaders/
+	DESTINATION bin/shaders/renderer/shaders
+	PATTERN ".git" EXCLUDE
+)
+
+# Install GPU assembler shader files
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/source/shaders/
+	DESTINATION bin/shaders/gpu_assembler
+	PATTERN ".git" EXCLUDE
+)
 
 add_nodes(
 	TARGET_NAME render_nodes 

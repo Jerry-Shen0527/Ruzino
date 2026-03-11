@@ -64,6 +64,7 @@ def install_dependencies(
     # Create install directories
     bin_dir = install_dir / "bin"
     lib_dir = install_dir / "lib"
+    project_root = Path(__file__).parent.parent
 
     if not dry_run:
         bin_dir.mkdir(parents=True, exist_ok=True)
@@ -72,7 +73,6 @@ def install_dependencies(
     # Helper function to copy SDK files to install directory
     def copy_sdk_to_install(folder: str, dst: str = ""):
         """Copy files from SDK folder to install directory."""
-        project_root = Path(__file__).parent.parent
         src_path = project_root / "SDK" / folder
 
         if not src_path.exists():
@@ -119,6 +119,42 @@ def install_dependencies(
     # Copy Slang
     print("\n2. Installing Slang...")
     copy_sdk_to_install("slang/bin")
+
+    print("\n2.1. Installing Slang headers (for shader compilation)...")
+    if dry_run:
+        print(
+            f"  [DRY RUN] Would copy SDK/slang/include to {bin_dir}/SDK/slang/include"
+        )
+    else:
+        slang_include_src = project_root / "SDK" / "slang" / "include"
+        slang_include_dst = bin_dir / "SDK" / "slang" / "include"
+        if slang_include_src.exists():
+            if slang_include_dst.exists():
+                shutil.rmtree(slang_include_dst)
+            slang_include_dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(slang_include_src, slang_include_dst)
+            print(f"  ✓ Copied Slang headers to {slang_include_dst}")
+        else:
+            print(f"  ⚠ Slang headers not found at {slang_include_src}")
+
+    print("\n2.2. Installing nvapi resources (for HLSL compilation)...")
+    if dry_run:
+        print(
+            f"  [DRY RUN] Would copy source/Runtime/renderer/resources/nvapi to {bin_dir}/resources/nvapi"
+        )
+    else:
+        nvapi_src = (
+            project_root / "source" / "Runtime" / "renderer" / "resources" / "nvapi"
+        )
+        nvapi_dst = bin_dir / "resources" / "nvapi"
+        if nvapi_src.exists():
+            if nvapi_dst.exists():
+                shutil.rmtree(nvapi_dst)
+            nvapi_dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(nvapi_src, nvapi_dst)
+            print(f"  ✓ Copied nvapi resources to {nvapi_dst}")
+        else:
+            print(f"  ⚠ nvapi resources not found at {nvapi_src}")
 
     # Copy D3D12 (Windows only)
     if is_windows():
@@ -237,6 +273,7 @@ def install_dependencies(
 
     # Copy built DLLs from Binaries to install directory
     print("\n9. Copying built DLLs to install directory...")
+
     binaries_dir = project_root / "Binaries" / build_type
 
     if binaries_dir.exists():
@@ -254,6 +291,7 @@ def install_dependencies(
             src_dll = binaries_dir / dll_name
             if src_dll.exists():
                 dst_dll = bin_dir / dll_name
+
                 if dry_run:
                     print(f"  [DRY RUN] Would copy {dll_name}")
                 else:
@@ -263,10 +301,11 @@ def install_dependencies(
             else:
                 print(f"  ℹ {dll_name} not found in {binaries_dir}")
 
-        if copied_count > 0:
+        if copied_count == 0:
             print(f"  ✓ Copied {copied_count} built DLLs")
         else:
-            print(f"  ℹ No built DLLs found to copy")
+            print(f"  ⚠ No built DLLs found to copy")
+
     else:
         print(f"  ⚠ Binaries directory not found: {binaries_dir}")
 

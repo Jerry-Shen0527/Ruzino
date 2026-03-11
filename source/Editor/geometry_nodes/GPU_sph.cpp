@@ -1,3 +1,4 @@
+#include "../../Core/RHI/source/shaderCompiler.h"
 #include "GCore/Components/MeshComponent.h"
 #include "GCore/Components/PointsComponent.h"
 #include "GCore/algorithms/intersection.h"
@@ -244,7 +245,7 @@ NODE_EXECUTION_FUNCTION(gpu_sph)
         ProgramDesc desc;
         desc.shaderType = nvrhi::ShaderType::Compute;
         desc.set_path(
-            GEOM_NODES_SHADER_DIR "SPH/shaders/SPH_init_density.slang");
+            SlangShaderCompiler::get_shader_dir(ShaderDirType::GeomNodes).string() + "/SPH/shaders/SPH_init_density.slang");
         desc.set_entry_name("main");
         storage.init_density_program = resource_allocator.create(desc);
         if (!storage.init_density_program->get_error_string().empty()) {
@@ -262,7 +263,7 @@ NODE_EXECUTION_FUNCTION(gpu_sph)
         ProgramDesc desc;
         desc.shaderType = nvrhi::ShaderType::Compute;
         desc.set_path(
-            GEOM_NODES_SHADER_DIR "SPH/shaders/SPH_update_density.slang");
+            SlangShaderCompiler::get_shader_dir(ShaderDirType::GeomNodes).string() + "/SPH/shaders/SPH_update_density.slang");
         desc.set_entry_name("main");
         storage.density_program = resource_allocator.create(desc);
         if (!storage.density_program->get_error_string().empty()) {
@@ -280,7 +281,7 @@ NODE_EXECUTION_FUNCTION(gpu_sph)
         ProgramDesc desc;
         desc.shaderType = nvrhi::ShaderType::Compute;
         desc.set_path(
-            GEOM_NODES_SHADER_DIR "SPH/shaders/SPH_update_pressure.slang");
+            SlangShaderCompiler::get_shader_dir(ShaderDirType::GeomNodes).string() + "/SPH/shaders/SPH_update_pressure.slang");
         desc.set_entry_name("main");
         storage.pressure_program = resource_allocator.create(desc);
         if (!storage.pressure_program->get_error_string().empty()) {
@@ -298,7 +299,7 @@ NODE_EXECUTION_FUNCTION(gpu_sph)
         ProgramDesc desc;
         desc.shaderType = nvrhi::ShaderType::Compute;
         desc.set_path(
-            GEOM_NODES_SHADER_DIR "SPH/shaders/SPH_update_viscosity.slang");
+            SlangShaderCompiler::get_shader_dir(ShaderDirType::GeomNodes).string() + "/SPH/shaders/SPH_update_viscosity.slang");
         desc.set_entry_name("main");
         storage.viscosity_program = resource_allocator.create(desc);
         if (!storage.viscosity_program->get_error_string().empty()) {
@@ -315,7 +316,7 @@ NODE_EXECUTION_FUNCTION(gpu_sph)
     if (!storage.update_pos_program) {
         ProgramDesc desc;
         desc.shaderType = nvrhi::ShaderType::Compute;
-        desc.set_path(GEOM_NODES_SHADER_DIR "SPH/shaders/SPH_update_pos.slang");
+        desc.set_path(SlangShaderCompiler::get_shader_dir(ShaderDirType::GeomNodes).string() + "/SPH/shaders/SPH_update_pos.slang");
         desc.set_entry_name("main");
         storage.update_pos_program = resource_allocator.create(desc);
         if (!storage.update_pos_program->get_error_string().empty()) {

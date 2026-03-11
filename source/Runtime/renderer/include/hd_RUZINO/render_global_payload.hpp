@@ -26,20 +26,7 @@ struct HD_RUZINO_API RenderGlobalPayload {
 
     RenderGlobalPayload(const RenderGlobalPayload& rhs);
 
-    RenderGlobalPayload& operator=(const RenderGlobalPayload& rhs)
-    {
-        cameras = rhs.cameras;
-        lights = rhs.lights;
-        materials = rhs.materials;
-        nvrhi_device = rhs.nvrhi_device;
-        shader_factory = ShaderFactory(&resource_allocator);
-        shader_factory.set_search_path(RENDERER_SHADER_DIR);
-        shader_factory.add_search_path("usd/hd_RUZINO/resources/libraries");
-
-        resource_allocator.device = nvrhi_device;
-        resource_allocator.shader_factory = &shader_factory;
-        return *this;
-    }
+    RenderGlobalPayload& operator=(const RenderGlobalPayload& rhs);
 
     ResourceAllocator resource_allocator;
     ShaderFactory shader_factory;

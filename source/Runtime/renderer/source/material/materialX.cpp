@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <fstream>
 
+#include "../../../../Core/RHI/source/shaderCompiler.h"
 #include "MaterialX/SlangShaderGenerator.h"
 #include "MaterialXCore/Document.h"
 #include "MaterialXFormat/Util.h"
@@ -91,8 +92,10 @@ void Hd_RUZINO_MaterialX::Sync(
         if (!shader_path.empty()) {
             std::filesystem::path shader_file_path(shader_path);
             if (!shader_file_path.is_absolute()) {
-                shader_file_path =
-                    std::filesystem::path(RENDERER_SHADER_DIR) / shader_path;
+                shader_file_path = std::filesystem::path(
+                                       SlangShaderCompiler::get_shader_dir(
+                                           ShaderDirType::Renderer)) /
+                                   shader_path;
             }
 
             if (std::filesystem::exists(shader_file_path) &&

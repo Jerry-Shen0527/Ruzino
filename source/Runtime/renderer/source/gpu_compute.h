@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../../../Core/RHI/source/shaderCompiler.h"
 #include "RHI/ResourceManager/resource_allocator.hpp"
 #include "RHI/ShaderFactory/shader.hpp"
 #include "api.h"
@@ -51,7 +52,8 @@ struct HD_RUZINO_API GPUSceneAssember {
             get_instance().shader_factory.get();
         get_instance().sa_resource_allocator.device = RHI::get_device();
         get_instance().sa_resource_allocator.shader_factory->add_search_path(
-            GPU_ASSEMBLER_SHADER_DIR);
+            SlangShaderCompiler::get_shader_dir(ShaderDirType::GPUAssembler)
+                .string());
     }
 
     static void destroy_instance()

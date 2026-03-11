@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <memory>
 
+#include "../../../Core/RHI/source/shaderCompiler.h"
 #include "../source/renderTLAS.h"
 #include "GPUContext/program_vars.hpp"
 #include "GPUContext/raytracing_context.hpp"
@@ -211,7 +212,9 @@ NODE_EXECUTION_FUNCTION(path_tracing)
             // Path already validated above
             std::filesystem::path shader_path(current_dome_shader_path);
             if (!shader_path.is_absolute()) {
-                shader_path = std::filesystem::path(RENDERER_SHADER_DIR) /
+                shader_path = std::filesystem::path(
+                                  SlangShaderCompiler::get_shader_dir(
+                                      ShaderDirType::Renderer)) /
                               current_dome_shader_path;
             }
 
@@ -252,7 +255,9 @@ NODE_EXECUTION_FUNCTION(path_tracing)
                 std::filesystem::path shader_path(
                     material.second->GetShaderPath());
                 if (!shader_path.is_absolute()) {
-                    shader_path = std::filesystem::path(RENDERER_SHADER_DIR) /
+                    shader_path = std::filesystem::path(
+                                      SlangShaderCompiler::get_shader_dir(
+                                          ShaderDirType::Renderer)) /
                                   material.second->GetShaderPath();
                 }
                 program_desc.add_path(shader_path.string());

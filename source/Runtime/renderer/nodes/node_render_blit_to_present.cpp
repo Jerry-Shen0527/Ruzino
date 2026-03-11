@@ -1,3 +1,4 @@
+#include "../../../Core/RHI/source/shaderCompiler.h"
 #include "RHI/internal/resources.hpp"
 #include "hd_RUZINO/render_node_base.h"
 #include "nodes/core/def/node_def.hpp"
@@ -107,7 +108,8 @@ NODE_EXECUTION_FUNCTION(blit_to_present)
     auto vertex_shader = shader_factory.compile_shader(
         "main",
         nvrhi::ShaderType::Vertex,
-        RENDERER_SHADER_DIR "shaders/utils/" + vs_name,
+        SlangShaderCompiler::get_shader_dir(ShaderDirType::Renderer).string() +
+            "/shaders/utils/" + vs_name,
         vs_reflection_info,
         error_string,
         macro_defines);
@@ -118,7 +120,8 @@ NODE_EXECUTION_FUNCTION(blit_to_present)
     auto pixel_shader = shader_factory.compile_shader(
         "main",
         nvrhi::ShaderType::Pixel,
-        RENDERER_SHADER_DIR "shaders/utils/" + ps_name,
+        SlangShaderCompiler::get_shader_dir(ShaderDirType::Renderer).string() +
+            "/shaders/utils/" + ps_name,
         ps_reflection_info,
         error_string,
         macro_defines);

@@ -17,13 +17,20 @@ message(STATUS "Ruzino include dir: ${RUZINO_INCLUDE_DIR}")
 message(STATUS "Ruzino lib dir: ${RUZINO_LIB_DIR}")
 message(STATUS "Ruzino bin dir: ${RUZINO_BIN_DIR}")
 
+# Export OUTPUT_DIR for downstream projects to use same binary output location
+set(RUZINO_OUTPUT_DIR
+    RUNTIME_OUTPUT_DIRECTORY "${RUZINO_BIN_DIR}"
+    LIBRARY_OUTPUT_DIRECTORY "${RUZINO_BIN_DIR}"
+    ARCHIVE_OUTPUT_DIRECTORY "${RUZINO_LIB_DIR}"
+)
+
 # Find bundled dependencies that have their own cmake configs
 list(APPEND CMAKE_PREFIX_PATH "${PACKAGE_PREFIX_DIR}")
 find_dependency(Eigen3 QUIET)
 find_dependency(EnTT QUIET)
 find_dependency(autodiff QUIET)
 find_dependency(OpenVolumeMesh QUIET)
-find_dependency(glfw3 QUIET)
+# Note: glfw3 is not a public dependency, so we don't search for it here
 
 # Create IMPORTED targets for all installed Ruzino libraries
 if(WIN32)
@@ -86,6 +93,104 @@ foreach(_lib ${_ruzino_own_libs})
         endif()
     endif()
 endforeach()
+
+# List of static libraries (bundled dependencies)
+set(_ruzino_static_libs
+    nvrhi
+    gtest
+    gtest_main
+    gmock
+    gmock_main
+)
+
+foreach(_lib ${_ruzino_static_libs})
+    if(NOT TARGET Ruzino::${_lib})
+        set(_lib_file "${RUZINO_LIB_DIR}/${_lib}${_ruzino_lib_suffix}")
+        if(EXISTS "${_lib_file}")
+            add_library(Ruzino::${_lib} STATIC IMPORTED)
+            set_target_properties(Ruzino::${_lib} PROPERTIES
+                INTERFACE_INCLUDE_DIRECTORIES "${RUZINO_INCLUDE_DIR}"
+                IMPORTED_LOCATION "${_lib_file}"
+            )
+        endif()
+    endif()
+endforeach()
+
+# imgui is a special case - it can be shared or static
+if(NOT TARGET Ruzino::imgui)
+    set(_imgui_lib "${RUZINO_LIB_DIR}/imgui${_ruzino_lib_suffix}")
+    set(_imgui_dll "${RUZINO_BIN_DIR}/imgui${_ruzino_bin_suffix}")
+    if(EXISTS "${_imgui_lib}")
+        if(EXISTS "${_imgui_dll}")
+            # Shared library
+            add_library(Ruzino::imgui SHARED IMPORTED)
+            set_target_properties(Ruzino::imgui PROPERTIES
+                INTERFACE_INCLUDE_DIRECTORIES "${RUZINO_INCLUDE_DIR}"
+                IMPORTED_IMPLIB "${_imgui_lib}"
+                IMPORTED_LOCATION "${_imgui_dll}"
+            )
+        else()
+            # Static library
+            add_library(Ruzino::imgui STATIC IMPORTED)
+            set_target_properties(Ruzino::imgui PROPERTIES
+                INTERFACE_INCLUDE_DIRECTORIES "${RUZINO_INCLUDE_DIR}"
+                IMPORTED_LOCATION "${_imgui_lib}"
+            )
+        endif()
+    endif()
+    unset(_imgui_lib)
+    unset(_imgui_dll)
+endif()
+
+# Add external dependency include paths for specific libraries
+if(TARGET Ruzino::RHI)
+    # RHI needs slang headers
+    set(_slang_include_dir "${RUZINO_BIN_DIR}/SDK/slang/include")
+    if(EXISTS "${_slang_include_dir}")
+        get_target_property(_rhi_includes Ruzino::RHI INTERFACE_INCLUDE_DIRECTORIES)
+        list(APPEND _rhi_includes "${_slang_include_dir}")
+        set_target_properties(Ruzino::RHI PROPERTIES
+            INTERFACE_INCLUDE_DIRECTORIES "${_rhi_includes}"
+        )
+    endif()
+    # RHI depends on nvrhi and imgui
+    if(TARGET Ruzino::nvrhi)
+        set_target_properties(Ruzino::RHI PROPERTIES
+            INTERFACE_LINK_LIBRARIES "Ruzino::nvrhi;Ruzino::imgui"
+        )
+    endif()
+    unset(_slang_include_dir)
+    unset(_rhi_includes)
+endif()
+
+if(TARGET Ruzino::GUI)
+    # GUI depends on RHI and imgui
+    if(TARGET Ruzino::RHI AND TARGET Ruzino::imgui)
+        set_target_properties(Ruzino::GUI PROPERTIES
+            INTERFACE_LINK_LIBRARIES "Ruzino::RHI;Ruzino::imgui"
+        )
+    endif()
+    # GUI needs imgui include paths directly
+    set(_imgui_include_dirs
+        "${RUZINO_INCLUDE_DIR}/imgui"
+        "${RUZINO_INCLUDE_DIR}/imgui/backends"
+        "${RUZINO_INCLUDE_DIR}/imgui/misc/cpp"
+        "${RUZINO_INCLUDE_DIR}/ImGuiFileDialog"
+        "${RUZINO_INCLUDE_DIR}/user_imgui"
+    )
+    get_target_property(_gui_includes Ruzino::GUI INTERFACE_INCLUDE_DIRECTORIES)
+    foreach(_dir ${_imgui_include_dirs})
+        if(EXISTS "${_dir}")
+            list(APPEND _gui_includes "${_dir}")
+        endif()
+    endforeach()
+    set_target_properties(Ruzino::GUI PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${_gui_includes}"
+    )
+    unset(_imgui_include_dirs)
+    unset(_gui_includes)
+endif()
+
 unset(_lib_file)
 unset(_bin_file)
 unset(_ruzino_own_libs)

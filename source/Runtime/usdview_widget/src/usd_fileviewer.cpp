@@ -1,5 +1,7 @@
 #include <pxr/usd/usdGeom/pointInstancer.h>
 #include <pxr/usd/usdGeom/points.h>
+
+#include "../../../Core/RHI/source/shaderCompiler.h"
 #define IMGUI_DEFINE_MATH_OPERATORS
 
 #include <spdlog/spdlog.h>
@@ -8,12 +10,13 @@
 #ifdef _WIN32
 #define STRNCPY_SAFE(dest, src, size) strncpy_s(dest, size, src, _TRUNCATE)
 #else
-#define STRNCPY_SAFE(dest, src, size) do { \
-    if (size > 0) { \
-        strncpy(dest, src, size - 1); \
-        dest[size - 1] = '\0'; \
-    } \
-} while(0)
+#define STRNCPY_SAFE(dest, src, size)     \
+    do {                                  \
+        if (size > 0) {                   \
+            strncpy(dest, src, size - 1); \
+            dest[size - 1] = '\0';        \
+        }                                 \
+    } while (0)
 #endif
 
 #include <algorithm>
@@ -895,29 +898,10 @@ void UsdFileViewer::EditValue()
                                 std::vector<std::string> shaderFiles;
                                 shaderFiles.push_back("");  // Empty option
 
-                                // Get executable path and construct shader
-                                // directory path
-                                std::filesystem::path executable_path;
-#ifdef _WIN32
-                                char p[MAX_PATH];
-                                GetModuleFileNameA(NULL, p, MAX_PATH);
-                                executable_path =
-                                    std::filesystem::path(p).parent_path();
-#else
-                                char p[PATH_MAX];
-                                ssize_t count =
-                                    readlink("/proc/self/exe", p, PATH_MAX);
-                                if (count != -1) {
-                                    p[count] = '\0';
-                                    executable_path =
-                                        std::filesystem::path(p).parent_path();
-                                }
-#endif
                                 std::filesystem::path shaderDir =
-                                    executable_path /
-                                    "../../source/Runtime/renderer/nodes/"
-                                    "shaders/shaders/callables";
-                                shaderDir = shaderDir.lexically_normal();
+                                    SlangShaderCompiler::get_shader_dir(
+                                        ShaderDirType::Renderer) /
+                                    "shaders/callables";
 
                                 if (std::filesystem::exists(shaderDir)) {
                                     try {
@@ -1039,7 +1023,8 @@ void UsdFileViewer::EditValue()
                             else {
                                 // Normal string input
                                 char buffer[512];
-                                STRNCPY_SAFE(buffer, value.c_str(), sizeof(buffer));
+                                STRNCPY_SAFE(
+                                    buffer, value.c_str(), sizeof(buffer));
                                 if (ImGui::InputText(
                                         "##value", buffer, sizeof(buffer))) {
                                     attr.Set(std::string(buffer));
@@ -1051,7 +1036,8 @@ void UsdFileViewer::EditValue()
                             SdfAssetPath assetPath = v.Get<SdfAssetPath>();
                             std::string pathStr = assetPath.GetAssetPath();
                             char buffer[512];
-                            STRNCPY_SAFE(buffer, pathStr.c_str(), sizeof(buffer));
+                            STRNCPY_SAFE(
+                                buffer, pathStr.c_str(), sizeof(buffer));
                             if (ImGui::InputText(
                                     "##value", buffer, sizeof(buffer))) {
                                 attr.Set(SdfAssetPath(std::string(buffer)));
@@ -1062,7 +1048,8 @@ void UsdFileViewer::EditValue()
                             TfToken token = v.Get<TfToken>();
                             std::string tokenStr = token.GetString();
                             char buffer[512];
-                            STRNCPY_SAFE(buffer, tokenStr.c_str(), sizeof(buffer));
+                            STRNCPY_SAFE(
+                                buffer, tokenStr.c_str(), sizeof(buffer));
                             if (ImGui::InputText(
                                     "##value", buffer, sizeof(buffer))) {
                                 attr.Set(TfToken(std::string(buffer)));

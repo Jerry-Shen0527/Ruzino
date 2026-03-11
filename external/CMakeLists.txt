@@ -111,6 +111,27 @@ install(TARGETS imgui
     LIBRARY DESTINATION bin
     ARCHIVE DESTINATION lib
 )
+# Install imgui headers
+install(DIRECTORY ${imgui_SOURCE_DIR}/
+    DESTINATION include/imgui
+    FILES_MATCHING PATTERN "*.h"
+)
+install(DIRECTORY ${imgui_SOURCE_DIR}/backends/
+    DESTINATION include/imgui/backends
+    FILES_MATCHING PATTERN "*.h"
+)
+install(DIRECTORY ${imgui_SOURCE_DIR}/misc/cpp/
+    DESTINATION include/imgui/misc/cpp
+    FILES_MATCHING PATTERN "*.h"
+)
+install(DIRECTORY ${imgui_file_SOURCE_DIR}/
+    DESTINATION include/ImGuiFileDialog
+    FILES_MATCHING PATTERN "*.h"
+)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/user_imgui/
+    DESTINATION include/user_imgui
+    FILES_MATCHING PATTERN "*.h"
+)
 
 # Install nanobind (conditional - target may not exist)
 if(TARGET nanobind)
