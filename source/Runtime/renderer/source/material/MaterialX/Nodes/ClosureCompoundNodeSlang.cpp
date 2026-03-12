@@ -75,9 +75,6 @@ void ClosureCompoundNodeSlang::emitFunctionDefinition(
             shadergen.emitLineBreak(stage);
             return;
         }
-        throw std::runtime_error(
-            "ClosureCompoundNodeSlang::emitFunctionDefinition - Only "
-            "standard_surface and UsdPreviewSurface are supported.");
 
         // Emit functions for all child nodes
         shadergen.emitFunctionDefinitions(*_rootGraph, context, stage);
