@@ -34,8 +34,8 @@ HEADLESS_SKIP_PATTERNS = [
     "opengl",
     "vulkan",
     "dx12",
-    "cuda",
-    "rhi",
+    "cudarhi",
+    "mtlx",  # Add mtlx to skip list
 ]
 
 
@@ -225,6 +225,16 @@ def run_cpp_tests(
             skipped += 1
             continue
 
+        # Set up environment for MaterialX resource search
+        test_env = os.environ.copy()
+        materialx_search_path = str(binaries_dir / "resources")
+        if "MATERIALX_SEARCH_PATH" in test_env:
+            test_env["MATERIALX_SEARCH_PATH"] = (
+                materialx_search_path + ";" + test_env["MATERIALX_SEARCH_PATH"]
+            )
+        else:
+            test_env["MATERIALX_SEARCH_PATH"] = materialx_search_path
+
         try:
             result = subprocess.run(
                 [str(exe_path)],
@@ -232,6 +242,7 @@ def run_cpp_tests(
                 timeout=300,  # 5 minute timeout per test
                 capture_output=True,
                 text=True,
+                env=test_env,
             )
 
             if result.returncode == 0:
