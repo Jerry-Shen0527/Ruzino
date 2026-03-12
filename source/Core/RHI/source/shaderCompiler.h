@@ -6,7 +6,7 @@
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 
-enum class ShaderDirType { Renderer, GPUAssembler, GeomNodes };
+enum class ShaderDirType { Renderer, GPUAssembler, GeomNodes, GeomCompute };
 
 class RHI_API SlangShaderCompiler {
    public:

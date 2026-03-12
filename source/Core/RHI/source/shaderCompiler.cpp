@@ -86,15 +86,22 @@ std::filesystem::path SlangShaderCompiler::get_shader_dir(ShaderDirType type)
 
     if (cached_shader_dir.empty()) {
         auto exe_dir = get_executable_dir();
-        auto installed_shader_dir = exe_dir / "shaders";
 
-        if (std::filesystem::exists(installed_shader_dir) &&
-            std::filesystem::exists(installed_shader_dir / "renderer")) {
-            is_installed = true;
-            cached_shader_dir = installed_shader_dir;
+        std::vector<std::filesystem::path> shader_search_paths = {
+            exe_dir / "shaders",
+            exe_dir.parent_path() / "shaders",
+        };
+
+        for (const auto& candidate : shader_search_paths) {
+            if (std::filesystem::exists(candidate) &&
+                std::filesystem::exists(candidate / "renderer")) {
+                is_installed = true;
+                cached_shader_dir = candidate;
+                break;
+            }
         }
-        else {
-            is_installed = false;
+
+        if (!is_installed) {
             auto root = find_root(".");
 
             std::vector<std::filesystem::path> possible_paths = {
@@ -123,6 +130,8 @@ std::filesystem::path SlangShaderCompiler::get_shader_dir(ShaderDirType type)
                 return cached_shader_dir / "gpu_assembler";
             case ShaderDirType::GeomNodes:
                 return cached_shader_dir / "geom_nodes";
+            case ShaderDirType::GeomCompute:
+                return cached_shader_dir / "geom_compute";
             default: return cached_shader_dir;
         }
     }
@@ -135,6 +144,9 @@ std::filesystem::path SlangShaderCompiler::get_shader_dir(ShaderDirType type)
                 return cached_base_dir / "Runtime" / "renderer" / "source";
             case ShaderDirType::GeomNodes:
                 return cached_base_dir / "Editor" / "geometry_nodes";
+            case ShaderDirType::GeomCompute:
+                return cached_base_dir / "Editor" / "geometry" / "source" /
+                       "algorithms" / "CS";
             default: return cached_base_dir;
         }
     }
