@@ -285,9 +285,9 @@ def main():
     parser = argparse.ArgumentParser(description="Run Ruzino tests")
     parser.add_argument("test_filter", nargs="?", help="Filter to run specific tests")
     parser.add_argument(
-        "--no-skip-headless",
+        "--skip-headless",
         action="store_true",
-        help="Do not skip UI/rendering tests in headless environment",
+        help="Skip UI/rendering tests in headless environment",
     )
     parser.add_argument(
         "--install-dir",
@@ -297,7 +297,7 @@ def main():
     args = parser.parse_args()
 
     test_filter = args.test_filter
-    skip_headless = not args.no_skip_headless
+    skip_headless = args.skip_headless
 
     if test_filter:
         print(f"Running tests matching: {test_filter}")
