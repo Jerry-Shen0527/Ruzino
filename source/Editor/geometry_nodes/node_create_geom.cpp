@@ -328,4 +328,28 @@ NODE_EXECUTION_FUNCTION(create_double_tetrahedron)
     return true;
 }
 
+NODE_DECLARATION_FUNCTION(create_star_box)
+{
+    b.add_input<float>("width").min(0.1).max(20).default_val(2.0f);
+    b.add_input<float>("height").min(0.1).max(20).default_val(2.0f);
+    b.add_input<float>("depth").min(0.1).max(20).default_val(1.0f);
+    b.add_input<float>("triangle_size").min(0.0).max(1.0).default_val(0.5f);
+    b.add_input<float>("star_factor").min(0.0).max(1.0).default_val(0.0f);
+    b.add_output<Geometry>("Geometry");
+}
+
+NODE_EXECUTION_FUNCTION(create_star_box)
+{
+    float width = params.get_input<float>("width");
+    float height = params.get_input<float>("height");
+    float depth = params.get_input<float>("depth");
+    float triangle_size = params.get_input<float>("triangle_size");
+    float star_factor = params.get_input<float>("star_factor");
+
+    Geometry geometry =
+        create_varying_star(star_factor, triangle_size, width, height, depth);
+    params.set_output("Geometry", std::move(geometry));
+    return true;
+}
+
 NODE_DEF_CLOSE_SCOPE

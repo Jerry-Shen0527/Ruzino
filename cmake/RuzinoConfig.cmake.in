@@ -9,6 +9,9 @@ set_and_check(RUZINO_INCLUDE_DIR "${PACKAGE_PREFIX_DIR}/include")
 set_and_check(RUZINO_LIB_DIR "${PACKAGE_PREFIX_DIR}/lib")
 set_and_check(RUZINO_BIN_DIR "${PACKAGE_PREFIX_DIR}/bin")
 
+# Set RZNODES_DIR for add_nodes functionality
+set_and_check(RUZNODES_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/rznode")
+
 set(RUZINO_FOUND TRUE)
 set(RUZINO_VERSION @PROJECT_VERSION@)
 
@@ -16,6 +19,7 @@ message(STATUS "Ruzino version: ${RUZINO_VERSION}")
 message(STATUS "Ruzino include dir: ${RUZINO_INCLUDE_DIR}")
 message(STATUS "Ruzino lib dir: ${RUZINO_LIB_DIR}")
 message(STATUS "Ruzino bin dir: ${RUZINO_BIN_DIR}")
+message(STATUS "RZNODES_DIR: ${RUZNODES_DIR}")
 
 # Export OUTPUT_DIR for downstream projects to use same binary output location
 set(RUZINO_OUTPUT_DIR
@@ -201,3 +205,6 @@ unset(_ruzino_bin_suffix)
 if(Ruzino_FIND_REQUIRED)
     # Add any required dependency checks here
 endif()
+
+# Include AddNodes.cmake to provide add_nodes() function
+include("${RUZNODES_DIR}/AddNodes.cmake")

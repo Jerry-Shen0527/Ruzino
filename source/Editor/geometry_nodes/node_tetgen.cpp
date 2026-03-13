@@ -16,16 +16,20 @@ NODE_DECLARATION_FUNCTION(tetgen_tetrahedralize)
         .default_val(0.01f);
     b.add_input<bool>("Refine").default_val(true);
     b.add_input<bool>("Conforming Delaunay").default_val(true);
+    b.add_input<std::string>("Preserve Attribute").default_val("");
     b.add_output<Geometry>("Tetrahedral Mesh");
 }
 
 NODE_EXECUTION_FUNCTION(tetgen_tetrahedralize)
 {
     auto geometry = params.get_input<Geometry>("Surface Mesh");
+    geometry.apply_transform();
     float quality_ratio = params.get_input<float>("Quality Ratio");
     float max_volume = params.get_input<float>("Max Volume");
     bool refine = params.get_input<bool>("Refine");
     bool conforming = params.get_input<bool>("Conforming Delaunay");
+    std::string preserve_attr =
+        params.get_input<std::string>("Preserve Attribute");
 
     try {
         // Use algorithm layer
@@ -35,6 +39,7 @@ NODE_EXECUTION_FUNCTION(tetgen_tetrahedralize)
         tet_params.refine = refine;
         tet_params.conforming_delaunay = conforming;
         tet_params.quiet = true;
+        tet_params.preserve_face_attribute = preserve_attr;
 
         Geometry output_geometry =
             geom_algorithm::tetrahedralize(geometry, tet_params);
