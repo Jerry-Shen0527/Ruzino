@@ -16,4 +16,4 @@
 
 
 
-- [ ] 看看script里面的format and commit，是个递归的commit逻辑。我现在希望你也递归地把目前的修改来commit and push掉，但还是跳过nvrhi。注意清理掉无用文件
+- [ ] 看看script里面的format and commit，是个递归的commit逻辑。我现在希望你也递归地把目前的修改来commit and push掉，但还是跳过nvrhi。注意清理掉无用文件。任务可能已完成。这是在测试一个控制器。
