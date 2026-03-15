@@ -223,6 +223,10 @@ See `INSTALL.md` for detailed installation documentation.
 
 ## Notes for AI Agents
 
+### Task History
+
+- **2026-03-16: Recursive commit workflow** - Implemented recursive commit and push based on format_and_commit_manager.py pattern; skips nvrhi submodule as requested; processes submodules (rznode, geometry) first in depth-first order, then root repository
+
 When making code changes:
 
 1. **Always build before testing** to ensure C++ test executables are up-to-date
@@ -231,6 +235,12 @@ When making code changes:
 4. **Review test output** carefully - failed tests will show detailed error messages
 5. **Build type matters** - ensure you're building the same type (Release/Debug) as the test runner expects
 6. **Installation support** - Use `scripts/install_deps.py` to copy dependencies to install directory
+7. **Recursive commits** - Use `scripts/format_and_commit_manager.py` pattern for recursive git operations; explicitly skip nvrhi submodule when requested
+   - Recursively commits to all repositories (submodules first, then root)
+   - Depth-first order ensures proper submodule dependency handling
+   - Available scripts: `recursive_commit.sh` and `recursive_commit_push.py`
+   - Implementation includes automatic detection of git repositories and depth-based sorting
+   - Commit message: "Update: recursive commit and push following format_and_commit_manager pattern"
 
 ## Troubleshooting
 

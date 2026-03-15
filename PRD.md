@@ -14,4 +14,6 @@
 
 - [x] 现在把项目整个Install到../RuzinoInstall 是成功的，但是运行不起来。首先我能想到的第一个问题，就是 C:\Users\Pengfei\WorkSpace\Ruzino\source\Core\RHI\source\shaderCompiler.cpp 这里面不停向上找的逻辑会导致死循环，因为Ruzino.exe(以及其他的exe)现在的工作目录变了，和SDK的相对位置变了。修复这一点，可能既要考虑怎么把需要的文件install过去，又要考虑如何设计这里的查找方式。总之这样找parent的方式很蠢。
 
-- [ ] [867/1181] Building CXX object source\Editor\rzpython\CMakeFiles\rzpython.dir\source\tcp_server.cpp.obj         Please define _WIN32_WINNT or _WIN32_WINDOWS appropriately. For example: - add -D_WIN32_WINNT=0x0601 to the compiler command line; or - add _WIN32_WINNT=0x0601 to your project's Preprocessor Definitions. Assuming _WIN32_WINNT=0x0601 (i.e. Windows 7 target). [872/1181] Building CXX object source\Editor\geometry_...s\CMakeFiles\node_write_usd.dir\node_write_usd.cpp.ob  C:\Users\Pengfei\WorkSpace\Ruzino\source\Editor\geometry_nodes\node_write_usd.cpp(31): warning C4190: 'get_or_create_modifier_layer' 已指定 C 链接，但返回了与 C 不兼容的 'pxrInternal_v0_25_5__pxrReserved__::TfWeakPtr<pxrInternal_v0_25_5__pxrReserved__::SdfLayer>' C:\Users\Pengfei\WorkSpace\Ruzino\SDK\OpenUSD\Debug\include\pxr/base/tf/weakPtr.h(127): note: 参见“pxrInternal_v0_25_5__pxrReserved__::TfWeakPtr<pxrInternal_v0_25_5__pxrReserved__::SdfLayer>”的声明 构建的时候有这两个Warning
+
+
+- [ ] 看看script里面的format and commit，是个递归的commit逻辑。我现在希望你也递归地把目前的修改来commit and push掉，但还是跳过nvrhi。注意清理掉无用文件

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Post-install script to copy dependencies and resources to the install directory.
+Post-install script to copy dependencies and resources to install directory.
 
 This script is run after 'cmake --install' to copy all runtime dependencies:
 - DLLs from SDK
@@ -40,6 +40,7 @@ def install_dependencies(
     build_type: str = "Release",
     with_tests: bool = False,
     dry_run: bool = False,
+    force: bool = False,
 ):
     """
     Install all runtime dependencies to the install directory.
@@ -49,11 +50,13 @@ def install_dependencies(
         build_type: Build type (Release, Debug, RelWithDebInfo)
         with_tests: Whether to install test dependencies
         dry_run: If True, print actions without executing them
+        force: If True, force reinstall all dependencies
     """
     print(f"Installing dependencies to: {install_dir}")
     print(f"Build type: {build_type}")
     print(f"Install tests: {with_tests}")
     print(f"Dry run: {dry_run}")
+    print(f"Force: {force}")
 
     # Map RelWithDebInfo to Release for SDK folder selection
     sdk_folder = build_type
@@ -79,42 +82,114 @@ def install_dependencies(
             print(f"  ⚠ SDK folder not found: {src_path}")
             return
 
-        # Determine destination
-        if dst:
-            dst_path = bin_dir / dst
+        # Determine destination - default is bin_dir, but include files go to include_dir and lib files to lib_dir
+        if "lib" in folder.lower() and folder != "libraries":
+            dst_path = lib_dir
+        elif dst:
+            if folder == "include":
+                dst_path = Path(install_dir) / "include"
+            else:
+                dst_path = Path(bin_dir / dst) if dst else Path(bin_dir)
         else:
-            dst_path = bin_dir
+            dst_path = Path(bin_dir)
 
         if dry_run:
             print(f"  [DRY RUN] Would copy {folder} to {dst_path}")
             return
 
-        # Copy files
-        for root, dirs, files in os.walk(src_path):
-            relative_path = os.path.relpath(root, src_path)
-            dst_dir = dst_path / relative_path
-            os.makedirs(dst_dir, exist_ok=True)
+        # Copy files - for include folders, use copytree to preserve structure
+        if folder == "include":
+            if dry_run:
+                print(f"  [DRY RUN] Would copy {folder} to {dst_path}")
+            else:
+                print(f"  Copying {folder} to {dst_path}")
+                print(f"  dst_path.exists(): {dst_path.exists()}")
+                print(f"  force: {force}")
+                if dst_path.exists() and not force:
+                    shutil.rmtree(dst_path)
+                shutil.copytree(src_path, dst_path)
+                print(f"  ✓ Copied {folder} to {dst_path}")
+        else:
+            # For non-include folders, use original walk logic
+            # Determine if this is a lib directory - we want to keep .lib files from lib/ (import libraries)
+            # but skip .lib files from bin/ (static libs bundled with DLLs)
+            is_lib_dir = "lib" in folder.lower()
 
-            for file in files:
-                # Skip static/import libraries
-                if file.endswith(".lib") or file.endswith(".a"):
-                    print(f"  Skipping {os.path.join(root, file)}")
-                    continue
+            for root, dirs, files in os.walk(src_path):
+                relative_path = os.path.relpath(root, src_path)
+                dst_dir = dst_path / relative_path
+                os.makedirs(dst_dir, exist_ok=True)
 
-                src_file = Path(root) / file
-                dst_file = dst_dir / file
-                shutil.copy2(src_file, dst_file)
+                for file in files:
+                    if is_lib_dir:
+                        # In lib directory, only copy .lib files (import libraries)
+                        if not file.endswith(".lib"):
+                            continue
+                    else:
+                        # In bin directory, skip .lib files (static libs bundled with DLLs)
+                        if file.endswith(".lib") or file.endswith(".a"):
+                            print(f"  Skipping {os.path.join(root, file)}")
+                            continue
 
-        print(f"  ✓ Copied {folder} to {dst_path}")
+                    src_file = Path(root) / file
+                    dst_file = dst_dir / file
+                    shutil.copy2(src_file, dst_file)
+
+            print(f"  ✓ Copied {folder} to {dst_path}")
 
     # Copy OpenUSD dependencies
     print("\n1. Installing OpenUSD dependencies...")
     copy_sdk_to_install(f"OpenUSD/{sdk_folder}/bin")
-    copy_sdk_to_install(f"OpenUSD/{sdk_folder}/lib")
+
+    # Copy OpenUSD lib files (.lib import libraries to lib dir)
+    print("\n1.1. Installing OpenUSD lib files (import libraries)...")
+    src_lib_path = project_root / f"SDK/OpenUSD/{sdk_folder}/lib"
+    if src_lib_path.exists():
+        if dry_run:
+            print(f"  [DRY RUN] Would copy lib files from {src_lib_path} to {lib_dir}")
+        else:
+            lib_dir.mkdir(parents=True, exist_ok=True)
+            # Copy only .lib files from lib directory
+            for file in src_lib_path.glob("*.lib"):
+                shutil.copy2(file, lib_dir / file.name)
+            print(f"  ✓ Copied .lib files to {lib_dir}")
+
     copy_sdk_to_install(f"OpenUSD/{sdk_folder}/plugin")
     copy_sdk_to_install(f"OpenUSD/{sdk_folder}/libraries", dst="libraries")
     copy_sdk_to_install(f"OpenUSD/{sdk_folder}/resources", dst="resources")
     copy_sdk_to_install(f"OpenUSD/{sdk_folder}/lib/python", dst="")  # Python bindings
+
+    # Copy OpenUSD include (pxr) headers for usd_extension.h
+    print("\n1.1. Installing OpenUSD include headers...")
+    copy_sdk_to_install(f"OpenUSD/{sdk_folder}/include")
+
+    # Copy TBB import library (needed for linking)
+    print("\n1.2. Installing TBB import library...")
+    tbb_lib_src = project_root / f"SDK/OpenUSD/{sdk_folder}/lib/tbb.lib"
+    tbb_lib_dst = lib_dir / "tbb.lib"
+    if tbb_lib_src.exists():
+        if dry_run:
+            print(f"  [DRY RUN] Would copy tbb.lib to {tbb_lib_dst}")
+        else:
+            lib_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(tbb_lib_src, tbb_lib_dst)
+            print(f"  ✓ Copied tbb.lib to {tbb_lib_dst}")
+    else:
+        print(f"  ⚠ tbb.lib not found at {tbb_lib_src}")
+
+    # Copy Python import library (needed for linking)
+    print("\n1.3. Installing Python import library...")
+    python_lib_src = project_root / "SDK/python/libs/python311.lib"
+    python_lib_dst = lib_dir / "python311.lib"
+    if python_lib_src.exists():
+        if dry_run:
+            print(f"  [DRY RUN] Would copy python311.lib to {python_lib_dst}")
+        else:
+            lib_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(python_lib_src, python_lib_dst)
+            print(f"  ✓ Copied python311.lib to {python_lib_dst}")
+    else:
+        print(f"  ⚠ python311.lib not found at {python_lib_src}")
 
     # Copy Slang
     print("\n2. Installing Slang...")
@@ -136,25 +211,6 @@ def install_dependencies(
             print(f"  ✓ Copied Slang headers to {slang_include_dst}")
         else:
             print(f"  ⚠ Slang headers not found at {slang_include_src}")
-
-    print("\n2.2. Installing nvapi resources (for HLSL compilation)...")
-    if dry_run:
-        print(
-            f"  [DRY RUN] Would copy source/Runtime/renderer/resources/nvapi to {bin_dir}/resources/nvapi"
-        )
-    else:
-        nvapi_src = (
-            project_root / "source" / "Runtime" / "renderer" / "resources" / "nvapi"
-        )
-        nvapi_dst = bin_dir / "resources" / "nvapi"
-        if nvapi_src.exists():
-            if nvapi_dst.exists():
-                shutil.rmtree(nvapi_dst)
-            nvapi_dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(nvapi_src, nvapi_dst)
-            print(f"  ✓ Copied nvapi resources to {nvapi_dst}")
-        else:
-            print(f"  ⚠ nvapi resources not found at {nvapi_src}")
 
     # Copy D3D12 (Windows only)
     if is_windows():
@@ -199,7 +255,6 @@ def install_dependencies(
     cuda_path = os.environ.get("CUDA_PATH")
     if not cuda_path and is_linux():
         cuda_path = os.environ.get("CUDA_HOME")
-
     if cuda_path:
         if is_windows():
             cuda_libs = [
@@ -244,7 +299,6 @@ def install_dependencies(
 
             if src_lib:
                 dst_lib = bin_dir / lib_name
-
                 if dry_run:
                     print(f"  [DRY RUN] Would copy {lib_name}")
                 else:
@@ -260,9 +314,8 @@ def install_dependencies(
     print("\n8. Installing imgui.ini...")
     project_root = Path(__file__).parent.parent
     src_file = project_root / "tests" / "application" / "imgui.ini"
-
+    dst_file = bin_dir / "imgui.ini"
     if src_file.exists():
-        dst_file = bin_dir / "imgui.ini"
         if dry_run:
             print(f"  [DRY RUN] Would copy imgui.ini")
         else:
@@ -273,7 +326,6 @@ def install_dependencies(
 
     # Copy built DLLs from Binaries to install directory
     print("\n9. Copying built DLLs to install directory...")
-
     binaries_dir = project_root / "Binaries" / build_type
 
     if binaries_dir.exists():
@@ -291,7 +343,6 @@ def install_dependencies(
             src_dll = binaries_dir / dll_name
             if src_dll.exists():
                 dst_dll = bin_dir / dll_name
-
                 if dry_run:
                     print(f"  [DRY RUN] Would copy {dll_name}")
                 else:
@@ -305,7 +356,6 @@ def install_dependencies(
             print(f"  ✓ Copied {copied_count} built DLLs")
         else:
             print(f"  ⚠ No built DLLs found to copy")
-
     else:
         print(f"  ⚠ Binaries directory not found: {binaries_dir}")
 
@@ -345,6 +395,12 @@ def main():
         action="store_true",
         help="Print actions without executing them",
     )
+    parser.add_argument(
+        "--force",
+        "-f",
+        action="store_true",
+        help="Force reinstall all dependencies",
+    )
 
     args = parser.parse_args()
 
@@ -352,12 +408,13 @@ def main():
     build_type = args.build_type
     with_tests = args.with_tests
     dry_run = args.dry_run
+    force = args.force
 
     # Make install_dir absolute if it's relative
     if not install_dir.is_absolute():
         install_dir = Path(__file__).parent.parent / install_dir
 
-    install_dependencies(install_dir, build_type, with_tests, dry_run)
+    install_dependencies(install_dir, build_type, with_tests, dry_run, force)
 
 
 if __name__ == "__main__":

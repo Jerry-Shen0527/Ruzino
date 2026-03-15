@@ -37,6 +37,7 @@ cmake-build-*/
 submissions/lisi_homework
 *_gfgf.*
 *.log
+*.bak
 RuzinoInstall/
 report/
 report.md

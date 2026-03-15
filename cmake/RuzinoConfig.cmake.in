@@ -4,13 +4,13 @@
 
 include(CMakeFindDependencyMacro)
 
-# Set variables using PACKAGE_PREFIX_DIR which correctly resolves to the install root
+# Set variables using PACKAGE_PREFIX_DIR which correctly resolves to install root
 set_and_check(RUZINO_INCLUDE_DIR "${PACKAGE_PREFIX_DIR}/include")
 set_and_check(RUZINO_LIB_DIR "${PACKAGE_PREFIX_DIR}/lib")
 set_and_check(RUZINO_BIN_DIR "${PACKAGE_PREFIX_DIR}/bin")
 
 # Set RZNODES_DIR for add_nodes functionality
-set_and_check(RUZNODES_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/rznode")
+set_and_check(RZNODES_DIR "${PACKAGE_PREFIX_DIR}/lib/cmake/Ruzino/rznode")
 
 set(RUZINO_FOUND TRUE)
 set(RUZINO_VERSION @PROJECT_VERSION@)
@@ -19,7 +19,25 @@ message(STATUS "Ruzino version: ${RUZINO_VERSION}")
 message(STATUS "Ruzino include dir: ${RUZINO_INCLUDE_DIR}")
 message(STATUS "Ruzino lib dir: ${RUZINO_LIB_DIR}")
 message(STATUS "Ruzino bin dir: ${RUZINO_BIN_DIR}")
-message(STATUS "RZNODES_DIR: ${RUZNODES_DIR}")
+message(STATUS "RZNODES_DIR: ${RZNODES_DIR}")
+
+# Define OUTPUT_DIR for add_nodes() function (for use with set_target_properties)
+set(OUTPUT_DIR
+    RUNTIME_OUTPUT_DIRECTORY "${RUZINO_BIN_DIR}"
+    LIBRARY_OUTPUT_DIRECTORY "${RUZINO_BIN_DIR}"
+    ARCHIVE_OUTPUT_DIRECTORY "${RUZINO_LIB_DIR}"
+)
+
+# Define OUT_BINARY_DIR for JSON generation
+set(OUT_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}")
+
+# Find Python3 for nodes_json.py
+if(NOT Python3_EXECUTABLE)
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        set(Python3_EXECUTABLE ${Python3_EXECUTABLE})
+    endif()
+endif()
 
 # Export OUTPUT_DIR for downstream projects to use same binary output location
 set(RUZINO_OUTPUT_DIR
@@ -146,7 +164,25 @@ if(NOT TARGET Ruzino::imgui)
     unset(_imgui_dll)
 endif()
 
+# Add glm include path (glm headers are in include/glm/glm/)
+# Note: Need to include both glm/ and glm/glm/ because glm uses relative includes
+if(EXISTS "${RUZINO_INCLUDE_DIR}/glm")
+    set(_glm_include_dir "${RUZINO_INCLUDE_DIR}/glm")
+    set(_glm_glm_dir "${RUZINO_INCLUDE_DIR}/glm/glm")
+endif()
+
 # Add external dependency include paths for specific libraries
+if(TARGET Ruzino::nodes_core)
+    # nodes_core depends on TBB
+    set(_tbb_lib "${RUZINO_LIB_DIR}/tbb${_ruzino_lib_suffix}")
+    if(EXISTS "${_tbb_lib}")
+        set_target_properties(Ruzino::nodes_core PROPERTIES
+            INTERFACE_LINK_LIBRARIES "${_tbb_lib}"
+        )
+    endif()
+    unset(_tbb_lib)
+endif()
+
 if(TARGET Ruzino::RHI)
     # RHI needs slang headers
     set(_slang_include_dir "${RUZINO_BIN_DIR}/SDK/slang/include")
@@ -195,11 +231,73 @@ if(TARGET Ruzino::GUI)
     unset(_gui_includes)
 endif()
 
+# Add glm include path to geometry target (and other targets that use glm)
+if(TARGET Ruzino::geometry)
+    get_target_property(_geometry_includes Ruzino::geometry INTERFACE_INCLUDE_DIRECTORIES)
+
+    # Add glm include paths
+    if(DEFINED _glm_include_dir)
+        list(APPEND _geometry_includes "${_glm_include_dir}")
+        if(DEFINED _glm_glm_dir)
+            list(APPEND _geometry_includes "${_glm_glm_dir}")
+        endif()
+    endif()
+
+    # Add pxr (OpenUSD) include paths for usd_extension.h
+    set(_pxr_include_dir "${RUZINO_INCLUDE_DIR}/pxr")
+    if(EXISTS "${_pxr_include_dir}")
+        list(APPEND _geometry_includes "${_pxr_include_dir}")
+    endif()
+
+    # Add Python include path for pxr/external/boost/python
+    set(_python_include_dir "${RUZINO_BIN_DIR}/include")
+    if(EXISTS "${_python_include_dir}")
+        list(APPEND _geometry_includes "${_python_include_dir}")
+    endif()
+
+    # Add Python import library for linking
+    set(_python_lib "${RUZINO_LIB_DIR}/python311${_ruzino_lib_suffix}")
+    set(_geometry_link_libs "")
+    if(EXISTS "${_python_lib}")
+        set(_geometry_link_libs "${_python_lib}")
+    endif()
+
+    # Add pxr/usd libraries needed for usd_extension.h
+    # These are the core libraries for SDF layer handling
+    set(_pxr_libs
+        "${RUZINO_LIB_DIR}/usd_sdf${_ruzino_lib_suffix}"
+        "${RUZINO_LIB_DIR}/usd_ar${_ruzino_lib_suffix}"
+        "${RUZINO_LIB_DIR}/usd_tf${_ruzino_lib_suffix}"
+        "${RUZINO_LIB_DIR}/usd_gf${_ruzino_lib_suffix}"
+        "${RUZINO_LIB_DIR}/usd_vt${_ruzino_lib_suffix}"
+        "${RUZINO_LIB_DIR}/usd_arch${_ruzino_lib_suffix}"
+    )
+    foreach(_pxr_lib IN LISTS _pxr_libs)
+        if(EXISTS "${_pxr_lib}")
+            list(APPEND _geometry_link_libs "${_pxr_lib}")
+        endif()
+    endforeach()
+
+    set_target_properties(Ruzino::geometry PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${_geometry_includes}"
+        INTERFACE_COMPILE_DEFINITIONS "NOMINMAX;WIN32_LEAN_AND_MEAN"
+        INTERFACE_LINK_LIBRARIES "${_geometry_link_libs}"
+    )
+    unset(_geometry_includes)
+    unset(_pxr_include_dir)
+    unset(_python_include_dir)
+    unset(_python_lib)
+    unset(_geometry_link_libs)
+    unset(_pxr_libs)
+endif()
+
 unset(_lib_file)
 unset(_bin_file)
 unset(_ruzino_own_libs)
 unset(_ruzino_lib_suffix)
 unset(_ruzino_bin_suffix)
+unset(_glm_include_dir)
+unset(_glm_glm_dir)
 
 # Check if all required components are found
 if(Ruzino_FIND_REQUIRED)
@@ -207,4 +305,7 @@ if(Ruzino_FIND_REQUIRED)
 endif()
 
 # Include AddNodes.cmake to provide add_nodes() function
-include("${RUZNODES_DIR}/AddNodes.cmake")
+# Note: Use ${CMAKE_CURRENT_LIST_DIR} to resolve the path relative to this config file
+set(_RZNODES_ADDNODES_PATH "${CMAKE_CURRENT_LIST_DIR}/rznode/cmake")
+include("${_RZNODES_ADDNODES_PATH}/AddNodes.cmake")
+unset(_RZNODES_ADDNODES_PATH)
