@@ -233,9 +233,9 @@ def configure_cmake(
 
     # Add CUDA option
     if with_cuda:
-        cmd.append("-DUSTC_CG_WITH_CUDA=ON")
+        cmd.append("-DRUZINO_WITH_CUDA=ON")
     else:
-        cmd.append("-DUSTC_CG_WITH_CUDA=OFF")
+        cmd.append("-DRUZINO_WITH_CUDA=OFF")
 
     # Disable homework plugins for SDK installation
     cmd.append("-DUSTC_HOMEWORK_PLUGINS=OFF")

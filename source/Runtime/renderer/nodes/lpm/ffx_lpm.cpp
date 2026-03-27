@@ -23,7 +23,13 @@
 #include <stdlib.h>  // for _countof
 #include <string.h>  // for memset
 
-#include <cmath>  // for fabs, abs, sinf, sqrt, etc.
+#include <cmath>   // for fabs, abs, sinf, sqrt, etc.
+#include <cwchar>  // for wcscmp
+
+// Linux compatibility: _countof is MSVC-specific
+#ifndef _countof
+#define _countof(arr) (sizeof(arr) / sizeof(arr[0]))
+#endif
 
 #include "ffx_lpm_host.h"
 

@@ -6,7 +6,9 @@
 #define NOMINMAX
 #endif
 #include <stb_image.h>
+#ifdef _WIN32
 #include <windows.h>
+#endif
 
 #include "GCore/GOP.h"
 #include "GCore/Texture/Texture.h"

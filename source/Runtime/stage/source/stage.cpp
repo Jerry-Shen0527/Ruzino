@@ -1,7 +1,4 @@
 #include "stage/stage.hpp"
-#include <filesystem>
-#include <functional>
-#include <sstream>
 
 #include <pxr/base/gf/rotation.h>
 #include <pxr/pxr.h>
@@ -19,6 +16,8 @@
 #include <spdlog/spdlog.h>
 
 #include <filesystem>
+#include <functional>
+#include <sstream>
 
 #include "GCore/GOP.h"
 #include "MaterialXFormat/File.h"
@@ -345,30 +344,30 @@ std::string Stage::stage_content() const
     return str;
 }
 
-
 std::string Stage::traverse_stage(int max_depth) const
 {
     std::stringstream ss;
     ss << "Stage traversal (max_depth=" << max_depth << "):\n";
-    
+
     if (!stage) {
         ss << "  Stage is null\n";
         return ss.str();
     }
-    
+
     std::function<void(const pxr::UsdPrim&, int)> traverse;
     traverse = [&](const pxr::UsdPrim& prim, int depth) {
-        if (max_depth >= 0 && depth > max_depth) return;
-        
+        if (max_depth >= 0 && depth > max_depth)
+            return;
+
         std::string indent(depth * 2, ' ');
-        ss << indent << prim.GetPath().GetString() 
+        ss << indent << prim.GetPath().GetString()
            << " (type: " << prim.GetTypeName() << ")\n";
-        
+
         for (const auto& child : prim.GetChildren()) {
             traverse(child, depth + 1);
         }
     };
-    
+
     traverse(stage->GetPseudoRoot(), 0);
     return ss.str();
 }
@@ -525,28 +524,32 @@ void Stage::SaveAs(const std::string& new_path)
     std::filesystem::path abs_path =
         std::filesystem::path(new_path).lexically_normal();
 
-    // 1. Export current session layer to NEW modifier path BEFORE switching stages
+    // 1. Export current session layer to NEW modifier path BEFORE switching
+    // stages
     auto session_layer = stage->GetSessionLayer();
     if (session_layer) {
         // Calculate new modifier path based on new_path
         std::filesystem::path new_modifier_path = abs_path;
         std::string stem = abs_path.stem().string();
         std::string ext = abs_path.extension().string();
-        new_modifier_path = abs_path.parent_path() / (stem + "_modifiers" + ext);
-        
+        new_modifier_path =
+            abs_path.parent_path() / (stem + "_modifiers" + ext);
+
         session_layer->Export(new_modifier_path.string());
-        spdlog::info("[Stage] Exported session layer to: {}", new_modifier_path.string());
+        spdlog::info(
+            "[Stage] Exported session layer to: {}",
+            new_modifier_path.string());
     }
 
     // 2. Export root layer to new location
     stage->GetRootLayer()->Export(abs_path.string());
     m_stage_path = abs_path.string();
-    
+
     // 3. Reset and reopen stage
     modifier_layer_ = nullptr;
     stage = pxr::UsdStage::Open(m_stage_path);
     load_modifier_layer();
-    
+
     spdlog::info("Stage saved as: {}", m_stage_path);
 }
 
@@ -624,8 +627,10 @@ void Stage::load_modifier_layer()
     std::string content;
     file_layer->ExportToString(&content);
     session_layer->ImportFromString(content);
-    
-    spdlog::info("[Stage] Imported modifier layer into session layer: {}", modifier_path);
+
+    spdlog::info(
+        "[Stage] Imported modifier layer into session layer: {}",
+        modifier_path);
 }
 
 bool Stage::OpenStage(const std::string& path)
@@ -876,10 +881,6 @@ void Stage::on_prim_changed(const pxr::SdfPath& path)
         spdlog::info("[Stage] Marked prim as dirty: {}", path.GetString());
     }
 }
-
-// Explicit template instantiation for UsdLuxSphereLight (needed for Linux linking)
-#include <pxr/usd/usdLux/sphereLight.h>
-template pxr::UsdLuxSphereLight Stage::create_prim<pxr::UsdLuxSphereLight>(const pxr::SdfPath&, const std::string&) const;
 
 // Explicit template instantiation for UsdLuxSphereLight (needed for Linux
 // linking)

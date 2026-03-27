@@ -1,12 +1,17 @@
 #include "shaderCompiler.h"
 
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
+#include <vector>
 
 #include "RHI/api.h"
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <linux/limits.h>
+#include <unistd.h>
 #endif
 
 #include <filesystem>

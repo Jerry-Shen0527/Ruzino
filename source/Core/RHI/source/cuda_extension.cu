@@ -63,12 +63,12 @@ void CUDALinearBuffer::assign_host_data(
 void CUDALinearBuffer::copy_from_device(ICUDALinearBuffer* src)
 {
     auto src_desc = src->getDesc();
-    
+
     // Ensure buffers have compatible sizes
     size_t src_bytes = src_desc.element_count * src_desc.element_size;
     size_t dst_bytes = desc.element_count * desc.element_size;
     size_t copy_bytes = std::min(src_bytes, dst_bytes);
-    
+
     cudaMemcpy(
         reinterpret_cast<void*>(get_device_ptr()),
         reinterpret_cast<const void*>(src->get_device_ptr()),
@@ -83,11 +83,10 @@ CUDALinearBufferHandle create_cuda_linear_buffer(
     auto buffer = new CUDALinearBuffer(d);
 
     if (init_data)
-        buffer->assign_host_data(
-            thrust::host_vector<uint8_t>(
-                static_cast<uint8_t*>(init_data),
-                static_cast<uint8_t*>(init_data) +
-                    d.element_size * d.element_count));
+        buffer->assign_host_data(thrust::host_vector<uint8_t>(
+            static_cast<uint8_t*>(init_data),
+            static_cast<uint8_t*>(init_data) +
+                d.element_size * d.element_count));
 
     return CUDALinearBufferHandle::Create(buffer);
 }
@@ -128,9 +127,20 @@ void copy_linear_buffer_to_surface(
                 surf2Dwrite(value, surface, x * sizeof(uint32_t), y);
             }
             else if (element_size == 8) {
-                uint64_t value =
-                    *reinterpret_cast<const uint64_t*>(&src_data[src_offset]);
-                surf2Dwrite(value, surface, x * sizeof(uint64_t), y);
+                // uint64_t is not directly supported by surf2Dwrite
+                // Write as two uint32_t values
+                const uint32_t* src_data32 =
+                    reinterpret_cast<const uint32_t*>(&src_data[src_offset]);
+                surf2Dwrite(
+                    src_data32[0],
+                    surface,
+                    int(x * 2 + 0) * int(sizeof(uint32_t)),
+                    y);
+                surf2Dwrite(
+                    src_data32[1],
+                    surface,
+                    int(x * 2 + 1) * int(sizeof(uint32_t)),
+                    y);
             }
             else if (element_size == 12) {
                 // Handle 3-component data (RGB float, etc.)
@@ -202,28 +212,46 @@ void copy_surface_to_linear_buffer(
                 *reinterpret_cast<uint32_t*>(&dst_data[dst_offset]) = value;
             }
             else if (element_size == 8) {
-                uint64_t value;
-                surf2Dread(&value, surface, x * sizeof(uint64_t), y);
-                *reinterpret_cast<uint64_t*>(&dst_data[dst_offset]) = value;
+                // uint64_t is not directly supported by surf2Dread
+                // Read as two uint32_t values
+                uint32_t* dst_data32 =
+                    reinterpret_cast<uint32_t*>(&dst_data[dst_offset]);
+                surf2Dread(
+                    &dst_data32[0],
+                    surface,
+                    int(x * 2 + 0) * int(sizeof(uint32_t)),
+                    y);
+                surf2Dread(
+                    &dst_data32[1],
+                    surface,
+                    int(x * 2 + 1) * int(sizeof(uint32_t)),
+                    y);
             }
             else if (element_size == 12) {
                 // Handle 3-component data (RGB float, etc.)
                 // Read as 3 consecutive 32-bit values
                 uint32_t* dst_data32 =
                     reinterpret_cast<uint32_t*>(&dst_data[dst_offset]);
-                surf2Dread(&dst_data32[0], surface, (x * 3 + 0) * sizeof(uint32_t), y);
-                surf2Dread(&dst_data32[1], surface, (x * 3 + 1) * sizeof(uint32_t), y);
-                surf2Dread(&dst_data32[2], surface, (x * 3 + 2) * sizeof(uint32_t), y);
+                surf2Dread(
+                    &dst_data32[0], surface, (x * 3 + 0) * sizeof(uint32_t), y);
+                surf2Dread(
+                    &dst_data32[1], surface, (x * 3 + 1) * sizeof(uint32_t), y);
+                surf2Dread(
+                    &dst_data32[2], surface, (x * 3 + 2) * sizeof(uint32_t), y);
             }
             else if (element_size == 16) {
                 // Handle 4-component data (RGBA float, etc.)
                 // Read as 4 consecutive 32-bit values
                 uint32_t* dst_data32 =
                     reinterpret_cast<uint32_t*>(&dst_data[dst_offset]);
-                surf2Dread(&dst_data32[0], surface, (x * 4 + 0) * sizeof(uint32_t), y);
-                surf2Dread(&dst_data32[1], surface, (x * 4 + 1) * sizeof(uint32_t), y);
-                surf2Dread(&dst_data32[2], surface, (x * 4 + 2) * sizeof(uint32_t), y);
-                surf2Dread(&dst_data32[3], surface, (x * 4 + 3) * sizeof(uint32_t), y);
+                surf2Dread(
+                    &dst_data32[0], surface, (x * 4 + 0) * sizeof(uint32_t), y);
+                surf2Dread(
+                    &dst_data32[1], surface, (x * 4 + 1) * sizeof(uint32_t), y);
+                surf2Dread(
+                    &dst_data32[2], surface, (x * 4 + 2) * sizeof(uint32_t), y);
+                surf2Dread(
+                    &dst_data32[3], surface, (x * 4 + 3) * sizeof(uint32_t), y);
             }
         });
 #else
