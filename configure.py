@@ -305,6 +305,63 @@ def download_and_extract(url, extract_path, folder, targets, dry_run=False):
 openusd_version = "25.05.01"
 
 
+def fix_slang_symlinks(dry_run=False):
+    """
+    Fix broken symlinks in SDK/slang/lib directory.
+
+    Slang's official GitHub releases have a bug where Unix symlinks are
+    stored as text files containing the target filename instead of proper
+    symlinks. This function detects and fixes them.
+
+    Affected files:
+    - libslang.so → should link to libslang-compiler.so.0.2025.22.1
+    - libslang-compiler.so → should link to libslang-compiler.so.0.2025.22.1
+    - libslang-rt.so → should link to libslang-rt.so.0.2025.22.1
+    - libgfx.so → should link to libgfx.so.0.2025.22.1
+    """
+    slang_lib_dir = os.path.join(os.path.dirname(__file__), "SDK", "slang", "lib")
+
+    if not os.path.exists(slang_lib_dir):
+        print(f"  ⚠ Slang lib directory not found: {slang_lib_dir}")
+        return
+
+    fixed_count = 0
+    for filename in os.listdir(slang_lib_dir):
+        filepath = os.path.join(slang_lib_dir, filename)
+
+        # Skip if it's already a proper symlink
+        if os.path.islink(filepath):
+            continue
+
+        # Check if it's a small file that might be a broken symlink stub
+        if not os.path.isfile(filepath):
+            continue
+
+        # Read the file content
+        try:
+            with open(filepath, 'r') as f:
+                content = f.read().strip()
+
+            # Check if content looks like a library filename
+            if content.endswith('.so') or '.so.' in content:
+                target_path = os.path.join(slang_lib_dir, content)
+                if os.path.exists(target_path):
+                    if dry_run:
+                        print(f"  [DRY RUN] Would fix symlink: {filename} -> {content}")
+                    else:
+                        os.remove(filepath)
+                        os.symlink(content, filepath)
+                        print(f"  ✓ Fixed symlink: {filename} -> {content}")
+                        fixed_count += 1
+        except Exception as e:
+            # Not a text file or other error, skip
+            pass
+
+    if fixed_count > 0:
+        print(f"  Fixed {fixed_count} broken symlinks in SDK/slang/lib/")
+
+
+
 # Source patches to apply before building (for GCC 13+ compatibility, etc.)
 SOURCE_PATCHES = {
     # OpenColorIO 2.1.3 - missing #include <cstring> in FileRules.cpp (GCC 13+ compatibility)
@@ -1185,9 +1242,13 @@ def main():
     
     # Always copy imgui.ini to Binaries
     copy_imgui_ini_to_binaries(targets, dry_run=dry_run)
-    
+
     # Always copy nvHLSLExtns.h to SDK/slang/include/
     copy_nvapi_header_to_slang(dry_run=dry_run)
+
+    # Fix broken symlinks in Slang SDK (official releases have this bug)
+    if "slang" in args.library or not copy_only:
+        fix_slang_symlinks(dry_run=dry_run)
 
 
 if __name__ == "__main__":
