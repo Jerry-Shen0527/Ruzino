@@ -305,6 +305,59 @@ def download_and_extract(url, extract_path, folder, targets, dry_run=False):
 openusd_version = "25.05.01"
 
 
+# Source patches to apply before building (for GCC 13+ compatibility, etc.)
+SOURCE_PATCHES = {
+    # OpenColorIO 2.1.3 - missing #include <cstring> in FileRules.cpp (GCC 13+ compatibility)
+    "OpenColorIO-2.1.3/src/OpenColorIO/FileRules.cpp": {
+        "find": '#include <algorithm>\n#include <cctype>',
+        "replace": '#include <algorithm>\n#include <cctype>\n#include <cstring>',
+        "description": "Add missing #include <cstring> for GCC 13+ compatibility"
+    },
+}
+
+
+def apply_source_patches(base_path, dry_run=False):
+    """
+    Apply source code patches to fix compilation issues with newer compilers.
+    This ensures the build works across different machines and compiler versions.
+    """
+    applied_count = 0
+    for relative_path, patch in SOURCE_PATCHES.items():
+        file_path = os.path.join(base_path, relative_path)
+
+        if not os.path.exists(file_path):
+            print(f"  ⚠ Patch target not found: {relative_path}")
+            continue
+
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            if patch["find"] in content:
+                if dry_run:
+                    print(f"  [DRY RUN] Would patch: {relative_path}")
+                    print(f"    {patch['description']}")
+                else:
+                    new_content = content.replace(patch["find"], patch["replace"])
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        f.write(new_content)
+                    print(f"  ✓ Patched: {relative_path}")
+                    print(f"    {patch['description']}")
+                applied_count += 1
+            else:
+                # Check if already patched
+                if patch["replace"] in content:
+                    print(f"  ✓ Already patched: {relative_path}")
+                else:
+                    print(f"  ⚠ Patch pattern not found (may need update): {relative_path}")
+        except Exception as e:
+            print(f"  ✗ Failed to patch {relative_path}: {e}")
+
+    if applied_count > 0:
+        print(f"Applied {applied_count} source patch(es)")
+    return applied_count
+
+
 def process_usd(targets, dry_run=False, keep_original_files=True, copy_only=False):
     if not copy_only:
         # First download and extract the source files
@@ -385,19 +438,27 @@ def process_usd(targets, dry_run=False, keep_original_files=True, copy_only=Fals
             if dry_run:
                 print(f"[DRY RUN] Would run: {build_command}")
             else:
-                # Apply FindTBB.cmake patch after building
-                if target == "RelWithDebInfo":  # Only patch once for RelWithDebInfo
+                # Apply source code patches before building (for GCC 13+ compatibility, etc.)
+                # OpenUSD downloads deps to SDK/OpenUSD/{target}/src/
+                src_path = os.path.join(
+                    os.path.dirname(__file__), "SDK", "OpenUSD", target, "src"
+                )
+                if os.path.exists(src_path):
+                    print("Applying source patches for compiler compatibility...")
+                    apply_source_patches(src_path, dry_run)
+
+                # Apply FindTBB.cmake patch before building
+                if target == "RelWithDebInfo":  # Only patch once
                     patch_findtbb_cmake(dry_run)
-                
+
                 # Enable long path support for Windows before building
                 import subprocess
                 try:
-                    # Enable Git long path support
                     subprocess.run(["git", "config", "--global", "core.longpaths", "true"], check=False)
                     print("Enabled Git long path support")
                 except Exception as e:
                     print(f"Warning: Could not enable Git long path support: {e}")
-                
+
                 os.system(build_command)
                 
 
