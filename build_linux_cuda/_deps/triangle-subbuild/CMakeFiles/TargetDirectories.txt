@@ -1,3 +1,0 @@
-/home/jerry/Workspace/Ruzino/build_linux_cuda/_deps/triangle-subbuild/CMakeFiles/triangle-populate.dir
-/home/jerry/Workspace/Ruzino/build_linux_cuda/_deps/triangle-subbuild/CMakeFiles/edit_cache.dir
-/home/jerry/Workspace/Ruzino/build_linux_cuda/_deps/triangle-subbuild/CMakeFiles/rebuild_cache.dir
