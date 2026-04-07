@@ -24,6 +24,8 @@
 #ifndef EXTRAS_IMAGING_EXAMPLES_HD_TINY_MESH_H
 #define EXTRAS_IMAGING_EXAMPLES_HD_TINY_MESH_H
 
+#include <unordered_map>
+
 #include "../context.h"
 #include "embree4/rtcore.h"
 #include "meshSamplers.h"
@@ -197,7 +199,8 @@ class Hd_RUZINO_Mesh final : public HdMesh {
         HdInterpolation interpolation;
     };
 
-    TfHashMap<TfToken, PrimvarSource, TfToken::HashFunctor> _primvarSourceMap;
+    std::unordered_map<TfToken, PrimvarSource, TfToken::HashFunctor>
+        _primvarSourceMap;
 };
 
 RUZINO_NAMESPACE_CLOSE_SCOPE
