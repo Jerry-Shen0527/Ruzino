@@ -58,8 +58,6 @@ struct Storage {
     }
 };
 
-std::map<std::string, entt::meta_any> Storage::storage;
-
 NODE_DECLARATION_FUNCTION(storage_in)
 {
     b.add_input<std::string>("Name").default_val("Storage");
@@ -124,3 +122,5 @@ NODE_EXECUTION_FUNCTION(storage_clear)
 
 NODE_DECLARATION_UI(storage);
 NODE_DEF_CLOSE_SCOPE
+
+std::map<std::string, entt::meta_any> Ruzino::Storage::storage;
