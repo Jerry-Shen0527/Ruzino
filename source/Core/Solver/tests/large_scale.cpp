@@ -1,4 +1,3 @@
-#include <corecrt_math_defines.h>
 #include <gtest/gtest.h>
 
 #include <Eigen/Eigen>
@@ -6,6 +5,7 @@
 #include <RZSolver/Solver.hpp>
 #include <chrono>
 #include <iomanip>
+#include <numbers>
 #include <random>
 
 using namespace Ruzino::Solver;
@@ -330,12 +330,13 @@ TEST_F(LargeScaleTest, TridiagonalScaling)
         // Estimate condition number - 更准确的估计
         double condition_estimate;
         if (n <= 1000) {
-            condition_estimate = 4.0 * n * n / (M_PI * M_PI);
+            condition_estimate =
+                4.0 * n * n / (std::numbers::pi * std::numbers::pi);
         }
         else {
             // 对于我们改进的矩阵，条件数应该更小
-            condition_estimate =
-                main_diag * main_diag * n / (4.0 * M_PI * M_PI);
+            condition_estimate = main_diag * main_diag * n /
+                                 (4.0 * std::numbers::pi * std::numbers::pi);
         }
         std::cout << "Estimated condition number: " << std::scientific
                   << condition_estimate << std::endl;

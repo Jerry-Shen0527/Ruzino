@@ -1,8 +1,8 @@
 #include <BPM/BPM.h>
-#include <corecrt_math_defines.h>
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <numeric>
 #include <stdexcept>
 
@@ -490,7 +490,7 @@ PropagationResult BPMSolver::propagateFDBPM()
     }
 
     // Setup FD-BPM parameters
-    float k_0 = 2.0f * M_PI / p.lambda;
+    float k_0 = 2.0f * std::numbers::pi / p.lambda;
     FDBPMPropagator::Parameters fdParams;
     fdParams.Nx = p.Nx;
     fdParams.Ny = p.Ny;
@@ -507,7 +507,7 @@ PropagationResult BPMSolver::propagateFDBPM()
     fdParams.ySymmetry = p.ySymmetry;
     fdParams.RoC = p.bendingRoC;
     fdParams.rho_e = p.rho_e;
-    fdParams.bendDirection = p.bendDirection * M_PI / 180.0f;
+    fdParams.bendDirection = p.bendDirection * std::numbers::pi / 180.0f;
     fdParams.n_mat = impl_->RI.n.data();
     fdParams.Nx_n = impl_->RI.Nx;
     fdParams.Ny_n = impl_->RI.Ny;
@@ -590,7 +590,7 @@ std::vector<BPMSolver::Mode> BPMSolver::findModes(int nModes, bool sortByLoss)
     std::vector<Mode> modes;
 
     // Setup parameters
-    float k_0 = 2.0f * M_PI / p.lambda;
+    float k_0 = 2.0f * std::numbers::pi / p.lambda;
     float dz = 1e-10f;  // Very small step for mode finding
 
     Complex ax = Complex(0, dz / (4.0f * p.dx * p.dx * k_0 * p.n_0));

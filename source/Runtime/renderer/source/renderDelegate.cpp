@@ -25,7 +25,6 @@
 
 #include "renderDelegate.h"
 
-#include <corecrt_math_defines.h>
 #include <pxr/imaging/hd/field.h>
 #include <pxr/usdImaging/usdVolImaging/tokens.h>
 #include <spdlog/spdlog.h>
