@@ -10,11 +10,11 @@ list(APPEND GEOMETRY_NODES_COMPILE_DEFS GEOM_NODES_SHADER_DIR="${CMAKE_CURRENT_S
 add_nodes(
 	TARGET_NAME geometry_nodes
 	SRC_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
-	DEP_LIBS stage nodes_system usd geometry usdShade Eigen3::Eigen autodiff igl::core igl_restricted::triangle RZFemBem
+	DEP_LIBS stage nodes_system geometry Eigen3::Eigen autodiff igl::core igl_restricted::triangle RZFemBem usd_wrapped
 	COMPILE_DEFS ${GEOMETRY_NODES_COMPILE_DEFS}
 )
 
-target_link_libraries(node_points_to_mesh PRIVATE usd hioOpenVDB)
+target_link_libraries(node_points_to_mesh PRIVATE usd_wrapped)
 
 add_library(tetgen STATIC ${CMAKE_CURRENT_SOURCE_DIR}/tetgen/tetgen.cxx ${CMAKE_CURRENT_SOURCE_DIR}/tetgen/tetgen.h ${CMAKE_CURRENT_SOURCE_DIR}/tetgen/predicates.cxx)
 set_target_properties(tetgen PROPERTIES ${OUTPUT_DIR})

@@ -5,11 +5,9 @@ RUZINO_ADD_LIB(
 	PUBLIC_LIBS
 		nodes_system
 		nodes_ui_imgui
-		usdMtlx
+		usd_wrapped
 		MaterialXGenShader
 	PRIVATE_LIBS
-		usd
-		usdImaging
 		blueprints
 	COMPILE_DEFS
 		NOMINMAX=1

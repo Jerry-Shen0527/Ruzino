@@ -10,8 +10,8 @@ if(NOT USTC_HOMEWORK_PLUGINS)
 RUZINO_ADD_LIB(
 	hd_RUZINO
 	SHARED
-	PUBLIC_LIBS spdlog::spdlog GPUContext usdMtlx MCore usdImaging usdImagingGL
-	PRIVATE_LIBS usd usdVol RHI hdx nodes_system shaders_interface usdVol usdVolImaging hioOpenVDB
+	PUBLIC_LIBS spdlog::spdlog GPUContext usd_wrapped MCore
+	PRIVATE_LIBS RHI nodes_system shaders_interface
 	COMPILE_DEFS
 		NOMINMAX RUZINO_DIRECT_VK_DISPLAY
 	USD_RESOURCE_DIRS resources nodes/shaders
@@ -33,7 +33,7 @@ add_nodes(
 	TARGET_NAME render_nodes
 	SRC_DIRS nodes
 	CONVERSION_DIRS nodes/conversion
-	DEP_LIBS usd RHI hd_RUZINO usdImaging shaders_interface
+	DEP_LIBS usd_wrapped RHI hd_RUZINO shaders_interface
 	COMPILE_DEFS NOMINMAX
 	EXTRA_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/source
 )

@@ -133,21 +133,19 @@ set(OpenSubdiv_DIR ${CMAKE_CURRENT_SOURCE_DIR}/SDK/OpenUSD/${SDK_FOLDER}/lib/cma
 find_package(pxr)
 
 if(pxr_FOUND)
-  set_target_properties(tf PROPERTIES INTERFACE_COMPILE_DEFINITIONS "TBB_SUPPRESS_DEPRECATED_MESSAGES=1")
-endif()
-
-if(pxr_FOUND)
   message("Found OpenUSD version ${pxr_VERSION}")
   find_package(OpenGL REQUIRED)
   set(RUZINO_WITH_OPENUSD ON)
-
-  if(${CMAKE_BUILD_TYPE} MATCHES "Debug")
-    if(Python3_LIBRARY MATCHES "_d.lib$")
-      set_target_properties(usd PROPERTIES INTERFACE_COMPILE_DEFINITIONS "TBB_USE_DEBUG=1; BOOST_DEBUG_PYTHON")
-    else()
-      set_target_properties(usd PROPERTIES INTERFACE_COMPILE_DEFINITIONS "TBB_USE_DEBUG=1")
-    endif()
+  add_library(usd_wrapped INTERFACE)
+  if(TARGET usd_ms)
+    target_link_libraries(usd_wrapped INTERFACE usd_ms)
+  else()
+    target_link_libraries(usd_wrapped INTERFACE usd tf hioOpenVDB usdShade usdMtlx usdImaging hdx usdVolImaging glf usdGeom usdImagingGL hdSt garch hgi python boost)
   endif()
+  target_compile_definitions(usd_wrapped INTERFACE
+    TBB_SUPPRESS_DEPRECATED_MESSAGES=1
+    $<$<CONFIG:Debug>:TBB_USE_DEBUG=1>
+    $<$<CONFIG:Debug>:BOOST_DEBUG_PYTHON>)
 else()
   message(WARNING "OpenUSD not found")
   set(RUZINO_WITH_OPENUSD OFF)
@@ -158,13 +156,17 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 if(WIN32)
   find_package(NVAPI REQUIRED)
+  set(AgilitySDK_ROOT_DIR SDK/d3d12)
+  find_package(AgilitySDK REQUIRED)
+endif()
+
+if(UNIX AND NOT APPLE)
+  find_package(X11 REQUIRED)
+  find_package(Boost REQUIRED)
 endif()
 
 set(SLANG_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/SDK/slang)
 find_package(Slang REQUIRED COMPONENTS slang slang-rt gfx)
-
-set(AgilitySDK_ROOT_DIR SDK/d3d12)
-find_package(AgilitySDK REQUIRED)
 
 # Find Embree from SDK
 set(embree_DIR ${CMAKE_CURRENT_SOURCE_DIR}/SDK/embree/lib/cmake/embree-4.4.0)

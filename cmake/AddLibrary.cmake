@@ -1,5 +1,3 @@
-
-
 if(RUZINO_WITH_CUDA)
     set(CMAKE_CUDA_ARCHITECTURES 86)
 endif()
