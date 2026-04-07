@@ -29,10 +29,11 @@
 #include "pxr/base/tf/envSetting.h"
 #include "pxr/base/tf/instantiateSingleton.h"
 
+TF_INSTANTIATE_SINGLETON(Ruzino::Hd_RUZINO_Config);
+
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
 // Instantiate the config singleton.
-TF_INSTANTIATE_SINGLETON(Hd_RUZINO_Config);
 
 // Each configuration variable has an associated environment variable.
 // The environment variable macro takes the variable name, a default value,

@@ -30,9 +30,7 @@
 #include "pxr/base/tf/instantiateSingleton.h"
 
 // Instantiate the config singleton.
-namespace pxrInternal_v0_24_11__pxrReserved__ {
 TF_INSTANTIATE_SINGLETON(Ruzino::Hd_RUZINO_Config);
-}
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
