@@ -20,11 +20,6 @@ if(SLANG_FOUND)
 
     target_compile_definitions(RHI PRIVATE RELATIVE_TO_PROJROOT="${RELATIVE_TO_PROJROOT}")
 
-    if(TARGET hgi)
-        target_link_libraries(RHI PUBLIC hgi)
-        target_compile_definitions(RHI PUBLIC RHI_WITH_OPENUSD_HGI=1)
-    endif()
-
     if(WIN32)
         target_compile_definitions(RHI PUBLIC RUZINO_WITH_DX12=1)
         target_compile_definitions(RHI PUBLIC RUZINO_WITH_VULKAN=0)
@@ -34,8 +29,8 @@ if(SLANG_FOUND)
         target_compile_definitions(RHI PUBLIC RUZINO_WITH_VULKAN=1)
     endif()
 
-    if(TARGET garch)
-        target_link_libraries(RHI PUBLIC garch)
+    if(TARGET usd_wrapped)
+        target_link_libraries(RHI PUBLIC usd_wrapped)
     endif()
 
     if(RUZINO_WITH_OPENUSD)
