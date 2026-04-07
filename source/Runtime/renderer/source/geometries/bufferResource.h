@@ -33,7 +33,7 @@ class HdStBufferResource final {
    public:
     HD_RUZINO_API
     HdStBufferResource(
-        pxr::TfToken const &role,
+        pxr::TfToken const& role,
         pxr::HdTupleType tupleType,
         int offset,
         int stride);
@@ -42,7 +42,7 @@ class HdStBufferResource final {
     ~HdStBufferResource();
 
     /// Returns the role of the data in this resource.
-    pxr::TfToken const &GetRole() const
+    pxr::TfToken const& GetRole() const
     {
         return _role;
     }
@@ -73,17 +73,17 @@ class HdStBufferResource final {
 
     /// Sets the HgiBufferHandle for this resource and its size.
     HD_RUZINO_API
-    void SetAllocation(pxr::HgiBufferHandle const &handle, size_t size);
+    void SetAllocation(pxr::HgiBufferHandle const& handle, size_t size);
 
     /// Returns the HgiBufferHandle for this GPU resource.
-    pxr::HgiBufferHandle &GetHandle()
+    pxr::HgiBufferHandle& GetHandle()
     {
         return _handle;
     }
 
    private:
-    HdStBufferResource(const HdStBufferResource &) = delete;
-    HdStBufferResource &operator=(const HdStBufferResource &) = delete;
+    HdStBufferResource(const HdStBufferResource&) = delete;
+    HdStBufferResource& operator=(const HdStBufferResource&) = delete;
 
     pxr::HgiBufferHandle _handle;
     size_t _size;

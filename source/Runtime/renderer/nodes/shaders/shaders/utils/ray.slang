@@ -89,4 +89,4 @@ bool safe_refract(float3 i, float3 n, float eta, out float3 t)
 }
 
 #endif
-#endif 
+#endif

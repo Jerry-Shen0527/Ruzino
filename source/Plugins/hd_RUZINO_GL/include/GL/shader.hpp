@@ -12,24 +12,24 @@ class HD_RUZINO_GL_API Shader {
     unsigned int ID;
     // constructor generates the shader on the fly
 
-    Shader(const char *vertexPath, const char *fragmentPath);
+    Shader(const char* vertexPath, const char* fragmentPath);
     // activate the shader
 
     void use() const;
     // utility uniform functions
-    void setBool(const std::string &name, bool value) const;
-    void setInt(const std::string &name, int value) const;
-    void setFloat(const std::string &name, float value) const;
-    void setVec2(const std::string &name, const pxr::GfVec2f &value) const;
-    void setVec2(const std::string &name, float x, float y) const;
-    void setVec3(const std::string &name, const pxr::GfVec3f &value) const;
-    void setVec3(const std::string &name, float x, float y, float z) const;
-    void setVec4(const std::string &name, const pxr::GfVec4f &value) const;
-    void setVec4(const std::string &name, float x, float y, float z, float w)
+    void setBool(const std::string& name, bool value) const;
+    void setInt(const std::string& name, int value) const;
+    void setFloat(const std::string& name, float value) const;
+    void setVec2(const std::string& name, const pxr::GfVec2f& value) const;
+    void setVec2(const std::string& name, float x, float y) const;
+    void setVec3(const std::string& name, const pxr::GfVec3f& value) const;
+    void setVec3(const std::string& name, float x, float y, float z) const;
+    void setVec4(const std::string& name, const pxr::GfVec4f& value) const;
+    void setVec4(const std::string& name, float x, float y, float z, float w)
         const;
-    void setMat2(const std::string &name, const pxr::GfMatrix2f &mat) const;
-    void setMat3(const std::string &name, const pxr::GfMatrix3f &mat) const;
-    void setMat4(const std::string &name, const pxr::GfMatrix4f &mat) const;
+    void setMat2(const std::string& name, const pxr::GfMatrix2f& mat) const;
+    void setMat3(const std::string& name, const pxr::GfMatrix3f& mat) const;
+    void setMat4(const std::string& name, const pxr::GfMatrix4f& mat) const;
 
     std::string get_error()
     {

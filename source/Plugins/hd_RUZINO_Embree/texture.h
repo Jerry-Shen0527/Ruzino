@@ -10,7 +10,9 @@ using namespace pxr;
 class Texture2D {
    public:
     Texture2D();
-    Texture2D(SdfAssetPath path, HioImage::SourceColorSpace colorSpace = HioImage::Auto);
+    Texture2D(
+        SdfAssetPath path,
+        HioImage::SourceColorSpace colorSpace = HioImage::Auto);
 
     bool isValid()
     {

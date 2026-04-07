@@ -2,7 +2,7 @@ RUZINO_ADD_LIB(
 	rzpython
 	SHARED
 	PUBLIC_LIBS GUI nanobind rzconsole
-	PRIVATE_LIBS 
+	PRIVATE_LIBS
 		glm::glm spdlog::spdlog Python3::Module
 	COMPILE_DEFS
 		NOMINMAX=1

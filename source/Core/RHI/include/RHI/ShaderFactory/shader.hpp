@@ -78,7 +78,9 @@ class RHI_API ShaderFactory {
         const Slang::ComPtr<ISlangBlob>& blob,
         const ShaderReflectionInfo& reflection_info,
         SlangCompileTarget target) const;
-    std::string get_cache_filename(const ProgramDesc& desc, SlangCompileTarget target) const;
+    std::string get_cache_filename(
+        const ProgramDesc& desc,
+        SlangCompileTarget target) const;
 
     void SlangCompile(
         const std::vector<std::string>& paths,

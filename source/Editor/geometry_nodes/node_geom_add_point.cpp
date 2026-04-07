@@ -21,27 +21,27 @@ NODE_DECLARATION_FUNCTION(geom_add_point)
 
 NODE_EXECUTION_FUNCTION(geom_add_point)
 {
-     auto& storage = params.get_storage<AddedPoints&>();
+    auto& storage = params.get_storage<AddedPoints&>();
 
-     auto pick = params.get_global_payload<GeomPayload>().pick;
-     if (pick) {
-         storage.points.push_back(glm::vec3(pick->point));
-     }
+    auto pick = params.get_global_payload<GeomPayload>().pick;
+    if (pick) {
+        storage.points.push_back(glm::vec3(pick->point));
+    }
 
-     params.set_storage(storage);
+    params.set_storage(storage);
 
-     auto width = params.get_input<float>("Width");
+    auto width = params.get_input<float>("Width");
 
-     auto geometry = Geometry();
-     auto points_component = std::make_shared<PointsComponent>(&geometry);
-     geometry.attach_component(points_component);
+    auto geometry = Geometry();
+    auto points_component = std::make_shared<PointsComponent>(&geometry);
+    geometry.attach_component(points_component);
 
-     std::vector widths(storage.points.size(), width);
+    std::vector widths(storage.points.size(), width);
 
-     points_component->set_vertices(storage.points);
-     points_component->set_width(widths);
+    points_component->set_vertices(storage.points);
+    points_component->set_width(widths);
 
-     params.set_output("Points", geometry);
+    params.set_output("Points", geometry);
     return true;
 }
 

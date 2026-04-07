@@ -27,27 +27,23 @@
  **************************************************************************/
 #pragma once
 
-#include "Core/Macros.h"
-
 #include <cstdint>
-
 #include <filesystem>
 #include <limits>
 
-namespace Ruzino
-{
+#include "Core/Macros.h"
+
+namespace Ruzino {
 
 /**
  * Utility class for reading memory-mapped files.
  */
-class HD_RUZINO_API MemoryMappedFile
-{
-public:
-    enum class AccessHint
-    {
-        Normal,         ///< Good overall performance.
-        SequentialScan, ///< Read file once with few seeks.
-        RandomAccess    ///< Good for random access.
+class HD_RUZINO_API MemoryMappedFile {
+   public:
+    enum class AccessHint {
+        Normal,          ///< Good overall performance.
+        SequentialScan,  ///< Read file once with few seeks.
+        RandomAccess     ///< Good for random access.
     };
 
     static constexpr size_t kWholeFile = std::numeric_limits<size_t>::max();
@@ -60,10 +56,14 @@ public:
     /**
      * Constructor opening a file. Use isOpen() to check if successful.
      * @param path Path to open.
-     * @param mappedSize Number of bytes to map into memory (automatically clamped to the file size).
+     * @param mappedSize Number of bytes to map into memory (automatically
+     * clamped to the file size).
      * @param accessHint Hint on how memory is accessed.
      */
-    MemoryMappedFile(const std::filesystem::path& path, size_t mappedSize = kWholeFile, AccessHint accessHint = AccessHint::Normal);
+    MemoryMappedFile(
+        const std::filesystem::path& path,
+        size_t mappedSize = kWholeFile,
+        AccessHint accessHint = AccessHint::Normal);
 
     /// Destructor. Closes the file.
     ~MemoryMappedFile();
@@ -71,31 +71,47 @@ public:
     /**
      * Open a file.
      * @param path Path to open.
-     * @param mappedSize Number of bytes to map into memory (automatically clamped to the file size).
+     * @param mappedSize Number of bytes to map into memory (automatically
+     * clamped to the file size).
      * @param accessHint Hint on how memory is accessed.
      * @return True if file was successfully opened.
      */
-    bool open(const std::filesystem::path& path, size_t mappedSize = kWholeFile, AccessHint accessHint = AccessHint::Normal);
+    bool open(
+        const std::filesystem::path& path,
+        size_t mappedSize = kWholeFile,
+        AccessHint accessHint = AccessHint::Normal);
 
     /// Close the file.
     void close();
 
     /// True, if file successfully opened.
-    bool isOpen() const { return mMappedData != nullptr; }
+    bool isOpen() const
+    {
+        return mMappedData != nullptr;
+    }
 
     /// Get the file size in bytes.
-    size_t getSize() const { return mSize; }
+    size_t getSize() const
+    {
+        return mSize;
+    }
 
     /// Get the mapped data.
-    const void* getData() const { return mMappedData; };
+    const void* getData() const
+    {
+        return mMappedData;
+    };
 
     /// Get the mapped memory size in bytes.
-    size_t getMappedSize() const { return mMappedSize; };
+    size_t getMappedSize() const
+    {
+        return mMappedSize;
+    };
 
     /// Get the OS page size (for remap).
     static size_t getPageSize();
 
-private:
+   private:
     MemoryMappedFile(const MemoryMappedFile&) = delete;
     MemoryMappedFile(MemoryMappedFile&) = delete;
     MemoryMappedFile& operator=(const MemoryMappedFile&) = delete;
@@ -103,7 +119,8 @@ private:
 
     /**
      * Replace mapping by a new one of the same file.
-     * @param offset Offset from start of the file in bytes (must be multiple of page size).
+     * @param offset Offset from start of the file in bytes (must be multiple of
+     * page size).
      * @param mappedSize Size of mapping in bytes.
      * @return True if successful.
      */
@@ -115,7 +132,7 @@ private:
 
 #if FALCOR_WINDOWS
     using FileHandle = void*;
-    void* mMappedFile{nullptr};
+    void* mMappedFile{ nullptr };
 #elif FALCOR_LINUX
     using FileHandle = int;
 #else
@@ -127,4 +144,4 @@ private:
     size_t mMappedSize = 0;
 };
 
-} // namespace Ruzino
+}  // namespace Ruzino

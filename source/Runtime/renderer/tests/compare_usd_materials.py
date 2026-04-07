@@ -25,10 +25,10 @@ def analyze_material_structure(stage, file_name):
     print(f"\n{'='*80}")
     print(f"Analyzing: {file_name}")
     print(f"{'='*80}\n")
-    
+
     materials = []
     material_paths = []
-    
+
     # Find all materials
     for prim in stage.Traverse():
         if prim.IsA(UsdShade.Material):
@@ -39,10 +39,10 @@ def analyze_material_structure(stage, file_name):
             print(f"  Is Active: {prim.IsActive()}")
             print(f"  Is Defined: {prim.IsDefined()}")
             print(f"  Metadata: {prim.GetAllMetadata()}")
-            
+
             # Check UsdShade.Material API
             material = UsdShade.Material(prim)
-            
+
             # Surface output
             surface_output = material.GetSurfaceOutput()
             if surface_output:
@@ -56,17 +56,17 @@ def analyze_material_structure(stage, file_name):
                             print(f"      Output Name: {source_info.sourceName}")
             else:
                 print(f"  No surface output")
-            
+
             # Volume output
             volume_output = material.GetVolumeOutput()
             if volume_output:
                 print(f"  Volume Output: {volume_output}")
-            
+
             # Displacement output
             displacement_output = material.GetDisplacementOutput()
             if displacement_output:
                 print(f"  Displacement Output: {displacement_output}")
-            
+
             # Check children (shaders)
             print(f"  Children:")
             for child in prim.GetChildren():
@@ -75,7 +75,7 @@ def analyze_material_structure(stage, file_name):
                     shader = UsdShade.Shader(child)
                     shader_id = shader.GetIdAttr().Get()
                     print(f"      Shader ID: {shader_id}")
-                    
+
                     # Get all inputs
                     for input in shader.GetInputs():
                         print(f"      Input: {input.GetBaseName()}")
@@ -85,39 +85,39 @@ def analyze_material_structure(stage, file_name):
                             print(f"        Connected to: {connections}")
                         else:
                             print(f"        Value: {value}")
-            
+
             print()
-    
+
     # Check material bindings
     print(f"\nMaterial Bindings:")
     for prim in stage.Traverse():
         if UsdShade.MaterialBindingAPI(prim).GetDirectBinding():
             binding = UsdShade.MaterialBindingAPI(prim).GetDirectBinding()
             print(f"  {prim.GetPath()} -> {binding.GetMaterialPath()}")
-    
+
     print(f"\nTotal materials found: {len(materials)}")
     print(f"Material paths: {material_paths}")
-    
+
     return materials, material_paths
 
 def compare_files():
     """Compare the two USD files"""
-    
+
     # File paths
     assets_path = os.path.join("..", "..", "..", "..", "Assets")
     chess_set_path = os.path.join(assets_path, "OpenChessSet", "chess_set.usda")
     # Also check one of the referenced piece files
     chess_piece_path = os.path.join(assets_path, "OpenChessSet", "assets", "King", "King.usd")
     shader_ball_path = os.path.join("material_tests", "shader_ball_TH_Rough_Wood.usdc")
-    
+
     chess_set_abs = os.path.abspath(chess_set_path)
     chess_piece_abs = os.path.abspath(chess_piece_path)
     shader_ball_abs = os.path.abspath(shader_ball_path)
-    
+
     print(f"Chess set path: {chess_set_abs}")
     print(f"Chess piece path: {chess_piece_abs}")
     print(f"Shader ball path: {shader_ball_abs}")
-    
+
     # Open stages
     if os.path.exists(chess_set_abs):
         chess_stage = Usd.Stage.Open(chess_set_abs)
@@ -125,21 +125,21 @@ def compare_files():
     else:
         print(f"ERROR: Chess set file not found at {chess_set_abs}")
         chess_materials, chess_paths = [], []
-    
+
     if os.path.exists(chess_piece_abs):
         chess_piece_stage = Usd.Stage.Open(chess_piece_abs)
         chess_piece_materials, chess_piece_paths = analyze_material_structure(chess_piece_stage, "King.usd")
     else:
         print(f"ERROR: Chess piece file not found at {chess_piece_abs}")
         chess_piece_materials, chess_piece_paths = [], []
-    
+
     if os.path.exists(shader_ball_abs):
         shader_ball_stage = Usd.Stage.Open(shader_ball_abs)
         shader_ball_materials, shader_ball_paths = analyze_material_structure(shader_ball_stage, "shader_ball_TH_Rough_Wood.usdc")
     else:
         print(f"ERROR: Shader ball file not found at {shader_ball_abs}")
         shader_ball_materials, shader_ball_paths = [], []
-    
+
     # Summary
     print(f"\n{'='*80}")
     print(f"SUMMARY")

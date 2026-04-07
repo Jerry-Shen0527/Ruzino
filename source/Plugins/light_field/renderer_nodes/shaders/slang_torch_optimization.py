@@ -24,7 +24,7 @@ if __name__ == "__main__":
     # Create sample input tensors
     pixel_position = torch.tensor([0.0, 0.0], dtype=torch.float32, device="cuda", requires_grad=True)
     lens_position = torch.tensor([0.0, 0.0, -40.0], dtype=torch.float32, device="cuda", requires_grad=True)
-    
+
     # Set other parameters
     display_z = -50.0
     focal_length = 8.0
@@ -34,7 +34,7 @@ if __name__ == "__main__":
     view_range = torch.tensor([-30.0, 30.0], dtype=torch.float32, device="cuda")
     rayOrigin = torch.zeros(3, dtype=torch.float32, device="cuda")
     rayDirection = torch.zeros(3, dtype=torch.float32, device="cuda")
-    
+
     # Call the function
     result = module.pixel_position_to_ray_with_fixed_lens_pos(
         pixelPositionF=pixel_position,
@@ -48,10 +48,10 @@ if __name__ == "__main__":
         rayOrigin=rayOrigin,
         rayDirection=rayDirection
     )
-    
+
     print("Ray Origin:", rayOrigin)
     print("Ray Direction:", rayDirection)
-    
+
     # Example backward pass
     if hasattr(result, 'Origin'):
         loss = torch.sum(result.Origin**2)

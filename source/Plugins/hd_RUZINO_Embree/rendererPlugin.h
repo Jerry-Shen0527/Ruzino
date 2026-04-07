@@ -24,14 +24,11 @@
 #ifndef EXTRAS_IMAGING_EXAMPLES_HD_TINY_RENDERER_PLUGIN_H
 #define EXTRAS_IMAGING_EXAMPLES_HD_TINY_RENDERER_PLUGIN_H
 #include "api.h"
-
-#include "pxr/pxr.h"
-#include "api.h"
 #include "pxr/imaging/hd/rendererPlugin.h"
+#include "pxr/pxr.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
-
 
 ///
 /// \class Hd_RUZINO_Embree_RendererPlugin
@@ -44,33 +41,35 @@ using namespace pxr;
 /// prims (which translate scene data into drawable representations) and Hydra
 /// renderpasses (which draw the scene to the framebuffer).
 ///
-class HD_RUZINO_EMBREE_API Hd_RUZINO_Embree_RendererPlugin final : public HdRendererPlugin
-{
-public:
+class HD_RUZINO_EMBREE_API Hd_RUZINO_Embree_RendererPlugin final
+    : public HdRendererPlugin {
+   public:
     Hd_RUZINO_Embree_RendererPlugin() = default;
     virtual ~Hd_RUZINO_Embree_RendererPlugin() = default;
 
     /// Construct a new render delegate of type Hd_RUZINO_RenderDelegate.
-    virtual HdRenderDelegate *CreateRenderDelegate() override;
+    virtual HdRenderDelegate* CreateRenderDelegate() override;
 
     /// Construct a new render delegate of type Hd_RUZINO_RenderDelegate.
-    virtual HdRenderDelegate *CreateRenderDelegate(
+    virtual HdRenderDelegate* CreateRenderDelegate(
         HdRenderSettingsMap const& settingsMap) override;
 
     /// Destroy a render delegate created by this class's CreateRenderDelegate.
     ///   \param renderDelegate The render delegate to delete.
     virtual void DeleteRenderDelegate(
-        HdRenderDelegate *renderDelegate) override;
+        HdRenderDelegate* renderDelegate) override;
 
     /// Checks to see if the plugin is supported on the running system.
     virtual bool IsSupported(bool gpuEnabled = true) const override;
 
-private:
+   private:
     // This class does not support copying.
-    Hd_RUZINO_Embree_RendererPlugin(const Hd_RUZINO_Embree_RendererPlugin&) = delete;
-    Hd_RUZINO_Embree_RendererPlugin &operator =(const Hd_RUZINO_Embree_RendererPlugin&) = delete;
+    Hd_RUZINO_Embree_RendererPlugin(const Hd_RUZINO_Embree_RendererPlugin&) =
+        delete;
+    Hd_RUZINO_Embree_RendererPlugin& operator=(
+        const Hd_RUZINO_Embree_RendererPlugin&) = delete;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE
 
-#endif // EXTRAS_IMAGING_EXAMPLES_HD_TINY_RENDERER_PLUGIN_H
+#endif  // EXTRAS_IMAGING_EXAMPLES_HD_TINY_RENDERER_PLUGIN_H

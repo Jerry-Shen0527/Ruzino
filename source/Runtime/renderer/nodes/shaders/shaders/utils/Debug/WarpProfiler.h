@@ -27,15 +27,12 @@
  **************************************************************************/
 #pragma once
 
-#include "Core/Macros.h"
-
-
-
 #include <filesystem>
 #include <vector>
 
-namespace Ruzino
-{
+#include "Core/Macros.h"
+
+namespace Ruzino {
 
 class RenderContext;
 struct ShaderVar;
@@ -43,10 +40,9 @@ struct ShaderVar;
 /**
  * @brief Utility class for warp-level profiling.
  */
-class HD_RUZINO_API WarpProfiler
-{
-public:
-    static constexpr size_t kWarpSize = 32; // Do not change
+class HD_RUZINO_API WarpProfiler {
+   public:
+    static constexpr size_t kWarpSize = 32;  // Do not change
 
     /**
      * @brief Construct new warp profiler object.
@@ -78,10 +74,13 @@ public:
      * @brief Compute warp histogram over a range of profiling bins.
      * @param[in] binIndex Index of first profiling bin for histogram.
      * @param[in] binCount Number of profiling bins to include in histogram.
-     * @return Histogram with `kWarpSize` buckets. The first bucket number of warps with 1 counted element, the last
-     * bucket represents number of warps with `kWarpSize` counted elements.
+     * @return Histogram with `kWarpSize` buckets. The first bucket number of
+     * warps with 1 counted element, the last bucket represents number of warps
+     * with `kWarpSize` counted elements.
      */
-    std::vector<uint32_t> getWarpHistogram(const uint32_t binIndex, const uint32_t binCount = 1);
+    std::vector<uint32_t> getWarpHistogram(
+        const uint32_t binIndex,
+        const uint32_t binCount = 1);
 
     /**
      * Save warp histograms for all profiling bins to file in CSV format.
@@ -90,17 +89,18 @@ public:
      */
     bool saveWarpHistogramsAsCSV(const std::filesystem::path& path);
 
-private:
+   private:
     void readBackData();
 
     nvrhi::EventQueryHandle mpFence;
     nvrhi::BufferHandle mpHistogramBuffer;
     nvrhi::BufferHandle mpHistogramStagingBuffer;
 
-    const uint32_t mBinCount;          ///< Number of profiling bins.
-    std::vector<uint32_t> mHistograms; ///< Histograms for all profiling bins.
+    const uint32_t mBinCount;           ///< Number of profiling bins.
+    std::vector<uint32_t> mHistograms;  ///< Histograms for all profiling bins.
 
-    bool mActive = false;      ///< True while inside a begin()/end() section.
-    bool mDataWaiting = false; ///< True when data is waiting for readback in the staging buffer.
+    bool mActive = false;       ///< True while inside a begin()/end() section.
+    bool mDataWaiting = false;  ///< True when data is waiting for readback in
+                                ///< the staging buffer.
 };
-} // namespace Ruzino
+}  // namespace Ruzino

@@ -44,19 +44,19 @@ static void _Interpolate(
     HioFormat format,
     float s,
     float t,
-    const uint8_t *texel00,
-    const uint8_t *texel01,
-    const uint8_t *texel10,
-    const uint8_t *texel11,
-    float *dst)
+    const uint8_t* texel00,
+    const uint8_t* texel01,
+    const uint8_t* texel10,
+    const uint8_t* texel11,
+    float* dst)
 {
     auto componentFormat = HioGetHioType(format);
     size_t componentCount = HioGetComponentCount(format);
 
-    std::function<float(const uint8_t *, int bias)> preprocess;
+    std::function<float(const uint8_t*, int bias)> preprocess;
     switch (componentFormat) {
         case HioTypeUnsignedByte:
-            preprocess = [](const uint8_t *texel, int bias) {
+            preprocess = [](const uint8_t* texel, int bias) {
                 return texel[bias] / 256.0f;
             };
             break;
@@ -68,8 +68,8 @@ static void _Interpolate(
         case HioTypeInt: break;
         case HioTypeHalfFloat: break;
         case HioTypeFloat:
-            preprocess = [](const uint8_t *texel, int bias) {
-                return reinterpret_cast<const float *>(texel)[bias];
+            preprocess = [](const uint8_t* texel, int bias) {
+                return reinterpret_cast<const float*>(texel)[bias];
             };
             break;
         case HioTypeDouble: break;
@@ -86,7 +86,7 @@ static void _Interpolate(
     }
 }
 
-GfVec4f Texture2D::Evaluate(const GfVec2f &uv) const
+GfVec4f Texture2D::Evaluate(const GfVec2f& uv) const
 {
     // Check if the texture is valid
     if (!texture) {
@@ -120,23 +120,23 @@ GfVec4f Texture2D::Evaluate(const GfVec2f &uv) const
     float t = y - y0;
 
     // Sample the four nearest texels
-    const unsigned char *texels =
-        static_cast<const unsigned char *>(storageSpec.data);
+    const unsigned char* texels =
+        static_cast<const unsigned char*>(storageSpec.data);
     int texelSize = texture->GetBytesPerPixel();
-    const unsigned char *texel00 =
+    const unsigned char* texel00 =
         texels + (y0 * texture->GetWidth() + x0) * texelSize;
-    const unsigned char *texel01 =
+    const unsigned char* texel01 =
         texels + (y1 * texture->GetWidth() + x0) * texelSize;
-    const unsigned char *texel10 =
+    const unsigned char* texel10 =
         texels + (y0 * texture->GetWidth() + x1) * texelSize;
-    const unsigned char *texel11 =
+    const unsigned char* texel11 =
         texels + (y1 * texture->GetWidth() + x1) * texelSize;
 
     auto format = storageSpec.format;
 
     GfVec4f value4f;
 
-    auto *dst = value4f.data();
+    auto* dst = value4f.data();
     _Interpolate(format, s, t, texel00, texel01, texel10, texel11, dst);
     return value4f;
 }

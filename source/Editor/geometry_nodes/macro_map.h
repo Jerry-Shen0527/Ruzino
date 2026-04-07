@@ -40,6 +40,9 @@
 
 #pragma once
 
+// switch off clang-format
+// clang-format off
+
 // Macro to compute the size of __VA_ARGS__ (including 0, works on Clang/GCC/MSVC)
 #define MACRO_EVAL(x) x
 

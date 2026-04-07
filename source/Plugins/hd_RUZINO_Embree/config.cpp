@@ -23,11 +23,11 @@
 //
 #include "config.h"
 
-#include "pxr/base/tf/envSetting.h"
-#include "pxr/base/tf/instantiateSingleton.h"
-
 #include <algorithm>
 #include <iostream>
+
+#include "pxr/base/tf/envSetting.h"
+#include "pxr/base/tf/instantiateSingleton.h"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
@@ -50,13 +50,14 @@ TF_DEFINE_ENV_SETTING(
 TF_DEFINE_ENV_SETTING(
     HDEMBREE_AMBIENT_OCCLUSION_SAMPLES,
     16,
-    "Ambient occlusion samples per camera ray (must be >= 0; a value of 0 disables ambient occlusion)")
-;
+    "Ambient occlusion samples per camera ray (must be >= 0; a value of 0 "
+    "disables ambient occlusion)");
 
 TF_DEFINE_ENV_SETTING(
     HDEMBREE_JITTER_CAMERA,
     1,
-    "Should Hd_RUZINO_ jitter camera rays while rendering? (values >0 are true)");
+    "Should Hd_RUZINO_ jitter camera rays while rendering? (values >0 are "
+    "true)");
 
 TF_DEFINE_ENV_SETTING(
     HDEMBREE_USE_FACE_COLORS,
@@ -76,44 +77,33 @@ TF_DEFINE_ENV_SETTING(
 Hd_RUZINO_Config::Hd_RUZINO_Config()
 {
     // Read in values from the environment, clamping them to valid ranges.
-    samplesToConvergence = std::max(
-        1,
-        TfGetEnvSetting(HDEMBREE_SAMPLES_TO_CONVERGENCE));
-    tileSize = std::max(
-        1,
-        TfGetEnvSetting(HDEMBREE_TILE_SIZE));
-    ambientOcclusionSamples = std::max(
-        0,
-        TfGetEnvSetting(HDEMBREE_AMBIENT_OCCLUSION_SAMPLES));
+    samplesToConvergence =
+        std::max(1, TfGetEnvSetting(HDEMBREE_SAMPLES_TO_CONVERGENCE));
+    tileSize = std::max(1, TfGetEnvSetting(HDEMBREE_TILE_SIZE));
+    ambientOcclusionSamples =
+        std::max(0, TfGetEnvSetting(HDEMBREE_AMBIENT_OCCLUSION_SAMPLES));
     jitterCamera = (TfGetEnvSetting(HDEMBREE_JITTER_CAMERA) > 0);
     useFaceColors = (TfGetEnvSetting(HDEMBREE_USE_FACE_COLORS) > 0);
-    cameraLightIntensity = (std::max(
-                                100,
-                                TfGetEnvSetting(
-                                    HDEMBREE_CAMERA_LIGHT_INTENSITY)) / 100.0f);
+    cameraLightIntensity =
+        (std::max(100, TfGetEnvSetting(HDEMBREE_CAMERA_LIGHT_INTENSITY)) /
+         100.0f);
 
-    if (TfGetEnvSetting(HDEMBREE_PRINT_CONFIGURATION) > 0)
-    {
-        std::cout
-            << "Hd_RUZINO_ Configuration: \n"
-            << "  samplesToConvergence       = "
-            << samplesToConvergence << "\n"
-            << "  tileSize                   = "
-            << tileSize << "\n"
-            << "  ambientOcclusionSamples    = "
-            << ambientOcclusionSamples << "\n"
-            << "  jitterCamera               = "
-            << jitterCamera << "\n"
-            << "  useFaceColors              = "
-            << useFaceColors << "\n"
-            << "  cameraLightIntensity      = "
-            << cameraLightIntensity << "\n";
+    if (TfGetEnvSetting(HDEMBREE_PRINT_CONFIGURATION) > 0) {
+        std::cout << "Hd_RUZINO_ Configuration: \n"
+                  << "  samplesToConvergence       = " << samplesToConvergence
+                  << "\n"
+                  << "  tileSize                   = " << tileSize << "\n"
+                  << "  ambientOcclusionSamples    = "
+                  << ambientOcclusionSamples << "\n"
+                  << "  jitterCamera               = " << jitterCamera << "\n"
+                  << "  useFaceColors              = " << useFaceColors << "\n"
+                  << "  cameraLightIntensity      = " << cameraLightIntensity
+                  << "\n";
     }
 }
 
 /*static*/
-const Hd_RUZINO_Config&
-Hd_RUZINO_Config::GetInstance()
+const Hd_RUZINO_Config& Hd_RUZINO_Config::GetInstance()
 {
     return TfSingleton<Hd_RUZINO_Config>::GetInstance();
 }

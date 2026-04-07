@@ -17,8 +17,7 @@ NODE_DECLARATION_FUNCTION(gradient_forward_dual)
 NODE_EXECUTION_FUNCTION(gradient_forward_dual)
 {
     auto f =
-        params.get_input<std::function<dual(const ArrayXdual&)>>(
-        "Function");
+        params.get_input<std::function<dual(const ArrayXdual&)>>("Function");
     Eigen::VectorXd x0(3);
     //    Eigen::VectorXd x0 = params.get_input<Eigen::VectorXd>("Target
     //    Point");

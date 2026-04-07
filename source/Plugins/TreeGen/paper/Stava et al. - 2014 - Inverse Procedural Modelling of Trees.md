@@ -1219,4 +1219,3 @@ Graphics 26 (Oct. 2007), 19.
 [Zha96] ZHANG K.: A constrained edit distance between unordered
 labeled trees. Algorithmica 15, 3 (1996), 205–222.
 
-

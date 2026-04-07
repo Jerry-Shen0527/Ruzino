@@ -213,7 +213,7 @@ Interpreter::Result Interpreter::Execute(std::string_view const cmdline)
         if (ShouldHandleCommand(cmdline)) {
             return HandleDirectExecution(cmdline);
         }
-        
+
         spdlog::error(
             "no console object with name '{}' found", std::string(args[0]));
     }

@@ -871,12 +871,12 @@ void CUDALinearBufferView::assign_host_data(
 void CUDALinearBufferView::copy_from_device(ICUDALinearBuffer* src)
 {
     auto src_desc = src->getDesc();
-    
+
     // Ensure buffers have compatible sizes
     size_t src_bytes = src_desc.element_count * src_desc.element_size;
     size_t dst_bytes = desc.element_count * desc.element_size;
     size_t copy_bytes = std::min(src_bytes, dst_bytes);
-    
+
     cudaMemcpy(
         cuda_ptr,
         reinterpret_cast<const void*>(src->get_device_ptr()),
@@ -1508,16 +1508,17 @@ ExternalMemoryResourcesHandle create_external_memory_surface(
     uint32_t cudaUsageFlags)
 {
     auto resources = std::make_unique<ExternalMemoryResources>();
-    
+
     HANDLE sharedHandle = getSharedApiHandle(device, texture);
     if (sharedHandle == NULL) {
         throw std::runtime_error(
-            "create_external_memory_surface - texture shared handle creation failed");
+            "create_external_memory_surface - texture shared handle creation "
+            "failed");
     }
 
     size_t actualSize;
-    resources->externalMemory = FetchExternalTextureMemory(
-        texture, device, actualSize, sharedHandle);
+    resources->externalMemory =
+        FetchExternalTextureMemory(texture, device, actualSize, sharedHandle);
 
     // Create a mipmapped array from the external memory
     cudaMipmappedArray_t mipmap;
@@ -1538,7 +1539,7 @@ ExternalMemoryResourcesHandle create_external_memory_surface(
     resDesc.resType = cudaResourceTypeArray;
 
     CUDA_CHECK(cudaCreateSurfaceObject(&resources->surface, &resDesc));
-    
+
     return resources;
 }
 
@@ -1548,10 +1549,11 @@ void copy_linear_buffer_to_texture_with_cleanup(
     nvrhi::ITexture* texture)
 {
     auto desc = texture->getDesc();
-    
+
     // Create external memory surface
-    auto external_resources = create_external_memory_surface(device, texture, 0);
-    
+    auto external_resources =
+        create_external_memory_surface(device, texture, 0);
+
     // Copy data from linear buffer to texture using GPU parallel for
     CUdeviceptr src_ptr = buffer->get_device_ptr();
     uint32_t width = desc.width;
@@ -1561,12 +1563,18 @@ void copy_linear_buffer_to_texture_with_cleanup(
 
     // Launch CUDA kernel to copy data
     copy_linear_buffer_to_surface(
-        src_ptr, external_resources->surface, width, height, element_size, row_pitch);
-    
+        src_ptr,
+        external_resources->surface,
+        width,
+        height,
+        element_size,
+        row_pitch);
+
     // Synchronize to ensure copy is complete before cleanup
     CUDA_SYNC_CHECK();
-    
-    // external_resources will be automatically destroyed when going out of scope
+
+    // external_resources will be automatically destroyed when going out of
+    // scope
 }
 
 CUDALinearBufferHandle copy_texture_to_linear_buffer_with_cleanup(
@@ -1592,7 +1600,10 @@ CUDALinearBufferHandle copy_texture_to_linear_buffer_with_cleanup(
         // Copy the original texture to the shared texture
         nvrhi::CommandListHandle cmd = device->createCommandList();
         cmd->open();
-        cmd->beginTrackingTextureState(shared_texture, nvrhi::AllSubresources, nvrhi::ResourceStates::CopyDest);
+        cmd->beginTrackingTextureState(
+            shared_texture,
+            nvrhi::AllSubresources,
+            nvrhi::ResourceStates::CopyDest);
         cmd->copyTexture(
             shared_texture,
             nvrhi::TextureSlice(),
@@ -1613,7 +1624,8 @@ CUDALinearBufferHandle copy_texture_to_linear_buffer_with_cleanup(
     auto buffer = create_cuda_linear_buffer(buffer_desc);
 
     // Create external memory surface
-    auto external_resources = create_external_memory_surface(device, source_texture, 0);
+    auto external_resources =
+        create_external_memory_surface(device, source_texture, 0);
 
     // Copy data from surface to linear buffer using GPU parallel for
     CUdeviceptr dst_ptr = buffer->get_device_ptr();
@@ -1621,12 +1633,18 @@ CUDALinearBufferHandle copy_texture_to_linear_buffer_with_cleanup(
 
     // Launch CUDA kernel to copy data
     copy_surface_to_linear_buffer(
-        external_resources->surface, dst_ptr, width, height, element_size, row_pitch);
-    
+        external_resources->surface,
+        dst_ptr,
+        width,
+        height,
+        element_size,
+        row_pitch);
+
     // Synchronize to ensure copy is complete before cleanup
     CUDA_SYNC_CHECK();
-    
-    // external_resources will be automatically destroyed when going out of scope
+
+    // external_resources will be automatically destroyed when going out of
+    // scope
     return buffer;
 }
 nvrhi::TextureHandle cuda_linear_buffer_to_nvrhi_texture(
@@ -1649,7 +1667,8 @@ CUDALinearBufferHandle nvrhi_texture_to_cuda_linear_buffer(
     uint32_t element_size)
 {
     // Use the cleanup-enabled copy function
-    return copy_texture_to_linear_buffer_with_cleanup(device, texture, element_size);
+    return copy_texture_to_linear_buffer_with_cleanup(
+        device, texture, element_size);
 }
 }  // namespace cuda
 

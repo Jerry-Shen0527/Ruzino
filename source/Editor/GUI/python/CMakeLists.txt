@@ -14,7 +14,7 @@ find_package(nanobind CONFIG REQUIRED)
 
 # Add the GUI library path (adjust as needed)
 # set(GUI_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../include")
-# set(GUI_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../lib") 
+# set(GUI_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../lib")
 
 # Create the Python module
 nanobind_add_module(gui gui.cpp)
@@ -23,7 +23,7 @@ nanobind_add_module(gui gui.cpp)
 # target_link_libraries(gui PRIVATE gui_lib)
 
 # Include directories
-target_include_directories(gui PRIVATE 
+target_include_directories(gui PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
     # Add other include paths as needed
 )

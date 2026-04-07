@@ -62,8 +62,9 @@ namespace fem_bem {
         const Expression& outer_expr,
         const ParameterMap<Expression>& variable_substitutions)
         : outer_expression_(std::make_unique<Expression>(outer_expr)),
-          substitution_map_(std::make_unique<ParameterMap<Expression>>(
-              variable_substitutions)),
+          substitution_map_(
+              std::make_unique<ParameterMap<Expression>>(
+                  variable_substitutions)),
           is_compound_(true)
     {
         // Build compound expression string for display
@@ -348,27 +349,27 @@ namespace fem_bem {
     {
         // Use more conservative step sizes for float precision
         real h = real(1e-2);
-        //if (is_compound_ && outer_expression_) {
-        //    // Check if any of the substitutions are derivatives
-        //    bool has_derivative_substitution = false;
-        //    for (int i = 0; i < substitution_map_->size(); ++i) {
-        //        const auto& pair = substitution_map_->get_value_at(i);
-        //        if (pair.has_derivative_evaluator_) {
-        //            has_derivative_substitution = true;
-        //            break;
-        //        }
-        //    }
+        // if (is_compound_ && outer_expression_) {
+        //     // Check if any of the substitutions are derivatives
+        //     bool has_derivative_substitution = false;
+        //     for (int i = 0; i < substitution_map_->size(); ++i) {
+        //         const auto& pair = substitution_map_->get_value_at(i);
+        //         if (pair.has_derivative_evaluator_) {
+        //             has_derivative_substitution = true;
+        //             break;
+        //         }
+        //     }
 
         //    // For compound expressions with derivatives, use significantly
         //    // larger step
         //    h = has_derivative_substitution ? real(5e-3) : real(1e-4);
         //}
-        //else if (has_derivative_evaluator_) {
+        // else if (has_derivative_evaluator_) {
         //    // This is already a derivative, so we're computing second
         //    // derivative
         //    h = real(5e-3);
         //}
-        //else {
+        // else {
         //    // Simple expression
         //    h = real(1e-4);
         //}

@@ -1,10 +1,12 @@
+#include <spdlog/spdlog.h>
+
+#include <Eigen/Dense>
+#include <Eigen/Sparse>
+#include <cmath>
+
 #include "GCore/Components/MeshComponent.h"
 #include "GCore/util_openmesh_bind.h"
 #include "geom_node_base.h"
-#include <cmath>
-#include <Eigen/Dense>
-#include <Eigen/Sparse>
-#include <spdlog/spdlog.h>
 
 NODE_DEF_OPEN_SCOPE
 NODE_DECLARATION_FUNCTION(extract_singular_values)
@@ -35,7 +37,6 @@ NODE_EXECUTION_FUNCTION(extract_singular_values)
     auto iter_mesh = operand_to_openmesh(&iters);
     int n_faces = halfedge_mesh->n_faces();
     int n_vertices = halfedge_mesh->n_vertices();
-
 
     // Construct a set of new triangles
     std::vector<std::vector<Eigen::Vector2d>> edges(n_faces);
@@ -104,8 +105,10 @@ NODE_EXECUTION_FUNCTION(extract_singular_values)
             X.row(i) = edges[face_idx][(i + 2) % 3];
             Cotangents(i, i) =
                 cotangents.coeffRef(vertex_idx[i], vertex_idx[(i + 1) % 3]);
-            const auto& v0 = iter_mesh->point(iter_mesh->vertex_handle(vertex_idx[i]));
-            const auto& v1 = iter_mesh->point(iter_mesh->vertex_handle(vertex_idx[(i + 1) % 3]));
+            const auto& v0 =
+                iter_mesh->point(iter_mesh->vertex_handle(vertex_idx[i]));
+            const auto& v1 = iter_mesh->point(
+                iter_mesh->vertex_handle(vertex_idx[(i + 1) % 3]));
             U(0, i) = (v1 - v0)[0];
             U(1, i) = (v1 - v0)[1];
         }

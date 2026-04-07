@@ -1,7 +1,6 @@
 #pragma once
 #if RUZINO_WITH_CUDA
 
-#include "optix/WorkQueue.cuh"
 #include <RHI/api.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -18,6 +17,7 @@
 
 #include "cuda_extension_utils.h"
 #include "optix/ShaderNameAbbre.h"
+#include "optix/WorkQueue.cuh"
 #include "optix/optix.h"
 RUZINO_NAMESPACE_OPEN_SCOPE
 
@@ -326,14 +326,16 @@ struct AppendStructuredBuffer {
     {
         workqueue_buffer = create_cuda_linear_buffer<T>(max_size);
         d_workqueue = create_cuda_linear_buffer<WorkQueue<T>>();
-        d_workqueue->assign_host_value(WorkQueue{
-            reinterpret_cast<T*>(workqueue_buffer->get_device_ptr()) });
+        d_workqueue->assign_host_value(
+            WorkQueue{
+                reinterpret_cast<T*>(workqueue_buffer->get_device_ptr()) });
     }
 
     void reset()
     {
-        d_workqueue->assign_host_value(WorkQueue{
-            reinterpret_cast<T*>(workqueue_buffer->get_device_ptr()) });
+        d_workqueue->assign_host_value(
+            WorkQueue{
+                reinterpret_cast<T*>(workqueue_buffer->get_device_ptr()) });
     }
 
     WorkQueue<T>* get_device_queue_ptr()
@@ -472,12 +474,14 @@ RHI_API CUDALinearBufferHandle nvrhi_texture_to_cuda_linear_buffer(
 struct ExternalMemoryResources {
     cudaExternalMemory_t externalMemory = nullptr;
     CUsurfObject surface = 0;
-    
-    ~ExternalMemoryResources() {
+
+    ~ExternalMemoryResources()
+    {
         cleanup();
     }
-    
-    void cleanup() {
+
+    void cleanup()
+    {
         if (surface != 0) {
             cudaDestroySurfaceObject(surface);
             surface = 0;

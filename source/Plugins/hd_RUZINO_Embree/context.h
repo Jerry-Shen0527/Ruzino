@@ -45,9 +45,9 @@ using namespace pxr;
 ///
 struct Hd_RUZINO_PrototypeContext {
     /// A pointer back to the owning Hd_RUZINO_ rprim.
-    HdRprim *rprim;
+    HdRprim* rprim;
     /// A name-indexed map of primvar samplers.
-    TfHashMap<std::string, Hd_RUZINO_PrimvarSampler *> primvarMap;
+    TfHashMap<std::string, Hd_RUZINO_PrimvarSampler*> primvarMap;
     /// A copy of the primitive params for this rprim.
     VtIntArray primitiveParams;
 };

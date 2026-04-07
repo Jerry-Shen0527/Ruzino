@@ -11,9 +11,9 @@ NODE_DEF_OPEN_SCOPE
 NODE_DECLARATION_FUNCTION(newton_backward)
 {
     b.add_input<std::function<var(const ArrayXvar&)>>("Cost function");
-    //b.add_input<Eigen::VectorXd>("Initial point");
-    //b.add_input<int>("Max iterations");
-    //b.add_input<double>("Tolerance");
+    // b.add_input<Eigen::VectorXd>("Initial point");
+    // b.add_input<int>("Max iterations");
+    // b.add_input<double>("Tolerance");
     b.add_output<Eigen::VectorXd>("Minimum point");
     b.add_output<double>("Minimum");
 }
@@ -22,9 +22,9 @@ NODE_EXECUTION_FUNCTION(newton_backward)
 {
     auto f =
         params.get_input<std::function<var(const ArrayXvar&)>>("Cost function");
-    //Eigen::VectorXd x0 = params.get_input<Eigen::VectorXd>("Initial point");
-    //const int max_iterations = params.get_input<int>("Max iterations");
-    //const double tolerance = params.get_input<double>("Tolerance");
+    // Eigen::VectorXd x0 = params.get_input<Eigen::VectorXd>("Initial point");
+    // const int max_iterations = params.get_input<int>("Max iterations");
+    // const double tolerance = params.get_input<double>("Tolerance");
     Eigen::VectorXd x0(3);
     x0 << 1, 1, 1;
     const int max_iterations = 100;

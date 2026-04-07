@@ -27,26 +27,25 @@
  **************************************************************************/
 #pragma once
 
-#include "utils/fast_vector.h"
-
+#include <span>
 #include <unordered_map>
 #include <vector>
-#include <span>
 
-namespace Ruzino
-{
+#include "utils/fast_vector.h"
+
+namespace Ruzino {
 
 /**
- * @brief Class to convert vector of possibly-duplicate items to a vector of indices into a set of unique data items.
+ * @brief Class to convert vector of possibly-duplicate items to a vector of
+ * indices into a set of unique data items.
  *
  * @tparam T Underlying type
  * @tparam I Index value type
  * @tparam H Hash object on type T, used to determine data item equivalence
  */
 template<typename T, typename I, typename H, typename E = std::equal_to<T>>
-class IndexedVector
-{
-public:
+class IndexedVector {
+   public:
     /**
      * @brief Append data item.
      * @param[in] v Data item to append
@@ -68,15 +67,13 @@ public:
     {
         bool insertedNew = false;
         auto iter = mIndexMap.find(v);
-        if (iter == mIndexMap.end())
-        {
+        if (iter == mIndexMap.end()) {
             iter = mIndexMap.insert(std::make_pair(v, I(mValues.size()))).first;
             outIdx = mValues.size();
             mValues.push_back(v);
             insertedNew = true;
         }
-        else
-        {
+        else {
             outIdx = iter->second;
         }
         mIndices.push_back(iter->second);
@@ -85,16 +82,22 @@ public:
     /**
      * @brief Get the set of unique data items.
      */
-    std::span<const T> getValues() const { return mValues; }
+    std::span<const T> getValues() const
+    {
+        return mValues;
+    }
 
     /**
      * @brief Get the ordered list of item indices.
      */
-    std::span<const I> getIndices() const { return mIndices; }
+    std::span<const I> getIndices() const
+    {
+        return mIndices;
+    }
 
-private:
+   private:
     std::unordered_map<T, I, H, E> mIndexMap;
     std::vector<T> mValues;
     std::vector<I> mIndices;
 };
-} // namespace Ruzino
+}  // namespace Ruzino

@@ -26,41 +26,45 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Core/Error.h"
 #include <format>
-
-#include <limits>
 #include <functional>
+#include <limits>
 #include <type_traits>
 
-namespace Ruzino
-{
+#include "Core/Error.h"
+
+namespace Ruzino {
 
 /**
- * Universal class for strongly typed IDs. Takes an TKindEnum to allow usage for IDs in unrelated
- * subsystems without polluting a single enum with unrelated kinds.
- * TODO: Ideally it would also take name of the ID for python binding purposes, but passing
- * string as a template argument is non-trivial in C++17.
+ * Universal class for strongly typed IDs. Takes an TKindEnum to allow usage for
+ * IDs in unrelated subsystems without polluting a single enum with unrelated
+ * kinds.
+ * TODO: Ideally it would also take name of the ID for python binding purposes,
+ * but passing string as a template argument is non-trivial in C++17.
  *
- * @param TKindEnum Enum class from which kinds are drawn. Different enum classes are not directly convertible.
+ * @param TKindEnum Enum class from which kinds are drawn. Different enum
+ * classes are not directly convertible.
  * @param TKind Kind of the ID.
- * @param TIntType the underlying numeric type. It is advised that it should be the same for all TKinds in the same enum.
+ * @param TIntType the underlying numeric type. It is advised that it should be
+ * the same for all TKinds in the same enum.
  */
 template<typename TKindEnum, TKindEnum TKind, typename TIntType = uint32_t>
-class ObjectID
-{
-public:
+class ObjectID {
+   public:
     using IntType = TIntType;
     using KindEnum = TKindEnum;
     static constexpr TKindEnum kKind = TKind;
     static constexpr IntType kInvalidID = std::numeric_limits<IntType>::max();
 
-public:
+   public:
     /**
      * Default construction creates an invalid ID.
-     * TODO: Consider creating uninitialized ID instead, if vectors of IDs become a performance issue.
+     * TODO: Consider creating uninitialized ID instead, if vectors of IDs
+     * become a performance issue.
      */
-    ObjectID() : mID(kInvalidID) {}
+    ObjectID() : mID(kInvalidID)
+    {
+    }
 
     /**
      * Constructs ObjectID from any numeric type.
@@ -75,17 +79,19 @@ public:
         FALCOR_ASSERT_GE(id, T(0));
         // When we know for a fact it is not negative,
         // we can cast it to the unsigned version of that integer for comparison
-        // (otherwise compiler complains about signed/unsigned mismatch when entering literals)
-        FALCOR_ASSERT_LE(std::make_unsigned_t<T>(id), std::numeric_limits<IntType>::max());
+        // (otherwise compiler complains about signed/unsigned mismatch when
+        // entering literals)
+        FALCOR_ASSERT_LE(
+            std::make_unsigned_t<T>(id), std::numeric_limits<IntType>::max());
     }
 
     /**
      * Allows converting between different Kinds of the same EnumKind.
      * This is slightly safer than going straight through numeric ids via get().
-     * This is mostly used when converting from an "union" ID, that can identify different
-     * objects based on other flags, e.g., kCurveOrMesh that is either Curve or Mesh,
-     * based on the tessellation flags.
-     * NB: Ideally this would be removed, use as sparingly as possible.
+     * This is mostly used when converting from an "union" ID, that can identify
+     * different objects based on other flags, e.g., kCurveOrMesh that is either
+     * Curve or Mesh, based on the tessellation flags. NB: Ideally this would be
+     * removed, use as sparingly as possible.
      *
      * @param[in] other The ObjectID to be converted from.
      */
@@ -96,66 +102,102 @@ public:
     }
 
     /**
-     * A helper method when convering from an numeric ID in Slang, to the strongly typed CPU ID.
-     * This is separate from the a basic constructor only for the purpose of clearly identifying,
-     * the conversion in the code, as per Joel's "Making Wrong Code Look Wrong" principle.
+     * A helper method when convering from an numeric ID in Slang, to the
+     * strongly typed CPU ID. This is separate from the a basic constructor only
+     * for the purpose of clearly identifying, the conversion in the code, as
+     * per Joel's "Making Wrong Code Look Wrong" principle.
      * TODO: Remove once the slang side also has strongly typed IDs.
      *
      * @param[in] id Integer ID to initialize from
      * @return The ObjectID created from a numeric ID
      */
     template<typename T>
-    static ObjectID fromSlang(const T& id, std::enable_if_t<std::is_integral_v<T>, bool> = true)
+    static ObjectID fromSlang(
+        const T& id,
+        std::enable_if_t<std::is_integral_v<T>, bool> = true)
     {
-        return ObjectID{id};
+        return ObjectID{ id };
     }
 
     /**
      * Provides an invalid ID for comparison purposes.
-     * In the future, most uses would be replaced by either isValid (for comparison),
-     * or by ObjectID(ObjectID::kInvalidID) (for obtaining an invalid ID)
+     * In the future, most uses would be replaced by either isValid (for
+     * comparison), or by ObjectID(ObjectID::kInvalidID) (for obtaining an
+     * invalid ID)
      *
      * @return An invalid ObjectID.
      */
-    static ObjectID Invalid() { return ObjectID(); }
+    static ObjectID Invalid()
+    {
+        return ObjectID();
+    }
 
     /**
      * Returns true when the ID is valid, i.e., get() != kInvalidID
      *
      * @return True when valid.
      */
-    bool isValid() const { return mID != kInvalidID; }
+    bool isValid() const
+    {
+        return mID != kInvalidID;
+    }
 
     /**
      * Return the numeric value of the ID.
-     * Should be used rather sparingly, e.g., consider allowing objects to be indexed by the strongly
-     * typed ID, instead of just a number.
-     * NB: Consider using getters with strongly typed IDs, rather than directly accessing even vectors/buffers.
+     * Should be used rather sparingly, e.g., consider allowing objects to be
+     * indexed by the strongly typed ID, instead of just a number. NB: Consider
+     * using getters with strongly typed IDs, rather than directly accessing
+     * even vectors/buffers.
      *
      * @return Numeric value of the ID, can be kInvalidID.
      */
-    IntType get() const { return mID; }
+    IntType get() const
+    {
+        return mID;
+    }
 
     /**
-     * A helped method to convert to numeric ID in Slang. Functionally identical to get(),
-     * but in the future it should be removed, and the Slang should have a compatible and checked
-     * strongly typed ID as well. Separated from get() to clearly show all such locations.
+     * A helped method to convert to numeric ID in Slang. Functionally identical
+     * to get(), but in the future it should be removed, and the Slang should
+     * have a compatible and checked strongly typed ID as well. Separated from
+     * get() to clearly show all such locations.
      *
      * @return Numeric value of the ID, can be kInvalidID.
      */
-    IntType getSlang() const { return get(); }
+    IntType getSlang() const
+    {
+        return get();
+    }
 
-    bool operator==(const ObjectID& rhs) const { return mID == rhs.mID; }
+    bool operator==(const ObjectID& rhs) const
+    {
+        return mID == rhs.mID;
+    }
 
-    bool operator!=(const ObjectID& rhs) const { return mID != rhs.mID; }
+    bool operator!=(const ObjectID& rhs) const
+    {
+        return mID != rhs.mID;
+    }
 
-    bool operator<=(const ObjectID& rhs) const { return mID <= rhs.mID; }
+    bool operator<=(const ObjectID& rhs) const
+    {
+        return mID <= rhs.mID;
+    }
 
-    bool operator>=(const ObjectID& rhs) const { return mID >= rhs.mID; }
+    bool operator>=(const ObjectID& rhs) const
+    {
+        return mID >= rhs.mID;
+    }
 
-    bool operator<(const ObjectID& rhs) const { return mID < rhs.mID; }
+    bool operator<(const ObjectID& rhs) const
+    {
+        return mID < rhs.mID;
+    }
 
-    bool operator>(const ObjectID& rhs) const { return mID < rhs.mID; }
+    bool operator>(const ObjectID& rhs) const
+    {
+        return mID < rhs.mID;
+    }
 
     ObjectID& operator++()
     {
@@ -164,9 +206,12 @@ public:
         return *this;
     }
 
-    ObjectID operator++(int) { return ObjectID(mID++); }
+    ObjectID operator++(int)
+    {
+        return ObjectID(mID++);
+    }
 
-private:
+   private:
     IntType mID;
 };
 
@@ -176,18 +221,19 @@ inline std::string to_string(const ObjectID<TKindEnum, TKind, TIntType>& v)
     return std::to_string(v.get());
 }
 
-} // namespace Ruzino
+}  // namespace Ruzino
 
 template<typename TKindEnum, TKindEnum TKind, typename TIntType>
-struct std::hash<Ruzino::ObjectID<TKindEnum, TKind, TIntType>>
-{
+struct std::hash<Ruzino::ObjectID<TKindEnum, TKind, TIntType>> {
     using ObjectID = Ruzino::ObjectID<TKindEnum, TKind, TIntType>;
-    std::size_t operator()(const ObjectID& id) const noexcept { return std::hash<typename ObjectID::IntType>{}(id.get()); }
+    std::size_t operator()(const ObjectID& id) const noexcept
+    {
+        return std::hash<typename ObjectID::IntType>{}(id.get());
+    }
 };
 
 template<typename TKindEnum, TKindEnum TKind, typename TIntType>
-struct std::formatter<Ruzino::ObjectID<TKindEnum, TKind, TIntType>>
-{
+struct std::formatter<Ruzino::ObjectID<TKindEnum, TKind, TIntType>> {
     using ObjectID = Ruzino::ObjectID<TKindEnum, TKind, TIntType>;
 
     template<typename ParseContext>

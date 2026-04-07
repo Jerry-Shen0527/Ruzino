@@ -27,7 +27,7 @@ NODE_EXECUTION_FUNCTION(get_polyscope_vertex_pos)
     if (polyscope::hasStructure("Surface Mesh", structure_name)) {
         auto structure =
             polyscope::getStructure("Surface Mesh", structure_name);
-        auto mesh = dynamic_cast<polyscope::SurfaceMesh *>(structure);
+        auto mesh = dynamic_cast<polyscope::SurfaceMesh*>(structure);
         if (vertex_index < mesh->nVertices()) {
             auto pos = mesh->vertexPositions.getValue(vertex_index);
             params.set_output("Vertex Position X", pos.x);
@@ -42,7 +42,7 @@ NODE_EXECUTION_FUNCTION(get_polyscope_vertex_pos)
     // If the input structure is a point cloud
     else if (polyscope::hasStructure("Point Cloud", structure_name)) {
         auto structure = polyscope::getStructure("Point Cloud", structure_name);
-        auto point_cloud = dynamic_cast<polyscope::PointCloud *>(structure);
+        auto point_cloud = dynamic_cast<polyscope::PointCloud*>(structure);
         auto point = point_cloud->getPointPosition(vertex_index);
         params.set_output("Vertex Position X", point.x);
         params.set_output("Vertex Position Y", point.y);
@@ -52,7 +52,7 @@ NODE_EXECUTION_FUNCTION(get_polyscope_vertex_pos)
     else if (polyscope::hasStructure("Curve Network", structure_name)) {
         auto structure =
             polyscope::getStructure("Curve Network", structure_name);
-        auto curve_network = dynamic_cast<polyscope::CurveNetwork *>(structure);
+        auto curve_network = dynamic_cast<polyscope::CurveNetwork*>(structure);
         if (vertex_index < curve_network->nNodes()) {
             auto pos = curve_network->nodePositions.getValue(vertex_index);
             params.set_output("Vertex Position X", pos.x);

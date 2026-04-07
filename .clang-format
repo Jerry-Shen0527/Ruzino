@@ -14,7 +14,7 @@ BinPackParameters: 'false'
 Cpp11BracedListStyle: 'false'
 ColumnLimit: 80
 IndentWidth: 4
-NamespaceIndentation: Inner 
+NamespaceIndentation: Inner
 SpaceAfterTemplateKeyword: 'false'
 SpaceBeforeCtorInitializerColon: 'true'
 SpaceBeforeInheritanceColon: 'true'

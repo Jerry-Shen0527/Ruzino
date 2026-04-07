@@ -102,7 +102,8 @@ struct RHI_API ProgramDesc {
 
     nvrhi::ShaderType shaderType;
     bool nvapi_support = false;
-    int hlslExtensionsUAV = -1;  // NVAPI extensions UAV slot (-1 = disabled, typically 127 for SER)
+    int hlslExtensionsUAV =
+        -1;  // NVAPI extensions UAV slot (-1 = disabled, typically 127 for SER)
 
     bool check_shader_updated() const;
 

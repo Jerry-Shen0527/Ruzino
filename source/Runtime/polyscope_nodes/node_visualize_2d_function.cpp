@@ -61,9 +61,10 @@ NODE_EXECUTION_FUNCTION(visualize_2d_function)
     // 将生成的三角形网格添加到polyscope中进行可视化
     std::vector<std::array<size_t, 3>> faceVertexIndicesNested;
     for (int i = 0; i < F.rows(); ++i) {
-        faceVertexIndicesNested.push_back({ static_cast<size_t>(F(i, 0)),
-                                            static_cast<size_t>(F(i, 1)),
-                                            static_cast<size_t>(F(i, 2)) });
+        faceVertexIndicesNested.push_back(
+            { static_cast<size_t>(F(i, 0)),
+              static_cast<size_t>(F(i, 1)),
+              static_cast<size_t>(F(i, 2)) });
     }
 
     auto surface_mesh = polyscope::registerSurfaceMesh2D(

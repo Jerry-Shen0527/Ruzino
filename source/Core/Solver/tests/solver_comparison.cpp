@@ -92,8 +92,9 @@ class SolverComparisonTest : public ::testing::Test {
                 return;
             }
 
-            // Note: BiCGSTAB can work on SPD matrices, though CG is more efficient
-            // We allow it to run on SPD matrices with relaxed tolerances
+            // Note: BiCGSTAB can work on SPD matrices, though CG is more
+            // efficient We allow it to run on SPD matrices with relaxed
+            // tolerances
 
             auto result = solver->solve(A, b, x, config);
 
@@ -137,19 +138,21 @@ class SolverComparisonTest : public ::testing::Test {
                 // BiCGSTAB handling - works on both SPD and non-SPD matrices
                 if (solver_name.find("BiCGSTAB") != std::string::npos) {
                     if (is_spd) {
-                        // On SPD matrices, BiCGSTAB works but is less efficient than CG
-                        // Allow more lenient tolerance
+                        // On SPD matrices, BiCGSTAB works but is less efficient
+                        // than CG Allow more lenient tolerance
                         tolerance = std::max(tolerance, 5e-3f);
                         if (A.rows() >= 1000) {
                             tolerance = std::max(tolerance, 1e-2f);
                         }
-                    } else {
+                    }
+                    else {
                         // On non-SPD matrices, BiCGSTAB should perform well
                         tolerance = 1e-3f;
                     }
                 }
 
-                // GMRES on SPD matrices - less efficient than CG, so more lenient
+                // GMRES on SPD matrices - less efficient than CG, so more
+                // lenient
                 if (solver_name.find("GMRES") != std::string::npos && is_spd) {
                     tolerance = std::max(tolerance, 1e-3f);
                 }
@@ -172,9 +175,12 @@ class SolverComparisonTest : public ::testing::Test {
                 std::cout << "    Note: Solver did not converge - "
                           << result.error_message << std::endl;
 
-                if (!is_spd && (solver_name.find("Conjugate Gradient") != std::string::npos ||
-                                    solver_name.find("Cholesky") != std::string::npos)) {
-                    EXPECT_TRUE(true) << "SPD-only solver appropriately failed on non-SPD matrix";
+                if (!is_spd &&
+                    (solver_name.find("Conjugate Gradient") !=
+                         std::string::npos ||
+                     solver_name.find("Cholesky") != std::string::npos)) {
+                    EXPECT_TRUE(true) << "SPD-only solver appropriately failed "
+                                         "on non-SPD matrix";
                 }
             }
         }
@@ -276,17 +282,21 @@ TEST_F(SolverComparisonTest, IterativeVsDirectComparison)
                       triplets.push_back(Eigen::Triplet<float>(idx, idx, 4.0f));
 
                       if (i > 0)
-                          triplets.push_back(Eigen::Triplet<float>(
-                              idx, (i - 1) * ny + j, -1.0f));
+                          triplets.push_back(
+                              Eigen::Triplet<float>(
+                                  idx, (i - 1) * ny + j, -1.0f));
                       if (i < nx - 1)
-                          triplets.push_back(Eigen::Triplet<float>(
-                              idx, (i + 1) * ny + j, -1.0f));
+                          triplets.push_back(
+                              Eigen::Triplet<float>(
+                                  idx, (i + 1) * ny + j, -1.0f));
                       if (j > 0)
-                          triplets.push_back(Eigen::Triplet<float>(
-                              idx, i * ny + (j - 1), -1.0f));
+                          triplets.push_back(
+                              Eigen::Triplet<float>(
+                                  idx, i * ny + (j - 1), -1.0f));
                       if (j < ny - 1)
-                          triplets.push_back(Eigen::Triplet<float>(
-                              idx, i * ny + (j + 1), -1.0f));
+                          triplets.push_back(
+                              Eigen::Triplet<float>(
+                                  idx, i * ny + (j + 1), -1.0f));
                   }
               }
               A.setFromTriplets(triplets.begin(), triplets.end());
@@ -450,8 +460,9 @@ TEST_F(SolverComparisonTest, NumericalStabilityAnalysis)
                       triplets.push_back(
                           Eigen::Triplet<float>(i, i - 1, -1.0f));
                   if (i < n - 1)
-                      triplets.push_back(Eigen::Triplet<float>(
-                          i, i + 1, -3.0f));  // More asymmetric
+                      triplets.push_back(
+                          Eigen::Triplet<float>(
+                              i, i + 1, -3.0f));  // More asymmetric
               }
               A.setFromTriplets(triplets.begin(), triplets.end());
               b = Eigen::VectorXf::Ones(n);
@@ -470,8 +481,9 @@ TEST_F(SolverComparisonTest, NumericalStabilityAnalysis)
                       triplets.push_back(
                           Eigen::Triplet<float>(i, i - 1, -1.0f));
                   if (i < n - 1)
-                      triplets.push_back(Eigen::Triplet<float>(
-                          i, i + 1, -2.0f));  // Clear asymmetry
+                      triplets.push_back(
+                          Eigen::Triplet<float>(
+                              i, i + 1, -2.0f));  // Clear asymmetry
               }
               A.setFromTriplets(triplets.begin(), triplets.end());
               b = Eigen::VectorXf::Ones(n);

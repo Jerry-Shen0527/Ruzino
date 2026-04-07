@@ -46,7 +46,7 @@ def find_cpp_test_files(test_dir: Path) -> List[Path]:
 
 def cpp_to_exe_name(cpp_file: Path) -> str:
     """Convert cpp filename to expected exe name.
-    
+
     For example:
     - some_file.cpp -> some_file_test.exe
     - renderer.cpp -> renderer_test.exe
@@ -62,43 +62,43 @@ def should_run_test(exe_name: str, test_filter: Optional[str]) -> bool:
     """Check if a test should be run based on filter."""
     if test_filter is None:
         return True
-    
+
     # Match test name (with or without _test.exe suffix)
     test_base = exe_name.replace('_test.exe', '').replace('.exe', '')
     filter_base = test_filter.replace('_test', '').replace('.exe', '')
-    
+
     return filter_base.lower() in test_base.lower()
 
 
 def run_pytest(test_dir: Path, test_filter: Optional[str] = None) -> Tuple[int, int, List[Tuple[str, str]]]:
     """Run pytest in the given directory.
-    
+
     Returns:
         Tuple of (passed, failed, failed_test_info)
         where failed_test_info is a list of (test_name, output) tuples
     """
     python_tests = find_python_test_files(test_dir)
-    
+
     if not python_tests:
         return 0, 0, []
-    
+
     # Apply filter if specified
     if test_filter:
         python_tests = [t for t in python_tests if test_filter.lower() in t.stem.lower()]
         if not python_tests:
             return 0, 0, []
-    
+
     print(f"\n{'='*80}")
     print(f"Running pytest in: {test_dir}")
     print(f"{'='*80}")
-    
+
     passed = 0
     failed = 0
     failed_tests = []
-    
+
     for test_file in python_tests:
         print(f"\n--- Running: {test_file.name} ---")
-        
+
         try:
             result = subprocess.run(
                 ['pytest', str(test_file), '-v', '--tb=short'],
@@ -107,7 +107,7 @@ def run_pytest(test_dir: Path, test_filter: Optional[str] = None) -> Tuple[int, 
                 capture_output=True,
                 text=True
             )
-            
+
             if result.returncode == 0:
                 print(f"✓ PASSED: {test_file.name}")
                 passed += 1
@@ -116,7 +116,7 @@ def run_pytest(test_dir: Path, test_filter: Optional[str] = None) -> Tuple[int, 
                 failed += 1
                 output = result.stdout + result.stderr
                 failed_tests.append((f"{test_dir.name}/{test_file.name}", output))
-                
+
         except subprocess.TimeoutExpired as e:
             print(f"✗ TIMEOUT: {test_file.name}")
             failed += 1
@@ -126,45 +126,45 @@ def run_pytest(test_dir: Path, test_filter: Optional[str] = None) -> Tuple[int, 
             print(f"✗ ERROR: {test_file.name} - {str(e)}")
             failed += 1
             failed_tests.append((f"{test_dir.name}/{test_file.name}", f"ERROR: {str(e)}"))
-    
+
     return passed, failed, failed_tests
 
 
 def run_cpp_tests(test_dir: Path, binaries_dir: Path, test_filter: Optional[str] = None) -> Tuple[int, int, List[Tuple[str, str]]]:
     """Run C++ test executables corresponding to cpp files in test_dir.
-    
+
     Returns:
         Tuple of (passed, failed, failed_test_info)
         where failed_test_info is a list of (test_name, output) tuples
     """
     cpp_files = find_cpp_test_files(test_dir)
-    
+
     if not cpp_files:
         return 0, 0, []
-    
+
     print(f"\n{'='*80}")
     print(f"Running C++ tests from: {test_dir}")
     print(f"{'='*80}")
-    
+
     passed = 0
     failed = 0
     failed_tests = []
-    
+
     for cpp_file in cpp_files:
         exe_name = cpp_to_exe_name(cpp_file)
-        
+
         # Apply filter if specified
         if test_filter and not should_run_test(exe_name, test_filter):
             continue
-        
+
         exe_path = binaries_dir / exe_name
-        
+
         print(f"\n--- Running: {exe_name} (from {cpp_file.name}) ---")
-        
+
         if not exe_path.exists():
             print(f"⚠ SKIPPED: {exe_name} not found in {binaries_dir}")
             continue
-        
+
         try:
             result = subprocess.run(
                 [str(exe_path)],
@@ -173,7 +173,7 @@ def run_cpp_tests(test_dir: Path, binaries_dir: Path, test_filter: Optional[str]
                 capture_output=True,
                 text=True
             )
-            
+
             if result.returncode == 0:
                 print(f"✓ PASSED: {exe_name}")
                 passed += 1
@@ -182,7 +182,7 @@ def run_cpp_tests(test_dir: Path, binaries_dir: Path, test_filter: Optional[str]
                 failed += 1
                 output = result.stdout + result.stderr
                 failed_tests.append((exe_name, output))
-                
+
         except subprocess.TimeoutExpired as e:
             print(f"✗ TIMEOUT: {exe_name}")
             failed += 1
@@ -192,7 +192,7 @@ def run_cpp_tests(test_dir: Path, binaries_dir: Path, test_filter: Optional[str]
             print(f"✗ ERROR: {exe_name} - {str(e)}")
             failed += 1
             failed_tests.append((exe_name, f"ERROR: {str(e)}"))
-    
+
     return passed, failed, failed_tests
 
 
@@ -203,48 +203,48 @@ def main():
     if len(sys.argv) > 1:
         test_filter = sys.argv[1]
         print(f"Running tests matching: {test_filter}")
-    
+
     # Setup paths - script is in scripts/ directory, so go up one level to project root
     project_root = Path(__file__).parent.parent  # Go up from scripts/ to project root
     source_dir = project_root / 'source'
     binaries_dir = project_root / 'Binaries' / 'Release'
-    
+
     print(f"Starting test run...")
     print(f"Searching for tests in: {source_dir}")
     print("-" * 80)
-    
+
     # Find all test directories
     test_dirs = find_test_directories(source_dir)
     print(f"Found {len(test_dirs)} test directories")
-    
+
     # Run all tests
     total_pytest_passed = 0
     total_pytest_failed = 0
     total_cpp_passed = 0
     total_cpp_failed = 0
     all_failed_tests = []
-    
+
     for test_dir in test_dirs:
         print(f"\nProcessing: {test_dir.relative_to(project_root)}")
-        
+
         # Run Python tests
         pytest_passed, pytest_failed, pytest_failed_tests = run_pytest(test_dir, test_filter)
         total_pytest_passed += pytest_passed
         total_pytest_failed += pytest_failed
         all_failed_tests.extend(pytest_failed_tests)
-        
+
         if pytest_passed + pytest_failed > 0:
             print(f"  Python tests: {pytest_passed} passed, {pytest_failed} failed")
-        
+
         # Run C++ tests
         cpp_passed, cpp_failed, cpp_failed_tests = run_cpp_tests(test_dir, binaries_dir, test_filter)
         total_cpp_passed += cpp_passed
         total_cpp_failed += cpp_failed
         all_failed_tests.extend(cpp_failed_tests)
-        
+
         if cpp_passed + cpp_failed > 0:
             print(f"  C++ tests: {cpp_passed} passed, {cpp_failed} failed")
-    
+
     # Print summary to console
     print("\n" + "="*80)
     print("TEST SUMMARY")
@@ -253,7 +253,7 @@ def main():
     print(f"C++ Tests:    {total_cpp_passed} passed, {total_cpp_failed} failed")
     print(f"Overall:      {total_pytest_passed + total_cpp_passed} passed, "
           f"{total_pytest_failed + total_cpp_failed} failed")
-    
+
     # Print failed tests if any
     if all_failed_tests:
         print("\n" + "="*80)
@@ -270,9 +270,9 @@ def main():
             for line in lines:
                 print(f"    {line}")
             print("-" * 80)
-    
+
     print("="*80)
-    
+
     # Exit with error code if any tests failed
     if total_pytest_failed + total_cpp_failed > 0:
         sys.exit(1)

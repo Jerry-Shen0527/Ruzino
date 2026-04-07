@@ -11,7 +11,7 @@
 所有组件定义在 [stage/ecs_components.hpp](source/Runtime/stage/include/stage/ecs_components.hpp):
 
 1. **UsdPrimComponent** - 存储 USD prim 引用和时间状态
-2. **AnimationComponent** - 存储节点树和动画执行逻辑  
+2. **AnimationComponent** - 存储节点树和动画执行逻辑
 3. **TransformComponent** - 位置、旋转、缩放信息（支持 glm 变换矩阵）
 4. **GeometryComponent** - 包装现有的 Geometry 系统
 5. **MaterialComponent** - 材质引用
@@ -35,7 +35,7 @@
 - **回调机制**：通过 `std::function` 回调通知 Stage 类 USD 变化
 - **事件驱动**：监听 USD Notice 并触发相应回调
   - `PrimAddedCallback` - Prim 添加时调用
-  - `PrimRemovedCallback` - Prim 删除时调用  
+  - `PrimRemovedCallback` - Prim 删除时调用
   - `PrimChangedCallback` - Prim 属性变化时调用
 
 ### Stage 类
@@ -139,13 +139,13 @@ stage->load_prims_to_ecs();
 void Stage::tick(float delta_time) {
     // 1. 更新动画系统
     animation_system_->update(registry_, delta_time);
-    
+
     // 2. 更新物理系统
     physics_system_->update(registry_, delta_time);
-    
+
     // 3. 同步到 USD（在需要时）
     sync_entities_to_usd();
-    
+
     // 4. 更新全局时间
     current_time_code += delta_time;
 }
@@ -173,10 +173,10 @@ void Stage::tick(float delta_time) {
 class PhysicsSystem {
     // 初始化 PhysX SDK
     bool initialize();
-    
+
     // 更新物理模拟
     void update(entt::registry& registry, float delta_time);
-    
+
     // 添加/移除物理 actor
     void add_physics_actor(entt::registry& registry, entt::entity entity);
     void remove_physics_actor(entt::registry& registry, entt::entity entity);
@@ -185,7 +185,7 @@ class PhysicsSystem {
 class SceneQuerySystem {
     // Raycast
     bool raycast(const glm::vec3& origin, const glm::vec3& direction, ...);
-    
+
     // Overlap test
     bool overlap_sphere(const glm::vec3& center, float radius, ...);
 };
@@ -214,16 +214,16 @@ class SceneQuerySystem {
 class Stage {
     // 获取 registry
     entt::registry& get_registry();
-    
+
     // Entity 创建和查询
     entt::entity create_entity_from_prim(const pxr::UsdPrim& prim);
     pxr::UsdPrim get_prim_from_entity(entt::entity entity);
     entt::entity find_entity_by_path(const pxr::SdfPath& path);
-    
+
     // 同步
     void sync_entities_to_usd();
     void load_prims_to_ecs();
-    
+
     // 获取 systems
     ecs::AnimationSystem* get_animation_system();
     ecs::UsdSyncSystem* get_usd_sync_system();

@@ -27,10 +27,11 @@
  **************************************************************************/
 #pragma once
 #include <algorithm>
-#include <cstdint>
 #include <climits>
+#include <cstdint>
 
-// this file exposes a single function, CompressAlphaDxt5, which encodes a 4x4 set of uint8 alpha values into a single 64 bit BC4 encoded block
+// this file exposes a single function, CompressAlphaDxt5, which encodes a 4x4
+// set of uint8 alpha values into a single 64 bit BC4 encoded block
 static void CompressAlphaDxt5(uint8_t* tile, void* block);
 
 // derived from libsquish, alpha.cpp
@@ -66,21 +67,18 @@ static int FitCodes(uint8_t const* tile, uint8_t const* codes, uint8_t* indices)
 {
     // fit each alpha value to the codebook
     int err = 0;
-    for (int i = 0; i < 16; ++i)
-    {
+    for (int i = 0; i < 16; ++i) {
         // find the least error and corresponding index
         int value = (int)(tile[i]);
         int least = INT_MAX;
         int index = 0;
-        for (int j = 0; j < 8; ++j)
-        {
+        for (int j = 0; j < 8; ++j) {
             // get the squared error from this code
             int dist = (int)value - (int)codes[j];
             dist *= dist;
 
             // compare with the best so far
-            if (dist < least)
-            {
+            if (dist < least) {
                 least = dist;
                 index = j;
             }
@@ -95,7 +93,8 @@ static int FitCodes(uint8_t const* tile, uint8_t const* codes, uint8_t* indices)
     return err;
 }
 
-static void WriteAlphaBlock(int alpha0, int alpha1, uint8_t const* indices, void* block)
+static void
+WriteAlphaBlock(int alpha0, int alpha1, uint8_t const* indices, void* block)
 {
     uint8_t* bytes = reinterpret_cast<uint8_t*>(block);
 
@@ -106,34 +105,30 @@ static void WriteAlphaBlock(int alpha0, int alpha1, uint8_t const* indices, void
     // pack the indices with 3 bits each
     uint8_t* dest = bytes + 2;
     uint8_t const* src = indices;
-    for (int i = 0; i < 2; ++i)
-    {
+    for (int i = 0; i < 2; ++i) {
         // pack 8 3-bit values
         int value = 0;
-        for (int j = 0; j < 8; ++j)
-        {
+        for (int j = 0; j < 8; ++j) {
             int index = *src++;
             value |= (index << 3 * j);
         }
 
         // store in 3 bytes
-        for (int j = 0; j < 3; ++j)
-        {
+        for (int j = 0; j < 3; ++j) {
             int byte = (value >> 8 * j) & 0xff;
             *dest++ = (uint8_t)byte;
         }
     }
 }
 
-static void WriteAlphaBlock5(int alpha0, int alpha1, uint8_t const* indices, void* block)
+static void
+WriteAlphaBlock5(int alpha0, int alpha1, uint8_t const* indices, void* block)
 {
     // check the relative values of the endpoints
-    if (alpha0 > alpha1)
-    {
+    if (alpha0 > alpha1) {
         // swap the indices
         uint8_t swapped[16];
-        for (int i = 0; i < 16; ++i)
-        {
+        for (int i = 0; i < 16; ++i) {
             uint8_t index = indices[i];
             if (index == 0)
                 swapped[i] = 1;
@@ -148,22 +143,20 @@ static void WriteAlphaBlock5(int alpha0, int alpha1, uint8_t const* indices, voi
         // write the block
         WriteAlphaBlock(alpha1, alpha0, swapped, block);
     }
-    else
-    {
+    else {
         // write the block
         WriteAlphaBlock(alpha0, alpha1, indices, block);
     }
 }
 
-static void WriteAlphaBlock7(int alpha0, int alpha1, uint8_t const* indices, void* block)
+static void
+WriteAlphaBlock7(int alpha0, int alpha1, uint8_t const* indices, void* block)
 {
     // check the relative values of the endpoints
-    if (alpha0 < alpha1)
-    {
+    if (alpha0 < alpha1) {
         // swap the indices
         uint8_t swapped[16];
-        for (int i = 0; i < 16; ++i)
-        {
+        for (int i = 0; i < 16; ++i) {
             uint8_t index = indices[i];
             if (index == 0)
                 swapped[i] = 1;
@@ -176,13 +169,11 @@ static void WriteAlphaBlock7(int alpha0, int alpha1, uint8_t const* indices, voi
         // write the block
         WriteAlphaBlock(alpha1, alpha0, swapped, block);
     }
-    else
-    {
+    else {
         // write the block
         WriteAlphaBlock(alpha0, alpha1, indices, block);
     }
 }
-
 
 static void CompressAlphaDxt5(uint8_t* tile, void* block)
 {
@@ -191,8 +182,7 @@ static void CompressAlphaDxt5(uint8_t* tile, void* block)
     int max5 = 0;
     int min7 = 255;
     int max7 = 0;
-    for (int i = 0; i < 16; ++i)
-    {
+    for (int i = 0; i < 16; ++i) {
         // incorporate into the min/max
         int value = (int)(tile[i]);
         if (value < min7)
@@ -243,4 +233,3 @@ static void CompressAlphaDxt5(uint8_t* tile, void* block)
     else
         WriteAlphaBlock7(min7, max7, indices7, block);
 }
-

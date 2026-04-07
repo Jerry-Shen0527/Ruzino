@@ -77,7 +77,7 @@ uint find_closest_lens(float2 pixelPositionF, StructuredBuffer<float3> lensPosit
             closestLensIndex = i;
         }
     }
-    
+
     return closestLensIndex;
 }
 
@@ -85,11 +85,11 @@ uint find_closest_lens(float2 pixelPositionF, StructuredBuffer<float3> lensPosit
 float3 calculate_conjugate_point(float3 lensPosition, float3 displayPosition, float focalLength)
 {
     float3 opticalAxis = calc_lens_direction(lensPosition, 0); // viewDistance not used in this context
-    
+
     // Simple conjugate point calculation: intersection with z=0 plane
     float3 dir = normalize(displayPosition - lensPosition);
     float3 conjugatePoint = lensPosition - dir * (lensPosition.z / dir.z);
-    
+
     return conjugatePoint;
 }
 
@@ -100,7 +100,7 @@ struct ViewRange
     int last_in_angle;
 };
 
-ViewRange find_valid_view_range(float3 lensPosition, float3 conjugatePoint, uint viewCount, 
+ViewRange find_valid_view_range(float3 lensPosition, float3 conjugatePoint, uint viewCount,
                                float2 viewRange, float viewDistance, float pupilDiameter)
 {
     ViewRange result;
@@ -130,7 +130,7 @@ ViewRange find_valid_view_range(float3 lensPosition, float3 conjugatePoint, uint
         float2 viewVector = conjugatePoint2D - viewPosition;
         float leftAngle = cross_2d(leftVector, viewVector);
         float rightAngle = cross_2d(rightVector, viewVector);
-        
+
         if (leftAngle * rightAngle < 0)
         {
             // The view position is within the angle formed by the pupil and the conjugate point
@@ -139,29 +139,29 @@ ViewRange find_valid_view_range(float3 lensPosition, float3 conjugatePoint, uint
             result.last_in_angle = i;
         }
     }
-    
+
     return result;
 }
 
 // Create a ray from view position to conjugate point
 RayInfo create_ray(float3 conjugatePoint, int viewIndex, uint viewCount, float2 viewRange, float viewDistance)
 {
-    float viewPositionX = viewRange.x + (viewRange.y - viewRange.x) * (viewIndex / (float)(viewCount - 1)); 
+    float viewPositionX = viewRange.x + (viewRange.y - viewRange.x) * (viewIndex / (float)(viewCount - 1));
     float3 rayOrigin = float3(viewPositionX, 0, viewDistance);
-    
+
     RayInfo ray;
     ray.Origin = rayOrigin;
     ray.Direction = normalize(conjugatePoint - rayOrigin);
     ray.TMin = 0;
     ray.TMax = 1000;
     ray.throughput = RGBSpectrum(1.0f); // Initialize throughput to white
-    
+
     // swap y and z for ray origin and direction
     ray.Origin.yz = ray.Origin.zy;
     ray.Origin.x *= -1.0f; // Invert y to match the coordinate system
     ray.Direction.yz = ray.Direction.zy;
     ray.Direction.x *= -1.0f; // Invert y to match the coordinate system
-    
+
     return ray;
 }
 
@@ -186,13 +186,13 @@ void pixel_position_to_ray_with_fixed_lens_pos(float2 pixelPositionF, float3 len
 {
     uint lensCount;
     uint foo;
-    
+
     // Step 1: Calculate conjugate point
     float3 displayPosition = float3(pixelPositionF, displayZ);
     float3 conjugatePoint = calculate_conjugate_point(lensPosition, displayPosition, focalLength);
 
     // Step 2: Find valid view range
-    ViewRange validViewRange = find_valid_view_range(lensPosition, conjugatePoint, viewCount, 
+    ViewRange validViewRange = find_valid_view_range(lensPosition, conjugatePoint, viewCount,
                                                    viewRange, viewDistance, pupilDiameter);
 
     // Step 3: Generate ray based on valid view range
@@ -226,7 +226,7 @@ RayInfo pixel_position_to_ray(float2 pixelPositionF, no_diff inout uint seed, St
     lensPositions.GetDimensions(lensCount, foo);
 
     uint closestLensIndex = find_closest_lens(pixelPositionF, lensPositions, lensCount, displayZ, viewDistance);
-    
+
     float3 lensPosition = lensPositions[closestLensIndex];
     float3 rayOrigin, rayDirection;
     pixel_position_to_ray_with_fixed_lens_pos(pixelPositionF, lensPosition,
@@ -246,7 +246,7 @@ RayInfo pixel_position_to_ray(float2 pixelPositionF, no_diff inout uint seed, St
 // Core processing function that handles the entire light field ray generation logic
 [Differentiable]
 RayInfo process_pixel_to_ray(uint2 launchIndex, inout no_diff uint seed, StructuredBuffer<float3> lensPositions,
-                            uint2 launchDimensions, float2 displaySize, float displayZ, 
+                            uint2 launchDimensions, float2 displaySize, float displayZ,
                             float focalLength, float pupilDiameter, float viewDistance,
                             uint viewCount, float2 viewRange)
 {
@@ -254,7 +254,7 @@ RayInfo process_pixel_to_ray(uint2 launchIndex, inout no_diff uint seed, Structu
     float2 pixelPositionF = (float2(launchIndex) - random_float2(seed) + 0.5f) * displaySize / launchDimensions - displaySize * 0.5f;
 
     // Convert pixel position to ray
-    return pixel_position_to_ray(pixelPositionF, seed, lensPositions, displayZ, focalLength, 
+    return pixel_position_to_ray(pixelPositionF, seed, lensPositions, displayZ, focalLength,
                                pupilDiameter, viewDistance, viewCount, viewRange);
 }
 
@@ -268,7 +268,7 @@ void main(uint2 DTid: SV_DispatchThreadID)
         return; // Exit if the thread index is out of bounds
 
     uint seed = random_seeds[LaunchIndex];
-    
+
     // Process pixel to generate ray using core processing function
     RayInfo ray = process_pixel_to_ray(LaunchIndex, seed, lens_positions,
                                      constants.LaunchDimensions, constants.displaySize, constants.displayZ,

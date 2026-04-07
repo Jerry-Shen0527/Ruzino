@@ -33,15 +33,22 @@ class Hd_RUZINO_Material : public HdMaterial {
 
     explicit Hd_RUZINO_Material(SdfPath const& id);
 
-    void Sync(HdSceneDelegate* sceneDelegate, HdRenderParam* renderParam, HdDirtyBits* dirtyBits)
-        override;
+    void Sync(
+        HdSceneDelegate* sceneDelegate,
+        HdRenderParam* renderParam,
+        HdDirtyBits* dirtyBits) override;
 
     HdDirtyBits GetInitialDirtyBitsMask() const override;
 
     std::string requireTexcoordName();
 
     void Finalize(HdRenderParam* renderParam) override;
-    Color Sample(const GfVec3f& wo, GfVec3f& wi, float& pdf, GfVec2f texcoord, const std::function<float()>& uniform_float);
+    Color Sample(
+        const GfVec3f& wo,
+        GfVec3f& wi,
+        float& pdf,
+        GfVec2f texcoord,
+        const std::function<float()>& uniform_float);
     GfVec3f Eval(GfVec3f wi, GfVec3f wo, GfVec2f texcoord);
     float Pdf(GfVec3f wi, GfVec3f wo, GfVec2f texcoord);
 
@@ -90,7 +97,8 @@ class Hd_RUZINO_Material : public HdMaterial {
 
     HdMaterialNode2 get_input_connection(
         HdMaterialNetwork2 surfaceNetwork,
-        std::map<TfToken, std::vector<HdMaterialConnection2>>::value_type& input_connection);
+        std::map<TfToken, std::vector<HdMaterialConnection2>>::value_type&
+            input_connection);
 };
 
 RUZINO_NAMESPACE_CLOSE_SCOPE

@@ -1,9 +1,11 @@
-#include <Eigen/Eigen>
-#include "nodes/core/def/node_def.hpp"
-#include <igl/triangle/triangulate.h>
-#include <igl/boundary_loop.h>
 #include <igl/barycentric_coordinates.h>
+#include <igl/boundary_loop.h>
 #include <igl/harmonic.h>
+#include <igl/triangle/triangulate.h>
+
+#include <Eigen/Eigen>
+
+#include "nodes/core/def/node_def.hpp"
 
 std::function<Eigen::MatrixXd(const Eigen::MatrixXd&)> generate_weight_function(
     const Eigen::MatrixXd& C,
@@ -107,7 +109,7 @@ NODE_EXECUTION_FUNCTION(gbc_hbc)
     Eigen::MatrixXi E(num_rows, 2);
     for (int i = 0; i < num_rows; ++i) {
         E(i, 0) = i;
-        E(i, 1) = (i + 1) % num_rows; 
+        E(i, 1) = (i + 1) % num_rows;
     }
 
     // at least three control points
@@ -116,7 +118,7 @@ NODE_EXECUTION_FUNCTION(gbc_hbc)
     // dimension of points
     assert(C.cols() == 2);
 
-    auto W = generate_weight_function(C,E);
+    auto W = generate_weight_function(C, E);
     // we've made W transpose
     params.set_output("HBC", W);
     return true;

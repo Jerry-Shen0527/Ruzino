@@ -28,8 +28,8 @@
 #pragma once
 
 #include "Core/Error.h"
-#include "utils/Math/Vector.h"
 #include "utils/Math/Matrix.h"
+#include "utils/Math/Vector.h"
 
 /**
  * Color conversion utility functions.
@@ -53,7 +53,8 @@
  * -0.7036   1.6975   0.0061;
  * 0.0030   0.0136   0.9834 ]
  *
- * CIE XYZ to LMS using the Bradford transform (part of the original CIECAM97 model):
+ * CIE XYZ to LMS using the Bradford transform (part of the original CIECAM97
+ * model):
  *
  * M = [ 0.8951   0.2664  -0.1614;
  * -0.7502   1.7135   0.0367;
@@ -61,8 +62,7 @@
  *
  */
 
-namespace Ruzino
-{
+namespace Ruzino {
 // Transform from RGB color in Rec.709 to CIE XYZ.
 static const float3x3 kColorTransform_RGBtoXYZ_Rec709 = {
     // clang-format off
@@ -144,10 +144,12 @@ static float3 xyYtoXYZ(float x, float y, float Y)
 /**
  * Transforms color temperature of a blackbody emitter to color in CIE XYZ.
  * This function uses an approximation based on piecewise rational polynomials:
- * Kang et al., Design of Advanced Color Temperature Control System for HDTV Applications, 2002.
+ * Kang et al., Design of Advanced Color Temperature Control System for HDTV
+ * Applications, 2002.
  * https://pdfs.semanticscholar.org/cc7f/c2e67601ccb1a8fec048c9b78a4224c34d26.pdf
  *
- * @param[in] T Color temperature in degrees Kelvin, supported range is 1667K to 25000K.
+ * @param[in] T Color temperature in degrees Kelvin, supported range is 1667K to
+ * 25000K.
  * @param[in] Y Luminance.
  * @return CIE XYZ color.
  */
@@ -161,12 +163,10 @@ static float3 colorTemperatureToXYZ(float T, float Y = 1.f)
     double t3 = t * t * t;
 
     double xc = 0.0;
-    if (T < 4000.f)
-    {
+    if (T < 4000.f) {
         xc = -0.2661239e9 / t3 - 0.2343580e6 / t2 + 0.8776956e3 / t + 0.179910;
     }
-    else
-    {
+    else {
         xc = -3.0258469e9 / t3 + 2.1070379e6 / t2 + 0.2226347e3 / t + 0.240390;
     }
 
@@ -175,16 +175,13 @@ static float3 colorTemperatureToXYZ(float T, float Y = 1.f)
     double x3 = x * x * x;
 
     double yc = 0.0;
-    if (T < 2222.f)
-    {
+    if (T < 2222.f) {
         yc = -1.1063814 * x3 - 1.34811020 * x2 + 2.18555832 * x - 0.20219683;
     }
-    else if (T < 4000.f)
-    {
+    else if (T < 4000.f) {
         yc = -0.9549476 * x3 - 1.37418593 * x2 + 2.09137015 * x - 0.16748867;
     }
-    else
-    {
+    else {
         yc = +3.0817580 * x3 - 5.87338670 * x2 + 3.75112997 * x - 0.37001483;
     }
 
@@ -196,26 +193,34 @@ static float3 colorTemperatureToXYZ(float T, float Y = 1.f)
  * Calculates the 3x3 matrix that performs white balancing in RGB Rec.709 space
  * to a target color temperature.
  *
- * The function uses the von Kries transform, i.e. a diagonal scaling matrix in LMS space.
- * The default LMS transform is CAT02 (part of CIECAM02).
+ * The function uses the von Kries transform, i.e. a diagonal scaling matrix in
+ * LMS space. The default LMS transform is CAT02 (part of CIECAM02).
  *
- * The transform is chosen so that the D65 white point is exactly preserved at T=6500K.
- * Note that the transformed RGB can be out-of-gamut in Rec.709 (negative values
- * are possible) depending on T, so it is advisable to gamut clamp the result.
+ * The transform is chosen so that the D65 white point is exactly preserved at
+ * T=6500K. Note that the transformed RGB can be out-of-gamut in Rec.709
+ * (negative values are possible) depending on T, so it is advisable to gamut
+ * clamp the result.
  *
  * @param[in] T Target color temperature (K).
- * @return 3x3 matrix M, which transforms linear RGB in Rec.709 using c' = M * c.
+ * @return 3x3 matrix M, which transforms linear RGB in Rec.709 using c' = M *
+ * c.
  */
 static float3x3 calculateWhiteBalanceTransformRGB_Rec709(float T)
 {
-    static const float3x3 MA = mul(kColorTransform_XYZtoLMS_CAT02, kColorTransform_RGBtoXYZ_Rec709);    // RGB -> LMS
-    static const float3x3 invMA = mul(kColorTransform_XYZtoRGB_Rec709, kColorTransform_LMStoXYZ_CAT02); // LMS -> RGB
+    static const float3x3 MA =
+        mul(kColorTransform_XYZtoLMS_CAT02,
+            kColorTransform_RGBtoXYZ_Rec709);  // RGB -> LMS
+    static const float3x3 invMA =
+        mul(kColorTransform_XYZtoRGB_Rec709,
+            kColorTransform_LMStoXYZ_CAT02);  // LMS -> RGB
 
     // Compute destination reference white in LMS space.
-    static const float3 wd = mul(kColorTransform_XYZtoLMS_CAT02, colorTemperatureToXYZ(6500.f));
+    static const float3 wd =
+        mul(kColorTransform_XYZtoLMS_CAT02, colorTemperatureToXYZ(6500.f));
 
     // Compute source reference white in LMS space.
-    const float3 ws = mul(kColorTransform_XYZtoLMS_CAT02, colorTemperatureToXYZ(T));
+    const float3 ws =
+        mul(kColorTransform_XYZtoLMS_CAT02, colorTemperatureToXYZ(T));
 
     // Derive final 3x3 transform in RGB space.
     float3 scale = wd / ws;
@@ -223,4 +228,4 @@ static float3x3 calculateWhiteBalanceTransformRGB_Rec709(float T)
 
     return mul(mul(invMA, D), MA);
 }
-} // namespace Ruzino
+}  // namespace Ruzino

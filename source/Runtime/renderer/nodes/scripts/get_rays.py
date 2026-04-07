@@ -44,7 +44,7 @@ def exec_node(camera: CameraInfo, h: int, w: int):
     rayo = camera.camera_center.expand(rays_d.shape).permute(2, 0, 1).unsqueeze(0)
     rayd = rays_d.permute(2, 0, 1).unsqueeze(0)
 
-    
+
     rays = torch.cat((rayo, rayd), dim=1)
     return rays
 

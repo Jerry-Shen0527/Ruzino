@@ -26,70 +26,83 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "GridVolumeSamplerParams.slang"
 #include "Core/Macros.h"
 #include "Core/Program/DefineList.h"
-#include "utils/Properties.h"
+#include "GridVolumeSamplerParams.slang"
 #include "Scene/Scene.h"
+#include "utils/Properties.h"
 
-namespace Ruzino
-{
-    class RenderContext;
-    struct ShaderVar;
+namespace Ruzino {
+class RenderContext;
+struct ShaderVar;
 
-    /** Grid volume sampler.
-        Utily class for evaluating transmittance and sampling scattering in grid volumes.
-    */
-    class HD_RUZINO_API GridVolumeSampler
-    {
-    public:
-        /** Grid volume sampler configuration options.
-        */
-        struct Options
+/** Grid volume sampler.
+    Utily class for evaluating transmittance and sampling scattering in grid
+   volumes.
+*/
+class HD_RUZINO_API GridVolumeSampler {
+   public:
+    /** Grid volume sampler configuration options.
+     */
+    struct Options {
+        TransmittanceEstimator transmittanceEstimator =
+            TransmittanceEstimator::RatioTrackingLocalMajorant;
+        DistanceSampler distanceSampler =
+            DistanceSampler::DeltaTrackingLocalMajorant;
+        bool useBrickedGrid = true;
+
+        // Note: Empty constructor needed for clang due to the use of the nested
+        // struct constructor in the parent constructor.
+        Options()
         {
-            TransmittanceEstimator transmittanceEstimator = TransmittanceEstimator::RatioTrackingLocalMajorant;
-            DistanceSampler distanceSampler = DistanceSampler::DeltaTrackingLocalMajorant;
-            bool useBrickedGrid = true;
+        }
 
-            // Note: Empty constructor needed for clang due to the use of the nested struct constructor in the parent constructor.
-            Options() {}
-
-            template<typename Archive>
-            void serialize(Archive& ar)
-            {
-                ar("transmittanceEstimator", transmittanceEstimator);
-                ar("distanceSampler", distanceSampler);
-                ar("useBrickedGrid", useBrickedGrid);
-            }
-        };
-
-        /** Create a new object.
-            \param[in] pRenderContext A render-context that will be used for processing.
-            \param[in] pScene The scene.
-            \param[in] options Configuration options.
-        */
-        GridVolumeSampler(RenderContext* pRenderContext, ref<IScene> pScene, const Options& options = Options());
-        virtual ~GridVolumeSampler() = default;
-
-        /** Get a list of shader defines for using the grid volume sampler.
-            \return Returns a list of defines.
-        */
-        DefineList getDefines() const;
-
-        /** Bind the grid volume sampler to a given shader variable.
-            \param[in] var Shader variable.
-        */
-        void bindShaderData(const ShaderVar& var) const;
-
-        /** Returns the current configuration.
-        */
-        const Options& getOptions() const { return mOptions; }
-
-        void setOptions(const Options& options) { mOptions = options; }
-
-    protected:
-        ref<IScene>             mpScene;            ///< Scene.
-
-        Options                 mOptions;
+        template<typename Archive>
+        void serialize(Archive& ar)
+        {
+            ar("transmittanceEstimator", transmittanceEstimator);
+            ar("distanceSampler", distanceSampler);
+            ar("useBrickedGrid", useBrickedGrid);
+        }
     };
-}
+
+    /** Create a new object.
+        \param[in] pRenderContext A render-context that will be used for
+       processing.
+        \param[in] pScene The scene.
+        \param[in] options Configuration options.
+    */
+    GridVolumeSampler(
+        RenderContext* pRenderContext,
+        ref<IScene> pScene,
+        const Options& options = Options());
+    virtual ~GridVolumeSampler() = default;
+
+    /** Get a list of shader defines for using the grid volume sampler.
+        \return Returns a list of defines.
+    */
+    DefineList getDefines() const;
+
+    /** Bind the grid volume sampler to a given shader variable.
+        \param[in] var Shader variable.
+    */
+    void bindShaderData(const ShaderVar& var) const;
+
+    /** Returns the current configuration.
+     */
+    const Options& getOptions() const
+    {
+        return mOptions;
+    }
+
+    void setOptions(const Options& options)
+    {
+        mOptions = options;
+    }
+
+   protected:
+    ref<IScene> mpScene;  ///< Scene.
+
+    Options mOptions;
+};
+}  // namespace Ruzino

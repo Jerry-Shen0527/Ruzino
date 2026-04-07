@@ -16,7 +16,7 @@ The FD-BPM implementation uses the Douglas-Gunn Alternating Direction Implicit (
 
 1. **Substep 1a**: Explicit x-direction update
 2. **Substep 1b**: Implicit x-direction solve (Thomson algorithm)
-3. **Substep 2a**: Explicit y-direction update  
+3. **Substep 2a**: Explicit y-direction update
 4. **Substep 2b**: Implicit y-direction solve (Thomson algorithm)
 5. **Apply multiplier**: Phase accumulation and edge absorber
 

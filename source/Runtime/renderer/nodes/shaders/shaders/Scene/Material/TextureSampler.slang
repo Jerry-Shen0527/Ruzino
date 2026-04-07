@@ -174,7 +174,7 @@ struct StochasticTextureSampler : ITextureSampler
     float maxAnisotropy;    ///< Max anisotropy (ratio between major and minor ellipse axes)
 
     __init(
-    float2 gradX, float2 gradY, float2 uvJitter, float lodJitter, float maxAnisotropy=64)    
+    float2 gradX, float2 gradY, float2 uvJitter, float lodJitter, float maxAnisotropy=64)
     {
         this.gradX = gradX;
         this.gradY = gradY;
@@ -184,9 +184,9 @@ struct StochasticTextureSampler : ITextureSampler
     }
 
     float4 sampleTexture(Texture2D t, SamplerState s, float2 uv)
-    {       
+    {
         uint2 dim;
-        t.GetDimensions(dim.x, dim.y);    
+        t.GetDimensions(dim.x, dim.y);
         let dudx = dim.x * gradX.x;
         let dvdx = dim.y * gradX.y;
         let dudy = dim.x * gradY.x;
@@ -203,18 +203,18 @@ struct StochasticTextureSampler : ITextureSampler
 
         float minAxisLength = length(minAxis);
         float maxAxisLength = length(maxAxis);
-        
+
         if (minAxisLength > 0 && (minAxisLength * maxAnisotropy) < maxAxisLength)
         {
             let scale = maxAxisLength / (minAxisLength * maxAnisotropy);
             minAxisLength *= scale;
-        }       
+        }
 
         // No need to clamp to min and max lod levels, as HW should do it for free.
         let lod = log2(minAxisLength) + lodJitter;
 
         uv = uv * dim + uvJitter;
-        uv = (floor(uv) + 0.5) / dim;        
+        uv = (floor(uv) + 0.5) / dim;
 
         return t.SampleLevel(s, uv, lod);
     }

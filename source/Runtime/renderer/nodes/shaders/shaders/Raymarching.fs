@@ -84,9 +84,9 @@ float sdHexPrism(vec3 p, vec2 h) {
 }
 
 float sdOctogonPrism(in vec3 p, in float r, float h) {
-    const vec3 k = vec3(-0.9238795325,   // sqrt(2+sqrt(2))/2 
+    const vec3 k = vec3(-0.9238795325,   // sqrt(2+sqrt(2))/2
     0.3826834323,   // sqrt(2-sqrt(2))/2
-    0.4142135623); // sqrt(2)-1 
+    0.4142135623); // sqrt(2)-1
   // reflections
     p = abs(p);
     p.xy -= 2.0 * min(dot(vec2(k.x, k.y), p.xy), 0.0) * vec2(k.x, k.y);
@@ -255,7 +255,7 @@ float sdOctahedron(vec3 p, float s) {
     else
         return m * 0.57735027;
     float k = clamp(0.5 * (q.z - q.y + s), 0.0, s);
-    return length(vec3(q.x, q.y - s + k, q.z - k)); 
+    return length(vec3(q.x, q.y - s + k, q.z - k));
     #endif
 
     // bound, not exact
@@ -402,7 +402,7 @@ vec2 raycast(in vec3 ro, in vec3 rd) {
     }
     //else return res;
 
-    // raymarch primitives   
+    // raymarch primitives
     vec2 tb = iBox(ro - vec3(0.0, 0.4, -0.5), rd, vec3(2.5, 0.41, 3.0));
     if(tb.x < tb.y && tb.y > 0.0 && tb.x < tmax) {
         //return vec2(tb.x,2.0);
@@ -461,7 +461,7 @@ vec3 calcNormal(in vec3 pos) {
       //if( n.x+n.y+n.z>100.0 ) break;
     }
     return normalize(n);
-#endif    
+#endif
 }
 
 // https://iquilezles.org/articles/nvscene2008/rwwtt.pdf
@@ -489,7 +489,7 @@ float checkersGradBox(in vec2 p, in vec2 dpdx, in vec2 dpdy) {
     return 0.5 - 0.5 * i.x * i.y;
 }
 
-vec3 render(in vec3 ro, in vec3 rd, in vec3 rdx, in vec3 rdy) { 
+vec3 render(in vec3 ro, in vec3 rd, in vec3 rdx, in vec3 rdy) {
     // background
     vec3 col = vec3(0.7, 0.7, 0.9) - max(rd.y, 0.0) * 0.3;
 
@@ -502,7 +502,7 @@ vec3 render(in vec3 ro, in vec3 rd, in vec3 rdx, in vec3 rdy) {
         vec3 nor = (m < 1.5) ? vec3(0.0, 1.0, 0.0) : calcNormal(pos);
         vec3 ref = reflect(rd, nor);
 
-        // material        
+        // material
         col = 0.2 + 0.2 * sin(m * 2.0 + vec3(0.0, 1.0, 2.0));
         float ks = 1.0;
 
@@ -580,7 +580,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     vec2 mo = iMouse.xy / iResolution.xy;
     float time = 32.0 + iTime * 1.5;
 
-    // camera	
+    // camera
     vec3 ta = vec3(0.25, -0.75, -0.75);
     vec3 ro = ta + vec3(4.5 * cos(0.1 * time + 7.0 * mo.x), 2.2, 4.5 * sin(0.1 * time + 7.0 * mo.x));
     // camera-to-world transformation
@@ -594,7 +594,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
         // pixel coordinates
             vec2 o = vec2(float(m), float(n)) / float(AA) - 0.5;
             vec2 p = (2.0 * (fragCoord + o) - iResolution.xy) / iResolution.y;
-#else    
+#else
             vec2 p = (2.0 * fragCoord - iResolution.xy) / iResolution.y;
 #endif
 
@@ -609,7 +609,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
             vec3 rdx = ca * normalize(vec3(px, fl));
             vec3 rdy = ca * normalize(vec3(py, fl));
 
-        // render	
+        // render
             vec3 col = render(ro, rd, rdx, rdy);
 
         // gain

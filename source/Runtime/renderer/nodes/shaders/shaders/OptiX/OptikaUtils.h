@@ -1,9 +1,9 @@
 #pragma once
 
-#include"PathTracer/Preprocessor.h"
 #include "Geometry/ray.h"
+#include "PathTracer/Preprocessor.h"
 
-#if!defined(__CUDACC__)
+#if !defined(__CUDACC__)
 #include <algorithm>
 #include <cmath>
 using std::max;
@@ -11,8 +11,7 @@ using std::min;
 using std::sqrt;
 #endif
 
-struct float3x3
-{
+struct float3x3 {
     OPTIKA_HOSTDEVICE
 
     float3x3()
@@ -28,7 +27,7 @@ struct float3x3
         m_22 = 1;
     }
 
-    //ʹ����������ʼ��
+    // ʹ����������ʼ��
     OPTIKA_HOSTDEVICE
 
     float3x3(float3 v1, float3 v2, float3 v3)
@@ -87,8 +86,8 @@ struct float3x3
     float m_22;
 };
 
-OPTIKA_INLINE OPTIKA_HOSTDEVICE
-float3x3 Mul(const float3x3& A, const float3x3& B)
+OPTIKA_INLINE OPTIKA_HOSTDEVICE float3x3
+Mul(const float3x3& A, const float3x3& B)
 {
     float3x3 out;
     out.m_00 = A.m_00 * B.m_00 + A.m_01 * B.m_10 + A.m_02 * B.m_20;
@@ -106,8 +105,7 @@ float3x3 Mul(const float3x3& A, const float3x3& B)
     return out;
 }
 
-struct float4x4
-{
+struct float4x4 {
     OPTIKA_HOSTDEVICE
 
     float4x4()
@@ -172,7 +170,11 @@ struct float4x4
         m_33 = in.m_33;
     }
 
-    float4x4(const float4& v0, const float4& v1, const float4& v2, const float4& v3)
+    float4x4(
+        const float4& v0,
+        const float4& v1,
+        const float4& v2,
+        const float4& v3)
     {
         m_00 = v0.x;
         m_01 = v1.x;
@@ -191,7 +193,6 @@ struct float4x4
         m_32 = v2.w;
         m_33 = v3.w;
     }
-
 
     OPTIKA_HOSTDEVICE
 
@@ -299,29 +300,44 @@ struct float4x4
     float4x4 operator*(const float4x4& ma) const
     {
         float4x4 out;
-        out.m_00 = m_00 * ma.m_00 + m_01 * ma.m_10 + m_02 * ma.m_20 + m_03 * ma.m_30;
-        out.m_01 = m_00 * ma.m_01 + m_01 * ma.m_11 + m_02 * ma.m_21 + m_03 * ma.m_31;
-        out.m_02 = m_00 * ma.m_02 + m_01 * ma.m_12 + m_02 * ma.m_22 + m_03 * ma.m_32;
-        out.m_03 = m_00 * ma.m_03 + m_01 * ma.m_13 + m_02 * ma.m_23 + m_03 * ma.m_33;
+        out.m_00 =
+            m_00 * ma.m_00 + m_01 * ma.m_10 + m_02 * ma.m_20 + m_03 * ma.m_30;
+        out.m_01 =
+            m_00 * ma.m_01 + m_01 * ma.m_11 + m_02 * ma.m_21 + m_03 * ma.m_31;
+        out.m_02 =
+            m_00 * ma.m_02 + m_01 * ma.m_12 + m_02 * ma.m_22 + m_03 * ma.m_32;
+        out.m_03 =
+            m_00 * ma.m_03 + m_01 * ma.m_13 + m_02 * ma.m_23 + m_03 * ma.m_33;
 
-        out.m_10 = m_10 * ma.m_00 + m_11 * ma.m_10 + m_12 * ma.m_20 + m_13 * ma.m_30;
-        out.m_11 = m_10 * ma.m_01 + m_11 * ma.m_11 + m_12 * ma.m_21 + m_13 * ma.m_31;
-        out.m_12 = m_10 * ma.m_02 + m_11 * ma.m_12 + m_12 * ma.m_22 + m_13 * ma.m_32;
-        out.m_13 = m_10 * ma.m_03 + m_11 * ma.m_13 + m_12 * ma.m_23 + m_13 * ma.m_33;
+        out.m_10 =
+            m_10 * ma.m_00 + m_11 * ma.m_10 + m_12 * ma.m_20 + m_13 * ma.m_30;
+        out.m_11 =
+            m_10 * ma.m_01 + m_11 * ma.m_11 + m_12 * ma.m_21 + m_13 * ma.m_31;
+        out.m_12 =
+            m_10 * ma.m_02 + m_11 * ma.m_12 + m_12 * ma.m_22 + m_13 * ma.m_32;
+        out.m_13 =
+            m_10 * ma.m_03 + m_11 * ma.m_13 + m_12 * ma.m_23 + m_13 * ma.m_33;
 
-        out.m_20 = m_20 * ma.m_00 + m_21 * ma.m_10 + m_22 * ma.m_20 + m_23 * ma.m_30;
-        out.m_21 = m_20 * ma.m_01 + m_21 * ma.m_11 + m_22 * ma.m_21 + m_23 * ma.m_31;
-        out.m_22 = m_20 * ma.m_02 + m_21 * ma.m_12 + m_22 * ma.m_22 + m_23 * ma.m_32;
-        out.m_23 = m_20 * ma.m_03 + m_21 * ma.m_13 + m_22 * ma.m_23 + m_23 * ma.m_33;
+        out.m_20 =
+            m_20 * ma.m_00 + m_21 * ma.m_10 + m_22 * ma.m_20 + m_23 * ma.m_30;
+        out.m_21 =
+            m_20 * ma.m_01 + m_21 * ma.m_11 + m_22 * ma.m_21 + m_23 * ma.m_31;
+        out.m_22 =
+            m_20 * ma.m_02 + m_21 * ma.m_12 + m_22 * ma.m_22 + m_23 * ma.m_32;
+        out.m_23 =
+            m_20 * ma.m_03 + m_21 * ma.m_13 + m_22 * ma.m_23 + m_23 * ma.m_33;
 
-        out.m_30 = m_30 * ma.m_00 + m_31 * ma.m_10 + m_32 * ma.m_20 + m_33 * ma.m_30;
-        out.m_31 = m_30 * ma.m_01 + m_31 * ma.m_11 + m_32 * ma.m_21 + m_33 * ma.m_31;
-        out.m_32 = m_30 * ma.m_02 + m_31 * ma.m_12 + m_32 * ma.m_22 + m_33 * ma.m_32;
-        out.m_33 = m_30 * ma.m_03 + m_31 * ma.m_13 + m_32 * ma.m_23 + m_33 * ma.m_33;
+        out.m_30 =
+            m_30 * ma.m_00 + m_31 * ma.m_10 + m_32 * ma.m_20 + m_33 * ma.m_30;
+        out.m_31 =
+            m_30 * ma.m_01 + m_31 * ma.m_11 + m_32 * ma.m_21 + m_33 * ma.m_31;
+        out.m_32 =
+            m_30 * ma.m_02 + m_31 * ma.m_12 + m_32 * ma.m_22 + m_33 * ma.m_32;
+        out.m_33 =
+            m_30 * ma.m_03 + m_31 * ma.m_13 + m_32 * ma.m_23 + m_33 * ma.m_33;
 
         return out;
     }
-
 
     OPTIKA_HOSTDEVICE
 
@@ -353,8 +369,8 @@ struct float4x4
     float m_33;
 };
 
-
-OPTIKA_INLINE OPTIKA_HOSTDEVICE void Inverse4x4Matrix(const float4x4& m, float4x4& im, float& det)
+OPTIKA_INLINE OPTIKA_HOSTDEVICE void
+Inverse4x4Matrix(const float4x4& m, float4x4& im, float& det)
 {
     float A2323 = m.m_22 * m.m_33 - m.m_23 * m.m_32;
     float A1323 = m.m_21 * m.m_33 - m.m_23 * m.m_31;
@@ -374,10 +390,10 @@ OPTIKA_INLINE OPTIKA_HOSTDEVICE void Inverse4x4Matrix(const float4x4& m, float4x
     float A0212 = m.m_10 * m.m_22 - m.m_12 * m.m_20;
     float A0113 = m.m_10 * m.m_31 - m.m_11 * m.m_30;
     float A0112 = m.m_10 * m.m_21 - m.m_11 * m.m_20;
-    det = m.m_00 * (m.m_11 * A2323 - m.m_12 * A1323 + m.m_13 * A1223) - m.m_01 * (
-              m.m_10 * A2323 - m.m_12 * A0323 + m.m_13 * A0223) + m.m_02 * (
-              m.m_10 * A1323 - m.m_11 * A0323 + m.m_13 * A0123) - m.m_03 * (
-              m.m_10 * A1223 - m.m_11 * A0223 + m.m_12 * A0123);
+    det = m.m_00 * (m.m_11 * A2323 - m.m_12 * A1323 + m.m_13 * A1223) -
+          m.m_01 * (m.m_10 * A2323 - m.m_12 * A0323 + m.m_13 * A0223) +
+          m.m_02 * (m.m_10 * A1323 - m.m_11 * A0323 + m.m_13 * A0123) -
+          m.m_03 * (m.m_10 * A1223 - m.m_11 * A0223 + m.m_12 * A0123);
     float inv_det = 1.0f / det;
     im.m_00 = inv_det * (m.m_11 * A2323 - m.m_12 * A1323 + m.m_13 * A1223);
     im.m_01 = inv_det * -(m.m_01 * A2323 - m.m_02 * A1323 + m.m_03 * A1223);
@@ -404,7 +420,9 @@ OPTIKA_INLINE OPTIKA_HOSTDEVICE float Det(const float3x3& m)
            m.m_02 * (m.m_10 * m.m_21 - m.m_11 * m.m_20);
 }
 
-OPTIKA_INLINE OPTIKA_HOSTDEVICE bool Inverse3x3Matrix(const float3x3& m, float3x3& Invm)
+OPTIKA_INLINE OPTIKA_HOSTDEVICE bool Inverse3x3Matrix(
+    const float3x3& m,
+    float3x3& Invm)
 {
     double invdet = 1 / Det(m);
 
@@ -424,7 +442,9 @@ OPTIKA_INLINE OPTIKA_HOSTDEVICE bool Inverse3x3Matrix(const float3x3& m, float3x
     return true;
 }
 
-OPTIKA_INLINE OPTIKA_HOSTDEVICE void Transpose3x3Matrix(const float3x3& m, float3x3& transposed)
+OPTIKA_INLINE OPTIKA_HOSTDEVICE void Transpose3x3Matrix(
+    const float3x3& m,
+    float3x3& transposed)
 {
     transposed.m_00 = m.m_00;
     transposed.m_01 = m.m_10;
@@ -461,7 +481,6 @@ OPTIKA_INLINE OPTIKA_HOSTDEVICE float3 Mul(const float3x3& m, const float3& v)
     return ret;
 }
 
-
 OPTIKA_INLINE OPTIKA_HOSTDEVICE float3 RGBtoXYZ(const float3& rgb)
 {
     float3 xyz;
@@ -488,24 +507,24 @@ OPTIKA_INLINE OPTIKA_HOSTDEVICE float Clamp(float val, float low, float high)
         return val;
 }
 
-
 constexpr float Pi = 3.1415926535897932385;
 constexpr float InvPi = 0.31830988618379067154;
 constexpr float PiOver2 = 1.57079632679489661923;
 constexpr float PiOver4 = 0.78539816339744830961;
-//#define Pi      (3.1415926535897932385f )
-//#define InvPi   (0.31830988618379067154f)
-//#define PiOver2 (1.57079632679489661923f)
-//#define PiOver4 (0.78539816339744830961f)
-//#endif
-
+// #define Pi      (3.1415926535897932385f )
+// #define InvPi   (0.31830988618379067154f)
+// #define PiOver2 (1.57079632679489661923f)
+// #define PiOver4 (0.78539816339744830961f)
+// #endif
 
 OPTIKA_INLINE OPTIKA_HOSTDEVICE float degrees_to_radians(float degrees)
 {
     return degrees * Pi / 180.0;
 }
 
-OPTIKA_INLINE OPTIKA_HOSTDEVICE bool SameHemisphere(const float3& w, const float3& wp)
+OPTIKA_INLINE OPTIKA_HOSTDEVICE bool SameHemisphere(
+    const float3& w,
+    const float3& wp)
 {
     return w.z * wp.z > 0;
 }
@@ -544,13 +563,11 @@ OPTIKA_INLINE OPTIKA_HOSTDEVICE float2 ConcentricSampleDisk(float u, float v)
 
     // Apply concentric mapping to point
     float theta, r;
-    if (abs(uOffset.x) > abs(uOffset.y))
-    {
+    if (abs(uOffset.x) > abs(uOffset.y)) {
         r = uOffset.x;
         theta = PiOver4 * (uOffset.y / uOffset.x);
     }
-    else
-    {
+    else {
         r = uOffset.y;
         theta = PiOver2 - PiOver4 * (uOffset.x / uOffset.y);
     }
@@ -563,7 +580,6 @@ OPTIKA_INLINE OPTIKA_HOSTDEVICE float3 CosineSampleHemisphere(float u, float v)
     float z = sqrt(max((float)0, 1 - d.x * d.x - d.y * d.y));
     return make_float3(d.x, d.y, z);
 }
-
 
 #if defined(__CUDACC__)
 #include "optix_device.h"
@@ -578,10 +594,10 @@ OPTIKA_INLINE __device__ RayDesc GetWorldRay()
 
 OPTIKA_INLINE __device__ float3 GetCurrentPos()
 {
-    return optixGetWorldRayOrigin() + optixGetWorldRayDirection() * optixGetRayTmax();
+    return optixGetWorldRayOrigin() +
+           optixGetWorldRayDirection() * optixGetRayTmax();
 }
 #endif
-
 
 OPTIKA_INLINE OPTIKA_HOSTDEVICE float CosTheta(const float3& w)
 {
@@ -618,11 +634,11 @@ OPTIKA_INLINE OPTIKA_HOSTDEVICE float Tan2Theta(const float3& w)
     return Sin2Theta(w) / Cos2Theta(w);
 }
 
-OPTIKA_INLINE OPTIKA_HOSTDEVICE float3 Faceforward(const float3& v, const float3& v2)
+OPTIKA_INLINE OPTIKA_HOSTDEVICE float3
+Faceforward(const float3& v, const float3& v2)
 {
     return (dot(v, v2) < 0.f) ? -v : v;
 }
-
 
 OPTIKA_INLINE OPTIKA_HOSTDEVICE float CosPhi(const float3& w)
 {
@@ -646,18 +662,19 @@ OPTIKA_INLINE OPTIKA_HOSTDEVICE float Sin2Phi(const float3& w)
     return SinPhi(w) * SinPhi(w);
 }
 
-
 __forceinline__ __device__ float3 toSRGB(const float3& c)
 {
     float invGamma = 1.0f / 2.4f;
-    float3 powed = make_float3(powf(c.x, invGamma), powf(c.y, invGamma), powf(c.z, invGamma));
+    float3 powed = make_float3(
+        powf(c.x, invGamma), powf(c.y, invGamma), powf(c.z, invGamma));
     return make_float3(
         c.x < 0.0031308f ? 12.92f * c.x : 1.055f * powed.x - 0.055f,
         c.y < 0.0031308f ? 12.92f * c.y : 1.055f * powed.y - 0.055f,
         c.z < 0.0031308f ? 12.92f * c.z : 1.055f * powed.z - 0.055f);
 }
 
-//__forceinline__ __device__ float dequantizeUnsigned8Bits( const unsigned char i )
+//__forceinline__ __device__ float dequantizeUnsigned8Bits( const unsigned char
+// i )
 //{
 //    enum { N = (1 << 8) - 1 };
 //    return min((float)i / (float)N), 1.f)
@@ -665,11 +682,7 @@ __forceinline__ __device__ float3 toSRGB(const float3& c)
 __forceinline__ __device__ unsigned char quantizeUnsigned8Bits(float x)
 {
     x = clamp(x, 0.0f, 1.0f);
-    enum
-    {
-        N = (1 << 8) - 1,
-        Np1 = (1 << 8)
-    };
+    enum { N = (1 << 8) - 1, Np1 = (1 << 8) };
     return (unsigned char)min((unsigned int)(x * (float)Np1), (unsigned int)N);
 }
 
@@ -704,13 +717,11 @@ __forceinline__ __device__ uchar4 make_color_no_gamma(const float3& c)
         255u);
 }
 
-
 __forceinline__ __device__ uchar4 make_color_no_gamma(const float4& c)
 {
     // first apply gamma, then convert to unsigned char
     return make_color_no_gamma(make_float3(c.x, c.y, c.z));
 }
-
 
 __forceinline__ __device__ uchar4 make_color(const float4& c)
 {

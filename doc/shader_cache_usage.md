@@ -81,11 +81,11 @@ private:
 public:
     // 支持移动语义，避免不必要的数据拷贝
     explicit CustomBlob(std::vector<char>&& buffer);
-    
+
     // 实现ISlangUnknown接口（COM标准）
     - queryInterface: 支持ISlangUnknown和ISlangBlob查询
     - addRef/release: 线程安全的引用计数管理
-    
+
     // 实现ISlangBlob接口
     - getBufferPointer: 返回shader二进制数据指针
     - getBufferSize: 返回数据大小

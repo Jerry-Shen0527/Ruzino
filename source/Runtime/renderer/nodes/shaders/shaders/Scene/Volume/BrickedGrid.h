@@ -27,13 +27,10 @@
  **************************************************************************/
 #pragma once
 
-
-namespace Ruzino
-{
-    struct BrickedGrid
-    {
-        nvrhi::TextureHandle range;
-        nvrhi::TextureHandle indirection;
-        nvrhi::TextureHandle atlas;
-    };
-}
+namespace Ruzino {
+struct BrickedGrid {
+    nvrhi::TextureHandle range;
+    nvrhi::TextureHandle indirection;
+    nvrhi::TextureHandle atlas;
+};
+}  // namespace Ruzino

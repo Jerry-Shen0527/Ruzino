@@ -26,46 +26,44 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Core/Macros.h"
-#include "utils/StringFormatters.h"
+#include <filesystem>
 #include <format>
 #include <string_view>
-#include <filesystem>
 
-namespace Ruzino
-{
+#include "Core/Macros.h"
+#include "utils/StringFormatters.h"
+
+namespace Ruzino {
 /**
  * Container class for logging messages.
- * Messages are only printed to the selected outputs if they match the verbosity level.
+ * Messages are only printed to the selected outputs if they match the verbosity
+ * level.
  */
-class Logger
-{
-public:
+class Logger {
+   public:
     /// Log message severity.
-    enum class Level
-    {
-        Disabled, ///< Disable log messages.
-        Fatal,    ///< Fatal messages.
-        Error,    ///< Error messages.
-        Warning,  ///< Warning messages.
-        Info,     ///< Informative messages.
-        Debug,    ///< Debugging messages.
-        Count,    ///< Keep this last.
+    enum class Level {
+        Disabled,  ///< Disable log messages.
+        Fatal,     ///< Fatal messages.
+        Error,     ///< Error messages.
+        Warning,   ///< Warning messages.
+        Info,      ///< Informative messages.
+        Debug,     ///< Debugging messages.
+        Count,     ///< Keep this last.
     };
 
-    enum class Frequency
-    {
-        Always, ///< Reports the message always
-        Once,   ///< Reports the message only first time the exact string appears
+    enum class Frequency {
+        Always,  ///< Reports the message always
+        Once,  ///< Reports the message only first time the exact string appears
     };
 
     /// Log output.
-    enum class OutputFlags
-    {
-        None = 0x0,        ///< No output.
-        Console = 0x2,     ///< Output to console (stdout/stderr).
-        File = 0x1,        ///< Output to log file.
-        DebugWindow = 0x4, ///< Output to debug window (if debugger is attached).
+    enum class OutputFlags {
+        None = 0x0,     ///< No output.
+        Console = 0x2,  ///< Output to console (stdout/stderr).
+        File = 0x1,     ///< Output to log file.
+        DebugWindow =
+            0x4,  ///< Output to debug window (if debugger is attached).
     };
 
     /**
@@ -114,9 +112,12 @@ public:
      * @param[in] level Log level.
      * @param[in] msg Log message.
      */
-    static void log(Level level, const std::string_view msg, Frequency frequency = Frequency::Always);
+    static void log(
+        Level level,
+        const std::string_view msg,
+        Frequency frequency = Frequency::Always);
 
-private:
+   private:
     Logger() = delete;
 };
 
@@ -134,7 +135,8 @@ inline void logDebug(const std::string_view msg)
 template<typename... Args>
 inline void logDebug(std::format_string<Args...> format, Args&&... args)
 {
-    Logger::log(Logger::Level::Debug, std::format(format, std::forward<Args>(args)...));
+    Logger::log(
+        Logger::Level::Debug, std::format(format, std::forward<Args>(args)...));
 }
 
 inline void logInfo(const std::string_view msg)
@@ -145,7 +147,8 @@ inline void logInfo(const std::string_view msg)
 template<typename... Args>
 inline void logInfo(std::format_string<Args...> format, Args&&... args)
 {
-    Logger::log(Logger::Level::Info, std::format(format, std::forward<Args>(args)...));
+    Logger::log(
+        Logger::Level::Info, std::format(format, std::forward<Args>(args)...));
 }
 
 inline void logWarning(const std::string_view msg)
@@ -156,7 +159,9 @@ inline void logWarning(const std::string_view msg)
 template<typename... Args>
 inline void logWarning(std::format_string<Args...> format, Args&&... args)
 {
-    Logger::log(Logger::Level::Warning, std::format(format, std::forward<Args>(args)...));
+    Logger::log(
+        Logger::Level::Warning,
+        std::format(format, std::forward<Args>(args)...));
 }
 
 inline void logWarningOnce(const std::string_view msg)
@@ -167,7 +172,10 @@ inline void logWarningOnce(const std::string_view msg)
 template<typename... Args>
 inline void logWarningOnce(std::format_string<Args...> format, Args&&... args)
 {
-    Logger::log(Logger::Level::Warning, std::format(format, std::forward<Args>(args)...), Logger::Frequency::Once);
+    Logger::log(
+        Logger::Level::Warning,
+        std::format(format, std::forward<Args>(args)...),
+        Logger::Frequency::Once);
 }
 
 inline void logError(const std::string_view msg)
@@ -178,7 +186,8 @@ inline void logError(const std::string_view msg)
 template<typename... Args>
 inline void logError(std::format_string<Args...> format, Args&&... args)
 {
-    Logger::log(Logger::Level::Error, std::format(format, std::forward<Args>(args)...));
+    Logger::log(
+        Logger::Level::Error, std::format(format, std::forward<Args>(args)...));
 }
 
 inline void logErrorOnce(const std::string_view msg)
@@ -189,7 +198,10 @@ inline void logErrorOnce(const std::string_view msg)
 template<typename... Args>
 inline void logErrorOnce(std::format_string<Args...> format, Args&&... args)
 {
-    Logger::log(Logger::Level::Error, std::format(format, std::forward<Args>(args)...), Logger::Frequency::Once);
+    Logger::log(
+        Logger::Level::Error,
+        std::format(format, std::forward<Args>(args)...),
+        Logger::Frequency::Once);
 }
 
 inline void logFatal(const std::string_view msg)
@@ -200,13 +212,13 @@ inline void logFatal(const std::string_view msg)
 template<typename... Args>
 inline void logFatal(std::format_string<Args...> format, Args&&... args)
 {
-    Logger::log(Logger::Level::Fatal, std::format(format, std::forward<Args>(args)...));
+    Logger::log(
+        Logger::Level::Fatal, std::format(format, std::forward<Args>(args)...));
 }
 
-} // namespace Ruzino
+}  // namespace Ruzino
 
 #define FALCOR_PRINT(x)                      \
-    do                                       \
-    {                                        \
+    do {                                     \
         ::Ruzino::logInfo("{} = {}", #x, x); \
     } while (0)

@@ -26,15 +26,14 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Core/Macros.h"
-
-#include "Core/State/ComputeState.h"
-#include "Core/Program/Program.h"
-#include "Core/Program/ProgramVars.h"
 #include <memory>
 
-namespace Ruzino
-{
+#include "Core/Macros.h"
+#include "Core/Program/Program.h"
+#include "Core/Program/ProgramVars.h"
+#include "Core/State/ComputeState.h"
+
+namespace Ruzino {
 /**
  * Class that performs parallel reduction over all pixels in a texture.
  *
@@ -45,11 +44,9 @@ namespace Ruzino
  * The numerical error for the summation operation lies between pairwise
  * summation (blocks of size n = 2) and naive running summation.
  */
-class HD_RUZINO_API ParallelReduction
-{
-public:
-    enum class Type
-    {
+class HD_RUZINO_API ParallelReduction {
+   public:
+    enum class Type {
         Sum,
         MinMax,
     };
@@ -59,15 +56,18 @@ public:
 
     /**
      * Perform parallel reduction.
-     * The computations are performed in type T, which must be compatible with the texture format:
+     * The computations are performed in type T, which must be compatible with
+     * the texture format:
      * - float4 for floating-point texture formats (float, snorm, unorm).
      * - uint4 for unsigned integer texture formats.
      * - int4 for signed integer texture formats.
      *
-     * For the Sum operation, unused components are set to zero if texture format has < 4 components.
+     * For the Sum operation, unused components are set to zero if texture
+     * format has < 4 components.
      *
-     * For performance reasons, it is advisable to store the result in a buffer on the GPU,
-     * and then issue an asynchronous readback in user code to avoid a full GPU flush.
+     * For performance reasons, it is advisable to store the result in a buffer
+     * on the GPU, and then issue an asynchronous readback in user code to avoid
+     * a full GPU flush.
      *
      * The size of the result buffer depends on the executed operation:
      * - Sum needs 16B
@@ -76,10 +76,12 @@ public:
      * @param[in] pRenderContext The render context.
      * @param[in] pInput Input texture.
      * @param[in] operation Reduction operation.
-     * @param[out] pResult (Optional) The result of the reduction operation is stored here if non-nullptr. Note that this requires a GPU
-     * flush!
-     * @param[out] pResultBuffer (Optional) Buffer on the GPU to which the result is copied (16B or 32B).
-     * @param[out] resultOffset (Optional) Byte offset into pResultBuffer to where the result should be stored.
+     * @param[out] pResult (Optional) The result of the reduction operation is
+     * stored here if non-nullptr. Note that this requires a GPU flush!
+     * @param[out] pResultBuffer (Optional) Buffer on the GPU to which the
+     * result is copied (16B or 32B).
+     * @param[out] resultOffset (Optional) Byte offset into pResultBuffer to
+     * where the result should be stored.
      */
     template<typename T>
     void execute(
@@ -88,12 +90,11 @@ public:
         Type operation,
         T* pResult = nullptr,
         nvrhi::BufferHandle pResultBuffer = nullptr,
-        uint64_t resultOffset = 0
-    );
+        uint64_t resultOffset = 0);
 
     uint64_t getMemoryUsageInBytes() const;
 
-private:
+   private:
     void allocate(uint32_t elementCount, uint32_t elementSize);
 
     ref<Device> mpDevice;
@@ -103,6 +104,7 @@ private:
     ref<Program> mpFinalProgram;
     ref<ProgramVars> mpVars;
 
-    nvrhi::BufferHandle mpBuffers[2]; ///< Intermediate buffers for reduction iterations.
+    nvrhi::BufferHandle
+        mpBuffers[2];  ///< Intermediate buffers for reduction iterations.
 };
-} // namespace Ruzino
+}  // namespace Ruzino

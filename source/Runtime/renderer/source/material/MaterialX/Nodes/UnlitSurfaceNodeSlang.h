@@ -12,12 +12,14 @@
 MATERIALX_NAMESPACE_BEGIN
 
 /// Unlit surface node implementation for SLANG
-class HD_RUZINO_API UnlitSurfaceNodeSlang : public SlangImplementation
-{
-  public:
+class HD_RUZINO_API UnlitSurfaceNodeSlang : public SlangImplementation {
+   public:
     static ShaderNodeImplPtr create();
 
-    void emitFunctionCall(const ShaderNode& node, GenContext& context, ShaderStage& stage) const override;
+    void emitFunctionCall(
+        const ShaderNode& node,
+        GenContext& context,
+        ShaderStage& stage) const override;
 };
 
 MATERIALX_NAMESPACE_END

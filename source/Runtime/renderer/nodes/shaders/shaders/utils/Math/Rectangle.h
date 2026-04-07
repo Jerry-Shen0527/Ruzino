@@ -26,31 +26,43 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Core/Macros.h"
-#include "utils/Math/Vector.h"
 #include <limits>
 
-namespace Ruzino
-{
+#include "Core/Macros.h"
+#include "utils/Math/Vector.h"
+
+namespace Ruzino {
 /**
  * Axis-aligned UV tile stored by its min/max points.
  */
-struct Rectangle
-{
-    float2 minPoint = float2(std::numeric_limits<float>::infinity());  ///< Minimum point.
-    float2 maxPoint = float2(-std::numeric_limits<float>::infinity()); ///< Maximum point. If any minPoint > maxPoint the tile is invalid.
+struct Rectangle {
+    float2 minPoint =
+        float2(std::numeric_limits<float>::infinity());  ///< Minimum point.
+    float2 maxPoint = float2(
+        -std::numeric_limits<float>::infinity());  ///< Maximum point. If any
+                                                   ///< minPoint > maxPoint the
+                                                   ///< tile is invalid.
 
     /// Construct bounding tile initialized to +/-inf.
     Rectangle() = default;
 
     /// Construct bounding tile initialized to single point.
-    Rectangle(const float2& p) : minPoint(p), maxPoint(p) {}
+    Rectangle(const float2& p) : minPoint(p), maxPoint(p)
+    {
+    }
 
     /// Construct bounding tile initialized to min/max point.
-    Rectangle(const float2& pmin, const float2& pmax) : minPoint(pmin), maxPoint(pmax) {}
+    Rectangle(const float2& pmin, const float2& pmax)
+        : minPoint(pmin),
+          maxPoint(pmax)
+    {
+    }
 
     /// Set tile to single point.
-    void set(const float2& p) { minPoint = maxPoint = p; }
+    void set(const float2& p)
+    {
+        minPoint = maxPoint = p;
+    }
 
     /// Set the tile corners explicitly.
     void set(const float2& pmin, const float2& pmax)
@@ -67,7 +79,10 @@ struct Rectangle
     }
 
     /// Returns true if bounding tile is valid (all dimensions zero or larger).
-    bool valid() const { return maxPoint.x >= minPoint.x && maxPoint.y >= minPoint.y; }
+    bool valid() const
+    {
+        return maxPoint.x >= minPoint.x && maxPoint.y >= minPoint.y;
+    }
 
     /// Grows the tile to include the point p.
     Rectangle& include(const float2& p)
@@ -100,7 +115,8 @@ struct Rectangle
         return b.valid() && b.area() > 0.f;
     }
 
-    /// Returns true if the Rectangle `b` is fully contained within this Rectangle.
+    /// Returns true if the Rectangle `b` is fully contained within this
+    /// Rectangle.
     bool contains(const Rectangle& b)
     {
         Rectangle temp = *this;
@@ -111,13 +127,19 @@ struct Rectangle
      * Returns the tile center.
      * @return Center of the tile if valid, undefined otherwise.
      */
-    float2 center() const { return (minPoint + maxPoint) * 0.5f; }
+    float2 center() const
+    {
+        return (minPoint + maxPoint) * 0.5f;
+    }
 
     /**
      * Returns the tile extent.
      * @return Size of the tile if valid, undefined otherwise.
      */
-    float2 extent() const { return maxPoint - minPoint; }
+    float2 extent() const
+    {
+        return maxPoint - minPoint;
+    }
 
     /**
      * Returns the surface area of the tile.
@@ -131,18 +153,31 @@ struct Rectangle
 
     /**
      * Returns the radius of the minimal sphere that encloses the tile.
-     * @return Radius of minimal bounding sphere, or undefined if tile is invalid.
+     * @return Radius of minimal bounding sphere, or undefined if tile is
+     * invalid.
      */
-    float radius() const { return 0.5f * length(extent()); }
+    float radius() const
+    {
+        return 0.5f * length(extent());
+    }
 
     /// Checks whether two bounding tilees are equal.
-    bool operator==(const Rectangle& rhs) const { return all(minPoint == rhs.minPoint) && all(maxPoint == rhs.maxPoint); }
+    bool operator==(const Rectangle& rhs) const
+    {
+        return all(minPoint == rhs.minPoint) && all(maxPoint == rhs.maxPoint);
+    }
 
     /// Checks whether two bounding tilees are not equal.
-    bool operator!=(const Rectangle& rhs) const { return any(minPoint != rhs.minPoint) || any(maxPoint != rhs.maxPoint); }
+    bool operator!=(const Rectangle& rhs) const
+    {
+        return any(minPoint != rhs.minPoint) || any(maxPoint != rhs.maxPoint);
+    }
 
     /// Union of two tilees.
-    Rectangle& operator|=(const Rectangle& rhs) { return include(rhs); }
+    Rectangle& operator|=(const Rectangle& rhs)
+    {
+        return include(rhs);
+    }
 
     /// Union of two tilees.
     Rectangle operator|(const Rectangle& rhs) const
@@ -152,7 +187,10 @@ struct Rectangle
     }
 
     /// Intersection of two tilees.
-    Rectangle& operator&=(const Rectangle& rhs) { return intersection(rhs); }
+    Rectangle& operator&=(const Rectangle& rhs)
+    {
+        return intersection(rhs);
+    }
 
     /// Intersection of two tilees.
     Rectangle operator&(const Rectangle& rhs) const
@@ -161,4 +199,4 @@ struct Rectangle
         return bb &= rhs;
     }
 };
-} // namespace Ruzino
+}  // namespace Ruzino

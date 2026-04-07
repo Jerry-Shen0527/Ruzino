@@ -30,8 +30,7 @@
 #include "ScalarMath.h"
 #include "Vector.h"
 
-namespace Ruzino
-{
+namespace Ruzino {
 
 ///////////////////////////////////////////////////////////////////////////////
 //                              16-bit snorm
@@ -40,7 +39,8 @@ namespace Ruzino
 /**
  * Convert float value to 16-bit snorm value.
  * Values outside [-1,1] are clamped and NaN is encoded as zero.
- * @return 16-bit snorm value in low bits, high bits are all zeros or ones depending on sign.
+ * @return 16-bit snorm value in low bits, high bits are all zeros or ones
+ * depending on sign.
  */
 inline int floatToSnorm16(float v)
 {
@@ -61,7 +61,8 @@ inline float unpackSnorm16(uint packed)
 }
 
 /**
- * Pack single float into a 16-bit snorm in the lower bits of the returned dword.
+ * Pack single float into a 16-bit snorm in the lower bits of the returned
+ * dword.
  * @return 16-bit snorm in low bits, high bits all zero.
  */
 inline uint packSnorm16(float v)
@@ -90,4 +91,4 @@ inline uint packSnorm2x16(float2 v)
     return (floatToSnorm16(v.x) & 0x0000ffff) | (floatToSnorm16(v.y) << 16);
 }
 
-} // namespace Ruzino
+}  // namespace Ruzino

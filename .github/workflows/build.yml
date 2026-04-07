@@ -24,12 +24,12 @@ jobs:
               Write-Output "ERROR: GH_PAT secret is not set"
               exit 1
             }
-            
+
             Write-Output "✓ GH_PAT token is configured"
-            
+
             # Test token validity and permissions using gh CLI
             $env:GH_TOKEN = $token
-            
+
             try {
               # Try to get current user info - this tests token validity
               $output = & gh auth status --show-token 2>&1
@@ -42,7 +42,7 @@ jobs:
             } catch {
               Write-Output "⚠ Could not validate token with gh CLI, but it may still be valid"
             }
-            
+
             # Try to get repo info as additional test
             try {
               & gh api user --jq '.login' 2>$null
@@ -52,7 +52,7 @@ jobs:
             } catch {
               Write-Output "⚠ Could not verify API permissions"
             }
-            
+
             Write-Output "✓ Credentials check passed"
           } catch {
             Write-Output "ERROR: Failed to verify credentials - $_"
@@ -79,16 +79,16 @@ jobs:
           $ErrorActionPreference = "Continue"
           $WarningPreference = "SilentlyContinue"
           $VerbosePreference = "SilentlyContinue"
-          
+
           $configureHash = (Get-FileHash configure.py).Hash
           Write-Output "configure-hash=$configureHash" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          
+
           $needsRebuild = $false
-          
+
           # First check if configure.py changed
           $sdkDir = "SDK"
           $hashFile = Join-Path $sdkDir ".configure_hash"
-          
+
           if (Test-Path -Path $hashFile) {
             $storedHash = (Get-Content $hashFile -Raw).Trim()
             if ($storedHash -ne $configureHash) {
@@ -96,11 +96,11 @@ jobs:
               $needsRebuild = $true
             } else {
               Write-Output "configure.py unchanged, checking if SDK exists in remote Release..."
-              
+
               # Check if SDK exists in GitHub Release
               $tagName = "sdk-$configureHash"
               $releaseExists = $false
-              
+
               # Try to view the release
               $output = & gh release view $tagName --repo ${{ github.repository }} 2>$null
               $exitCode = $?
@@ -110,7 +110,7 @@ jobs:
               } else {
                 Write-Output "Release not found with tag: $tagName"
               }
-              
+
               if ($releaseExists) {
                 Write-Output "SDK exists in remote Release, no rebuild needed"
                 $needsRebuild = $false
@@ -121,11 +121,11 @@ jobs:
             }
           } else {
             Write-Output "No hash file found, will check if SDK exists in remote Release..."
-            
+
             # Check if SDK exists in GitHub Release with current hash
             $tagName = "sdk-$configureHash"
             $releaseExists = $false
-            
+
             # Try to view the release
             $output = & gh release view $tagName --repo ${{ github.repository }} 2>$null
             $exitCode = $?
@@ -135,7 +135,7 @@ jobs:
             } else {
               Write-Output "Release not found with tag: $tagName"
             }
-            
+
             if ($releaseExists) {
               Write-Output "SDK exists in remote Release, will download instead of rebuild"
               $needsRebuild = $false
@@ -144,7 +144,7 @@ jobs:
               $needsRebuild = $true
             }
           }
-          
+
           if ($needsRebuild) {
             Write-Output "needs-rebuild=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
             Write-Output "SDK rebuild needed"
@@ -152,7 +152,7 @@ jobs:
             Write-Output "needs-rebuild=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
             Write-Output "SDK is up to date, will restore from Release"
           }
-          
+
           exit 0
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
@@ -193,7 +193,7 @@ jobs:
             # Enable Git long path support
             & git config --global core.longpaths true
             Write-Output "Git long path support enabled"
-            
+
             # Enable Windows long path support in registry (if running with admin)
             # This is commented out as it requires admin, but Git long path should be sufficient
             # New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -Force
@@ -227,10 +227,10 @@ jobs:
           ) else if exist "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" (
             call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           )
-          
+
           REM Enable Git long path support
           git config --global core.longpaths true
-          
+
           REM Build SDK - All libraries for Debug variant
           echo Building SDK with all libraries for Debug variant
           python configure.py --all --build_variant Debug
@@ -250,10 +250,10 @@ jobs:
           ) else if exist "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" (
             call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           )
-          
+
           REM Enable Git long path support
           git config --global core.longpaths true
-          
+
           REM Build SDK - All libraries for Release variant
           echo Building SDK with all libraries for Release variant
           python configure.py --all --build_variant Release
@@ -272,10 +272,10 @@ jobs:
             if ($sdkExists) {
               $sdkFiles = (Get-ChildItem -Path "SDK" -Recurse -ErrorAction SilentlyContinue | Measure-Object).Count
             }
-            
+
             Write-Output "SDK directory exists: $sdkExists"
             Write-Output "SDK files count: $sdkFiles"
-            
+
             if (-not $sdkExists -or $sdkFiles -eq 0) {
               Write-Output "ERROR: SDK directory is empty or not found!"
               exit 1
@@ -290,7 +290,7 @@ jobs:
         run: |
           Write-Output "Packing SDK..."
           python configure.py --pack
-          
+
           if (Test-Path -Path "SDK/SDK.zip") {
             $size = (Get-Item "SDK/SDK.zip").Length / 1GB
             Write-Output "SDK.zip packed successfully - Size: $([Math]::Round($size, 2)) GB"
@@ -361,14 +361,14 @@ jobs:
             $configureHash = "${{ needs.check-sdk.outputs.configure-hash }}"
             $tagName = "sdk-$configureHash"
             $sdkZip = "SDK/SDK.zip"
-            
+
             Write-Output "Attempting to download SDK from release with tag: $tagName"
             New-Item -ItemType Directory -Path "SDK" -Force -ErrorAction SilentlyContinue | Out-Null
-            
+
             # Use GH CLI with personal token
             $env:GH_TOKEN = "${{ secrets.GH_PAT }}"
             & gh release download $tagName --repo ${{ github.repository }} -p "SDK.zip" -O $sdkZip
-            
+
             if ($LASTEXITCODE -eq 0 -and (Test-Path -Path $sdkZip)) {
               $size = (Get-Item $sdkZip).Length / 1GB
               Write-Output "SDK downloaded successfully - Size: $([Math]::Round($size, 2)) GB"
@@ -418,7 +418,7 @@ jobs:
           ) else if exist "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" (
             call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           )
-          
+
           REM Configure CMake
           set buildDir=build_nocuda
           if exist "%buildDir%" (
@@ -426,13 +426,13 @@ jobs:
           )
           mkdir "%buildDir%"
           cd /d "%buildDir%"
-          
+
           cmake -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DRUZINO_WITH_CUDA=OFF ^
             -DCMAKE_INSTALL_PREFIX="../install_nocuda" ^
             ..
-          
+
           if %ERRORLEVEL% neq 0 (
             echo CMake configuration failed
             exit /b %ERRORLEVEL%
@@ -450,7 +450,7 @@ jobs:
           ) else if exist "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" (
             call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           )
-          
+
           cd /d build_nocuda
           cmake --build . --config Release -j
           if %ERRORLEVEL% neq 0 (
@@ -485,14 +485,14 @@ jobs:
             $configureHash = "${{ needs.check-sdk.outputs.configure-hash }}"
             $tagName = "sdk-$configureHash"
             $sdkZip = "SDK/SDK.zip"
-            
+
             Write-Output "Attempting to download SDK from release with tag: $tagName"
             New-Item -ItemType Directory -Path "SDK" -Force -ErrorAction SilentlyContinue | Out-Null
-            
+
             # Use GH CLI with personal token
             $env:GH_TOKEN = "${{ secrets.GH_PAT }}"
             & gh release download $tagName --repo ${{ github.repository }} -p "SDK.zip" -O $sdkZip
-            
+
             if ($LASTEXITCODE -eq 0 -and (Test-Path -Path $sdkZip)) {
               $size = (Get-Item $sdkZip).Length / 1GB
               Write-Output "SDK downloaded successfully - Size: $([Math]::Round($size, 2)) GB"
@@ -519,13 +519,13 @@ jobs:
         run: |
           try {
             $cuda_available = $false
-            
+
             # Check CUDA_PATH environment variable
             if ($env:CUDA_PATH) {
               Write-Output "Found CUDA_PATH: $env:CUDA_PATH"
               $cuda_available = $true
             }
-            
+
             # Also check common CUDA installation locations
             if (-not $cuda_available) {
               $common_paths = @(
@@ -534,7 +534,7 @@ jobs:
                 "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4",
                 "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.3"
               )
-              
+
               foreach ($path in $common_paths) {
                 if (Test-Path -Path "$path\bin\nvcc.exe") {
                   Write-Output "Found CUDA at: $path"
@@ -544,7 +544,7 @@ jobs:
                 }
               }
             }
-            
+
             if ($cuda_available) {
               Write-Output "cuda-available=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
               Write-Output "CUDA is available"
@@ -588,21 +588,21 @@ jobs:
           ) else if exist "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" (
             call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           )
-          
+
           set buildDir=build_cuda_release
           if exist "%buildDir%" (
             rmdir /s /q "%buildDir%"
           )
           mkdir "%buildDir%"
           cd /d "%buildDir%"
-          
+
           cmake -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DRUZINO_WITH_CUDA=ON ^
             -DCMAKE_CUDA_ARCHITECTURES=75;86;89 ^
             -DCMAKE_INSTALL_PREFIX="../install_cuda" ^
             ..
-          
+
           if %ERRORLEVEL% neq 0 (
             echo CMake configuration failed for Release
             exit /b %ERRORLEVEL%
@@ -621,7 +621,7 @@ jobs:
           ) else if exist "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" (
             call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           )
-          
+
           cd /d build_cuda_release
           cmake --build . --config Release -j
           if %ERRORLEVEL% neq 0 (
@@ -652,7 +652,7 @@ jobs:
         run: |
           Write-Output "Starting test suite..."
           python scripts/run_all_tests.py
-          
+
           if ($LASTEXITCODE -eq 0) {
             Write-Output "test-status=success" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
             Write-Output "✓ All tests passed"
@@ -685,18 +685,18 @@ jobs:
             Write-Output "CUDA build & test: ${{ needs.build-and-test-with-cuda.result }}"
             Write-Output "======================================"
             Write-Output ""
-            
+
             $buildSuccess = ("${{ needs.build-without-cuda.result }}" -eq "success" -and "${{ needs.build-and-test-with-cuda.result }}" -eq "success")
-            
+
             if ($buildSuccess) {
               Write-Output "✓ Both builds and tests completed successfully"
             } else {
               Write-Output "✗ Some builds or tests failed"
             }
-            
+
             Write-Output "======================================"
             Write-Output ""
-            
+
             if ($buildSuccess) {
               Write-Output "✓ OVERALL: SUCCESS - All builds and tests passed!"
               exit 0

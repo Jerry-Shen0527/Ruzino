@@ -13,17 +13,13 @@ struct PickedVerticesStorage {
     constexpr static bool has_storage = false;
 
     std::list<size_t> picked_vertex_indices;
-
 };
-
 
 NODE_DEF_OPEN_SCOPE
 
 NODE_DECLARATION_FUNCTION(get_vertices_by_left_click)
 {
-
     b.add_output<std::list<size_t>>("Picked Vertex Index (Left Click)");
-
 }
 
 NODE_EXECUTION_FUNCTION(get_vertices_by_left_click)
@@ -42,10 +38,11 @@ NODE_EXECUTION_FUNCTION(get_vertices_by_left_click)
             }
         }
     }
-    
-	std::list<size_t> picked_vertex_indices = storage.picked_vertex_indices;
 
-	params.set_output("Picked Vertex Index (Left Click)", std::move(picked_vertex_indices));
+    std::list<size_t> picked_vertex_indices = storage.picked_vertex_indices;
+
+    params.set_output(
+        "Picked Vertex Index (Left Click)", std::move(picked_vertex_indices));
     return true;
 }
 

@@ -26,55 +26,72 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Core/Error.h"
-#include <utility>
 #include <stdexcept>
+#include <utility>
 
-namespace Ruzino
-{
+#include "Core/Error.h"
+
+namespace Ruzino {
 template<typename T, typename Enable = void>
-class NumericRange final
-{};
+class NumericRange final { };
 
 /**
  * Numeric range that can be iterated over.
  * Should be replaced with C++20 std::views::iota when available.
  */
 template<typename T>
-class NumericRange<T, typename std::enable_if<std::is_integral<T>::value>::type> final
-{
-public:
-    class Iterator
-    {
-    public:
+class NumericRange<T, typename std::enable_if<std::is_integral<T>::value>::type>
+    final {
+   public:
+    class Iterator {
+       public:
         using iterator_category = std::forward_iterator_tag;
         using value_type = T;
         using difference_type = T;
         using pointer = const T*;
         using reference = T;
 
-        explicit Iterator(const T& value = T(0)) : mValue(value) {}
+        explicit Iterator(const T& value = T(0)) : mValue(value)
+        {
+        }
         const Iterator& operator++()
         {
             ++mValue;
             return *this;
         }
-        bool operator!=(const Iterator& other) const { return other.mValue != mValue; }
-        T operator*() const { return mValue; }
+        bool operator!=(const Iterator& other) const
+        {
+            return other.mValue != mValue;
+        }
+        T operator*() const
+        {
+            return mValue;
+        }
 
-    private:
+       private:
         T mValue;
     };
 
-    explicit NumericRange(const T& begin, const T& end) : mBegin(begin), mEnd(end) { FALCOR_CHECK(begin <= end, "Invalid range"); }
+    explicit NumericRange(const T& begin, const T& end)
+        : mBegin(begin),
+          mEnd(end)
+    {
+        FALCOR_CHECK(begin <= end, "Invalid range");
+    }
     NumericRange() = delete;
     NumericRange(const NumericRange&) = delete;
     NumericRange(NumericRange&& other) = delete;
 
-    Iterator begin() const { return Iterator(mBegin); }
-    Iterator end() const { return Iterator(mEnd); }
+    Iterator begin() const
+    {
+        return Iterator(mBegin);
+    }
+    Iterator end() const
+    {
+        return Iterator(mEnd);
+    }
 
-private:
+   private:
     T mBegin, mEnd;
 };
-}; // namespace Ruzino
+};  // namespace Ruzino

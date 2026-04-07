@@ -11,16 +11,21 @@
 MATERIALX_NAMESPACE_BEGIN
 
 /// Utility node for getting number of active lights for SLANG.
-class HD_RUZINO_API NumLightsNodeSlang : public SlangImplementation
-{
-  public:
+class HD_RUZINO_API NumLightsNodeSlang : public SlangImplementation {
+   public:
     NumLightsNodeSlang();
 
     static ShaderNodeImplPtr create();
 
-    void createVariables(const ShaderNode& node, GenContext& context, Shader& shader) const override;
+    void createVariables(
+        const ShaderNode& node,
+        GenContext& context,
+        Shader& shader) const override;
 
-    void emitFunctionDefinition(const ShaderNode& node, GenContext& context, ShaderStage& stage) const override;
+    void emitFunctionDefinition(
+        const ShaderNode& node,
+        GenContext& context,
+        ShaderStage& stage) const override;
 };
 
 MATERIALX_NAMESPACE_END

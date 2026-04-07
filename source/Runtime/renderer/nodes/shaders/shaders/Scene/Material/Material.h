@@ -458,7 +458,7 @@ class HD_RUZINO_API Material : public Object {
      *   The factor range from 0 (no mollification) to 1 (maximum
      * mollification).
      */
-    virtual void setRoughnessMollification(float factor){};
+    virtual void setRoughnessMollification(float factor) { };
 
    protected:
     Material(ref<Device> pDevice, const std::string& name, MaterialType type);

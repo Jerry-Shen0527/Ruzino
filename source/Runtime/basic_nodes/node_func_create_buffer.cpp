@@ -15,10 +15,7 @@ static constexpr const char* socket_name(int i)
 NODE_DECLARATION_FUNCTION(create_buffer1f)
 {
     for (int i = 0; i < 1; ++i) {
-        b.add_input<float>(socket_name(i))
-            .min(-10)
-            .max(10)
-            .default_val(0);
+        b.add_input<float>(socket_name(i)).min(-10).max(10).default_val(0);
     }
     b.add_input<int>("Size").min(1).max(200).default_val(1);
     b.add_output<float1Buffer>("Buffer");
@@ -26,10 +23,7 @@ NODE_DECLARATION_FUNCTION(create_buffer1f)
 NODE_DECLARATION_FUNCTION(create_buffer2f)
 {
     for (int i = 0; i < 2; ++i) {
-        b.add_input<float>(socket_name(i))
-            .min(-10)
-            .max(10)
-            .default_val(0);
+        b.add_input<float>(socket_name(i)).min(-10).max(10).default_val(0);
     }
     b.add_input<int>("Size").min(1).max(200).default_val(1);
     b.add_output<float2Buffer>("Buffer");
@@ -37,10 +31,7 @@ NODE_DECLARATION_FUNCTION(create_buffer2f)
 NODE_DECLARATION_FUNCTION(create_buffer3f)
 {
     for (int i = 0; i < 3; ++i) {
-        b.add_input<float>(socket_name(i))
-            .min(-10)
-            .max(10)
-            .default_val(0);
+        b.add_input<float>(socket_name(i)).min(-10).max(10).default_val(0);
     }
     b.add_input<int>("Size").min(1).max(200).default_val(1);
     b.add_output<float3Buffer>("Buffer");
@@ -48,10 +39,7 @@ NODE_DECLARATION_FUNCTION(create_buffer3f)
 NODE_DECLARATION_FUNCTION(create_buffer4f)
 {
     for (int i = 0; i < 4; ++i) {
-        b.add_input<float>(socket_name(i))
-            .min(-10)
-            .max(10)
-            .default_val(0);
+        b.add_input<float>(socket_name(i)).min(-10).max(10).default_val(0);
     }
     b.add_input<int>("Size").min(1).max(200).default_val(1);
     b.add_output<float4Buffer>("Buffer");
@@ -60,10 +48,7 @@ NODE_DECLARATION_FUNCTION(create_buffer4f)
 NODE_DECLARATION_FUNCTION(create_float2f)
 {
     for (int i = 0; i < 2; ++i) {
-        b.add_input<float>(socket_name(i))
-            .min(-10)
-            .max(10)
-            .default_val(0);
+        b.add_input<float>(socket_name(i)).min(-10).max(10).default_val(0);
     }
     b.add_output<pxr::GfVec2f>("Buffer");
 };
@@ -71,10 +56,7 @@ NODE_DECLARATION_FUNCTION(create_float2f)
 NODE_DECLARATION_FUNCTION(create_float3f)
 {
     for (int i = 0; i < 3; ++i) {
-        b.add_input<float>(socket_name(i))
-            .min(-10)
-            .max(10)
-            .default_val(0);
+        b.add_input<float>(socket_name(i)).min(-10).max(10).default_val(0);
     }
     b.add_output<pxr::GfVec3f>("Buffer");
 };
@@ -82,10 +64,7 @@ NODE_DECLARATION_FUNCTION(create_float3f)
 NODE_DECLARATION_FUNCTION(create_float4f)
 {
     for (int i = 0; i < 4; ++i) {
-        b.add_input<float>(socket_name(i))
-            .min(-10)
-            .max(10)
-            .default_val(0);
+        b.add_input<float>(socket_name(i)).min(-10).max(10).default_val(0);
     }
     b.add_output<pxr::GfVec4f>("Buffer");
 };
@@ -93,10 +72,7 @@ NODE_DECLARATION_FUNCTION(create_float4f)
 NODE_DECLARATION_FUNCTION(create_int2)
 {
     for (int i = 0; i < 2; ++i) {
-        b.add_input<int>(socket_name(i))
-            .min(-10)
-            .max(10)
-            .default_val(0);
+        b.add_input<int>(socket_name(i)).min(-10).max(10).default_val(0);
     }
     b.add_output<pxr::GfVec2i>("Buffer");
 };
@@ -104,10 +80,7 @@ NODE_DECLARATION_FUNCTION(create_int2)
 NODE_DECLARATION_FUNCTION(create_int3)
 {
     for (int i = 0; i < 3; ++i) {
-        b.add_input<int>(socket_name(i))
-            .min(-10)
-            .max(10)
-            .default_val(0);
+        b.add_input<int>(socket_name(i)).min(-10).max(10).default_val(0);
     }
     b.add_output<pxr::GfVec3i>("Buffer");
 };
@@ -115,10 +88,7 @@ NODE_DECLARATION_FUNCTION(create_int3)
 NODE_DECLARATION_FUNCTION(create_buffer1i)
 {
     for (int i = 0; i < 1; ++i) {
-        b.add_input<int>(socket_name(i))
-            .min(-10)
-            .max(10)
-            .default_val(0);
+        b.add_input<int>(socket_name(i)).min(-10).max(10).default_val(0);
     }
     b.add_input<int>("Size").min(1).max(200).default_val(1);
     b.add_output<int1Buffer>("Buffer");
@@ -126,10 +96,7 @@ NODE_DECLARATION_FUNCTION(create_buffer1i)
 NODE_DECLARATION_FUNCTION(create_buffer2i)
 {
     for (int i = 0; i < 2; ++i) {
-        b.add_input<int>(socket_name(i))
-            .min(-10)
-            .max(10)
-            .default_val(0);
+        b.add_input<int>(socket_name(i)).min(-10).max(10).default_val(0);
     }
     b.add_input<int>("Size").min(1).max(200).default_val(1);
     b.add_output<int2Buffer>("Buffer");
@@ -137,10 +104,7 @@ NODE_DECLARATION_FUNCTION(create_buffer2i)
 NODE_DECLARATION_FUNCTION(create_buffer3i)
 {
     for (int i = 0; i < 3; ++i) {
-        b.add_input<int>(socket_name(i))
-            .min(-10)
-            .max(10)
-            .default_val(0);
+        b.add_input<int>(socket_name(i)).min(-10).max(10).default_val(0);
     }
     b.add_input<int>("Size").min(1).max(200).default_val(1);
     b.add_output<int3Buffer>("Buffer");
@@ -148,30 +112,27 @@ NODE_DECLARATION_FUNCTION(create_buffer3i)
 NODE_DECLARATION_FUNCTION(create_buffer4i)
 {
     for (int i = 0; i < 4; ++i) {
-        b.add_input<int>(socket_name(i))
-            .min(-10)
-            .max(10)
-            .default_val(0);
+        b.add_input<int>(socket_name(i)).min(-10).max(10).default_val(0);
     }
     b.add_input<int>("Size").min(1).max(200).default_val(1);
     b.add_output<int4Buffer>("Buffer");
 };
 
-#define NodeExec(type, base_type, suffix, size)                       \
-    static void node_create_buffer##size##suffix(ExeParams params)    \
-    {                                                                 \
-        base_type val[size];                                          \
-        for (int i = 0; i < size; ++i) {                              \
-            val[i] = params.get_input<float>(socket_name(i)); \
-        }                                                             \
-        auto s = params.get_input<int>("Size");                       \
-                                                                      \
-        type data;                                                    \
-        memcpy(&data, val, sizeof(type));                             \
-                                                                      \
-        pxr::VtArray<type> arr;                                       \
-        arr.resize(s, data);                                          \
-        params.set_output("Buffer", arr);                             \
+#define NodeExec(type, base_type, suffix, size)                    \
+    static void node_create_buffer##size##suffix(ExeParams params) \
+    {                                                              \
+        base_type val[size];                                       \
+        for (int i = 0; i < size; ++i) {                           \
+            val[i] = params.get_input<float>(socket_name(i));      \
+        }                                                          \
+        auto s = params.get_input<int>("Size");                    \
+                                                                   \
+        type data;                                                 \
+        memcpy(&data, val, sizeof(type));                          \
+                                                                   \
+        pxr::VtArray<type> arr;                                    \
+        arr.resize(s, data);                                       \
+        params.set_output("Buffer", arr);                          \
     }
 NODE_EXECUTION_FUNCTION(create_buffer1f)
 {

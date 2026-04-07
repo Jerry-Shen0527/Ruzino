@@ -29,41 +29,38 @@
 
 #include "ScalarTypes.h"
 
-namespace Ruzino
-{
-namespace math
-{
+namespace Ruzino {
+namespace math {
 
-// ----------------------------------------------------------------------------
-// Vector types
-// ----------------------------------------------------------------------------
+    // ----------------------------------------------------------------------------
+    // Vector types
+    // ----------------------------------------------------------------------------
 
-/**
- * Vector type.
- *
- * The semantics are aligned with Slang:
- * - Math operators are element-wise (e.g. +, -, *, /)
- * - Free standing functions for vector operations (e.g. dot(), cross(), etc.)
- *
- * @tparam T Scalar type
- * @tparam N Number of elements (1-4)
- */
-template<typename T, int N>
-struct vector;
+    /**
+     * Vector type.
+     *
+     * The semantics are aligned with Slang:
+     * - Math operators are element-wise (e.g. +, -, *, /)
+     * - Free standing functions for vector operations (e.g. dot(), cross(),
+     * etc.)
+     *
+     * @tparam T Scalar type
+     * @tparam N Number of elements (1-4)
+     */
+    template<typename T, int N>
+    struct vector;
 
-template<typename T>
-struct vector<T, 1>
-{
-    static constexpr int dimension = 1;
-    using value_type = T;
+    template<typename T>
+    struct vector<T, 1> {
+        static constexpr int dimension = 1;
+        using value_type = T;
 
-    union
-    {
-        T x;
-        T r;
-        T s;
-    };
-    // clang-format off
+        union {
+            T x;
+            T r;
+            T s;
+        };
+        // clang-format off
     /// Default constructor.
     constexpr vector() noexcept = default;
     /// Copy constructor.
@@ -73,39 +70,44 @@ struct vector<T, 1>
     /// Explicit basic constructor (scalar).
     template<typename U>
     explicit constexpr vector(U x) noexcept : x{T(x)} {}
-    // clang-format on
+        // clang-format on
 
-    template<typename U>
-    constexpr vector(const vector<U, 1>& other) noexcept : x{T(other.x)} {};
+        template<typename U>
+        constexpr vector(const vector<U, 1>& other) noexcept
+            : x{ T(other.x) } {};
 
-    [[nodiscard]] constexpr T& operator[](int index) noexcept { return (&(this->x))[index]; }
-    [[nodiscard]] constexpr const T& operator[](int index) const noexcept { return (&(this->x))[index]; }
-
-    [[nodiscard]] static constexpr int length() noexcept { return dimension; }
-};
-
-template<typename T>
-struct vector<T, 2>
-{
-    static constexpr int dimension = 2;
-    using value_type = T;
-
-    union
-    {
-        struct
+        [[nodiscard]] constexpr T& operator[](int index) noexcept
         {
-            T x, y;
-        };
-        struct
+            return (&(this->x))[index];
+        }
+        [[nodiscard]] constexpr const T& operator[](int index) const noexcept
         {
-            T r, g;
-        };
-        struct
+            return (&(this->x))[index];
+        }
+
+        [[nodiscard]] static constexpr int length() noexcept
         {
-            T s, t;
-        };
+            return dimension;
+        }
     };
-    // clang-format off
+
+    template<typename T>
+    struct vector<T, 2> {
+        static constexpr int dimension = 2;
+        using value_type = T;
+
+        union {
+            struct {
+                T x, y;
+            };
+            struct {
+                T r, g;
+            };
+            struct {
+                T s, t;
+            };
+        };
+        // clang-format off
     /// Default constructor.
     constexpr vector() noexcept = default;
     /// Copy constructor.
@@ -120,41 +122,47 @@ struct vector<T, 2>
 
     template<typename X, typename Y>
     constexpr vector(X x, Y y) noexcept : x{T(x)}, y{T(y)} {}
-    // clang-format on
+        // clang-format on
 
-    template<typename U>
-    constexpr vector(const vector<U, 2>& other) noexcept : x{T(other.x)}, y{T(other.y)} {};
+        template<typename U>
+        constexpr vector(const vector<U, 2>& other) noexcept
+            : x{ T(other.x) },
+              y{ T(other.y) } {};
 
-    [[nodiscard]] constexpr T& operator[](int index) noexcept { return (&(this->x))[index]; }
-    [[nodiscard]] constexpr const T& operator[](int index) const noexcept { return (&(this->x))[index]; }
+        [[nodiscard]] constexpr T& operator[](int index) noexcept
+        {
+            return (&(this->x))[index];
+        }
+        [[nodiscard]] constexpr const T& operator[](int index) const noexcept
+        {
+            return (&(this->x))[index];
+        }
 
-    [[nodiscard]] static constexpr int length() noexcept { return dimension; }
+        [[nodiscard]] static constexpr int length() noexcept
+        {
+            return dimension;
+        }
 
 #include "VectorSwizzle2.inl.h"
-};
-
-template<typename T>
-struct vector<T, 3>
-{
-    static constexpr int dimension = 3;
-    using value_type = T;
-
-    union
-    {
-        struct
-        {
-            T x, y, z;
-        };
-        struct
-        {
-            T r, g, b;
-        };
-        struct
-        {
-            T s, t, p;
-        };
     };
-    // clang-format off
+
+    template<typename T>
+    struct vector<T, 3> {
+        static constexpr int dimension = 3;
+        using value_type = T;
+
+        union {
+            struct {
+                T x, y, z;
+            };
+            struct {
+                T r, g, b;
+            };
+            struct {
+                T s, t, p;
+            };
+        };
+        // clang-format off
     /// Default constructor.
     constexpr vector() noexcept = default;
     /// Copy constructor.
@@ -173,41 +181,48 @@ struct vector<T, 3>
     constexpr vector(vector<XY, 2> xy, Z z) noexcept : x{T(xy.x)}, y{T(xy.y)}, z{T(z)} {}
     template<typename X, typename YZ>
     constexpr vector(X x, vector<YZ, 2> yz) noexcept : x{T(x)}, y{T(yz.x)}, z{T(yz.y)} {}
-    // clang-format on
+        // clang-format on
 
-    template<typename U>
-    constexpr vector(const vector<U, 3>& other) noexcept : x{T(other.x)}, y{T(other.y)}, z{T(other.z)} {};
+        template<typename U>
+        constexpr vector(const vector<U, 3>& other) noexcept
+            : x{ T(other.x) },
+              y{ T(other.y) },
+              z{ T(other.z) } {};
 
-    [[nodiscard]] constexpr T& operator[](int index) noexcept { return (&(this->x))[index]; }
-    [[nodiscard]] constexpr const T& operator[](int index) const noexcept { return (&(this->x))[index]; }
+        [[nodiscard]] constexpr T& operator[](int index) noexcept
+        {
+            return (&(this->x))[index];
+        }
+        [[nodiscard]] constexpr const T& operator[](int index) const noexcept
+        {
+            return (&(this->x))[index];
+        }
 
-    [[nodiscard]] static constexpr int length() noexcept { return dimension; }
+        [[nodiscard]] static constexpr int length() noexcept
+        {
+            return dimension;
+        }
 
 #include "VectorSwizzle3.inl.h"
-};
-
-template<typename T>
-struct vector<T, 4>
-{
-    static constexpr int dimension = 4;
-    using value_type = T;
-
-    union
-    {
-        struct
-        {
-            T x, y, z, w;
-        };
-        struct
-        {
-            T r, g, b, a;
-        };
-        struct
-        {
-            T s, t, p, q;
-        };
     };
-    // clang-format off
+
+    template<typename T>
+    struct vector<T, 4> {
+        static constexpr int dimension = 4;
+        using value_type = T;
+
+        union {
+            struct {
+                T x, y, z, w;
+            };
+            struct {
+                T r, g, b, a;
+            };
+            struct {
+                T s, t, p, q;
+            };
+        };
+        // clang-format off
     /// Default constructor.
     constexpr vector() noexcept = default;
     /// Copy constructor.
@@ -234,41 +249,54 @@ struct vector<T, 4>
     constexpr vector(vector<XYZ, 3> xyz, W w) noexcept : x{T(xyz.x)}, y{T(xyz.y)}, z{T(xyz.z)}, w{T(w)} {}
     template<typename X, typename YZW>
     constexpr vector(X x, vector<YZW, 3> yzw) noexcept : x{T(x)}, y{T(yzw.x)}, z{T(yzw.y)}, w{T(yzw.z)} {}
-    // clang-format on
+        // clang-format on
 
-    template<typename U>
-    constexpr vector(const vector<U, 4>& other) noexcept : x{T(other.x)}, y{T(other.y)}, z{T(other.z)}, w{T(other.w)} {};
+        template<typename U>
+        constexpr vector(const vector<U, 4>& other) noexcept
+            : x{ T(other.x) },
+              y{ T(other.y) },
+              z{ T(other.z) },
+              w{ T(other.w) } {};
 
-    [[nodiscard]] constexpr T& operator[](int index) noexcept { return (&(this->x))[index]; }
-    [[nodiscard]] constexpr const T& operator[](int index) const noexcept { return (&(this->x))[index]; }
+        [[nodiscard]] constexpr T& operator[](int index) noexcept
+        {
+            return (&(this->x))[index];
+        }
+        [[nodiscard]] constexpr const T& operator[](int index) const noexcept
+        {
+            return (&(this->x))[index];
+        }
 
-    [[nodiscard]] static constexpr int length() noexcept { return dimension; }
+        [[nodiscard]] static constexpr int length() noexcept
+        {
+            return dimension;
+        }
 
 #include "VectorSwizzle4.inl.h"
-};
+    };
 
-using bool1 = vector<bool, 1>;
-using bool2 = vector<bool, 2>;
-using bool3 = vector<bool, 3>;
-using bool4 = vector<bool, 4>;
-using int1 = vector<int, 1>;
-using int2 = vector<int, 2>;
-using int3 = vector<int, 3>;
-using int4 = vector<int, 4>;
-using uint1 = vector<uint, 1>;
-using uint2 = vector<uint, 2>;
-using uint3 = vector<uint, 3>;
-using uint4 = vector<uint, 4>;
-using float1 = vector<float, 1>;
-using float2 = vector<float, 2>;
-using float3 = vector<float, 3>;
-using float4 = vector<float, 4>;
-using float16_t1 = vector<float16_t, 1>;
-using float16_t2 = vector<float16_t, 2>;
-using float16_t3 = vector<float16_t, 3>;
-using float16_t4 = vector<float16_t, 4>;
+    using bool1 = vector<bool, 1>;
+    using bool2 = vector<bool, 2>;
+    using bool3 = vector<bool, 3>;
+    using bool4 = vector<bool, 4>;
+    using int1 = vector<int, 1>;
+    using int2 = vector<int, 2>;
+    using int3 = vector<int, 3>;
+    using int4 = vector<int, 4>;
+    using uint1 = vector<uint, 1>;
+    using uint2 = vector<uint, 2>;
+    using uint3 = vector<uint, 3>;
+    using uint4 = vector<uint, 4>;
+    using float1 = vector<float, 1>;
+    using float2 = vector<float, 2>;
+    using float3 = vector<float, 3>;
+    using float4 = vector<float, 4>;
+    using float16_t1 = vector<float16_t, 1>;
+    using float16_t2 = vector<float16_t, 2>;
+    using float16_t3 = vector<float16_t, 3>;
+    using float16_t4 = vector<float16_t, 4>;
 
-} // namespace math
+}  // namespace math
 
 using bool1 = math::bool1;
 using bool2 = math::bool2;
@@ -291,4 +319,4 @@ using float16_t2 = math::float16_t2;
 using float16_t3 = math::float16_t3;
 using float16_t4 = math::float16_t4;
 
-} // namespace Ruzino
+}  // namespace Ruzino

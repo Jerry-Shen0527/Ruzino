@@ -26,17 +26,18 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Core/Macros.h"
-#include "MaterialTypes.slang"
-#include "MaterialParamLayout.h"
 #include <format>
 
-namespace Ruzino
-{
-/** Registers a new material type with the given name. Returns the existing material type if name is already registered.
-    The type name will be used by the system for symbols in the generated shader code and must not contain whitespaces etc.
-    The first returned MaterialType is one past `MaterialType::BuiltinCount`.
-    This operation is thread safe.
+#include "Core/Macros.h"
+#include "MaterialParamLayout.h"
+#include "MaterialTypes.slang"
+
+namespace Ruzino {
+/** Registers a new material type with the given name. Returns the existing
+   material type if name is already registered. The type name will be used by
+   the system for symbols in the generated shader code and must not contain
+   whitespaces etc. The first returned MaterialType is one past
+   `MaterialType::BuiltinCount`. This operation is thread safe.
     \param[in] typeName Material type name.
     \return Material type.
 */
@@ -49,20 +50,20 @@ HD_RUZINO_API MaterialType registerMaterialType(std::string typeName);
 */
 HD_RUZINO_API std::string to_string(MaterialType type);
 
-/** Returns the total number of registered material types. This includes the `MaterialType::BuiltinCount`.
-    This operation is thread safe.
+/** Returns the total number of registered material types. This includes the
+   `MaterialType::BuiltinCount`. This operation is thread safe.
     \return Total number of registered material types.
 */
 HD_RUZINO_API size_t getMaterialTypeCount();
 
-/** Return the material parameter layout of serialized material parameters (for differentiable materials).
-*/
+/** Return the material parameter layout of serialized material parameters (for
+ * differentiable materials).
+ */
 HD_RUZINO_API MaterialParamLayout getMaterialParamLayout(MaterialType type);
-}
+}  // namespace Ruzino
 
 template<>
-struct fmt::formatter<Ruzino::MaterialType>
-{
+struct fmt::formatter<Ruzino::MaterialType> {
     template<typename ParseContext>
     constexpr auto parse(ParseContext& ctx)
     {
@@ -72,6 +73,7 @@ struct fmt::formatter<Ruzino::MaterialType>
     template<typename FormatContext>
     auto format(Ruzino::MaterialType materialType, FormatContext& ctx)
     {
-        return fmt::format_to(ctx.out(), "{0}", Ruzino::to_string(materialType));
+        return fmt::format_to(
+            ctx.out(), "{0}", Ruzino::to_string(materialType));
     }
 };

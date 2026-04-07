@@ -34,7 +34,7 @@ class PointCloud(NamedTuple):
     points: np.array
     colors: np.array
     normals: np.array
-   
+
 class SceneInfo(NamedTuple):
     point_cloud: PointCloud
     train_cameras: list

@@ -1,6 +1,7 @@
-#include <RHI/cuda.hpp>
 #include <cublas_v2.h>
 #include <cusparse.h>
+
+#include <RHI/cuda.hpp>
 #include <algorithm>
 #include <glm/glm.hpp>
 #include <limits>

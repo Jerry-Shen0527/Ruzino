@@ -54,58 +54,58 @@ class HdSt_Subdivision final {
     pxr::VtIntArray GetRefinedFvarIndices(int channel) const;
 
     void RefineCPU(
-        pxr::HdBufferSourceSharedPtr const &source,
-        std::vector<float> *primvarBuffer,
+        pxr::HdBufferSourceSharedPtr const& source,
+        std::vector<float>* primvarBuffer,
         HdSt_MeshTopology::Interpolation interpolation,
         int fvarChannel = 0);
 
     // computation factory methods
     pxr::HdBufferSourceSharedPtr CreateTopologyComputation(
-        HdSt_MeshTopology *topology,
-        pxr::SdfPath const &id);
+        HdSt_MeshTopology* topology,
+        pxr::SdfPath const& id);
 
     pxr::HdBufferSourceSharedPtr CreateIndexComputation(
-        HdSt_MeshTopology *topology,
-        pxr::HdBufferSourceSharedPtr const &osdTopology);
+        HdSt_MeshTopology* topology,
+        pxr::HdBufferSourceSharedPtr const& osdTopology);
 
     pxr::HdBufferSourceSharedPtr CreateFvarIndexComputation(
-        HdSt_MeshTopology *topology,
-        pxr::HdBufferSourceSharedPtr const &osdTopology,
+        HdSt_MeshTopology* topology,
+        pxr::HdBufferSourceSharedPtr const& osdTopology,
         int channel);
 
     pxr::HdBufferSourceSharedPtr CreateRefineComputationCPU(
-        HdSt_MeshTopology *topology,
-        pxr::HdBufferSourceSharedPtr const &source,
-        pxr::HdBufferSourceSharedPtr const &osdTopology,
+        HdSt_MeshTopology* topology,
+        pxr::HdBufferSourceSharedPtr const& source,
+        pxr::HdBufferSourceSharedPtr const& osdTopology,
         HdSt_MeshTopology::Interpolation interpolation,
         int fvarChannel = 0);
 
     pxr::HdBufferSourceSharedPtr CreateBaseFaceToRefinedFacesMapComputation(
-        pxr::HdBufferSourceSharedPtr const &osdTopology);
+        pxr::HdBufferSourceSharedPtr const& osdTopology);
 
     /// Returns true if the subdivision for \a scheme generates triangles,
     /// instead of quads.
-    static bool RefinesToTriangles(pxr::TfToken const &scheme);
+    static bool RefinesToTriangles(pxr::TfToken const& scheme);
 
     /// Returns true if the subdivision for \a scheme generates bspline patches.
-    static bool RefinesToBSplinePatches(pxr::TfToken const &scheme);
+    static bool RefinesToBSplinePatches(pxr::TfToken const& scheme);
 
     /// Returns true if the subdivision for \a scheme generates box spline
     /// triangle patches.
-    static bool RefinesToBoxSplineTrianglePatches(pxr::TfToken const &scheme);
+    static bool RefinesToBoxSplineTrianglePatches(pxr::TfToken const& scheme);
 
     /// Takes ownership of stencil tables and patch table
     void SetRefinementTables(
-        std::unique_ptr<StencilTable const> &&vertexStencils,
-        std::unique_ptr<StencilTable const> &&varyingStencils,
-        std::vector<std::unique_ptr<StencilTable const>> &&faceVaryingStencils,
-        std::unique_ptr<PatchTable const> &&patchTable);
+        std::unique_ptr<StencilTable const>&& vertexStencils,
+        std::unique_ptr<StencilTable const>&& varyingStencils,
+        std::vector<std::unique_ptr<StencilTable const>>&& faceVaryingStencils,
+        std::unique_ptr<PatchTable const>&& patchTable);
 
-    StencilTable const *GetStencilTable(
+    StencilTable const* GetStencilTable(
         HdSt_MeshTopology::Interpolation interpolation,
         int fvarChannel) const;
 
-    PatchTable const *GetPatchTable() const
+    PatchTable const* GetPatchTable() const
     {
         return _patchTable.get();
     }
@@ -133,19 +133,19 @@ class HdSt_Subdivision final {
 class HdSt_OsdRefineComputationCPU final : public pxr::HdBufferSource {
    public:
     HdSt_OsdRefineComputationCPU(
-        HdSt_MeshTopology *topology,
-        pxr::HdBufferSourceSharedPtr const &source,
-        pxr::HdBufferSourceSharedPtr const &osdTopology,
+        HdSt_MeshTopology* topology,
+        pxr::HdBufferSourceSharedPtr const& source,
+        pxr::HdBufferSourceSharedPtr const& osdTopology,
         HdSt_MeshTopology::Interpolation interpolation,
         int fvarChannel = 0);
     ~HdSt_OsdRefineComputationCPU() override;
 
-    pxr::TfToken const &GetName() const override;
+    pxr::TfToken const& GetName() const override;
     size_t ComputeHash() const override;
-    void const *GetData() const override;
+    void const* GetData() const override;
     pxr::HdTupleType GetTupleType() const override;
     size_t GetNumElements() const override;
-    void GetBufferSpecs(pxr::HdBufferSpecVector *specs) const override;
+    void GetBufferSpecs(pxr::HdBufferSpecVector* specs) const override;
     bool Resolve() override;
     bool HasPreChainedBuffer() const override;
     pxr::HdBufferSourceSharedPtr GetPreChainedBuffer() const override;
@@ -155,7 +155,7 @@ class HdSt_OsdRefineComputationCPU final : public pxr::HdBufferSource {
     bool _CheckValid() const override;
 
    private:
-    HdSt_MeshTopology *_topology;
+    HdSt_MeshTopology* _topology;
     pxr::HdBufferSourceSharedPtr _source;
     pxr::HdBufferSourceSharedPtr _osdTopology;
     std::vector<float> _primvarBuffer;

@@ -26,47 +26,62 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Material.h"
 #include "MERLMaterialData.slang"
+#include "Material.h"
 
-namespace Ruzino
-{
-    class MERLFile;
+namespace Ruzino {
+class MERLFile;
 
-    /** Class representing a measured material from the MERL BRDF database.
+/** Class representing a measured material from the MERL BRDF database.
 
-        For details refer to:
-        Wojciech Matusik, Hanspeter Pfister, Matt Brand and Leonard McMillan.
-        "A Data-Driven Reflectance Model". ACM Transactions on Graphics,
-        vol. 22(3), 2003, pages 759-769.
-    */
-    class HD_RUZINO_API MERLMaterial : public Material
+    For details refer to:
+    Wojciech Matusik, Hanspeter Pfister, Matt Brand and Leonard McMillan.
+    "A Data-Driven Reflectance Model". ACM Transactions on Graphics,
+    vol. 22(3), 2003, pages 759-769.
+*/
+class HD_RUZINO_API MERLMaterial : public Material {
+    FALCOR_OBJECT(MERLMaterial)
+   public:
+    static ref<MERLMaterial> create(
+        ref<Device> pDevice,
+        const std::string& name,
+        const std::filesystem::path& path)
     {
-        FALCOR_OBJECT(MERLMaterial)
-    public:
-        static ref<MERLMaterial> create(ref<Device> pDevice, const std::string& name, const std::filesystem::path& path) { return make_ref<MERLMaterial>(pDevice, name, path); }
+        return make_ref<MERLMaterial>(pDevice, name, path);
+    }
 
-        MERLMaterial(ref<Device> pDevice, const std::string& name, const std::filesystem::path& path);
-        MERLMaterial(ref<Device> pDevice, const MERLFile& merlFile);
+    MERLMaterial(
+        ref<Device> pDevice,
+        const std::string& name,
+        const std::filesystem::path& path);
+    MERLMaterial(ref<Device> pDevice, const MERLFile& merlFile);
 
-        bool renderUI(Gui::Widgets& widget) override;
-        Material::UpdateFlags update(MaterialSystem* pOwner) override;
-        bool isEqual(const ref<Material>& pOther) const override;
-        MaterialDataBlob getDataBlob() const override { return prepareDataBlob(mData); }
-        ProgramDesc::ShaderModuleList getShaderModules() const override;
-        TypeConformanceList getTypeConformances() const override;
+    bool renderUI(Gui::Widgets& widget) override;
+    Material::UpdateFlags update(MaterialSystem* pOwner) override;
+    bool isEqual(const ref<Material>& pOther) const override;
+    MaterialDataBlob getDataBlob() const override
+    {
+        return prepareDataBlob(mData);
+    }
+    ProgramDesc::ShaderModuleList getShaderModules() const override;
+    TypeConformanceList getTypeConformances() const override;
 
-        size_t getMaxBufferCount() const override { return 1; }
+    size_t getMaxBufferCount() const override
+    {
+        return 1;
+    }
 
-    protected:
-        void init(const MERLFile& merlFile);
+   protected:
+    void init(const MERLFile& merlFile);
 
-        std::filesystem::path mPath;        ///< Full path to the BRDF loaded.
-        std::string mBRDFName;              ///< This is the file basename without extension.
+    std::filesystem::path mPath;  ///< Full path to the BRDF loaded.
+    std::string mBRDFName;  ///< This is the file basename without extension.
 
-        MERLMaterialData mData;             ///< Material parameters.
-        nvrhi::BufferHandle mpBRDFData;             ///< GPU buffer holding all BRDF data as float3 array.
-        nvrhi::TextureHandle mpAlbedoLUT;           ///< Precomputed albedo lookup table.
-        nvrhi::SamplerHandle mpLUTSampler;          ///< Sampler for accessing the LUT texture.
-    };
-}
+    MERLMaterialData mData;  ///< Material parameters.
+    nvrhi::BufferHandle
+        mpBRDFData;  ///< GPU buffer holding all BRDF data as float3 array.
+    nvrhi::TextureHandle mpAlbedoLUT;  ///< Precomputed albedo lookup table.
+    nvrhi::SamplerHandle
+        mpLUTSampler;  ///< Sampler for accessing the LUT texture.
+};
+}  // namespace Ruzino

@@ -15,7 +15,7 @@ void mx_deon_hair_absorption_from_melanin(
     float eumelanin = melanin * (1.0 - melanin_redness);
     float pheomelanin = melanin * melanin_redness;
     absorption = max(
-        eumelanin * -log(eumelanin_color) + pheomelanin * -log(pheomelanin_color), 
+        eumelanin * -log(eumelanin_color) + pheomelanin * -log(pheomelanin_color),
         float3(0.0)
     );
 }
@@ -25,11 +25,11 @@ void mx_chiang_hair_absorption_from_color(float3 color, float betaN, out float3 
 {
     float b2 = betaN* betaN;
     float b4 = b2 * b2;
-    float b_fac = 
-        5.969 - 
-        (0.215 * betaN) + 
+    float b_fac =
+        5.969 -
+        (0.215 * betaN) +
         (2.532 * b2) -
-        (10.73 * b2 * betaN) + 
+        (10.73 * b2 * betaN) +
         (5.574 * b4) +
         (0.245 * b4 * betaN);
     float3 sigma = log(min(max(color, 0.001), float3(1.0))) / b_fac;

@@ -26,24 +26,27 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include <vector>
 #include <cstddef>
+#include <vector>
 
-namespace Ruzino
-{
+namespace Ruzino {
 
 /**
  * UnionFind for any integral type.
  * @tparam T - The integral type for which UnionFind works.
  */
 template<typename T>
-class UnionFind
-{
-    static_assert(std::is_unsigned_v<T>, "UnionFind only works on unsigned integer types");
+class UnionFind {
+    static_assert(
+        std::is_unsigned_v<T>,
+        "UnionFind only works on unsigned integer types");
 
-public:
+   public:
     UnionFind() = default;
-    UnionFind(size_t size) { reset(size); }
+    UnionFind(size_t size)
+    {
+        reset(size);
+    }
 
     void reset(size_t size)
     {
@@ -59,12 +62,16 @@ public:
         // If root of the set, return it
         if (v == mParent[v])
             return v;
-        // Otherwise find the root from the parent, and relink to the root (so the search chain shortens)
+        // Otherwise find the root from the parent, and relink to the root (so
+        // the search chain shortens)
         mParent[v] = findSet(mParent[v]);
         return mParent[v];
     }
 
-    bool connectedSets(T v0, T v1) { return findSet(v0) == findSet(v1); }
+    bool connectedSets(T v0, T v1)
+    {
+        return findSet(v0) == findSet(v1);
+    }
 
     void unionSet(T v0, T v1)
     {
@@ -83,12 +90,15 @@ public:
         --mSetCount;
     }
 
-    size_t getSetCount() const { return mSetCount; }
+    size_t getSetCount() const
+    {
+        return mSetCount;
+    }
 
-private:
+   private:
     std::vector<T> mParent;
     std::vector<size_t> mSetSize;
-    size_t mSetCount{0};
+    size_t mSetCount{ 0 };
 };
 
-} // namespace Ruzino
+}  // namespace Ruzino

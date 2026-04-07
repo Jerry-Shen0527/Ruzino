@@ -1,5 +1,5 @@
 #include "utils.slangh"
-    
+
 
 ConstantBuffer<PBDConstants> pbd_constants : register(b0);
 StructuredBuffer<uint2> ContactPairs : register(t0);
@@ -16,7 +16,7 @@ void update_PBD_density(int2 i_globalIdx : SV_DispatchThreadID)
     float mV = pbd_constants.mV;
     float rho0 = pbd_constants.restDensity;
     float h = pbd_constants.smoothingRadius;
-    
+
     uint u1 = ContactPairs[i_globalIdx.x].x;
     uint u2 = ContactPairs[i_globalIdx.x].y;
     float3 r = positions[u1] - positions[u2];

@@ -27,15 +27,14 @@
  **************************************************************************/
 #pragma once
 
-#include "Core/Error.h"
-#include "utils/Math/Vector.h"
 #include <array>
 
-namespace Ruzino
-{
+#include "Core/Error.h"
+#include "utils/Math/Vector.h"
 
-struct SerializedMaterialParams : public std::array<float, 20>
-{
+namespace Ruzino {
+
+struct SerializedMaterialParams : public std::array<float, 20> {
     static constexpr size_t kParamCount = 20;
 
     void write(float value, size_t offset)
@@ -67,4 +66,4 @@ struct SerializedMaterialParams : public std::array<float, 20>
     }
 };
 
-} // namespace Ruzino
+}  // namespace Ruzino

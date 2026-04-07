@@ -19,18 +19,18 @@ cbuffer Params {
 void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     uint sphereIndex = dispatchThreadID.x;
-    
+
     if (sphereIndex >= g_SphereCount)
         return;
-    
+
     // Read position (3 floats)
     uint posOffset = g_PositionsOffset + sphereIndex * 12;  // 3 * sizeof(float)
     float3 center = asfloat(g_VertexBuffer.Load3(posOffset));
-    
+
     // Read radius (1 float)
     uint radiusOffset = g_RadiiOffset + sphereIndex * 4;  // sizeof(float)
     float radius = asfloat(g_VertexBuffer.Load(radiusOffset));
-    
+
     SphereAABB aabb;
     aabb.minX = center.x - radius;
     aabb.minY = center.y - radius;
@@ -38,6 +38,6 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
     aabb.maxX = center.x + radius;
     aabb.maxY = center.y + radius;
     aabb.maxZ = center.z + radius;
-    
+
     g_OutputAABBs[sphereIndex] = aabb;
 }

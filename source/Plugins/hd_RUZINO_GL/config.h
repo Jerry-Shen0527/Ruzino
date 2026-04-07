@@ -25,8 +25,8 @@
 #define PXR_IMAGING_PLUGIN_HD_EMBREE_CONFIG_H
 
 #include "api.h"
-#include "pxr/pxr.h"
 #include "pxr/base/tf/singleton.h"
+#include "pxr/pxr.h"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
@@ -43,9 +43,8 @@ using namespace pxr;
 /// *HDEMBREE_PRINT_CONFIGURATION* is true. Integer values greater than zero
 /// are considered "true".
 ///
-class HdEmbreeConfig
-{
-public:
+class HdEmbreeConfig {
+   public:
     /// \brief Return the configuration singleton.
     static const HdEmbreeConfig& GetInstance();
 
@@ -86,7 +85,7 @@ public:
     /// Override with *HDEMBREE_CAMERA_LIGHT_INTENSITY*.
     float cameraLightIntensity;
 
-private:
+   private:
     // The constructor initializes the config variables with their
     // default or environment-provided override, and optionally prints
     // them.
@@ -101,4 +100,4 @@ private:
 
 RUZINO_NAMESPACE_CLOSE_SCOPE
 
-#endif // PXR_IMAGING_PLUGIN_HD_EMBREE_CONFIG_H
+#endif  // PXR_IMAGING_PLUGIN_HD_EMBREE_CONFIG_H

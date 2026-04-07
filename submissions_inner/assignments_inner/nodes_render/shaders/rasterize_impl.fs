@@ -15,7 +15,7 @@ uniform mat4 view;
 
 uniform sampler2D diffuseColorSampler;
 
-// This only works for current scenes provided by the TAs 
+// This only works for current scenes provided by the TAs
 // because the scenes we provide is transformed from gltf
 uniform sampler2D normalMapSampler;
 uniform sampler2D metallicRoughnessSampler;

@@ -171,7 +171,7 @@ NODE_EXECUTION_FUNCTION(path_tracing)
         ProgramDesc program_desc;
         program_desc.set_path("shaders/path_tracing.slang");
         program_desc.shaderType = nvrhi::ShaderType::AllRayTracing;
-#if 0 
+#if 0
 
         program_desc.nvapi_support = true;
 

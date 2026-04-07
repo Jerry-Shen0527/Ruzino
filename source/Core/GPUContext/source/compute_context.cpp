@@ -61,5 +61,4 @@ ComputeContext& ComputeContext::finish_setting_pso()
     return *this;
 }
 
-
 RUZINO_NAMESPACE_CLOSE_SCOPE

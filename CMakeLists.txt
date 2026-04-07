@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.29.6) 
+cmake_minimum_required(VERSION 3.29.6)
 
 #
 # Project details
@@ -199,7 +199,7 @@ if (ENABLE_SUBMISSION)
     if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/submissions_inner)
       add_subdirectory(submissions_inner)
     endif ()
-    
+
     if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../submissions)
       get_filename_component(
         ABS_SUBMISSION
@@ -208,7 +208,7 @@ if (ENABLE_SUBMISSION)
         BASE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
       )
       message(STATUS "[ABS DIR] " ${ABS_SUBMISSION})
-    
+
       add_subdirectory(${ABS_SUBMISSION} "OuterSubmissions")
     endif ()
 endif ()

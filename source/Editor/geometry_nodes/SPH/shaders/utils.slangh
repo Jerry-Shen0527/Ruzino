@@ -41,7 +41,7 @@ struct PBDConstants
 
 float quartic_kernel(float3 r, float h)
 {
-   
+
     float res = 0;
     float r_norm = length(r);
     float k = 315.f / 208.f / PI / pow(h, 3);
@@ -77,7 +77,7 @@ float3 quartic_kernel_derivative(float3 r, float h)
 
 float cubic_kernel(float3 r, float h)
 {
-   
+
     float res = 0.f;
     float r_norm = length(r);
     float k = 8.f / PI / pow(h, 3);
@@ -100,7 +100,7 @@ float cubic_kernel(float3 r, float h)
 
 float3 cubic_kernel_derivative(float3 r, float h)
 {
-   
+
     float3 res = float3(0, 0, 0);
     float r_norm = length(r);
     float k = 48.f / PI / pow(h, 3);

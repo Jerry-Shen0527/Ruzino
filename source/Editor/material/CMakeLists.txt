@@ -7,7 +7,7 @@ RUZINO_ADD_LIB(
 		nodes_ui_imgui
 		usdMtlx
 		MaterialXGenShader
-	PRIVATE_LIBS 
+	PRIVATE_LIBS
 		usd
 		usdImaging
 		blueprints

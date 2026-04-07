@@ -15,7 +15,8 @@ namespace {
 // TODO: Support options strings by converting to a corresponding enum integer
 class SlangStringTypeSyntax : public StringTypeSyntax {
    public:
-    SlangStringTypeSyntax(const Syntax* parent) : StringTypeSyntax(parent, "int", "0", "0")
+    SlangStringTypeSyntax(const Syntax* parent)
+        : StringTypeSyntax(parent, "int", "0", "0")
     {
     }
 
@@ -28,7 +29,12 @@ class SlangStringTypeSyntax : public StringTypeSyntax {
 class SlangArrayTypeSyntax : public ScalarTypeSyntax {
    public:
     SlangArrayTypeSyntax(const Syntax* parent, const string& name)
-        : ScalarTypeSyntax(parent, name, EMPTY_STRING, EMPTY_STRING, EMPTY_STRING)
+        : ScalarTypeSyntax(
+              parent,
+              name,
+              EMPTY_STRING,
+              EMPTY_STRING,
+              EMPTY_STRING)
     {
     }
 
@@ -63,7 +69,9 @@ class SlangFloatArrayTypeSyntax : public SlangArrayTypeSyntax {
 
 class SlangIntegerArrayTypeSyntax : public SlangArrayTypeSyntax {
    public:
-    explicit SlangIntegerArrayTypeSyntax(const Syntax* parent, const string& name)
+    explicit SlangIntegerArrayTypeSyntax(
+        const Syntax* parent,
+        const string& name)
         : SlangArrayTypeSyntax(parent, name)
     {
     }
@@ -92,193 +100,193 @@ const StringVec SlangSyntax::VEC4_MEMBERS = { ".x", ".y", ".z", ".w" };
 // SlangSyntax methods
 //
 
-SlangSyntax::SlangSyntax(TypeSystemPtr typeSystem) :
-    Syntax(typeSystem)
+SlangSyntax::SlangSyntax(TypeSystemPtr typeSystem) : Syntax(typeSystem)
 {
     // Add in all reserved words and keywords in SLANG
-    registerReservedWords({ "centroid",
-                            "flat",
-                            "smooth",
-                            "noperspective",
-                            "patch",
-                            "sample",
-                            "break",
-                            "continue",
-                            "do",
-                            "for",
-                            "while",
-                            "switch",
-                            "case",
-                            "default",
-                            "if",
-                            "else,",
-                            "subroutine",
-                            "in",
-                            "out",
-                            "inout",
-                            "float",
-                            "double",
-                            "int",
-                            "void",
-                            "bool",
-                            "true",
-                            "false",
-                            "invariant",
-                            "discard",
-                            "return",
-                            "mat2",
-                            "float3x3",
-                            "float4x4",
-                            "dmat2",
-                            "dmat3",
-                            "dmat4",
-                            "mat2x2",
-                            "mat2x3",
-                            "mat2x4",
-                            "dmat2x2",
-                            "dmat2x3",
-                            "dmat2x4",
-                            "mat3x2",
-                            "mat3x3",
-                            "mat3x4",
-                            "dmat3x2",
-                            "dmat3x3",
-                            "dmat3x4",
-                            "mat4x2",
-                            "mat4x3",
-                            "mat4x4",
-                            "dmat4x2",
-                            "dmat4x3",
-                            "dmat4x4",
-                            "float2",
-                            "float3",
-                            "float4",
-                            "ifloat2",
-                            "ifloat3",
-                            "ifloat4",
-                            "bfloat2",
-                            "bfloat3",
-                            "bfloat4",
-                            "dfloat2",
-                            "dfloat3",
-                            "dfloat4",
-                            "uint",
-                            "ufloat2",
-                            "ufloat3",
-                            "ufloat4",
-                            "lowp",
-                            "mediump",
-                            "highp",
-                            "precision",
-                            "sampler1D",
-                            "Sampler2D",
-                            "sampler3D",
-                            "samplerCube",
-                            "sampler1DShadow",
-                            "sampler2DShadow",
-                            "samplerCubeShadow",
-                            "sampler1DArray",
-                            "sampler2DArray",
-                            "sampler1DArrayShadow",
-                            "sampler2DArrayShadow",
-                            "isampler1D",
-                            "isampler2D",
-                            "isampler3D",
-                            "isamplerCube",
-                            "isampler1DArray",
-                            "isampler2DArray",
-                            "usampler1D",
-                            "usampler2D",
-                            "usampler3D",
-                            "usamplerCube",
-                            "usampler1DArray",
-                            "usampler2DArray",
-                            "sampler2DRect",
-                            "sampler2DRectShadow",
-                            "isampler2DRect",
-                            "usampler2DRect",
-                            "samplerBuffer",
-                            "isamplerBuffer",
-                            "usamplerBuffer",
-                            "sampler2DMS",
-                            "isampler2DMS",
-                            "usampler2DMS",
-                            "sampler2DMSArray",
-                            "isampler2DMSArray",
-                            "usampler2DMSArray",
-                            "samplerCubeArray",
-                            "samplerCubeArrayShadow",
-                            "isamplerCubeArray",
-                            "usamplerCubeArray",
-                            "common",
-                            "partition",
-                            "active",
-                            "asm",
-                            "struct",
-                            "class",
-                            "union",
-                            "enum",
-                            "typedef",
-                            "template",
-                            "this",
-                            "packed",
-                            "goto",
-                            "inline",
-                            "noinline",
-                            "volatile",
-                            "public",
-                            "static",
-                            "extern",
-                            "external",
-                            "interface",
-                            "long",
-                            "short",
-                            "half",
-                            "fixed",
-                            "unsigned",
-                            "superp",
-                            "input",
-                            "output",
-                            "hfloat2",
-                            "hfloat3",
-                            "hfloat4",
-                            "ffloat2",
-                            "ffloat3",
-                            "ffloat4",
-                            "sampler3DRect",
-                            "filter",
-                            "image1D",
-                            "image2D",
-                            "image3D",
-                            "imageCube",
-                            "iimage1D",
-                            "iimage2D",
-                            "iimage3D",
-                            "iimageCube",
-                            "uimage1D",
-                            "uimage2D",
-                            "uimage3D",
-                            "uimageCube",
-                            "image1DArray",
-                            "image2DArray",
-                            "iimage1DArray",
-                            "iimage2DArray",
-                            "uimage1DArray",
-                            "uimage2DArray",
-                            "image1DShadow",
-                            "image2DShadow",
-                            "image1DArrayShadow",
-                            "image2DArrayShadow",
-                            "imageBuffer",
-                            "iimageBuffer",
-                            "uimageBuffer",
-                            "sizeof",
-                            "cast",
-                            "namespace",
-                            "using",
-                            "row_major",
-                            "lerp",
-                            "sampler" });
+    registerReservedWords(
+        { "centroid",
+          "flat",
+          "smooth",
+          "noperspective",
+          "patch",
+          "sample",
+          "break",
+          "continue",
+          "do",
+          "for",
+          "while",
+          "switch",
+          "case",
+          "default",
+          "if",
+          "else,",
+          "subroutine",
+          "in",
+          "out",
+          "inout",
+          "float",
+          "double",
+          "int",
+          "void",
+          "bool",
+          "true",
+          "false",
+          "invariant",
+          "discard",
+          "return",
+          "mat2",
+          "float3x3",
+          "float4x4",
+          "dmat2",
+          "dmat3",
+          "dmat4",
+          "mat2x2",
+          "mat2x3",
+          "mat2x4",
+          "dmat2x2",
+          "dmat2x3",
+          "dmat2x4",
+          "mat3x2",
+          "mat3x3",
+          "mat3x4",
+          "dmat3x2",
+          "dmat3x3",
+          "dmat3x4",
+          "mat4x2",
+          "mat4x3",
+          "mat4x4",
+          "dmat4x2",
+          "dmat4x3",
+          "dmat4x4",
+          "float2",
+          "float3",
+          "float4",
+          "ifloat2",
+          "ifloat3",
+          "ifloat4",
+          "bfloat2",
+          "bfloat3",
+          "bfloat4",
+          "dfloat2",
+          "dfloat3",
+          "dfloat4",
+          "uint",
+          "ufloat2",
+          "ufloat3",
+          "ufloat4",
+          "lowp",
+          "mediump",
+          "highp",
+          "precision",
+          "sampler1D",
+          "Sampler2D",
+          "sampler3D",
+          "samplerCube",
+          "sampler1DShadow",
+          "sampler2DShadow",
+          "samplerCubeShadow",
+          "sampler1DArray",
+          "sampler2DArray",
+          "sampler1DArrayShadow",
+          "sampler2DArrayShadow",
+          "isampler1D",
+          "isampler2D",
+          "isampler3D",
+          "isamplerCube",
+          "isampler1DArray",
+          "isampler2DArray",
+          "usampler1D",
+          "usampler2D",
+          "usampler3D",
+          "usamplerCube",
+          "usampler1DArray",
+          "usampler2DArray",
+          "sampler2DRect",
+          "sampler2DRectShadow",
+          "isampler2DRect",
+          "usampler2DRect",
+          "samplerBuffer",
+          "isamplerBuffer",
+          "usamplerBuffer",
+          "sampler2DMS",
+          "isampler2DMS",
+          "usampler2DMS",
+          "sampler2DMSArray",
+          "isampler2DMSArray",
+          "usampler2DMSArray",
+          "samplerCubeArray",
+          "samplerCubeArrayShadow",
+          "isamplerCubeArray",
+          "usamplerCubeArray",
+          "common",
+          "partition",
+          "active",
+          "asm",
+          "struct",
+          "class",
+          "union",
+          "enum",
+          "typedef",
+          "template",
+          "this",
+          "packed",
+          "goto",
+          "inline",
+          "noinline",
+          "volatile",
+          "public",
+          "static",
+          "extern",
+          "external",
+          "interface",
+          "long",
+          "short",
+          "half",
+          "fixed",
+          "unsigned",
+          "superp",
+          "input",
+          "output",
+          "hfloat2",
+          "hfloat3",
+          "hfloat4",
+          "ffloat2",
+          "ffloat3",
+          "ffloat4",
+          "sampler3DRect",
+          "filter",
+          "image1D",
+          "image2D",
+          "image3D",
+          "imageCube",
+          "iimage1D",
+          "iimage2D",
+          "iimage3D",
+          "iimageCube",
+          "uimage1D",
+          "uimage2D",
+          "uimage3D",
+          "uimageCube",
+          "image1DArray",
+          "image2DArray",
+          "iimage1DArray",
+          "iimage2DArray",
+          "uimage1DArray",
+          "uimage2DArray",
+          "image1DShadow",
+          "image2DShadow",
+          "image1DArrayShadow",
+          "image2DArrayShadow",
+          "imageBuffer",
+          "iimageBuffer",
+          "uimageBuffer",
+          "sizeof",
+          "cast",
+          "namespace",
+          "using",
+          "row_major",
+          "lerp",
+          "sampler" });
 
     // Register restricted tokens in SLANG
     StringMap tokens;
@@ -286,45 +294,29 @@ SlangSyntax::SlangSyntax(TypeSystemPtr typeSystem) :
     tokens["gl_"] = "gll";
     tokens["webgl_"] = "webgll";
     tokens["_webgl"] = "wwebgl";
-    registerInvalidTokens(tokens);    //
+    registerInvalidTokens(tokens);  //
     // Register syntax handlers for each data type.
     //
 
     registerTypeSyntax(
         Type::FLOAT,
-        std::make_shared<ScalarTypeSyntax>(
-            this,
-            "float",
-            "0.0",
-            "0.0"));
+        std::make_shared<ScalarTypeSyntax>(this, "float", "0.0", "0.0"));
 
     registerTypeSyntax(
         Type::FLOATARRAY,
-        std::make_shared<SlangFloatArrayTypeSyntax>(
-            this,
-            "float"));
+        std::make_shared<SlangFloatArrayTypeSyntax>(this, "float"));
 
     registerTypeSyntax(
         Type::INTEGER,
-        std::make_shared<ScalarTypeSyntax>(
-            this,
-            "int",
-            "0",
-            "0"));
+        std::make_shared<ScalarTypeSyntax>(this, "int", "0", "0"));
 
     registerTypeSyntax(
         Type::INTEGERARRAY,
-        std::make_shared<SlangIntegerArrayTypeSyntax>(
-            this,
-            "int"));
+        std::make_shared<SlangIntegerArrayTypeSyntax>(this, "int"));
 
     registerTypeSyntax(
         Type::BOOLEAN,
-        std::make_shared<ScalarTypeSyntax>(
-            this,
-            "bool",
-            "false",
-            "false"));
+        std::make_shared<ScalarTypeSyntax>(this, "bool", "false", "false"));
 
     registerTypeSyntax(
         Type::COLOR3,
@@ -384,30 +376,20 @@ SlangSyntax::SlangSyntax(TypeSystemPtr typeSystem) :
     registerTypeSyntax(
         Type::MATRIX33,
         std::make_shared<AggregateTypeSyntax>(
-            this,
-            "float3x3",
-            "float3x3(1.0)",
-            "float3x3(1.0)"));
+            this, "float3x3", "float3x3(1.0)", "float3x3(1.0)"));
 
     registerTypeSyntax(
         Type::MATRIX44,
         std::make_shared<AggregateTypeSyntax>(
-            this,
-            "float4x4",
-            "float4x4(1.0)",
-            "float4x4(1.0)"));
+            this, "float4x4", "float4x4(1.0)", "float4x4(1.0)"));
 
     registerTypeSyntax(
-        Type::STRING,
-        std::make_shared<SlangStringTypeSyntax>(this));
+        Type::STRING, std::make_shared<SlangStringTypeSyntax>(this));
 
     registerTypeSyntax(
         Type::FILENAME,
         std::make_shared<ScalarTypeSyntax>(
-            this,
-            "Texture2D",
-            EMPTY_STRING,
-            EMPTY_STRING));
+            this, "Texture2D", EMPTY_STRING, EMPTY_STRING));
 
     registerTypeSyntax(
         Type::BSDF,

@@ -27,27 +27,23 @@
  **************************************************************************/
 #pragma once
 
+#include <cstdint>
+#include <format>
+#include <string>
+
 #include "Float16.h"
 
-#include <format>
+namespace Ruzino {
+namespace math {
 
-#include <string>
-#include <cstdint>
+    enum class Handedness {
+        RightHanded,
+        LeftHanded,
+    };
 
-namespace Ruzino
-{
-namespace math
-{
+    using uint = uint32_t;
 
-enum class Handedness
-{
-    RightHanded,
-    LeftHanded,
-};
-
-using uint = uint32_t;
-
-// clang-format off
+    // clang-format off
 template<typename T> [[nodiscard]] std::string to_string(T v);
 template<> [[nodiscard]] inline std::string to_string(bool v) { return v ? "1" : "0"; }
 template<> [[nodiscard]] inline std::string to_string(int v) { return std::to_string(v); }
@@ -55,9 +51,9 @@ template<> [[nodiscard]] inline std::string to_string(uint v) { return std::to_s
 template<> [[nodiscard]] inline std::string to_string(float v) { return std::to_string(v); }
 template<> [[nodiscard]] inline std::string to_string(double v) { return std::to_string(v); }
 template<> [[nodiscard]] inline std::string to_string(float16_t v) { return std::to_string(float(v)); }
-// clang-format on
+    // clang-format on
 
-// clang-format off
+    // clang-format off
 template<typename T> struct is_bool : ::std::is_same<T, bool> {};
 template<typename T> struct is_int : ::std::is_same<T, int32_t> {};
 template<typename T> struct is_uint : ::std::is_same<T, uint32_t> {};
@@ -77,56 +73,50 @@ template<typename T> constexpr bool is_floating_point_v = is_float_v<T> || is_do
 using std::is_integral_v;
 using std::is_signed_v;
 using std::is_unsigned_v;
-// clang-format on
+    // clang-format on
 
-template<typename T>
-struct ScalarTraits
-{};
+    template<typename T>
+    struct ScalarTraits { };
 
-template<>
-struct ScalarTraits<bool>
-{
-    static constexpr const char* name{"bool"};
-};
+    template<>
+    struct ScalarTraits<bool> {
+        static constexpr const char* name{ "bool" };
+    };
 
-template<>
-struct ScalarTraits<int>
-{
-    static constexpr const char* name{"int"};
-};
+    template<>
+    struct ScalarTraits<int> {
+        static constexpr const char* name{ "int" };
+    };
 
-template<>
-struct ScalarTraits<uint>
-{
-    static constexpr const char* name{"uint"};
-};
+    template<>
+    struct ScalarTraits<uint> {
+        static constexpr const char* name{ "uint" };
+    };
 
-template<>
-struct ScalarTraits<float>
-{
-    static constexpr const char* name{"float"};
-};
+    template<>
+    struct ScalarTraits<float> {
+        static constexpr const char* name{ "float" };
+    };
 
-template<>
-struct ScalarTraits<double>
-{
-    static constexpr const char* name{"double"};
-};
+    template<>
+    struct ScalarTraits<double> {
+        static constexpr const char* name{ "double" };
+    };
 
-template<>
-struct ScalarTraits<float16_t>
-{
-    static constexpr const char* name{"float16_t"};
-};
+    template<>
+    struct ScalarTraits<float16_t> {
+        static constexpr const char* name{ "float16_t" };
+    };
 
-} // namespace math
+}  // namespace math
 
 using uint = math::uint;
 using float16_t = math::float16_t;
 
 #if FALCOR_MSVC
 #pragma warning(push)
-#pragma warning(disable : 4455) // disable warning about literal suffixes not starting with an underscore
+#pragma warning(disable : 4455)  // disable warning about literal suffixes not
+                                 // starting with an underscore
 #endif
 
 using math::operator""h;
@@ -135,12 +125,11 @@ using math::operator""h;
 #pragma warning(pop)
 #endif
 
-} // namespace Ruzino
+}  // namespace Ruzino
 
 // Formatter for the float16_t.
 template<>
-struct std::formatter<Ruzino::math::float16_t> : formatter<float>
-{
+struct std::formatter<Ruzino::math::float16_t> : formatter<float> {
     template<typename FormatContext>
     auto format(Ruzino::math::float16_t value, FormatContext& ctx) const
     {

@@ -4,7 +4,7 @@
 ![alt text](images/image-1.png)
 ```
 python .\configure.py --all --build_variant Debug --extract-sdk .\SDK.zip
-``` 
+```
 
 ```
 mkdir build
@@ -39,7 +39,7 @@ git submodule update --init --recursive
 ## Windows + MSVC
 强烈建议在Windows系统下使用本框架，并使用最新版MSVC进行构建和编译。
 
-### Python 3.10.11 
+### Python 3.10.11
 [下载地址](https://www.python.org/downloads/release/python-31011/)
 
 安装时无需勾选Debug库，需要加入path。
@@ -68,14 +68,14 @@ pip install PyOpenGL PySide6 numpy
    ```shell
    python --version
    # 确保输出为Python 3.10.11
-   
+
    cmake --version
    # 确保输出为CMake version 3.31.5
 
    echo $Env:VULKAN_SDK
    # 确保输出为Vulkan SDK的路径
    ```
- 
+
    确保Python和CMake的版本正确后，将以下命令中的`path/to/framework3d`替换为你的实验框架目录，然后执行：
 
    ```shell
@@ -137,10 +137,10 @@ pip install PyOpenGL PySide6 numpy
 App Store 下载Xcode安装
 运行命令
 ```Terminal
-sudo xcode-select -s /Applications/Xcode.app/Contents/Developer 
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 ```
 
-### Python 3.10.11 
+### Python 3.10.11
 ```Terminal
 brew install pyenv
 pyenv install 3.10.11

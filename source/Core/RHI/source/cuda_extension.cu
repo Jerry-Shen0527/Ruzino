@@ -63,12 +63,12 @@ void CUDALinearBuffer::assign_host_data(
 void CUDALinearBuffer::copy_from_device(ICUDALinearBuffer* src)
 {
     auto src_desc = src->getDesc();
-    
+
     // Ensure buffers have compatible sizes
     size_t src_bytes = src_desc.element_count * src_desc.element_size;
     size_t dst_bytes = desc.element_count * desc.element_size;
     size_t copy_bytes = std::min(src_bytes, dst_bytes);
-    
+
     cudaMemcpy(
         reinterpret_cast<void*>(get_device_ptr()),
         reinterpret_cast<const void*>(src->get_device_ptr()),

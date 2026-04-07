@@ -204,7 +204,8 @@ class EigenBiCGStabSolver
         SolverResult result;
 
         // 标准的 BiCGSTAB 实现（之前的逻辑）
-        // Increase restart attempts and use more conservative tolerance for SPD matrices
+        // Increase restart attempts and use more conservative tolerance for SPD
+        // matrices
         const int max_restarts = 8;  // More restarts for difficult cases
         int restart_count = 0;
 
@@ -213,7 +214,8 @@ class EigenBiCGStabSolver
             // Use slightly relaxed tolerance for better stability
             float effective_tolerance = config.tolerance;
             if (restart_count > 0) {
-                effective_tolerance = config.tolerance * (1.0f + restart_count * 0.5f);
+                effective_tolerance =
+                    config.tolerance * (1.0f + restart_count * 0.5f);
             }
             solver.setTolerance(effective_tolerance);
             solver.setMaxIterations(config.max_iterations);
@@ -245,12 +247,15 @@ class EigenBiCGStabSolver
                     float scale = 0.1f / (restart_count + 1);
                     if (restart_count % 2 == 0) {
                         x = Eigen::VectorXf::Random(A.rows()) * scale;
-                    } else {
+                    }
+                    else {
                         // Try zeros with small perturbation
                         x = Eigen::VectorXf::Constant(A.rows(), scale * 0.1f);
                     }
                     if (config.verbose) {
-                        spdlog::info("BiCGSTAB restart {} due to NaN/Inf", restart_count);
+                        spdlog::info(
+                            "BiCGSTAB restart {} due to NaN/Inf",
+                            restart_count);
                     }
                     continue;
                 }
@@ -271,21 +276,28 @@ class EigenBiCGStabSolver
                 (b_norm > 0) ? residual.norm() / b_norm : residual.norm();
 
             // Check if solution is acceptable
-            if (result.converged && result.final_residual < config.tolerance * 20) {
+            if (result.converged &&
+                result.final_residual < config.tolerance * 20) {
                 // Good enough solution found
                 break;
             }
-            else if (result.final_residual > 0.1f && restart_count < max_restarts - 1) {
+            else if (
+                result.final_residual > 0.1f &&
+                restart_count < max_restarts - 1) {
                 // Poor solution, try restart with different initialization
                 restart_count++;
                 float scale = 0.1f / (restart_count + 1);
                 if (restart_count % 2 == 0) {
                     x = Eigen::VectorXf::Random(A.rows()) * scale;
-                } else {
+                }
+                else {
                     x = Eigen::VectorXf::Constant(A.rows(), scale * 0.1f);
                 }
                 if (config.verbose) {
-                    spdlog::info("BiCGSTAB restart {} due to poor residual {}", restart_count, result.final_residual);
+                    spdlog::info(
+                        "BiCGSTAB restart {} due to poor residual {}",
+                        restart_count,
+                        result.final_residual);
                 }
                 continue;
             }

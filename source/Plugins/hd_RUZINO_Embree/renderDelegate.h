@@ -32,11 +32,14 @@
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
-#define HDEMBREE_RENDER_SETTINGS_TOKENS \
-    (enableAmbientOcclusion)(enableSceneColors)(ambientOcclusionSamples)(renderMode)
+#define HDEMBREE_RENDER_SETTINGS_TOKENS          \
+    (enableAmbientOcclusion)(enableSceneColors)( \
+        ambientOcclusionSamples)(renderMode)
 // Also: HdRenderSettingsTokens->convergedSamplesPerPixel
 
-TF_DECLARE_PUBLIC_TOKENS(Hd_RUZINO_RenderSettingsTokens, HDEMBREE_RENDER_SETTINGS_TOKENS);
+TF_DECLARE_PUBLIC_TOKENS(
+    Hd_RUZINO_RenderSettingsTokens,
+    HDEMBREE_RENDER_SETTINGS_TOKENS);
 
 class Hd_RUZINO_RenderDelegate final : public HdRenderDelegate {
    public:
@@ -60,17 +63,21 @@ class Hd_RUZINO_RenderDelegate final : public HdRenderDelegate {
         HdRenderIndex* index,
         const HdRprimCollection& collection) override;
 
-    HdInstancer* CreateInstancer(HdSceneDelegate* delegate, const SdfPath& id) override;
+    HdInstancer* CreateInstancer(HdSceneDelegate* delegate, const SdfPath& id)
+        override;
     void DestroyInstancer(HdInstancer* instancer) override;
 
-    HdRprim* CreateRprim(const TfToken& typeId, const SdfPath& rprimId) override;
+    HdRprim* CreateRprim(const TfToken& typeId, const SdfPath& rprimId)
+        override;
     void DestroyRprim(HdRprim* rPrim) override;
 
-    HdSprim* CreateSprim(const TfToken& typeId, const SdfPath& sprimId) override;
+    HdSprim* CreateSprim(const TfToken& typeId, const SdfPath& sprimId)
+        override;
     HdSprim* CreateFallbackSprim(const TfToken& typeId) override;
     void DestroySprim(HdSprim* sprim) override;
 
-    HdBprim* CreateBprim(const TfToken& typeId, const SdfPath& bprimId) override;
+    HdBprim* CreateBprim(const TfToken& typeId, const SdfPath& bprimId)
+        override;
     HdBprim* CreateFallbackBprim(const TfToken& typeId) override;
     void DestroyBprim(HdBprim* bprim) override;
 
@@ -98,7 +105,8 @@ class Hd_RUZINO_RenderDelegate final : public HdRenderDelegate {
     static HdResourceRegistrySharedPtr _resourceRegistry;
 
     Hd_RUZINO_RenderDelegate(const Hd_RUZINO_RenderDelegate&) = delete;
-    Hd_RUZINO_RenderDelegate& operator=(const Hd_RUZINO_RenderDelegate&) = delete;
+    Hd_RUZINO_RenderDelegate& operator=(const Hd_RUZINO_RenderDelegate&) =
+        delete;
 
    public:
     HdAovDescriptor GetDefaultAovDescriptor(const TfToken& name) const override;

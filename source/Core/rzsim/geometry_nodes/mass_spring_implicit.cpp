@@ -303,7 +303,7 @@ static bool solve_newton(
             spdlog::warn("Newton solve failed at iteration {}", iter);
             return false;
         }
-        
+
         spdlog::debug(
             "Newton iter {}: grad_norm={:.6e}, solver_iters={}",
             iter,

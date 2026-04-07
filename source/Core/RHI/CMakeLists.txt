@@ -4,7 +4,7 @@ if(SLANG_FOUND)
         SHARED
         WITH_CUDA
         PUBLIC_LIBS nvrhi SLANG::slang nodes_core
-        PRIVATE_LIBS spdlog::spdlog glfw glm::glm 
+        PRIVATE_LIBS spdlog::spdlog glfw glm::glm
         PYTHON_WRAP_DIR python
         COMPILE_DEFS
         NOMINMAX

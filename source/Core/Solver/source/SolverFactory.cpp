@@ -12,7 +12,8 @@ std::unique_ptr<LinearSolver> createCudaCGSolver();
 std::unique_ptr<LinearSolver> createCudaBiCGStabSolver();  // 新增
 std::unique_ptr<LinearSolver> createCudaGMRESSolver();     // 新增
 std::unique_ptr<LinearSolver> createCuSolverQRSolver();    // cuSOLVER QR
-std::unique_ptr<LinearSolver> createCuSolverCholeskySolver();  // cuSOLVER Cholesky
+std::unique_ptr<LinearSolver>
+createCuSolverCholeskySolver();  // cuSOLVER Cholesky
 #endif
 std::unique_ptr<LinearSolver> createEigenCGSolver();
 std::unique_ptr<LinearSolver> createEigenBiCGStabSolver();
@@ -85,9 +86,9 @@ std::vector<SolverType> SolverFactory::getAvailableTypes()
     std::vector<SolverType> all_types = {
 #if RUZINO_WITH_CUDA
         SolverType::CUDA_CG,
-        SolverType::CUDA_BICGSTAB,  // 新增
-        SolverType::CUDA_GMRES,     // 新增
-        SolverType::CUSOLVER_QR,    // cuSOLVER QR
+        SolverType::CUDA_BICGSTAB,      // 新增
+        SolverType::CUDA_GMRES,         // 新增
+        SolverType::CUSOLVER_QR,        // cuSOLVER QR
         SolverType::CUSOLVER_CHOLESKY,  // cuSOLVER Cholesky
 #endif
         SolverType::EIGEN_ITERATIVE_CG,

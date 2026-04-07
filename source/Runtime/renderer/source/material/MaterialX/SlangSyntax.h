@@ -44,7 +44,8 @@ class HD_RUZINO_API SlangSyntax : public Syntax {
     const string& getSourceFileExtension() const override
     {
         return SOURCE_FILE_EXTENSION;
-    };    bool typeSupported(const TypeDesc* type) const override;
+    };
+    bool typeSupported(const TypeDesc* type) const override;
 
     /// Given an input specification attempt to remap this to an enumeration
     /// which is accepted by the shader generator. The enumeration may be

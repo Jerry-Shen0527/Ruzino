@@ -26,20 +26,24 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "SDF3DPrimitiveCommon.slang"
 #include "Core/Macros.h"
+#include "SDF3DPrimitiveCommon.slang"
+#include "Scene/Transform.h"
 #include "utils/Math/AABB.h"
 #include "utils/Math/Vector.h"
 #include "utils/SDF/SDFOperationType.slang"
-#include "Scene/Transform.h"
 
-namespace Ruzino
-{
-    class HD_RUZINO_API SDF3DPrimitiveFactory
-    {
-    public:
-        static SDF3DPrimitive initCommon(SDF3DShapeType shapeType, const float3& shapeData, float blobbing, float operationSmoothing, SDFOperationType operationType, const Transform& transform);
+namespace Ruzino {
+class HD_RUZINO_API SDF3DPrimitiveFactory {
+   public:
+    static SDF3DPrimitive initCommon(
+        SDF3DShapeType shapeType,
+        const float3& shapeData,
+        float blobbing,
+        float operationSmoothing,
+        SDFOperationType operationType,
+        const Transform& transform);
 
-        static AABB computeAABB(const SDF3DPrimitive& primitive);
-    };
-}
+    static AABB computeAABB(const SDF3DPrimitive& primitive);
+};
+}  // namespace Ruzino

@@ -102,7 +102,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID, uint3 groupThreadID : SV
     }
 
     GroupMemoryBarrierWithGroupSync();
-    
+
     // Load voxel corner values.
     float4 values0xx;
     float4 values1xx;

@@ -9,7 +9,7 @@ RUZINO_ADD_LIB(
 		glm::glm
 		geometry
 	PYTHON_WRAP_DIR python
-	PRIVATE_LIBS 
+	PRIVATE_LIBS
 		spdlog::spdlog
 		nodes_system
 		MaterialXCore

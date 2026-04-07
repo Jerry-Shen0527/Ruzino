@@ -9,7 +9,6 @@
 
 #include "../SlangShaderGenerator.h"
 
-
 MATERIALX_NAMESPACE_BEGIN
 
 LightCompoundNodeSlang::LightCompoundNodeSlang()

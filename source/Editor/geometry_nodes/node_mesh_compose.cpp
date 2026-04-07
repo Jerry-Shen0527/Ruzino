@@ -24,8 +24,7 @@ NODE_EXECUTION_FUNCTION(mesh_compose)
     auto faceVertexIndices =
         params.get_input<std::vector<int>>("FaceVertexIndices");
     auto normals = params.get_input<std::vector<glm::vec3>>("Normals");
-    auto texcoordsArray =
-        params.get_input<std::vector<glm::vec2>>("Texcoords");
+    auto texcoordsArray = params.get_input<std::vector<glm::vec2>>("Texcoords");
 
     if (vertices.size() > 0 && faceVertexCounts.size() > 0 &&
         faceVertexIndices.size() > 0) {

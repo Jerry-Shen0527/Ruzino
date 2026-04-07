@@ -28,19 +28,17 @@
 #pragma once
 #include "Core/Macros.h"
 
-namespace Ruzino
-{
+namespace Ruzino {
 #if FALCOR_WINDOWS
-using SharedLibraryHandle = void*; // HANDLE
-using WindowHandle = void*;        // HWND
+using SharedLibraryHandle = void*;  // HANDLE
+using WindowHandle = void*;         // HWND
 #elif FALCOR_LINUX
 using SharedLibraryHandle = void*;
-struct WindowHandle
-{
+struct WindowHandle {
     void* pDisplay;
     unsigned long window;
 };
 #else
 #error "Platform not specified!"
 #endif
-} // namespace Ruzino
+}  // namespace Ruzino

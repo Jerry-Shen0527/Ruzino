@@ -9,12 +9,11 @@
 #include <unordered_map>
 #include <vector>
 
+#include "Eigen/Dense"
 #include "GCore/Components/MeshComponent.h"
 #include "GCore/GOP.h"
-#include "nodes/core/def/node_def.hpp"
-#include "Eigen/Dense"
-
 #include "geom_node_base.h"
+#include "nodes/core/def/node_def.hpp"
 
 typedef OpenMesh::TriMesh_ArrayKernelT<> MyMesh;
 
@@ -48,7 +47,6 @@ NODE_DECLARATION_FUNCTION(assignments_shortest_path)
 
 NODE_EXECUTION_FUNCTION(assignments_shortest_path)
 {
-
     auto picked_mesh_0_name =
         params.get_input<std::string>("Picked Mesh [0] Name");
     auto picked_mesh_1_name =

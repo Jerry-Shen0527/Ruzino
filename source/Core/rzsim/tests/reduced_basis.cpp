@@ -75,10 +75,12 @@ TEST(ReducedOrderBasis, GridMesh)
 
     // Compare eigenvalues
     std::cout << "\nEigenvalue comparison:\n";
-    for (size_t i = 0; i < std::min(rob.eigenvalues.size(), rob_libigl.eigenvalues.size()); i++) {
+    for (size_t i = 0;
+         i < std::min(rob.eigenvalues.size(), rob_libigl.eigenvalues.size());
+         i++) {
         float diff = std::abs(rob.eigenvalues[i] - rob_libigl.eigenvalues[i]);
-        std::cout << "  Mode " << i << ": custom=" << rob.eigenvalues[i] 
-                  << ", libigl=" << rob_libigl.eigenvalues[i] 
+        std::cout << "  Mode " << i << ": custom=" << rob.eigenvalues[i]
+                  << ", libigl=" << rob_libigl.eigenvalues[i]
                   << ", diff=" << diff << std::endl;
     }
 }
@@ -111,10 +113,12 @@ TEST(ReducedOrderBasis, CircleMesh)
 
     // Compare eigenvalues
     std::cout << "\nEigenvalue comparison:\n";
-    for (size_t i = 0; i < std::min(rob.eigenvalues.size(), rob_libigl.eigenvalues.size()); i++) {
+    for (size_t i = 0;
+         i < std::min(rob.eigenvalues.size(), rob_libigl.eigenvalues.size());
+         i++) {
         float diff = std::abs(rob.eigenvalues[i] - rob_libigl.eigenvalues[i]);
-        std::cout << "  Mode " << i << ": custom=" << rob.eigenvalues[i] 
-                  << ", libigl=" << rob_libigl.eigenvalues[i] 
+        std::cout << "  Mode " << i << ": custom=" << rob.eigenvalues[i]
+                  << ", libigl=" << rob_libigl.eigenvalues[i]
                   << ", diff=" << diff << std::endl;
     }
 }
@@ -180,10 +184,12 @@ TEST(ReducedOrderBasis, TetrahedralMesh)
 
     // Compare eigenvalues
     std::cout << "\nEigenvalue comparison:\n";
-    for (size_t i = 0; i < std::min(rob.eigenvalues.size(), rob_libigl.eigenvalues.size()); i++) {
+    for (size_t i = 0;
+         i < std::min(rob.eigenvalues.size(), rob_libigl.eigenvalues.size());
+         i++) {
         float diff = std::abs(rob.eigenvalues[i] - rob_libigl.eigenvalues[i]);
-        std::cout << "  Mode " << i << ": custom=" << rob.eigenvalues[i] 
-                  << ", libigl=" << rob_libigl.eigenvalues[i] 
+        std::cout << "  Mode " << i << ": custom=" << rob.eigenvalues[i]
+                  << ", libigl=" << rob_libigl.eigenvalues[i]
                   << ", diff=" << diff << std::endl;
     }
 }

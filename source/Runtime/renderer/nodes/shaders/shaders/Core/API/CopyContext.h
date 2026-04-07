@@ -32,8 +32,8 @@
 
 #include "Core/Macros.h"
 #include "Device.h"
-#include "utils/Math/VectorTypes.h"
 #include "utils/CudaRuntime.h"
+#include "utils/Math/VectorTypes.h"
 
 #if FALCOR_HAS_CUDA
 struct CUstream_st;

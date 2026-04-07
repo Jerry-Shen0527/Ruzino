@@ -19,31 +19,31 @@ def test_single_terrain():
     print("\n" + "="*70)
     print("TEST: Single Terrain USD Generation")
     print("="*70)
-    
+
     binary_dir = get_binary_dir()
     output_file = os.path.join(binary_dir, "terrain_single.usdc")
-    
+
     g = RuzinoGraph("SingleTerrain")
-    
+
     # Load configurations
     g.loadConfiguration(os.path.join(binary_dir, "geometry_nodes.json"))
     print(f"✓ Loaded geometry nodes configuration")
-    
+
     g.loadConfiguration(os.path.join(binary_dir, "Plugins", "TerrainGen_geometry_nodes.json"))
     print(f"✓ Loaded TerrainGen configuration")
-    
+
     # Create terrain generation node
     terrain_gen = g.createNode("terrain_generate", name="terrain")
     print(f"✓ Created terrain_generate node")
-    
+
     # Create write node
     write_node = g.createNode("write_usd", name="writer")
     print(f"✓ Created write_usd node")
-    
+
     # Connect terrain directly to write
     g.addEdge(terrain_gen, "Height Field", write_node, "Geometry")
     print(f"✓ Connected nodes")
-    
+
     # Set terrain generation parameters
     inputs = {}
     inputs[(terrain_gen, "Grid Resolution")] = int(128)
@@ -56,23 +56,23 @@ def test_single_terrain():
     inputs[(terrain_gen, "Enable Multi Scale")] = bool(True)
     inputs[(terrain_gen, "Mountain Amplitude")] = float(30.0)
     inputs[(terrain_gen, "Random Seed")] = int(42)
-    
+
     print(f"\nParameters set: 128×128 terrain, Frequency=3.0, Multi-scale enabled")
-    
+
     # Create Stage and convert to GeomPayload
     stage = stage_py.Stage(output_file)
     geom_payload = stage_py.create_payload_from_stage(stage, "/terrain")
     g.setGlobalParams(geom_payload)
-    
+
     print(f"\nExecuting graph...")
-    
+
     # Execute
     g.prepare_and_execute(inputs, required_node=write_node)
     print(f"✓ Executed graph")
-    
+
     # Save the stage
     stage.save()
-    
+
     # Check file size
     if os.path.exists(output_file):
         file_size = os.path.getsize(output_file)
@@ -84,11 +84,11 @@ def test_single_terrain():
         print(f"File size: {file_size:,} bytes ({file_size_mb:.2f} MB)")
         print(f"Output: {output_file}")
         print(f"{'='*70}")
-        
+
         # Verify reasonable file size
         assert file_size > 10000, f"File unexpectedly small: {file_size} bytes"
         print(f"\n✓ File size validation passed")
-        
+
     else:
         print(f"✗ USD file not found: {output_file}")
         assert False, f"File not created: {output_file}"

@@ -16,13 +16,13 @@ void mx_image_color4(
     out float4 result)
 {
     float2 uv = mx_transform_uv(texcoord, uv_scale, uv_offset);
-    
+
     // Calculate sampler index based on modes
     // Index calculation: (uaddressmode * 3) + filtertype
     // 0=wrap, 1=clamp, 2=mirror for address modes
     // 0=point, 1=linear, 2=aniso for filter types
     int samplerIndex = (uaddressmode * 3) + filtertype;
     samplerIndex = clamp(samplerIndex, 0, 8);
-    
+
     result = texture.SampleLevel(samplers[samplerIndex], uv, 0.0);
 }

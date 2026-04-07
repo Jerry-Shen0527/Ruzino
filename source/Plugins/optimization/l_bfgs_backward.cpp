@@ -12,10 +12,10 @@ using namespace autodiff;
 NODE_DECLARATION_FUNCTION(l_bfgs_backward)
 {
     b.add_input<std::function<var(const ArrayXvar&)>>("Cost function");
-    //b.add_input<Eigen::VectorXd>("Initial point");
-    //b.add_input<int>("Max iterations");
-    //b.add_input<double>("Tolerance");
-    //b.add_input<int>("Memory step size");
+    // b.add_input<Eigen::VectorXd>("Initial point");
+    // b.add_input<int>("Max iterations");
+    // b.add_input<double>("Tolerance");
+    // b.add_input<int>("Memory step size");
     b.add_output<Eigen::VectorXd>("Minimum point");
     b.add_output<double>("Minimum");
 }
@@ -25,10 +25,10 @@ NODE_EXECUTION_FUNCTION(l_bfgs_backward)
     auto f =
         params.get_input<std::function<var(const ArrayXvar&)>>("Cost function");
 
-    //Eigen::VectorXd x0 = params.get_input<Eigen::VectorXd>("Initial point");
-    //int max_iterations = params.get_input<int>("Max iterations");
-    //double tolerance = params.get_input<double>("Tolerance");
-    //int m = params.get_input<int>("Memory step size");
+    // Eigen::VectorXd x0 = params.get_input<Eigen::VectorXd>("Initial point");
+    // int max_iterations = params.get_input<int>("Max iterations");
+    // double tolerance = params.get_input<double>("Tolerance");
+    // int m = params.get_input<int>("Memory step size");
     Eigen::VectorXd x0(3);
     x0 << 1, 1, 1;
     int max_iterations = 100;

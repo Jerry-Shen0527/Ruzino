@@ -6,12 +6,14 @@
 namespace TerrainGen {
 
 // Version information
-TERRAINGEN_API const char* GetVersion() {
+TERRAINGEN_API const char* GetVersion()
+{
     return "1.0.0";
 }
 
-TERRAINGEN_API const char* GetPluginName() {
+TERRAINGEN_API const char* GetPluginName()
+{
     return "TerrainGen";
 }
 
-} // namespace TerrainGen
+}  // namespace TerrainGen

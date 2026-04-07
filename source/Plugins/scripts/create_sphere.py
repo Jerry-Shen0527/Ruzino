@@ -24,12 +24,12 @@ for i in range(grid_size):
         x = i * spacing - grid_offset
         y = j * spacing - grid_offset
         z = z_height
-        
+
         # Create sphere
         sphere_path = f"/Spheres/Sphere_{i}_{j}"
         sphere = UsdGeom.Sphere.Define(usd_stage, sphere_path)
         sphere.CreateRadiusAttr(radius)
-        
+
         # Set position using transform
         sphere_prim = usd_stage.GetPrimAtPath(sphere_path)
         xformable = UsdGeom.Xformable(sphere_prim)

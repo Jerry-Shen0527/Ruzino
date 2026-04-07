@@ -26,63 +26,79 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Material.h"
-#include "RGLMaterialData.slang"
 #include <filesystem>
 
-namespace Ruzino
-{
-    /** Class representing a measured material from the RGL BRDF database.
+#include "Material.h"
+#include "RGLMaterialData.slang"
 
-        For details refer to:
-        Jonathan Dupuy, Wenzel Jakob
-        "An Adaptive Parameterization for Efficient Material Acquisition and Rendering".
-        Transactions on Graphics (Proc. SIGGRAPH Asia 2018)
-    */
-    class HD_RUZINO_API RGLMaterial : public Material
+namespace Ruzino {
+/** Class representing a measured material from the RGL BRDF database.
+
+    For details refer to:
+    Jonathan Dupuy, Wenzel Jakob
+    "An Adaptive Parameterization for Efficient Material Acquisition and
+   Rendering". Transactions on Graphics (Proc. SIGGRAPH Asia 2018)
+*/
+class HD_RUZINO_API RGLMaterial : public Material {
+    FALCOR_OBJECT(RGLMaterial)
+   public:
+    static ref<RGLMaterial> create(
+        ref<Device> pDevice,
+        const std::string& name,
+        const std::filesystem::path& path)
     {
-        FALCOR_OBJECT(RGLMaterial)
-    public:
-        static ref<RGLMaterial> create(ref<Device> pDevice, const std::string& name, const std::filesystem::path& path) { return make_ref<RGLMaterial>(pDevice, name, path); }
+        return make_ref<RGLMaterial>(pDevice, name, path);
+    }
 
-        RGLMaterial(ref<Device> pDevice, const std::string& name, const std::filesystem::path& path);
+    RGLMaterial(
+        ref<Device> pDevice,
+        const std::string& name,
+        const std::filesystem::path& path);
 
-        bool renderUI(Gui::Widgets& widget) override;
-        Material::UpdateFlags update(MaterialSystem* pOwner) override;
-        bool isEqual(const ref<Material>& pOther) const override;
-        MaterialDataBlob getDataBlob() const override { return prepareDataBlob(mData); }
-        ProgramDesc::ShaderModuleList getShaderModules() const override;
-        TypeConformanceList getTypeConformances() const override;
+    bool renderUI(Gui::Widgets& widget) override;
+    Material::UpdateFlags update(MaterialSystem* pOwner) override;
+    bool isEqual(const ref<Material>& pOther) const override;
+    MaterialDataBlob getDataBlob() const override
+    {
+        return prepareDataBlob(mData);
+    }
+    ProgramDesc::ShaderModuleList getShaderModules() const override;
+    TypeConformanceList getTypeConformances() const override;
 
-        virtual size_t getMaxBufferCount() const override { return 12; }
+    virtual size_t getMaxBufferCount() const override
+    {
+        return 12;
+    }
 
-        bool loadBRDF(const std::filesystem::path& path);
+    bool loadBRDF(const std::filesystem::path& path);
 
-    protected:
-        void prepareData(const int dims[3], const std::vector<double>& data);
-        void prepareAlbedoLUT(RenderContext* pRenderContext);
-        void computeAlbedoLUT(RenderContext* pRenderContext);
+   protected:
+    void prepareData(const int dims[3], const std::vector<double>& data);
+    void prepareAlbedoLUT(RenderContext* pRenderContext);
+    void computeAlbedoLUT(RenderContext* pRenderContext);
 
-        std::filesystem::path mPath;        ///< Full path to the BRDF loaded.
-        std::string mBRDFName;              ///< This is the file basename without extension.
-        std::string mBRDFDescription;       ///< Description of the BRDF given in the BRDF file.
+    std::filesystem::path mPath;  ///< Full path to the BRDF loaded.
+    std::string mBRDFName;  ///< This is the file basename without extension.
+    std::string
+        mBRDFDescription;  ///< Description of the BRDF given in the BRDF file.
 
-        bool mBRDFUploaded = false;         ///< True if BRDF data buffers have been uploaded to the material system.
-        RGLMaterialData mData;              ///< Material parameters.
-        nvrhi::BufferHandle mpThetaBuf;
-        nvrhi::BufferHandle mpPhiBuf;
-        nvrhi::BufferHandle mpSigmaBuf;
-        nvrhi::BufferHandle mpNDFBuf;
-        nvrhi::BufferHandle mpVNDFBuf;
-        nvrhi::BufferHandle mpLumiBuf;
-        nvrhi::BufferHandle mpRGBBuf;
-        nvrhi::BufferHandle mpVNDFMarginalBuf;
-        nvrhi::BufferHandle mpLumiMarginalBuf;
-        nvrhi::BufferHandle mpVNDFConditionalBuf;
-        nvrhi::BufferHandle mpLumiConditionalBuf;
-        nvrhi::TextureHandle mpAlbedoLUT;           ///< Precomputed albedo lookup table.
-        nvrhi::SamplerHandle mpSampler;             ///< Sampler for accessing BRDF textures.
+    bool mBRDFUploaded = false;  ///< True if BRDF data buffers have been
+                                 ///< uploaded to the material system.
+    RGLMaterialData mData;       ///< Material parameters.
+    nvrhi::BufferHandle mpThetaBuf;
+    nvrhi::BufferHandle mpPhiBuf;
+    nvrhi::BufferHandle mpSigmaBuf;
+    nvrhi::BufferHandle mpNDFBuf;
+    nvrhi::BufferHandle mpVNDFBuf;
+    nvrhi::BufferHandle mpLumiBuf;
+    nvrhi::BufferHandle mpRGBBuf;
+    nvrhi::BufferHandle mpVNDFMarginalBuf;
+    nvrhi::BufferHandle mpLumiMarginalBuf;
+    nvrhi::BufferHandle mpVNDFConditionalBuf;
+    nvrhi::BufferHandle mpLumiConditionalBuf;
+    nvrhi::TextureHandle mpAlbedoLUT;  ///< Precomputed albedo lookup table.
+    nvrhi::SamplerHandle mpSampler;    ///< Sampler for accessing BRDF textures.
 
-        ref<ComputePass> mBRDFTesting;
-    };
-}
+    ref<ComputePass> mBRDFTesting;
+};
+}  // namespace Ruzino

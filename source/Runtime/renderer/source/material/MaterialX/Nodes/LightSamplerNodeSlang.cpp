@@ -7,12 +7,13 @@
 
 MATERIALX_NAMESPACE_BEGIN
 
-namespace
-{
+namespace {
 
-const string SAMPLE_LIGHTS_FUNC_SIGNATURE = "void sampleLightSource(LightData light, float3 position, out lightshader result)";
+const string SAMPLE_LIGHTS_FUNC_SIGNATURE =
+    "void sampleLightSource(LightData light, float3 position, out lightshader "
+    "result)";
 
-} // anonymous namespace
+}  // anonymous namespace
 
 LightSamplerNodeSlang::LightSamplerNodeSlang()
 {
@@ -24,7 +25,10 @@ ShaderNodeImplPtr LightSamplerNodeSlang::create()
     return std::make_shared<LightSamplerNodeSlang>();
 }
 
-void LightSamplerNodeSlang::emitFunctionDefinition(const ShaderNode& node, GenContext& context, ShaderStage& stage) const
+void LightSamplerNodeSlang::emitFunctionDefinition(
+    const ShaderNode& node,
+    GenContext& context,
+    ShaderStage& stage) const
 {
     DEFINE_SHADER_STAGE(stage, Stage::PIXEL)
     {
@@ -36,13 +40,16 @@ void LightSamplerNodeSlang::emitFunctionDefinition(const ShaderNode& node, GenCo
         shadergen.emitLine("result.intensity = float3(0.0)", stage);
         shadergen.emitLine("result.direction = float3(0.0)", stage);
 
-        HwLightShadersPtr lightShaders = context.getUserData<HwLightShaders>(HW::USER_DATA_LIGHT_SHADERS);
-        if (lightShaders)
-        {
+        HwLightShadersPtr lightShaders =
+            context.getUserData<HwLightShaders>(HW::USER_DATA_LIGHT_SHADERS);
+        if (lightShaders) {
             string ifstatement = "if ";
-            for (const auto& it : lightShaders->get())
-            {
-                shadergen.emitLine(ifstatement + "(light.type == " + std::to_string(it.first) + ")", stage, false);
+            for (const auto& it : lightShaders->get()) {
+                shadergen.emitLine(
+                    ifstatement + "(light.type == " + std::to_string(it.first) +
+                        ")",
+                    stage,
+                    false);
                 shadergen.emitScopeBegin(stage);
                 shadergen.emitFunctionCall(*it.second, context, stage);
                 shadergen.emitScopeEnd(stage);

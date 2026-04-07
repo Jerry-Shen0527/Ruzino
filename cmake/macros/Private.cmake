@@ -215,7 +215,7 @@ function(__pxr_library NAME)
         "${multiValueArgs}"
         ${ARGN}
     )
-    
+
     if(args_TYPE STREQUAL "STATIC")
         # Building an explicitly static library.
         add_library(${NAME}
@@ -224,7 +224,7 @@ function(__pxr_library NAME)
             ${args_PUBLIC_HEADERS}
             ${args_PRIVATE_HEADERS}
         )
-    
+
     else()
         # Building an explicitly shared library or plugin.
         add_library(${NAME}
@@ -236,7 +236,7 @@ function(__pxr_library NAME)
     endif()
     message("${NAME} links to ${args_LIBRARIES}")
     target_link_libraries(${NAME} PUBLIC ${args_LIBRARIES})
-    
+
     # Copy headers to the build directory and include from there and from
     # external packages.
     _copy_headers(${NAME}
@@ -247,7 +247,7 @@ function(__pxr_library NAME)
         PREFIX
             ${PXR_PREFIX}
     )
-    
+
     target_include_directories(${NAME}
     PRIVATE
         "${PROJECT_BINARY_DIR}/include"
@@ -255,16 +255,16 @@ function(__pxr_library NAME)
     INTERFACE
         $<INSTALL_INTERFACE:${headerInstallDir}>
     )
-    
+
     set_target_properties(${NAME} PROPERTIES ${OUTPUT_DIR})
-    
+
     set(libraryFilename "${args_PREFIX}${NAME}${args_SUFFIX}")
-    
+
     set(pluginInstallPrefix "usd")
     set(libInstallPrefix "")
-    
+
     set(pluginToLibraryPath "")
-    
+
     # Figure out the relative path from this library's plugin location
     # (in the libplug sense, which applies even to non-plugins, and is
     # where we can find external resources for the library) to the
@@ -282,14 +282,14 @@ function(__pxr_library NAME)
                 ${CMAKE_INSTALL_PREFIX}/${libInstallPrefix}/${libraryFilename})
         endif()
     endif()
-    
+
     # Install resources for the NAME library, at appropriate paths
     _copy_resource_files(
         ${NAME}
         "${pluginInstallPrefix}"
         "${pluginToLibraryPath}"
         ${args_RESOURCE_FILES})
-    
+
     target_compile_definitions(${NAME} PUBLIC NOMINMAX=1)
     string(TOUPPER ${NAME} CAPITAL_NAME)
     target_compile_definitions(${NAME} PRIVATE ${CAPITAL_NAME}_EXPORTS=1)

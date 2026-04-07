@@ -1,7 +1,7 @@
 import stdlib.genslang.lib.mx_transform_uv;
 
 void mx_image_color3(
-    
+
     Texture2D texture,
     int layer,
     float3 defaultval,

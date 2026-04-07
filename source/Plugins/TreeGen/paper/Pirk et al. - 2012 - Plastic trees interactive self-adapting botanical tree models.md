@@ -2,8 +2,8 @@
 
 **Sören Pirk¹ Ondrej Stava² Julian Kratt¹ Michel Abdul Massih Said² Boris Neubert¹ Radomír Měch³ Bedrich Benes² Oliver Deussen¹**
 
-¹ University of Konstanz, Germany  
-² Purdue University, USA  
+¹ University of Konstanz, Germany
+² Purdue University, USA
 ³ Adobe Systems Inc., USA
 
 ---

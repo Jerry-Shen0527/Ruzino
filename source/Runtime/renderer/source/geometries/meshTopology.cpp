@@ -35,7 +35,7 @@ class HdSt_IndexSubsetComputation : public HdComputedBufferSource {
         HdBufferSourceSharedPtr indexBuilderSource,
         HdBufferSourceSharedPtr faceIndicesSource,
         HdBufferSourceSharedPtr baseFaceToRefinedFacesMapSource = nullptr);
-    void GetBufferSpecs(HdBufferSpecVector *specs) const override;
+    void GetBufferSpecs(HdBufferSpecVector* specs) const override;
     bool Resolve() override;
 
     bool HasChainedBuffer() const override;
@@ -44,13 +44,13 @@ class HdSt_IndexSubsetComputation : public HdComputedBufferSource {
    protected:
     bool _CheckValid() const override;
     VtIntArray _ComputeProcessedFaceIndices() const;
-    void _ResolveIndices(VtIntArray const &faceIndices);
-    void _PopulateChainedBuffers(VtIntArray const &faceIndices);
+    void _ResolveIndices(VtIntArray const& faceIndices);
+    void _PopulateChainedBuffers(VtIntArray const& faceIndices);
     HdBufferSourceSharedPtrVector _chainedBuffers;
     HdBufferSourceSharedPtr _indexBuilderSource;
     HdBufferSourceSharedPtr _faceIndicesSource;
     HdBufferSourceSharedPtr _baseFaceToRefinedFacesMapSource;
-    HdSt_MeshTopology *_topology;
+    HdSt_MeshTopology* _topology;
 };
 
 // Will map a geom subset's authored face indices to the appropriate
@@ -61,8 +61,8 @@ class HdSt_GeomSubsetFaceIndexBuilderComputation
    public:
     HdSt_GeomSubsetFaceIndexBuilderComputation(
         HdBufferSourceSharedPtr geomSubsetFaceIndexHelperSource,
-        VtIntArray const &faceIndices);
-    void GetBufferSpecs(HdBufferSpecVector *specs) const override;
+        VtIntArray const& faceIndices);
+    void GetBufferSpecs(HdBufferSpecVector* specs) const override;
     bool Resolve() override;
 
    protected:
@@ -82,17 +82,17 @@ class HdSt_GeomSubsetFaceIndexHelperComputation
     : public HdComputedBufferSource {
    public:
     HdSt_GeomSubsetFaceIndexHelperComputation(
-        HdSt_MeshTopology *topology,
+        HdSt_MeshTopology* topology,
         bool refined,
         bool quadrangulated);
-    void GetBufferSpecs(HdBufferSpecVector *specs) const override;
+    void GetBufferSpecs(HdBufferSpecVector* specs) const override;
     bool Resolve() override;
     bool HasChainedBuffer() const override;
     HdBufferSourceSharedPtrVector GetChainedBuffers() const override;
 
    protected:
     bool _CheckValid() const override;
-    HdSt_MeshTopology *_topology;
+    HdSt_MeshTopology* _topology;
     bool _refined;
     bool _quadrangulated;
     HdBufferSourceSharedPtr _processedFaceIndicesBuffer;
@@ -100,7 +100,7 @@ class HdSt_GeomSubsetFaceIndexHelperComputation
 
 // static
 HdSt_MeshTopologySharedPtr HdSt_MeshTopology::New(
-    const HdMeshTopology &src,
+    const HdMeshTopology& src,
     int refineLevel,
     RefineMode refineMode,
     QuadsMode quadsMode)
@@ -111,7 +111,7 @@ HdSt_MeshTopologySharedPtr HdSt_MeshTopology::New(
 
 // explicit
 HdSt_MeshTopology::HdSt_MeshTopology(
-    const HdMeshTopology &src,
+    const HdMeshTopology& src,
     int refineLevel,
     RefineMode refineMode,
     QuadsMode quadsMode)
@@ -130,7 +130,7 @@ HdSt_MeshTopology::HdSt_MeshTopology(
 
 HdSt_MeshTopology::~HdSt_MeshTopology() = default;
 
-bool HdSt_MeshTopology::operator==(HdSt_MeshTopology const &other) const
+bool HdSt_MeshTopology::operator==(HdSt_MeshTopology const& other) const
 {
     TRACE_FUNCTION();
 
@@ -138,7 +138,7 @@ bool HdSt_MeshTopology::operator==(HdSt_MeshTopology const &other) const
     return HdMeshTopology::operator==(other);
 }
 
-void HdSt_MeshTopology::SetQuadInfo(HdQuadInfo const *quadInfo)
+void HdSt_MeshTopology::SetQuadInfo(HdQuadInfo const* quadInfo)
 {
     _quadInfo.reset(quadInfo);
 }
@@ -156,13 +156,13 @@ HdBufferSourceSharedPtr HdSt_MeshTopology::GetPointsIndexBuilderComputation()
 }
 
 HdBufferSourceSharedPtr HdSt_MeshTopology::GetTriangleIndexBuilderComputation(
-    SdfPath const &id)
+    SdfPath const& id)
 {
     return std::make_shared<HdSt_TriangleIndexBuilderComputation>(this, id);
 }
 
 HdSt_QuadInfoBuilderComputationSharedPtr
-HdSt_MeshTopology::GetQuadInfoBuilderComputation(SdfPath const &id)
+HdSt_MeshTopology::GetQuadInfoBuilderComputation(SdfPath const& id)
 {
     HdSt_QuadInfoBuilderComputationSharedPtr builder =
         std::make_shared<HdSt_QuadInfoBuilderComputation>(this, id);
@@ -174,15 +174,15 @@ HdSt_MeshTopology::GetQuadInfoBuilderComputation(SdfPath const &id)
 }
 
 HdBufferSourceSharedPtr HdSt_MeshTopology::GetQuadIndexBuilderComputation(
-    SdfPath const &id)
+    SdfPath const& id)
 {
     return std::make_shared<HdSt_QuadIndexBuilderComputation>(
         this, _quadInfoBuilder.lock(), id);
 }
 
 HdBufferSourceSharedPtr HdSt_MeshTopology::GetQuadrangulateComputation(
-    HdBufferSourceSharedPtr const &source,
-    SdfPath const &id)
+    HdBufferSourceSharedPtr const& source,
+    SdfPath const& id)
 {
     // check if the quad table is already computed as all-quads.
     if (_quadInfo && _quadInfo->IsAllQuads()) {
@@ -204,16 +204,16 @@ HdBufferSourceSharedPtr HdSt_MeshTopology::GetQuadrangulateComputation(
 
 HdBufferSourceSharedPtr
 HdSt_MeshTopology::GetQuadrangulateFaceVaryingComputation(
-    HdBufferSourceSharedPtr const &source,
-    SdfPath const &id)
+    HdBufferSourceSharedPtr const& source,
+    SdfPath const& id)
 {
     return std::make_shared<HdSt_QuadrangulateFaceVaryingComputation>(
         this, source, id);
 }
 
 HdBufferSourceSharedPtr HdSt_MeshTopology::GetTriangulateFaceVaryingComputation(
-    HdBufferSourceSharedPtr const &source,
-    SdfPath const &id)
+    HdBufferSourceSharedPtr const& source,
+    SdfPath const& id)
 {
     return std::make_shared<HdSt_TriangulateFaceVaryingComputation>(
         this, source, id);
@@ -240,7 +240,7 @@ bool HdSt_MeshTopology::RefinesToBoxSplineTrianglePatches() const
 }
 
 HdBufferSourceSharedPtr HdSt_MeshTopology::GetOsdTopologyComputation(
-    SdfPath const &id)
+    SdfPath const& id)
 {
     if (HdBufferSourceSharedPtr builder = _osdTopologyBuilder.lock()) {
         return builder;
@@ -268,7 +268,7 @@ HdBufferSourceSharedPtr HdSt_MeshTopology::GetOsdTopologyComputation(
 
 void HdSt_MeshTopology::SanitizeGeomSubsets()
 {
-    const HdGeomSubsets &geomSubsets = GetGeomSubsets();
+    const HdGeomSubsets& geomSubsets = GetGeomSubsets();
     if (geomSubsets.empty()) {
         return;
     }
@@ -279,7 +279,7 @@ void HdSt_MeshTopology::SanitizeGeomSubsets()
     size_t numUnusedFaces = numFaces;
 
     HdGeomSubsets sanitizedGeomSubsets;
-    for (const HdGeomSubset &geomSubset : geomSubsets) {
+    for (const HdGeomSubset& geomSubset : geomSubsets) {
         HdGeomSubset sanitizedGeomSubset = geomSubset;
 
         // We only care about subsets that will with non-empty indices and
@@ -364,7 +364,7 @@ HdSt_MeshTopology::GetGeomSubsetFaceIndexHelperComputation(
 HdBufferSourceSharedPtr
 HdSt_MeshTopology::GetGeomSubsetFaceIndexBuilderComputation(
     HdBufferSourceSharedPtr geomSubsetFaceIndexHelperSource,
-    VtIntArray const &faceIndices)
+    VtIntArray const& faceIndices)
 {
     return std::make_shared<HdSt_GeomSubsetFaceIndexBuilderComputation>(
         geomSubsetFaceIndexHelperSource, faceIndices);
@@ -385,7 +385,7 @@ HdBufferSourceSharedPtr HdSt_MeshTopology::GetOsdFvarIndexBuilderComputation(
 }
 
 HdBufferSourceSharedPtr HdSt_MeshTopology::GetOsdRefineComputation(
-    HdBufferSourceSharedPtr const &source,
+    HdBufferSourceSharedPtr const& source,
     Interpolation interpolation,
     int fvarChannel)
 {
@@ -425,7 +425,7 @@ HdSt_IndexSubsetComputation::HdSt_IndexSubsetComputation(
 }
 
 void HdSt_IndexSubsetComputation::GetBufferSpecs(
-    HdBufferSpecVector *specs) const
+    HdBufferSpecVector* specs) const
 {
     return _indexBuilderSource->GetBufferSpecs(specs);
 }
@@ -448,8 +448,8 @@ bool HdSt_IndexSubsetComputation::Resolve()
 
     VtIntArray faceIndices;
     if (_faceIndicesSource) {
-        const int32_t *const processedFaceIndices =
-            reinterpret_cast<const int32_t *>(_faceIndicesSource->GetData());
+        const int32_t* const processedFaceIndices =
+            reinterpret_cast<const int32_t*>(_faceIndicesSource->GetData());
         const size_t numElements = _faceIndicesSource->GetNumElements();
         faceIndices.resize(numElements);
         memcpy(
@@ -461,11 +461,11 @@ bool HdSt_IndexSubsetComputation::Resolve()
     // Refined indices need extra step to map the quadrangulated/triangulated
     // face indices to the refined face indices.
     if (_baseFaceToRefinedFacesMapSource) {
-        const int32_t *const baseFaceToRefinedFacesMap =
-            reinterpret_cast<const int32_t *>(
+        const int32_t* const baseFaceToRefinedFacesMap =
+            reinterpret_cast<const int32_t*>(
                 _baseFaceToRefinedFacesMapSource->GetData());
-        const int32_t *const refinedFaceCounts =
-            reinterpret_cast<const int32_t *>(
+        const int32_t* const refinedFaceCounts =
+            reinterpret_cast<const int32_t*>(
                 _baseFaceToRefinedFacesMapSource->GetChainedBuffers()
                     .front()
                     ->GetData());
@@ -506,11 +506,11 @@ bool HdSt_IndexSubsetComputation::_CheckValid() const
     return true;
 }
 
-void HdSt_IndexSubsetComputation::_ResolveIndices(VtIntArray const &faceIndices)
+void HdSt_IndexSubsetComputation::_ResolveIndices(VtIntArray const& faceIndices)
 {
     const size_t numFaces = faceIndices.size();
-    const int32_t *const indices =
-        reinterpret_cast<const int32_t *>(_indexBuilderSource->GetData());
+    const int32_t* const indices =
+        reinterpret_cast<const int32_t*>(_indexBuilderSource->GetData());
     const HdTupleType tupleType = _indexBuilderSource->GetTupleType();
     const size_t arraySize = tupleType.count;
 
@@ -559,12 +559,13 @@ void HdSt_IndexSubsetComputation::_ResolveIndices(VtIntArray const &faceIndices)
                 _indexBuilderSource->GetName().GetText());
     }
 
-    _SetResult(std::make_shared<HdVtBufferSource>(
-        _indexBuilderSource->GetName(), subsetIndices, arraySize));
+    _SetResult(
+        std::make_shared<HdVtBufferSource>(
+            _indexBuilderSource->GetName(), subsetIndices, arraySize));
 }
 
 void HdSt_IndexSubsetComputation::_PopulateChainedBuffers(
-    VtIntArray const &faceIndices)
+    VtIntArray const& faceIndices)
 {
     if (_indexBuilderSource->HasChainedBuffer()) {
         const size_t numFaces = faceIndices.size();
@@ -573,8 +574,8 @@ void HdSt_IndexSubsetComputation::_PopulateChainedBuffers(
             _indexBuilderSource->GetChainedBuffers();
 
         for (HdBufferSourceSharedPtr chainedBuffer : chainedBuffers) {
-            const int32_t *const chainedBufferData =
-                reinterpret_cast<const int32_t *>(chainedBuffer->GetData());
+            const int32_t* const chainedBufferData =
+                reinterpret_cast<const int32_t*>(chainedBuffer->GetData());
             const HdTupleType tupleType = chainedBuffer->GetTupleType();
 
             // We assume the chained buffers of the index builder comps all
@@ -644,14 +645,14 @@ void HdSt_IndexSubsetComputation::_PopulateChainedBuffers(
 HdSt_GeomSubsetFaceIndexBuilderComputation::
     HdSt_GeomSubsetFaceIndexBuilderComputation(
         HdBufferSourceSharedPtr geomSubsetFaceIndexHelperSource,
-        VtIntArray const &faceIndices)
+        VtIntArray const& faceIndices)
     : _geomSubsetFaceIndexHelperSource(geomSubsetFaceIndexHelperSource),
       _faceIndices(faceIndices)
 {
 }
 
 void HdSt_GeomSubsetFaceIndexBuilderComputation::GetBufferSpecs(
-    HdBufferSpecVector *specs) const
+    HdBufferSpecVector* specs) const
 {
     // Though this computation is used as the face indices input into the
     // subset indices computations, it is also used in drawing as the coarse
@@ -674,11 +675,11 @@ bool HdSt_GeomSubsetFaceIndexBuilderComputation::Resolve()
 
     VtIntArray faceIndices;
     if (_geomSubsetFaceIndexHelperSource) {
-        const int32_t *const processedFaceCounts =
-            reinterpret_cast<const int32_t *>(
+        const int32_t* const processedFaceCounts =
+            reinterpret_cast<const int32_t*>(
                 _geomSubsetFaceIndexHelperSource->GetData());
-        const int32_t *const processedFaceIndices =
-            reinterpret_cast<const int32_t *>(
+        const int32_t* const processedFaceIndices =
+            reinterpret_cast<const int32_t*>(
                 _geomSubsetFaceIndexHelperSource->GetChainedBuffers()
                     .front()
                     ->GetData());
@@ -691,8 +692,9 @@ bool HdSt_GeomSubsetFaceIndexBuilderComputation::Resolve()
         }
     }
 
-    _SetResult(std::make_shared<HdVtBufferSource>(
-        _tokens->coarseFaceIndex, VtValue(faceIndices)));
+    _SetResult(
+        std::make_shared<HdVtBufferSource>(
+            _tokens->coarseFaceIndex, VtValue(faceIndices)));
 
     _SetResolved();
 
@@ -706,7 +708,7 @@ bool HdSt_GeomSubsetFaceIndexBuilderComputation::_CheckValid() const
 
 HdSt_GeomSubsetFaceIndexHelperComputation::
     HdSt_GeomSubsetFaceIndexHelperComputation(
-        HdSt_MeshTopology *topology,
+        HdSt_MeshTopology* topology,
         bool refined,
         bool quadrangulated)
     : _topology(topology),
@@ -716,7 +718,7 @@ HdSt_GeomSubsetFaceIndexHelperComputation::
 }
 
 void HdSt_GeomSubsetFaceIndexHelperComputation::GetBufferSpecs(
-    HdBufferSpecVector *specs) const
+    HdBufferSpecVector* specs) const
 {
     specs->emplace_back(
         _tokens->processedFaceCounts, HdTupleType{ HdTypeInt32, 1 });
@@ -731,13 +733,13 @@ bool HdSt_GeomSubsetFaceIndexHelperComputation::Resolve()
 
     HD_TRACE_FUNCTION();
 
-    const VtIntArray &faceVertexCounts = _topology->GetFaceVertexCounts();
+    const VtIntArray& faceVertexCounts = _topology->GetFaceVertexCounts();
     VtIntArray processedFaceCounts = VtIntArray(_topology->GetNumFaces());
 
     // Based on whether the mesh underwent a triangulation or quadrangulation
     // step, determine how many faces each base face becomes.
     if (_quadrangulated) {
-        const VtIntArray &holeIndices = _topology->GetHoleIndices();
+        const VtIntArray& holeIndices = _topology->GetHoleIndices();
         size_t holeIndex = 0;
         for (int i = 0; i < _topology->GetNumFaces(); ++i) {
             if (holeIndex < holeIndices.size() && holeIndices[holeIndex] == i) {
@@ -754,7 +756,7 @@ bool HdSt_GeomSubsetFaceIndexHelperComputation::Resolve()
         }
     }
     else {
-        const VtIntArray &holeIndices = _topology->GetHoleIndices();
+        const VtIntArray& holeIndices = _topology->GetHoleIndices();
         size_t holeIndex = 0;
         for (int i = 0; i < _topology->GetNumFaces(); ++i) {
             if (holeIndex < holeIndices.size() && holeIndices[holeIndex] == i) {
@@ -767,8 +769,9 @@ bool HdSt_GeomSubsetFaceIndexHelperComputation::Resolve()
         }
     }
 
-    _SetResult(std::make_shared<HdVtBufferSource>(
-        _tokens->processedFaceCounts, VtValue(processedFaceCounts)));
+    _SetResult(
+        std::make_shared<HdVtBufferSource>(
+            _tokens->processedFaceCounts, VtValue(processedFaceCounts)));
 
     // Using the number of processed faces per base face, determine the new face
     // index that each base face index maps to.

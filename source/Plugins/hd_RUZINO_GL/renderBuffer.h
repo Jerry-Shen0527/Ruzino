@@ -35,12 +35,15 @@ class Hd_RUZINO_RenderBufferGL : public HdRenderBuffer {
     Hd_RUZINO_RenderBufferGL(const SdfPath& id);
     ~Hd_RUZINO_RenderBufferGL() override;
 
-    void Sync(HdSceneDelegate* sceneDelegate, HdRenderParam* renderParam, HdDirtyBits* dirtyBits)
-        override;
+    void Sync(
+        HdSceneDelegate* sceneDelegate,
+        HdRenderParam* renderParam,
+        HdDirtyBits* dirtyBits) override;
 
     void Finalize(HdRenderParam* renderParam) override;
 
-    bool Allocate(const GfVec3i& dimensions, HdFormat format, bool multiSampled) override;
+    bool Allocate(const GfVec3i& dimensions, HdFormat format, bool multiSampled)
+        override;
 
     unsigned int GetWidth() const override
     {

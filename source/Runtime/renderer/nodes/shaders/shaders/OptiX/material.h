@@ -1,18 +1,14 @@
 #pragma once
 
-
-
-#include "random.h"
-#include "vec_math.h"
-
 #include "OptikaUtils.h"
 #include "PathTracer/Intersection.h"
 #include "bsdf.h"
 #include "cuda/texture.h"
+#include "random.h"
+#include "vec_math.h"
 
-struct Material
-{
-    //float3 baseColor;
+struct Material {
+    // float3 baseColor;
     Texture3f baseColor;
     Texture3f normalMap;
     float3 specularColor;
@@ -30,8 +26,7 @@ struct Material
 
     // Table of BxDF selection:
     // diffuse | specular
-    OPTIKA_INLINE OPTIKA_HOSTDEVICE
-    Material(
+    OPTIKA_INLINE OPTIKA_HOSTDEVICE Material(
         Texture3f basecolor = make_float3(1.0),
         float3 specularolor = make_float3(1.0),
         float3 emissive = make_float3(0.0),
@@ -43,9 +38,8 @@ struct Material
         float speculartint = 0,
         float anisotropic = 0,
         float sheen = 0,
-        float sheentint = 0.5, 
-        Texture3f normalmap = make_float3(0.5f, 0.5f, 1.0f)
-        )
+        float sheentint = 0.5,
+        Texture3f normalmap = make_float3(0.5f, 0.5f, 1.0f))
         : baseColor(basecolor),
           specularColor(specularolor),
           emissive(emissive),
@@ -62,7 +56,7 @@ struct Material
     {
     }
 
- OPTIKA_INLINE __device__ BSDF CreatBSDF(const Intersection& isect) const
+    OPTIKA_INLINE __device__ BSDF CreatBSDF(const Intersection& isect) const
     {
         float3 c;
         baseColor.sample(&c, isect.uv);
@@ -72,7 +66,7 @@ struct Material
         roughness.sample(&rough, isect.uv);
         float metal;
         metalness.sample(&metal, isect.uv);
-        
+
         return BSDF(
             c,
             emissive,
@@ -86,12 +80,10 @@ struct Material
             sheen,
             sheenTint,
             n);
-        
     }
-    OPTIKA_INLINE OPTIKA_HOSTDEVICE
-    void operator=(const Material& material)
+    OPTIKA_INLINE OPTIKA_HOSTDEVICE void operator=(const Material& material)
     {
-        //printf("copy Material");
+        // printf("copy Material");
         baseColor = material.baseColor;
         specularColor = material.specularColor;
         emissive = material.emissive;
@@ -106,7 +98,5 @@ struct Material
         sheenTint = material.sheenTint;
     }
 
-
     const float bias_epsilon = 2E-4f;
 };
-

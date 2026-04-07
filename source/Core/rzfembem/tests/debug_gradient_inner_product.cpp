@@ -1,7 +1,7 @@
 #include <cassert>
+#include <cmath>
 #include <iostream>
 #include <vector>
-#include <cmath>
 
 #include "fem_bem/ElementBasis.hpp"
 #include "fem_bem/api.h"
@@ -72,14 +72,15 @@ int main()
 
     // Compute stiffness matrix entries and verify they are computed correctly
     double K[3][3];
-    
+
     for (int i = 0; i < 3; i++) {
         for (int j = 0; j < 3; j++) {
             // Bind the metric tensor values
-            final_expressions[i * 3 + j].bind_variables({ { "j00", j00 },
-                                                          { "j01", j01 },
-                                                          { "j10", j10 },
-                                                          { "j11", j11 } });
+            final_expressions[i * 3 + j].bind_variables(
+                { { "j00", j00 },
+                  { "j01", j01 },
+                  { "j10", j10 },
+                  { "j11", j11 } });
 
             // Integrate over reference triangle
             auto integrated = fem_bem::integrate_over_simplex(
@@ -94,17 +95,19 @@ int main()
     for (int i = 0; i < 3; i++) {
         for (int j = i + 1; j < 3; j++) {
             if (std::abs(K[i][j] - K[j][i]) > 1e-6) {
-                std::cout << "FAILED: Stiffness matrix is not symmetric" << std::endl;
+                std::cout << "FAILED: Stiffness matrix is not symmetric"
+                          << std::endl;
                 return 1;
             }
         }
     }
-    
+
     // Verify rows sum to zero (constant strain condition)
     for (int i = 0; i < 3; i++) {
         double row_sum = K[i][0] + K[i][1] + K[i][2];
         if (std::abs(row_sum) > 1e-5) {
-            std::cout << "FAILED: Stiffness matrix rows do not sum to zero" << std::endl;
+            std::cout << "FAILED: Stiffness matrix rows do not sum to zero"
+                      << std::endl;
             return 1;
         }
     }

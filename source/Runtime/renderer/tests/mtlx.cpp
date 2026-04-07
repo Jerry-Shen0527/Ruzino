@@ -158,8 +158,7 @@ TEST(GenShader, Bind_Light_Shaders)
 
     mx::FileSearchPath searchPath = mx::getDefaultDataSearchPath();
     loadLibraries({ "libraries" }, searchPath, doc);
-    mx::loadLibraries(
-        { "usd/hd_RUZINO/resources/libraries" }, searchPath, doc);
+    mx::loadLibraries({ "usd/hd_RUZINO/resources/libraries" }, searchPath, doc);
 
     mx::NodeDefPtr pointLightShader = doc->getNodeDef("ND_point_light");
     mx::NodeDefPtr spotLightShader = doc->getNodeDef("ND_spot_light");

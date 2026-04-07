@@ -30,11 +30,11 @@ target_include_directories(hd_RUZINO PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/source)
 
 
 add_nodes(
-	TARGET_NAME render_nodes 
+	TARGET_NAME render_nodes
 	SRC_DIRS nodes
 	CONVERSION_DIRS nodes/conversion
 	DEP_LIBS usd RHI hd_RUZINO usdImaging shaders_interface
-	COMPILE_DEFS NOMINMAX 
+	COMPILE_DEFS NOMINMAX
 	EXTRA_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/source
 )
 

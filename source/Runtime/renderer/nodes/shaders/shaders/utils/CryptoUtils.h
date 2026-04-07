@@ -26,21 +26,20 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Core/Macros.h"
 #include <array>
-#include <string>
 #include <cstdint>
 #include <cstdlib>
+#include <string>
 
-namespace Ruzino
-{
+#include "Core/Macros.h"
+
+namespace Ruzino {
 /**
  * Helper to compute SHA-1 hash.
  */
-class HD_RUZINO_API SHA1
-{
-public:
-    using MD = std::array<uint8_t, 20>; ///< Message digest.
+class HD_RUZINO_API SHA1 {
+   public:
+    using MD = std::array<uint8_t, 20>;  ///< Message digest.
 
     SHA1();
 
@@ -61,7 +60,9 @@ public:
      * Update hash by adding one value of fundamental type T.
      * @param[in] Value to hash.
      */
-    template<typename T, std::enable_if_t<std::is_fundamental<T>::value, bool> = true>
+    template<
+        typename T,
+        std::enable_if_t<std::is_fundamental<T>::value, bool> = true>
     void update(const T& value)
     {
         update(&value, sizeof(value));
@@ -70,7 +71,10 @@ public:
     /**
      * Update hash by adding the given string view.
      */
-    void update(const std::string_view str) { update(str.data(), str.size()); }
+    void update(const std::string_view str)
+    {
+        update(str.data(), str.size());
+    }
 
     /**
      * Return final message digest.
@@ -91,7 +95,7 @@ public:
      */
     static std::string toString(const MD& sha1);
 
-private:
+   private:
     void addByte(uint8_t x);
     void processBlock(const uint8_t* ptr);
 
@@ -100,4 +104,4 @@ private:
     uint32_t mState[5];
     uint8_t mBuf[64];
 };
-}; // namespace Ruzino
+};  // namespace Ruzino

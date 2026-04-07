@@ -26,15 +26,14 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Core/Macros.h"
-
-#include "Core/State/ComputeState.h"
-#include "Core/Program/Program.h"
-#include "Core/Program/ProgramVars.h"
 #include <memory>
 
-namespace Ruzino
-{
+#include "Core/Macros.h"
+#include "Core/Program/Program.h"
+#include "Core/Program/ProgramVars.h"
+#include "Core/State/ComputeState.h"
+
+namespace Ruzino {
 class RenderContext;
 
 /**
@@ -43,9 +42,8 @@ class RenderContext;
  * The prefix sum is computed in place using exclusive scan.
  * Each new element is y[i] = x[0] + ... + x[i-1], for i=1..N and y[0] = 0.
  */
-class HD_RUZINO_API PrefixSum
-{
-public:
+class HD_RUZINO_API PrefixSum {
+   public:
     /// Constructor. Throws an exception if creation failed.
     PrefixSum(ref<Device> pDevice);
 
@@ -54,9 +52,12 @@ public:
      * @param[in] pRenderContext The render context.
      * @param[in] pData The buffer to compute prefix sum over.
      * @param[in] elementCount Number of elements to compute prefix sum over.
-     * @param[out] pTotalSum (Optional) The sum of all elements is stored to this variable if it is non-null. Requires a GPU sync!
-     * @param[in] pTotalSumBuffer (Optional) Buffer on the GPU to which the total sum is copied (uint32_t).
-     * @param[in] pTotalSumOffset (Optional) Byte offset into pTotalSumBuffer to where the sum should be written.
+     * @param[out] pTotalSum (Optional) The sum of all elements is stored to
+     * this variable if it is non-null. Requires a GPU sync!
+     * @param[in] pTotalSumBuffer (Optional) Buffer on the GPU to which the
+     * total sum is copied (uint32_t).
+     * @param[in] pTotalSumOffset (Optional) Byte offset into pTotalSumBuffer to
+     * where the sum should be written.
      */
     void execute(
         RenderContext* pRenderContext,
@@ -64,10 +65,9 @@ public:
         uint32_t elementCount,
         uint32_t* pTotalSum = nullptr,
         nvrhi::BufferHandle pTotalSumBuffer = nullptr,
-        uint64_t pTotalSumOffset = 0
-    );
+        uint64_t pTotalSumOffset = 0);
 
-private:
+   private:
     ref<Device> mpDevice;
 
     ref<ComputeState> mpComputeState;
@@ -78,8 +78,11 @@ private:
     ref<Program> mpPrefixSumFinalizeProgram;
     ref<ProgramVars> mpPrefixSumFinalizeVars;
 
-    nvrhi::BufferHandle mpPrefixGroupSums; ///< Temporary buffer for prefix sum computation.
-    nvrhi::BufferHandle mpTotalSum;        ///< Temporary buffer for total sum of an iteration.
-    nvrhi::BufferHandle mpPrevTotalSum;    ///< Temporary buffer for prev total sum of an iteration.
+    nvrhi::BufferHandle
+        mpPrefixGroupSums;  ///< Temporary buffer for prefix sum computation.
+    nvrhi::BufferHandle
+        mpTotalSum;  ///< Temporary buffer for total sum of an iteration.
+    nvrhi::BufferHandle mpPrevTotalSum;  ///< Temporary buffer for prev total
+                                         ///< sum of an iteration.
 };
-} // namespace Ruzino
+}  // namespace Ruzino

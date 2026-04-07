@@ -4,7 +4,7 @@
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 
-struct GPUCONTEXT_API RaytracingState{};
+struct GPUCONTEXT_API RaytracingState { };
 
 class GPUCONTEXT_API RaytracingContext : public GPUContext {
    public:

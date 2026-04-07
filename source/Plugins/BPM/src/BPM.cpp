@@ -186,10 +186,11 @@ void FDBPMPropagator::propagateSegment(
         Complex* d_n_mat;
         float* d_EfieldPower;
         float* d_precisePowerDiff;
-        
+
         size_t size_E = Nx * Ny * sizeof(Complex);
-        size_t size_n = params.Nx_n * params.Ny_n * params.Nz_n * sizeof(Complex);
-        
+        size_t size_n =
+            params.Nx_n * params.Ny_n * params.Nz_n * sizeof(Complex);
+
         cudaMalloc(&d_E1, size_E);
         cudaMalloc(&d_E2, size_E);
         cudaMalloc(&d_Eyx, size_E);
@@ -199,44 +200,57 @@ void FDBPMPropagator::propagateSegment(
         cudaMalloc(&d_n_mat, size_n);
         cudaMalloc(&d_EfieldPower, sizeof(float));
         cudaMalloc(&d_precisePowerDiff, sizeof(float));
-        
+
         // Copy to device
         cudaMemcpy(d_E1, E, size_E, cudaMemcpyHostToDevice);
-        cudaMemcpy(d_multiplier, params.multiplier, Nx * Ny * sizeof(float), 
-                   cudaMemcpyHostToDevice);
+        cudaMemcpy(
+            d_multiplier,
+            params.multiplier,
+            Nx * Ny * sizeof(float),
+            cudaMemcpyHostToDevice);
         cudaMemcpy(d_n_mat, params.n_mat, size_n, cudaMemcpyHostToDevice);
-        
+
         float h_EfieldPower;
         float h_precisePowerDiff;
-        
+
         for (int iz = iz_start; iz < iz_end; ++iz) {
             // Reset power accumulators
             h_EfieldPower = 0.0f;
             h_precisePowerDiff = 0.0f;
-            cudaMemcpy(d_EfieldPower, &h_EfieldPower, sizeof(float), 
-                      cudaMemcpyHostToDevice);
-            cudaMemcpy(d_precisePowerDiff, &h_precisePowerDiff, sizeof(float),
-                      cudaMemcpyHostToDevice);
-            
+            cudaMemcpy(
+                d_EfieldPower,
+                &h_EfieldPower,
+                sizeof(float),
+                cudaMemcpyHostToDevice);
+            cudaMemcpy(
+                d_precisePowerDiff,
+                &h_precisePowerDiff,
+                sizeof(float),
+                cudaMemcpyHostToDevice);
+
             // Call CUDA kernels
             cuda::substep1a_kernel(d_E1, d_E2, d_Eyx, params);
             cuda::substep1b_kernel(d_Eyx, d_b, params);
             cuda::substep2a_kernel(d_E1, d_Eyx, d_E2, params);
             cuda::substep2b_kernel(d_E2, d_b, d_EfieldPower, params);
-            cuda::applyMultiplier_kernel(d_E2, d_n_out, params, iz, d_precisePowerDiff);
-            
+            cuda::applyMultiplier_kernel(
+                d_E2, d_n_out, params, iz, d_precisePowerDiff);
+
             // Swap pointers for next iteration
             std::swap(d_E1, d_E2);
-            
+
             // Update precise power
-            cudaMemcpy(&h_precisePowerDiff, d_precisePowerDiff, sizeof(float),
-                      cudaMemcpyDeviceToHost);
+            cudaMemcpy(
+                &h_precisePowerDiff,
+                d_precisePowerDiff,
+                sizeof(float),
+                cudaMemcpyDeviceToHost);
             // This should update params.precisePower
         }
-        
+
         // Copy result back
         cudaMemcpy(E, d_E1, size_E, cudaMemcpyDeviceToHost);
-        
+
         // Free device memory
         cudaFree(d_E1);
         cudaFree(d_E2);
@@ -248,7 +262,8 @@ void FDBPMPropagator::propagateSegment(
         cudaFree(d_EfieldPower);
         cudaFree(d_precisePowerDiff);
 #else
-        throw std::runtime_error("GPU support not compiled (BUILD_WITH_CUDA not defined)");
+        throw std::runtime_error(
+            "GPU support not compiled (BUILD_WITH_CUDA not defined)");
 #endif
     }
     else {
@@ -534,15 +549,15 @@ PropagationResult BPMSolver::propagateFDBPM()
             E_current.data(), p.Nx, p.Ny, iz_start, iz_end, fdParams, p.useGPU);
 
         // Calculate power correctly - account for symmetry
-        float powerFraction = 1.0f / (1.0f + (p.xSymmetry != 0)) / 
-                              (1.0f + (p.ySymmetry != 0));
+        float powerFraction =
+            1.0f / (1.0f + (p.xSymmetry != 0)) / (1.0f + (p.ySymmetry != 0));
         float power = 0.0f;
         for (const auto& e : E_current) {
             power += std::norm(e);
         }
         result.powers[i + 1] = power / powerFraction;
         result.z_positions[i + 1] = iz_end * p.dz;
-        
+
         // Update precisePower for next segment
         fdParams.precisePower = power;
 
@@ -568,29 +583,30 @@ PropagationResult BPMSolver::propagateFFTBPM()
 std::vector<BPMSolver::Mode> BPMSolver::findModes(int nModes, bool sortByLoss)
 {
     auto& p = impl_->params;
-    
-    // This is a simplified mode finder using power iteration / inverse iteration
-    // For a full eigenmode solver, you'd need ARPACK or similar
-    
+
+    // This is a simplified mode finder using power iteration / inverse
+    // iteration For a full eigenmode solver, you'd need ARPACK or similar
+
     std::vector<Mode> modes;
-    
+
     // Setup parameters
     float k_0 = 2.0f * M_PI / p.lambda;
-    float dz = 1e-10f; // Very small step for mode finding
-    
+    float dz = 1e-10f;  // Very small step for mode finding
+
     Complex ax = Complex(0, dz / (4.0f * p.dx * p.dx * k_0 * p.n_0));
     Complex ay = Complex(0, dz / (4.0f * p.dy * p.dy * k_0 * p.n_0));
-    
+
     auto x = getGridArray(p.Nx, p.dx, p.ySymmetry);
     auto y = getGridArray(p.Ny, p.dy, p.xSymmetry);
-    
+
     // Build propagation operator
     // This is a simplified version - full implementation would use eigs()
-    
+
     // For now, throw informative error
     throw std::runtime_error(
         "findModes() requires eigenvalue solver (ARPACK/Spectra). "
-        "This is a complex feature - for now, use MATLAB's BPM-Matlab for mode finding, "
+        "This is a complex feature - for now, use MATLAB's BPM-Matlab for mode "
+        "finding, "
         "then import the modes using setE()");
 }
 

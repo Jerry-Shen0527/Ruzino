@@ -26,20 +26,19 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Clock.h"
-#include "Core/Macros.h"
 #include <algorithm>
 #include <string>
 #include <vector>
 
-namespace Ruzino
-{
+#include "Clock.h"
+#include "Core/Macros.h"
+
+namespace Ruzino {
 /**
  * Helper class for calculating framerate.
  */
-class HD_RUZINO_API FrameRate
-{
-public:
+class HD_RUZINO_API FrameRate {
+   public:
     FrameRate()
     {
         mFrameTimes.resize(kFrameWindow);
@@ -48,8 +47,9 @@ public:
 
     /**
      * Resets the FPS.
-     * After this call it will appear as if the application had just started. Useful in cases a new scene is loaded, since it will display a
-     * more accurate FPS.
+     * After this call it will appear as if the application had just started.
+     * Useful in cases a new scene is loaded, since it will display a more
+     * accurate FPS.
      */
     void reset()
     {
@@ -59,12 +59,14 @@ public:
 
     /**
      * Tick the timer.
-     * It is assumed that this is called once per frame, since this frequency is assumed when calculating FPS.
+     * It is assumed that this is called once per frame, since this frequency is
+     * assumed when calculating FPS.
      */
     void newFrame()
     {
         mFrameCount++;
-        mFrameTimes[mFrameCount % kFrameWindow] = mClock.tick().getRealTimeDelta();
+        mFrameTimes[mFrameCount % kFrameWindow] =
+            mClock.tick().getRealTimeDelta();
         mClock.setTime(0).tick();
     }
 
@@ -83,19 +85,25 @@ public:
     /**
      * Get the time in seconds that it took to render the last frame.
      */
-    double getLastFrameTime() const { return mFrameTimes[mFrameCount % kFrameWindow]; }
+    double getLastFrameTime() const
+    {
+        return mFrameTimes[mFrameCount % kFrameWindow];
+    }
 
     /**
      * Get the frame count (= number of times newFrame() has been called).
      */
-    uint64_t getFrameCount() const { return mFrameCount; }
+    uint64_t getFrameCount() const
+    {
+        return mFrameCount;
+    }
 
     /**
      * Get a message with the FPS.
      */
     std::string getMsg(bool vsyncOn = false) const;
 
-private:
+   private:
     Clock mClock;
     std::vector<double> mFrameTimes;
     uint64_t mFrameCount = 0;
@@ -106,4 +114,4 @@ inline std::string to_string(const FrameRate& fr, bool vsyncOn = false)
 {
     return fr.getMsg(vsyncOn);
 }
-} // namespace Ruzino
+}  // namespace Ruzino

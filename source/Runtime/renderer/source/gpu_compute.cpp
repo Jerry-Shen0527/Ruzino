@@ -121,7 +121,7 @@ void GPUSceneAssember::fill_instances(
     // Create single command list for all operations
     auto cmd = get_instance().sa_resource_allocator.create(CommandListDesc{});
     MARK_DESTROY_NVRHI_RESOURCE(cmd);
-    
+
     cmd->open();
     cmd->writeBuffer(
         index_buffer,
@@ -334,7 +334,7 @@ void GPUSceneAssember::compute_sphere_aabbs(
 
     auto cmd = get_instance().sa_resource_allocator.create(CommandListDesc{});
     MARK_DESTROY_NVRHI_RESOURCE(cmd);
-    
+
     cmd->open();
     cmd->writeBuffer(params_buffer, &params, sizeof(Params));
     cmd->close();
@@ -356,7 +356,8 @@ void GPUSceneAssember::compute_sphere_aabbs(
     compute_context.dispatch({}, program_vars, sphere_count, 64);
     compute_context.finish();
 
-    spdlog::info("GPUSceneAssember::compute_sphere_aabbs: AABB computation complete");
+    spdlog::info(
+        "GPUSceneAssember::compute_sphere_aabbs: AABB computation complete");
 }
 
 RUZINO_NAMESPACE_CLOSE_SCOPE

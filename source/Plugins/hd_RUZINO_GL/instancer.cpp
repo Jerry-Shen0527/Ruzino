@@ -23,16 +23,15 @@
 //
 #include "instancer.h"
 
-#include "sampler.h"
-#include "pxr/imaging/hd/sceneDelegate.h"
-#include "pxr/imaging/hd/tokens.h"
-
+#include "pxr/base/gf/matrix4d.h"
+#include "pxr/base/gf/quaternion.h"
+#include "pxr/base/gf/rotation.h"
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/gf/vec4f.h"
-#include "pxr/base/gf/matrix4d.h"
-#include "pxr/base/gf/rotation.h"
-#include "pxr/base/gf/quaternion.h"
 #include "pxr/base/tf/staticTokens.h"
+#include "pxr/imaging/hd/sceneDelegate.h"
+#include "pxr/imaging/hd/tokens.h"
+#include "sampler.h"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
@@ -52,22 +51,19 @@ HdEmbreeInstancer::~HdEmbreeInstancer()
     _primvarMap.clear();
 }
 
-void
-HdEmbreeInstancer::Sync(
+void HdEmbreeInstancer::Sync(
     HdSceneDelegate* delegate,
     HdRenderParam* renderParam,
     HdDirtyBits* dirtyBits)
 {
     _UpdateInstancer(delegate, dirtyBits);
 
-    if (HdChangeTracker::IsAnyPrimvarDirty(*dirtyBits, GetId()))
-    {
+    if (HdChangeTracker::IsAnyPrimvarDirty(*dirtyBits, GetId())) {
         _SyncPrimvars(delegate, *dirtyBits);
     }
 }
 
-void
-HdEmbreeInstancer::_SyncPrimvars(
+void HdEmbreeInstancer::_SyncPrimvars(
     HdSceneDelegate* delegate,
     HdDirtyBits dirtyBits)
 {
@@ -79,26 +75,21 @@ HdEmbreeInstancer::_SyncPrimvars(
     HdPrimvarDescriptorVector primvars =
         delegate->GetPrimvarDescriptors(id, HdInterpolationInstance);
 
-    for (const HdPrimvarDescriptor& pv : primvars)
-    {
-        if (HdChangeTracker::IsPrimvarDirty(dirtyBits, id, pv.name))
-        {
+    for (const HdPrimvarDescriptor& pv : primvars) {
+        if (HdChangeTracker::IsPrimvarDirty(dirtyBits, id, pv.name)) {
             VtValue value = delegate->Get(id, pv.name);
-            if (!value.IsEmpty())
-            {
-                if (_primvarMap.count(pv.name) > 0)
-                {
+            if (!value.IsEmpty()) {
+                if (_primvarMap.count(pv.name) > 0) {
                     delete _primvarMap[pv.name];
                 }
-                _primvarMap[pv.name] =
-                    new HdVtBufferSource(pv.name, value);
+                _primvarMap[pv.name] = new HdVtBufferSource(pv.name, value);
             }
         }
     }
 }
 
-VtMatrix4dArray
-HdEmbreeInstancer::ComputeInstanceTransforms(const SdfPath& prototypeId)
+VtMatrix4dArray HdEmbreeInstancer::ComputeInstanceTransforms(
+    const SdfPath& prototypeId)
 {
     HD_TRACE_FUNCTION();
     HF_MALLOC_TAG_FUNCTION();
@@ -119,20 +110,17 @@ HdEmbreeInstancer::ComputeInstanceTransforms(const SdfPath& prototypeId)
         GetDelegate()->GetInstanceIndices(GetId(), prototypeId);
 
     VtMatrix4dArray transforms(instanceIndices.size());
-    for (size_t i = 0; i < instanceIndices.size(); ++i)
-    {
+    for (size_t i = 0; i < instanceIndices.size(); ++i) {
         transforms[i] = instancerTransform;
     }
 
-    if (GetParentId().IsEmpty())
-    {
+    if (GetParentId().IsEmpty()) {
         return transforms;
     }
 
     HdInstancer* parentInstancer =
         GetDelegate()->GetRenderIndex().GetInstancer(GetParentId());
-    if (!TF_VERIFY(parentInstancer))
-    {
+    if (!TF_VERIFY(parentInstancer)) {
         return transforms;
     }
 
@@ -142,16 +130,14 @@ HdEmbreeInstancer::ComputeInstanceTransforms(const SdfPath& prototypeId)
     //     parentXf * xf
     // }
     VtMatrix4dArray parentTransforms =
-        static_cast<HdEmbreeInstancer*>(parentInstancer)->
-        ComputeInstanceTransforms(GetId());
+        static_cast<HdEmbreeInstancer*>(parentInstancer)
+            ->ComputeInstanceTransforms(GetId());
 
     VtMatrix4dArray final(parentTransforms.size() * transforms.size());
-    for (size_t i = 0; i < parentTransforms.size(); ++i)
-    {
-        for (size_t j = 0; j < transforms.size(); ++j)
-        {
-            final[i * transforms.size() + j] = transforms[j] *
-                                               parentTransforms[i];
+    for (size_t i = 0; i < parentTransforms.size(); ++i) {
+        for (size_t j = 0; j < transforms.size(); ++j) {
+            final[i * transforms.size() + j] =
+                transforms[j] * parentTransforms[i];
         }
     }
     return final;

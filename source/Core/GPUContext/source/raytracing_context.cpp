@@ -267,9 +267,10 @@ void RaytracingContext::finish_announcing_shader_names()
     pipeline_desc.globalBindingLayouts = vars_.get_binding_layout();
     pipeline_desc.maxRecursionDepth = 31;
     pipeline_desc.maxAttributeSize = 4 * sizeof(float);
-    
+
     // Get hlslExtensionsUAV from the program descriptor
-    // This tells D3D12 to reserve the specified UAV slot in the root signature for NVAPI
+    // This tells D3D12 to reserve the specified UAV slot in the root signature
+    // for NVAPI
     if (program && program->get_desc().hlslExtensionsUAV >= 0) {
         pipeline_desc.hlslExtensionsUAV = program->get_desc().hlslExtensionsUAV;
     }
@@ -280,7 +281,7 @@ void RaytracingContext::finish_announcing_shader_names()
         std::string hit_group_export_name = "HitGroup" + std::to_string(i);
         auto intersection_shader = std::get<2>(hit_group_shaders[i]);
         bool is_procedural = (intersection_shader != nullptr);
-        
+
         nvrhi::rt::PipelineHitGroupDesc hitgroup_desc;
         hitgroup_desc.exportName = hit_group_export_name;
         hitgroup_desc.closestHitShader = std::get<0>(hit_group_shaders[i]);
@@ -288,7 +289,7 @@ void RaytracingContext::finish_announcing_shader_names()
         hitgroup_desc.intersectionShader = intersection_shader;
         hitgroup_desc.isProceduralPrimitive = is_procedural;
         hitgroup_desc.bindingLayout = nullptr;
-        
+
         pipeline_desc.hitGroups.push_back(hitgroup_desc);
     }
 

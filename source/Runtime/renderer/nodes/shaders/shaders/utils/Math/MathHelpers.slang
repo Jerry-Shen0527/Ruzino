@@ -288,12 +288,12 @@ float2 sample_triangle_aperture(float2 u)
     float su0 = sqrt(u.x);
     float b0 = 1.0f - su0;
     float b1 = u.y * su0;
-    
+
     // Triangle vertices (equilateral triangle centered at origin)
     float2 v0 = float2(0.0f, 1.0f);
     float2 v1 = float2(-0.866025404f, -0.5f);  // -sqrt(3)/2, -0.5
     float2 v2 = float2(0.866025404f, -0.5f);   // sqrt(3)/2, -0.5
-    
+
     return b0 * v0 + b1 * v1 + (1.0f - b0 - b1) * v2;
 }
 
@@ -308,29 +308,29 @@ float2 sample_star_aperture(float2 u)
     // Five-pointed star vertices (outer points)
     const float angle = M_2PI / 5.0f;
     const float innerRadius = 0.382f; // Golden ratio based inner radius
-    
+
     // Select which of the 5 triangles to sample from
     int triangleIndex = int(u.x * 5.0f);
     float u0 = u.x * 5.0f - float(triangleIndex);
-    
+
     // Each triangle is formed by center, outer vertex, and next outer vertex
     float theta1 = float(triangleIndex) * angle - M_PI * 0.5f;
     float theta2 = float(triangleIndex + 1) * angle - M_PI * 0.5f;
-    
+
     float2 center = float2(0.0f, 0.0f);
     float2 v1 = float2(cos(theta1), sin(theta1));
     float2 v2 = float2(cos(theta2), sin(theta2));
-    
+
     // Check if point should be in inner triangle (between two outer points and inner vertex)
     float innerTheta = theta1 + angle * 0.5f;
     float2 innerVertex = float2(cos(innerTheta), sin(innerTheta)) * innerRadius;
-    
+
     // Sample the triangle
     float su0 = sqrt(u0);
     float b0 = 1.0f - su0;
     float b1 = u.y * su0;
     float b2 = 1.0f - b0 - b1;
-    
+
     // Alternate between outer triangles and inner triangles
     if (u.y < 0.5f) {
         // Outer triangle: center -> v1 -> innerVertex

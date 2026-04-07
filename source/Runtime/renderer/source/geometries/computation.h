@@ -37,8 +37,8 @@ class HdStComputation {
 
     /// Execute computation.
     virtual void Execute(
-        HdBufferArrayRangeSharedPtr const &range,
-        HdResourceRegistry *resourceRegistry) = 0;
+        HdBufferArrayRangeSharedPtr const& range,
+        HdResourceRegistry* resourceRegistry) = 0;
 
     /// Returns the size of its destination buffer (located by range argument
     /// of Execute()). This function will be called after all HdBufferSources
@@ -50,7 +50,7 @@ class HdStComputation {
     /// Add the buffer spec for this computation into given bufferspec vector.
     /// Caller has to allocate the destination buffer with respect to the
     /// BufferSpecs, and passes the range when registering the computation.
-    virtual void GetBufferSpecs(pxr::HdBufferSpecVector *specs) const = 0;
+    virtual void GetBufferSpecs(pxr::HdBufferSpecVector* specs) const = 0;
 
     /// This function is needed as HdStComputation shares a templatized
     /// interface with HdBufferSource.

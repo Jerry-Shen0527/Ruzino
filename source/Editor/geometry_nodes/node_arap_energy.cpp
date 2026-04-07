@@ -1,9 +1,11 @@
+#include <spdlog/spdlog.h>
+
+#include <Eigen/Dense>
+#include <cmath>
+
 #include "GCore/Components/MeshComponent.h"
 #include "GCore/util_openmesh_bind.h"
 #include "geom_node_base.h"
-#include <cmath>
-#include <Eigen/Dense>
-#include <spdlog/spdlog.h>
 
 NODE_DEF_OPEN_SCOPE
 NODE_DECLARATION_FUNCTION(arap_energy)
@@ -21,7 +23,10 @@ NODE_EXECUTION_FUNCTION(arap_energy)
     auto areas = params.get_input<Eigen::VectorXd>("Areas");
 
     if (areas.rows() != sigmas.rows()) {
-        spdlog::error("ARAP Energy: Wrong Input - areas.rows({}) != sigmas.rows({})", areas.rows(), sigmas.rows());
+        spdlog::error(
+            "ARAP Energy: Wrong Input - areas.rows({}) != sigmas.rows({})",
+            areas.rows(),
+            sigmas.rows());
         return false;
     }
 
@@ -29,13 +34,14 @@ NODE_EXECUTION_FUNCTION(arap_energy)
     double energy = 0;
 
     for (int i = 0; i < sigmas.rows(); i++) {
-        //std::cout << sigmas(i, 0) << "\t" << sigmas(i, 1) << std::endl;
-        energy += areas(i) * (pow(sigmas(i, 0) - 1, 2) + pow(sigmas(i, 1) - 1, 2));
+        // std::cout << sigmas(i, 0) << "\t" << sigmas(i, 1) << std::endl;
+        energy +=
+            areas(i) * (pow(sigmas(i, 0) - 1, 2) + pow(sigmas(i, 1) - 1, 2));
         sum_area += areas(i);
     }
 
     std::cout << float(energy / sum_area) << std::endl;
-    
+
     params.set_output("Energy", float(energy / sum_area));
     return true;
 }

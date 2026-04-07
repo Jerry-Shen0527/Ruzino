@@ -40,7 +40,8 @@ NODE_EXECUTION_FUNCTION(set_scalar_as_height)
     }
 
     // 获取标量数据
-    std::vector<float> scalar_data = mesh_component->get_vertex_scalar_quantity(scalar_name);
+    std::vector<float> scalar_data =
+        mesh_component->get_vertex_scalar_quantity(scalar_name);
     if (scalar_data.empty()) {
         return false;
     }
@@ -48,12 +49,13 @@ NODE_EXECUTION_FUNCTION(set_scalar_as_height)
     // 获取顶点数据
     std::vector<glm::vec3> vertices = mesh_component->get_vertices();
     if (vertices.size() != scalar_data.size()) {
-        return false; // 顶点数量与标量数据数量不匹配
+        return false;  // 顶点数量与标量数据数量不匹配
     }
 
     // 计算数据范围
     if (auto_range) {
-        auto minmax = std::minmax_element(scalar_data.begin(), scalar_data.end());
+        auto minmax =
+            std::minmax_element(scalar_data.begin(), scalar_data.end());
         min_value = *minmax.first;
         max_value = *minmax.second;
     }
@@ -66,17 +68,19 @@ NODE_EXECUTION_FUNCTION(set_scalar_as_height)
     // 更新顶点的z坐标
     for (size_t i = 0; i < vertices.size(); ++i) {
         float value = scalar_data[i];
-        
+
         // 归一化或缩放处理
         if (center_at_zero) {
             // 将数据居中到零点
             float mid = (min_value + max_value) * 0.5f;
             vertices[i].z = (value - mid) * scale;
-        } else if (auto_range) {
+        }
+        else if (auto_range) {
             // 归一化到[0,1]然后缩放
             float normalized = (value - min_value) / (max_value - min_value);
             vertices[i].z = normalized * scale;
-        } else {
+        }
+        else {
             // 直接使用原始值缩放
             vertices[i].z = value * scale;
         }

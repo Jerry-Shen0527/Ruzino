@@ -202,7 +202,6 @@ bool ImGui_Renderer::MouseButtonUpdate(int button, int action, int mods)
         case GLFW_MOUSE_BUTTON_MIDDLE: buttonIndex = 2; break;
 
         default: return false;  // unhandled button
-            
     }
 
     // update our internal state tracking for this mouse button

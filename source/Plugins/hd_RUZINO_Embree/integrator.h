@@ -33,15 +33,16 @@ class Integrator {
     Hd_RUZINO_RenderParam* render_param;
 
    protected:
-    // All the following utility functions, it is not best practice for all of them to be here.
-    // However, for educational purpose I shall just keep it simple and put them together.
+    // All the following utility functions, it is not best practice for all of
+    // them to be here. However, for educational purpose I shall just keep it
+    // simple and put them together.
 
     /**
      * \brief Sample light in scene
      * \param pos position on an object. Used to calculate pdf.
      * \param dir sampled direction
-     * \param pdf returning the pdf of sampling such a direction. could be 0, which stands for delta
-     * lights. \return
+     * \param pdf returning the pdf of sampling such a direction. could be 0,
+     * which stands for delta lights. \return
      */
     Color SampleLights(
         const GfVec3f& pos,
@@ -51,19 +52,21 @@ class Integrator {
         const std::function<float()>& function);
 
     /**
-     * \brief for now, we only use very limited count of lights, thus we don't use any BVH on lights
+     * \brief for now, we only use very limited count of lights, thus we don't
+     * use any BVH on lights
      * \param ray the brdf sampled ray
      * \return
      */
     Color IntersectLights(const GfRay& ray, GfVec3f& intersectPos);
     Color IntersectDomeLight(const GfRay& ray);
 
-
     bool Intersect(const GfRay& ray, SurfaceInteraction& si);
     bool VisibilityTest(const GfRay& ray);
     bool VisibilityTest(const GfVec3f& begin, const GfVec3f& end);
 
-    Color EstimateDirectLight(SurfaceInteraction& si, const std::function<float()>& uniform_float);
+    Color EstimateDirectLight(
+        SurfaceInteraction& si,
+        const std::function<float()>& uniform_float);
 
     const Hd_RUZINO_Camera* camera_;
     HdRenderThread* render_thread_;
@@ -81,14 +84,19 @@ class SamplingIntegrator : public Integrator {
 
    protected:
     unsigned spp = 8;
-//    unsigned spp = 4;
+    //    unsigned spp = 4;
 
     void _writeBuffer(unsigned x, unsigned y, VtValue color);
 
-    virtual VtValue Li(const GfRay& ray, std::default_random_engine& uniform_float) = 0;
+    virtual VtValue Li(
+        const GfRay& ray,
+        std::default_random_engine& uniform_float) = 0;
     void accumulate_color(VtValue& color, const VtValue& vt_value);
     VtValue average_samples(const VtValue& color, unsigned spp);
-    void _RenderTiles(HdRenderThread* renderThread, size_t tileStart, size_t tileEnd);
+    void _RenderTiles(
+        HdRenderThread* renderThread,
+        size_t tileStart,
+        size_t tileEnd);
 
    public:
     void Render() override;

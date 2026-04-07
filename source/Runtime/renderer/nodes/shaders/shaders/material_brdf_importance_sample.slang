@@ -60,7 +60,7 @@ float2 direction_to_texcoord(float3 dir, out float jacobian)
         return float2(-1, -1);
     }
 
-    float2 p = dir.xy; 
+    float2 p = dir.xy;
 
     jacobian = max(z, 1e-6);
 

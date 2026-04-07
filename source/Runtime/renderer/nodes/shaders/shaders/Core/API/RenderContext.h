@@ -38,7 +38,6 @@ class GraphicsStateObject;
 class GraphicsState;
 class ProgramVars;
 
-
 class Program;
 class RtProgramVars;
 
@@ -121,7 +120,6 @@ class HD_RUZINO_API RenderContext : public ComputeContext {
         float depth,
         uint8_t stencil,
         FboAttachmentType flags = FboAttachmentType::All);
-
 
     /**
      * Clear a depth-stencil view.

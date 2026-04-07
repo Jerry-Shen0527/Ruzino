@@ -46,7 +46,8 @@ HdRenderDelegate* Hd_RUZINO_GL_RendererPlugin::CreateRenderDelegate(
     return new Ruzino::Hd_RUZINO_RenderDelegate(settingsMap);
 }
 
-void Hd_RUZINO_GL_RendererPlugin::DeleteRenderDelegate(HdRenderDelegate* renderDelegate)
+void Hd_RUZINO_GL_RendererPlugin::DeleteRenderDelegate(
+    HdRenderDelegate* renderDelegate)
 {
     delete renderDelegate;
 }

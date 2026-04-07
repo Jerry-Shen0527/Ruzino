@@ -79,10 +79,15 @@ class RZCONSOLE_API Interpreter {
 
    protected:
     // Virtual methods for extensibility
-    virtual Result ExecuteCommand(std::string_view command, const std::vector<std::string>& args);
-    virtual std::vector<std::string> SuggestCommand(std::string_view command, std::string_view cmdline, size_t cursor_pos);
+    virtual Result ExecuteCommand(
+        std::string_view command,
+        const std::vector<std::string>& args);
+    virtual std::vector<std::string> SuggestCommand(
+        std::string_view command,
+        std::string_view cmdline,
+        size_t cursor_pos);
     virtual bool IsValidCommand(std::string_view command) const;
-    
+
     // New virtual methods for Python interpreter
     virtual bool ShouldHandleCommand(std::string_view command) const;
     virtual Result HandleDirectExecution(std::string_view cmdline);

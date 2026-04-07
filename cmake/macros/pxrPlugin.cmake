@@ -45,7 +45,7 @@ function(pxr_library NAME)
     _classes(${NAME} PUBLIC ${args_PUBLIC_CLASSES})
 
     set(CPPFILES "${args_CPPFILES};${${NAME}_CPPFILES}")
-    
+
     if(args_TYPE STREQUAL "STATIC")
         set(suffix ${CMAKE_STATIC_LIBRARY_SUFFIX})
     else()

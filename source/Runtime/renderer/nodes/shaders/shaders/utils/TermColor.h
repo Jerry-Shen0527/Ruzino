@@ -29,24 +29,20 @@
 #include <iostream>
 #include <string>
 
-namespace Ruzino
-{
-enum class TermColor
-{
-    Gray,
-    Red,
-    Green,
-    Yellow,
-    Blue,
-    Magenta
-};
+namespace Ruzino {
+enum class TermColor { Gray, Red, Green, Yellow, Blue, Magenta };
 
 /**
- * Colorize a string for writing to a terminal. Return original string if stream is not a terminal.
+ * Colorize a string for writing to a terminal. Return original string if stream
+ * is not a terminal.
  * @param[in] str String to colorize
  * @param[in] color Color
  * @param[in] stream Output stream
- * @return Returns string wrapped in color codes if stream is not a terminal, original string otherwise.
+ * @return Returns string wrapped in color codes if stream is not a terminal,
+ * original string otherwise.
  */
-std::string colored(const std::string& str, TermColor color, const std::ostream& stream = std::cout);
-} // namespace Ruzino
+std::string colored(
+    const std::string& str,
+    TermColor color,
+    const std::ostream& stream = std::cout);
+}  // namespace Ruzino

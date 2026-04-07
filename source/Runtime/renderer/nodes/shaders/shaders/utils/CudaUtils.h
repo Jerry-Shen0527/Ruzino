@@ -88,7 +88,8 @@ namespace cuda_utils {
 
     HD_RUZINO_API void memsetDevice(void* devPtr, int value, size_t count);
 
-    HD_RUZINO_API cudaExternalMemory_t importExternalMemory(const Buffer* buffer);
+    HD_RUZINO_API cudaExternalMemory_t
+    importExternalMemory(const Buffer* buffer);
     HD_RUZINO_API void destroyExternalMemory(cudaExternalMemory_t extMem);
     HD_RUZINO_API void* externalMemoryGetMappedBuffer(
         cudaExternalMemory_t extMem,

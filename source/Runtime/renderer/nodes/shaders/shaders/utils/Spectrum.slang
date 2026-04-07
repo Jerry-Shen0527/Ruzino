@@ -229,13 +229,13 @@ struct SampledSpectrum : ISpectrum {
         int uintIndex = index / 2;
         uint2 current = uint2((samples[uintIndex] >> 0) & 0xFFFF, (samples[uintIndex] >> 16) & 0xFFFF);
         float2 unpacked = f16tof32(current);
-        
+
         if (index % 2 == 0) {
             unpacked.x = value;
         } else {
             unpacked.y = value;
         }
-        
+
         uint2 packed = f32tof16(unpacked);
         samples[uintIndex] = (packed.y << 16) | (packed.x & 0xFFFF);
     }
@@ -246,30 +246,30 @@ struct SampledSpectrum : ISpectrum {
         // RGB to spectrum conversion using smooth basis functions
         // Based on "An RGB to Spectrum Conversion for Reflectances" by Smits (1999)
         // This uses smooth gaussian-like profiles for each RGB channel
-        
+
         // Clamp input to prevent extreme values
         rgb = clamp(rgb, 0.0, 65504.0);  // Max value for half precision
-        
+
         float lambdaStep = (LAMBDA_MAX - LAMBDA_MIN) / float(NUM_SAMPLES - 1);
-        
+
         for (int i = 0; i < NUM_SAMPLES; ++i) {
             float lambda = LAMBDA_MIN + float(i) * lambdaStep;
-            
+
             // Define smooth basis functions for R, G, B channels
             // These are designed to integrate to approximately 1.0 when converted back to RGB
-            
+
             // Red: centered at 620nm, broader distribution
             float r_response = exp(-pow((lambda - 620.0) / 50.0, 2.0));
-            
+
             // Green: centered at 540nm, medium width
             float g_response = exp(-pow((lambda - 540.0) / 40.0, 2.0));
-            
+
             // Blue: centered at 450nm, narrower distribution
             float b_response = exp(-pow((lambda - 450.0) / 30.0, 2.0));
-            
+
             // Linear combination of basis functions weighted by RGB values
             float value = rgb.r * r_response + rgb.g * g_response + rgb.b * b_response;
-            
+
             // Clamp before storing
             setSample(i, clamp(value, 0.0, 65504.0));
         }
@@ -291,18 +291,18 @@ struct SampledSpectrum : ISpectrum {
         // Using trapezoidal rule for numerical integration
         float3 xyz = float3(0.0, 0.0, 0.0);
         float lambdaStep = (LAMBDA_MAX - LAMBDA_MIN) / float(NUM_SAMPLES - 1);
-        
+
         for (int i = 0; i < NUM_SAMPLES; ++i) {
             float lambda = LAMBDA_MIN + float(i) * lambdaStep;
             float3 cmf = wavelengthToXYZ(lambda);
-            
+
             // Trapezoidal rule weights (0.5 for endpoints, 1.0 for interior points)
             float weight = (i == 0 || i == NUM_SAMPLES - 1) ? 0.5 : 1.0;
-            
+
             // Accumulate weighted by the spectrum value and wavelength step
             xyz += spec.getSample(i) * cmf * weight;
         }
-        
+
         // Normalize by wavelength step and the sum of CMF Y values
         // This ensures unit spectrum (all 1.0) maps to white
         return xyz * lambdaStep / 106.856895f;
@@ -321,7 +321,7 @@ struct SampledSpectrum : ISpectrum {
         // Convert spectrum to XYZ, then to RGB
         float3 xyz = spectrumToXYZ(this);
         float3 rgb = XYZtoRGB(xyz);
-        
+
         // Clamp to prevent invalid colors
         return clamp(rgb, 0.0, 65504.0);
     }
@@ -392,4 +392,4 @@ typedef SampledSpectrum Spectrum;
 typedef RGBSpectrum Spectrum;
 #endif
 
-#endif 
+#endif

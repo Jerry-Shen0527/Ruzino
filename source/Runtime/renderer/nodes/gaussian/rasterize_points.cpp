@@ -14,7 +14,6 @@
 
 #if RUZINO_WITH_TORCH
 #include <cuda_runtime_api.h>
-
 #include <stdio.h>
 #include <torch/extension.h>
 
@@ -135,7 +134,7 @@ RasterizeGaussiansCUDA(
         geomBuffer,
         binningBuffer,
         imgBuffer,
-        out_depth); 
+        out_depth);
 }
 
 std::tuple<

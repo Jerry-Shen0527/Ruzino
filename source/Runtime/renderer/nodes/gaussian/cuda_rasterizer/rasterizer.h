@@ -13,6 +13,7 @@
 #define CUDA_RASTERIZER_H_INCLUDED
 
 #include <RUZINO.h>
+
 #include <functional>
 #include <vector>
 

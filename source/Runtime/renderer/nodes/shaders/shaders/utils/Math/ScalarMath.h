@@ -27,66 +27,65 @@
  **************************************************************************/
 #pragma once
 
-#include "ScalarTypes.h"
-#include <bit> // TODO C++20: Replace with <bit>
+#include <bit>  // TODO C++20: Replace with <bit>
 #include <cmath>
 
-namespace Ruzino
-{
-namespace math
-{
+#include "ScalarTypes.h"
 
-// ----------------------------------------------------------------------------
-// Boolean reductions
-// ----------------------------------------------------------------------------
+namespace Ruzino {
+namespace math {
 
-template<typename T>
-[[nodiscard]] constexpr bool any(T x)
-{
-    return x != T(0);
-}
+    // ----------------------------------------------------------------------------
+    // Boolean reductions
+    // ----------------------------------------------------------------------------
 
-template<typename T>
-[[nodiscard]] constexpr bool all(T x)
-{
-    return x != T(0);
-}
+    template<typename T>
+    [[nodiscard]] constexpr bool any(T x)
+    {
+        return x != T(0);
+    }
 
-// ----------------------------------------------------------------------------
-// Basic functions
-// ----------------------------------------------------------------------------
+    template<typename T>
+    [[nodiscard]] constexpr bool all(T x)
+    {
+        return x != T(0);
+    }
 
-template<typename T, std::enable_if_t<is_arithmetic_v<T>, bool> = false>
-[[nodiscard]] constexpr T min(T x, T y) noexcept
-{
-    return x < y ? x : y;
-}
+    // ----------------------------------------------------------------------------
+    // Basic functions
+    // ----------------------------------------------------------------------------
 
-template<typename T, std::enable_if_t<is_arithmetic_v<T>, bool> = false>
-[[nodiscard]] constexpr T max(T x, T y) noexcept
-{
-    return x > y ? x : y;
-}
+    template<typename T, std::enable_if_t<is_arithmetic_v<T>, bool> = false>
+    [[nodiscard]] constexpr T min(T x, T y) noexcept
+    {
+        return x < y ? x : y;
+    }
 
-template<typename T, std::enable_if_t<is_arithmetic_v<T>, bool> = false>
-[[nodiscard]] constexpr T clamp(T x, T min_, T max_) noexcept
-{
-    return max(min_, min(max_, x));
-}
+    template<typename T, std::enable_if_t<is_arithmetic_v<T>, bool> = false>
+    [[nodiscard]] constexpr T max(T x, T y) noexcept
+    {
+        return x > y ? x : y;
+    }
 
-template<typename T, std::enable_if_t<is_signed_v<T>, bool> = false>
-[[nodiscard]] constexpr T abs(T x) noexcept
-{
-    return std::abs(x);
-}
+    template<typename T, std::enable_if_t<is_arithmetic_v<T>, bool> = false>
+    [[nodiscard]] constexpr T clamp(T x, T min_, T max_) noexcept
+    {
+        return max(min_, min(max_, x));
+    }
 
-template<typename T, std::enable_if_t<is_signed_v<T>, bool> = false>
-[[nodiscard]] constexpr T sign(T x) noexcept
-{
-    return x < T(0) ? T(-1) : (x > T(0) ? T(1) : T(0));
-}
+    template<typename T, std::enable_if_t<is_signed_v<T>, bool> = false>
+    [[nodiscard]] constexpr T abs(T x) noexcept
+    {
+        return std::abs(x);
+    }
 
-// clang-format off
+    template<typename T, std::enable_if_t<is_signed_v<T>, bool> = false>
+    [[nodiscard]] constexpr T sign(T x) noexcept
+    {
+        return x < T(0) ? T(-1) : (x > T(0) ? T(1) : T(0));
+    }
+
+    // clang-format off
 
 // ----------------------------------------------------------------------------
 // Floating point checks
@@ -246,20 +245,20 @@ template<typename T> [[nodiscard]] T step(T x, T y) noexcept;
 template<> [[nodiscard]] inline float step(float x, float y) noexcept { return x >= y ? 1.f : 0.f; }
 template<> [[nodiscard]] inline double step(double x, double y) noexcept { return x >= y ? 1.0 : 0.0; }
 
-// clang-format on
+    // clang-format on
 
-template<typename T, std::enable_if_t<is_floating_point_v<T>, bool> = false>
-[[nodiscard]] T smoothstep(T min_, T max_, T x) noexcept
-{
-    x = saturate((x - min_) / (max_ - min_));
-    return x * x * (T(3) - T(2) * x);
-}
+    template<typename T, std::enable_if_t<is_floating_point_v<T>, bool> = false>
+    [[nodiscard]] T smoothstep(T min_, T max_, T x) noexcept
+    {
+        x = saturate((x - min_) / (max_ - min_));
+        return x * x * (T(3) - T(2) * x);
+    }
 
-// ----------------------------------------------------------------------------
-// Conversion
-// ----------------------------------------------------------------------------
+    // ----------------------------------------------------------------------------
+    // Conversion
+    // ----------------------------------------------------------------------------
 
-// clang-format off
+    // clang-format off
 [[nodiscard]] inline float f16tof32(uint v) noexcept { return float16ToFloat32(v & 0xffff); }
 [[nodiscard]] inline uint f32tof16(float v) noexcept { return float32ToFloat16(v); }
 
@@ -270,7 +269,7 @@ template<typename T, std::enable_if_t<is_floating_point_v<T>, bool> = false>
 [[nodiscard]] inline uint32_t asuint(float f) noexcept { return std::bit_cast<uint32_t>(f); }
 [[nodiscard]] inline int32_t asint(float f) noexcept { return std::bit_cast<int32_t>(f); }
 [[nodiscard]] inline uint16_t asuint16(float16_t f) noexcept { return std::bit_cast<uint16_t>(f); }
-// clang-format on
+    // clang-format on
 
-} // namespace math
-} // namespace Ruzino
+}  // namespace math
+}  // namespace Ruzino

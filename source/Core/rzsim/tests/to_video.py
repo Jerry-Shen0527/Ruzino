@@ -16,11 +16,11 @@ from pathlib import Path
 def find_image_sequence(directory, pattern=None):
     """
     Find image sequences in the given directory.
-    
+
     Args:
         directory: Directory to search for images
         pattern: Optional pattern to match (e.g., "output_*.png")
-    
+
     Returns:
         Dictionary with sequence info or None if no sequence found
     """
@@ -33,13 +33,13 @@ def find_image_sequence(directory, pattern=None):
         for ext in extensions:
             files.extend(glob.glob(os.path.join(directory, ext)))
         files = sorted(files)
-    
+
     if not files:
         return None
-    
+
     # Try to detect sequence pattern
     first_file = os.path.basename(files[0])
-    
+
     # Look for common patterns like name_0001.ext, name_001.ext, etc.
     match = re.match(r'(.+?)_(\d+)\.(\w+)$', first_file)
     if match:
@@ -47,7 +47,7 @@ def find_image_sequence(directory, pattern=None):
         first_number = int(match.group(2))
         extension = match.group(3)
         num_digits = len(match.group(2))
-        
+
         return {
             'files': files,
             'base_name': base_name,
@@ -56,7 +56,7 @@ def find_image_sequence(directory, pattern=None):
             'num_digits': num_digits,
             'count': len(files)
         }
-    
+
     # If no pattern detected, just return the files
     return {
         'files': files,
@@ -95,7 +95,7 @@ def convert_to_video(
 ):
     """
     Convert image sequence to video using FFmpeg.
-    
+
     Args:
         input_pattern: Input file pattern (e.g., "output_%04d.png")
         output_file: Output video file path
@@ -107,7 +107,7 @@ def convert_to_video(
         start_number: Starting frame number
         verbose: Enable verbose output
     """
-    
+
     # Build ffmpeg command
     cmd = [
         'ffmpeg',
@@ -120,19 +120,19 @@ def convert_to_video(
         '-preset', preset,
         '-pix_fmt', pix_fmt,
     ]
-    
+
     # Add extra options for HDR/EXR inputs
     if input_pattern.lower().endswith(('.exr', '.hdr')):
         # Apply tone mapping for HDR content
         cmd.extend([
             '-vf', 'zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p'
         ])
-    
+
     cmd.append(output_file)
-    
+
     if verbose:
         print(f"Running command: {' '.join(cmd)}")
-    
+
     # Run ffmpeg
     try:
         result = subprocess.run(
@@ -142,16 +142,16 @@ def convert_to_video(
             text=True,
             check=False
         )
-        
+
         if result.returncode != 0:
             print(f"Error: FFmpeg failed with code {result.returncode}")
             if not verbose and result.stderr:
                 print("Error output:")
                 print(result.stderr)
             return False
-        
+
         return True
-        
+
     except Exception as e:
         print(f"Error running FFmpeg: {e}")
         return False
@@ -162,107 +162,107 @@ def main():
         description='Convert image sequence to video using FFmpeg',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    
+
     parser.add_argument(
         '-i', '--input',
         help='Input pattern (e.g., "output_%%04d.png") or directory to search',
         default='.'
     )
-    
+
     parser.add_argument(
         '-o', '--output',
         help='Output video file',
         default='output.mp4'
     )
-    
+
     parser.add_argument(
         '-f', '--fps',
         type=float,
         help='Frames per second',
         default=60.0
     )
-    
+
     parser.add_argument(
         '-c', '--crf',
         type=int,
         help='Constant Rate Factor (quality: 0-51, lower is better)',
         default=18
     )
-    
+
     parser.add_argument(
         '-p', '--preset',
-        choices=['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 
+        choices=['ultrafast', 'superfast', 'veryfast', 'faster', 'fast',
                  'medium', 'slow', 'slower', 'veryslow'],
         help='Encoding preset (speed vs compression)',
         default='medium'
     )
-    
+
     parser.add_argument(
         '--codec',
         help='Video codec',
         default='libx264',
         choices=['libx264', 'libx265', 'libvpx-vp9', 'libaom-av1']
     )
-    
+
     parser.add_argument(
         '--pix-fmt',
         help='Pixel format',
         default='yuv420p'
     )
-    
+
     parser.add_argument(
         '-s', '--start-number',
         type=int,
         help='Starting frame number',
         default=0
     )
-    
+
     parser.add_argument(
         '-v', '--verbose',
         action='store_true',
         help='Enable verbose output'
     )
-    
+
     parser.add_argument(
         '--pattern',
         help='File pattern to search for (e.g., "frame_*.png")',
         default=None
     )
-    
+
     args = parser.parse_args()
-    
+
     # Check if ffmpeg is available
     if not check_ffmpeg():
         print("Error: FFmpeg not found. Please install FFmpeg and add it to PATH.")
         print("Download from: https://ffmpeg.org/download.html")
         return 1
-    
+
     # Determine input pattern
     input_pattern = args.input
-    
+
     # If input is a directory, try to find sequence
     if os.path.isdir(input_pattern):
         print(f"Searching for image sequences in: {input_pattern}")
         seq_info = find_image_sequence(input_pattern, args.pattern)
-        
+
         if not seq_info:
             print("Error: No image sequence found in directory")
             return 1
-        
+
         print(f"Found sequence: {seq_info['count']} images")
         print(f"  Base name: {seq_info['base_name']}")
         print(f"  Extension: {seq_info['extension']}")
         print(f"  First number: {seq_info['first_number']}")
-        
+
         # Construct ffmpeg pattern
         input_pattern = os.path.join(
             input_pattern,
             f"{seq_info['base_name']}_%0{seq_info['num_digits']}d.{seq_info['extension']}"
         )
         args.start_number = seq_info['first_number']
-        
+
         print(f"Using pattern: {input_pattern}")
-    
+
     # Convert to video
     print(f"\nConverting to video...")
     print(f"  FPS: {args.fps}")
@@ -270,7 +270,7 @@ def main():
     print(f"  Preset: {args.preset}")
     print(f"  Codec: {args.codec}")
     print(f"  Output: {args.output}")
-    
+
     success = convert_to_video(
         input_pattern=input_pattern,
         output_file=args.output,
@@ -282,7 +282,7 @@ def main():
         start_number=args.start_number,
         verbose=args.verbose
     )
-    
+
     if success:
         output_size = os.path.getsize(args.output) / (1024 * 1024)  # MB
         print(f"\n✓ Video created successfully: {args.output}")

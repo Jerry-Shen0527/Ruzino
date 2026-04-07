@@ -1,10 +1,10 @@
 RUZINO_ADD_LIB(
 	rzconsole
 	SHARED
-	PUBLIC_LIBS 
+	PUBLIC_LIBS
 		GUI spdlog::spdlog
-	PRIVATE_LIBS 
-		glm::glm 
+	PRIVATE_LIBS
+		glm::glm
 	COMPILE_DEFS
 		NOMINMAX=1
 )

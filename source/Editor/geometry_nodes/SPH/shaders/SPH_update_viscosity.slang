@@ -33,11 +33,11 @@ void main(int2 i_globalIdx: SV_DispatchThreadID)
     // Simplified: using same viscosity for all particles
     float rho_avg = (rho_i + rho_j) * 0.5;
     float3 grad_W = cubic_kernel_derivative(r, h);
-    
+
     // Enhanced viscosity formulation with higher coefficient
     float visc_factor = 2.0 * visc * mass * dot(dv, r) / (rho_avg * (r2 + 0.01 * h * h));
     float3 F_visc = visc_factor * grad_W;
-    
+
     // Surface tension force
     // When particles are too close (distance < diameter), clamp to avoid singularity
     float d = sph_constants.particleDiameter;

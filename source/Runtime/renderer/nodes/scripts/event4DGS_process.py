@@ -77,7 +77,7 @@ def exec_node(
 
     world_view_transform_reshaped = cam.world_view_transform.reshape(4, 4)
     projection_matrix_reshaped = cam.full_proj_transform.reshape(4, 4)
-    
+
     #print(world_view_transform_reshaped)
     point = torch.tensor([0, 0, 0, 1], dtype=torch.float32, device="cuda")
     # print(world_view_transform_reshaped.inverse())

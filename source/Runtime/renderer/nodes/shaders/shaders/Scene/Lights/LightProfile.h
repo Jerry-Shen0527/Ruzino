@@ -27,44 +27,45 @@
  **************************************************************************/
 #pragma once
 
-#include "Core/Macros.h"
-#include "Core/Object.h"
-
-
-
-
 #include <filesystem>
 #include <string>
 #include <vector>
 
-namespace Ruzino
-{
-    struct ShaderVar;
+#include "Core/Macros.h"
+#include "Core/Object.h"
 
-    class HD_RUZINO_API LightProfile : public Object
-    {
-        FALCOR_OBJECT(LightProfile)
-    public:
-        static ref<LightProfile> createFromIesProfile(ref<Device> pDevice, const std::filesystem::path& path, bool normalize);
+namespace Ruzino {
+struct ShaderVar;
 
-        void bake(RenderContext* pRenderContext);
+class HD_RUZINO_API LightProfile : public Object {
+    FALCOR_OBJECT(LightProfile)
+   public:
+    static ref<LightProfile> createFromIesProfile(
+        ref<Device> pDevice,
+        const std::filesystem::path& path,
+        bool normalize);
 
-        /** Set the light profile into a shader var.
-        */
-        void bindShaderData(const ShaderVar& var) const;
+    void bake(RenderContext* pRenderContext);
 
-        /** Render the UI.
-        */
-        void renderUI(Gui::Widgets& widget) const;
+    /** Set the light profile into a shader var.
+     */
+    void bindShaderData(const ShaderVar& var) const;
 
-    private:
-        LightProfile(ref<Device> pDevice, const std::string& name, const std::vector<float>& rawData);
+    /** Render the UI.
+     */
+    void renderUI(Gui::Widgets& widget) const;
 
-        ref<Device> mpDevice;
-        std::string mName;
-        std::vector<float> mRawData;
-        nvrhi::TextureHandle mpTexture;
-        nvrhi::SamplerHandle mpSampler;
-        float mFluxFactor = 0.f;
-    };
-}
+   private:
+    LightProfile(
+        ref<Device> pDevice,
+        const std::string& name,
+        const std::vector<float>& rawData);
+
+    ref<Device> mpDevice;
+    std::string mName;
+    std::vector<float> mRawData;
+    nvrhi::TextureHandle mpTexture;
+    nvrhi::SamplerHandle mpSampler;
+    float mFluxFactor = 0.f;
+};
+}  // namespace Ruzino

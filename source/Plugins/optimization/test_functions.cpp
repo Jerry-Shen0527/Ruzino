@@ -1,10 +1,10 @@
 #include <Eigen/Eigen>
-#include <autodiff/reverse/var.hpp>
-#include <autodiff/reverse/var/eigen.hpp>
 #include <autodiff/forward/dual.hpp>
 #include <autodiff/forward/dual/eigen.hpp>
 #include <autodiff/forward/real.hpp>
 #include <autodiff/forward/real/eigen.hpp>
+#include <autodiff/reverse/var.hpp>
+#include <autodiff/reverse/var/eigen.hpp>
 
 #include "nodes/core/def/node_def.hpp"
 using namespace autodiff;
@@ -31,9 +31,7 @@ NODE_DECLARATION_FUNCTION(test_function_2)
 
 NODE_EXECUTION_FUNCTION(test_function_2)
 {
-    auto f = [](const ArrayXvar& x) {
-        return sqrt((x * x).sum());
-    };
+    auto f = [](const ArrayXvar& x) { return sqrt((x * x).sum()); };
     params.set_output<std::function<var(const ArrayXvar&)>>(
         "Function", std::move(f));
     return true;

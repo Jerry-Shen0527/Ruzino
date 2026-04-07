@@ -26,48 +26,54 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Core/Macros.h"
-#include "utils/Math/Common.h"
-#include "utils/Math/Vector.h"
-#include "utils/Color/ColorUtils.h"
-#include <span> // TODO C++20: Replace with <span>
 #include <algorithm>
 #include <filesystem>
 #include <optional>
+#include <span>  // TODO C++20: Replace with <span>
 #include <vector>
 
-namespace Ruzino
-{
+#include "Core/Macros.h"
+#include "utils/Color/ColorUtils.h"
+#include "utils/Math/Common.h"
+#include "utils/Math/Vector.h"
+
+namespace Ruzino {
 /**
  * Represents a piecewise linearly interpolated spectrum.
  * Stores wavelengths (in increasing order) and a value for each wavelength.
  */
-class HD_RUZINO_API PiecewiseLinearSpectrum
-{
-public:
+class HD_RUZINO_API PiecewiseLinearSpectrum {
+   public:
     /**
      * Create a spectrum.
      * @param[in] wavelengths Wavelengths in nm.
      * @param[in] values Values.
      */
-    PiecewiseLinearSpectrum(std::span<const float> wavelengths, std::span<const float> values);
+    PiecewiseLinearSpectrum(
+        std::span<const float> wavelengths,
+        std::span<const float> values);
 
     /**
      * Create a spectrum from interleaved data:
-     * [wavelength_0, value_0, wavelength_1, value_1, .. wavelength_N-1, value_N-1]
+     * [wavelength_0, value_0, wavelength_1, value_1, .. wavelength_N-1,
+     * value_N-1]
      * @param[in] interleaved Interleaved data (needs to contain 2*N entries).
      * @param[in] normalize Normalize spectrum to have luminance of 1.
      * @return The spectrum.
      */
-    static PiecewiseLinearSpectrum fromInterleaved(std::span<const float> interleaved, bool normalize);
+    static PiecewiseLinearSpectrum fromInterleaved(
+        std::span<const float> interleaved,
+        bool normalize);
 
     /**
      * Create a spectrum from a text file that contains interleaved data:
-     * [wavelength_0, value_0, wavelength_1, value_1, .. wavelength_N-1, value_N-1]
+     * [wavelength_0, value_0, wavelength_1, value_1, .. wavelength_N-1,
+     * value_N-1]
      * @param[in] path File path.
      * @return The spectrum.
      */
-    static std::optional<PiecewiseLinearSpectrum> fromFile(const std::filesystem::path& path);
+    static std::optional<PiecewiseLinearSpectrum> fromFile(
+        const std::filesystem::path& path);
 
     /**
      * Scale all values of the spectrum by a constant.
@@ -83,19 +89,20 @@ public:
      */
     float eval(float wavelength) const
     {
-        if (mWavelengths.empty() || wavelength < mWavelengths.front() || wavelength > mWavelengths.back())
-        {
+        if (mWavelengths.empty() || wavelength < mWavelengths.front() ||
+            wavelength > mWavelengths.back()) {
             return 0.f;
         }
 
-        auto it = std::lower_bound(mWavelengths.begin(), mWavelengths.end(), wavelength);
-        if (it == mWavelengths.begin())
-        {
+        auto it = std::lower_bound(
+            mWavelengths.begin(), mWavelengths.end(), wavelength);
+        if (it == mWavelengths.begin()) {
             return mValues.front();
         }
 
         size_t index = std::distance(mWavelengths.begin(), it) - 1;
-        float t = (wavelength - mWavelengths[index]) / (mWavelengths[index + 1] - mWavelengths[index]);
+        float t = (wavelength - mWavelengths[index]) /
+                  (mWavelengths[index + 1] - mWavelengths[index]);
         float a = mValues[index];
         float b = mValues[index + 1];
         return math::lerp(a, b, t);
@@ -105,33 +112,43 @@ public:
      * Return the wavelength range.
      * @return The wavelength range of the spectrum.
      */
-    float2 getWavelengthRange() const { return {mWavelengths.front(), mWavelengths.back()}; }
+    float2 getWavelengthRange() const
+    {
+        return { mWavelengths.front(), mWavelengths.back() };
+    }
 
     /**
      * Get the maximum value in the spectrum.
      * @return The maximum value.
      */
-    float getMaxValue() const { return mMaxValue; }
+    float getMaxValue() const
+    {
+        return mMaxValue;
+    }
 
-private:
-    std::vector<float> mWavelengths; ///< Wavelengths in nm.
-    std::vector<float> mValues;      ///< Values at each wavelength.
-    float mMaxValue;                 ///< Maximum value in mValues.
+   private:
+    std::vector<float> mWavelengths;  ///< Wavelengths in nm.
+    std::vector<float> mValues;       ///< Values at each wavelength.
+    float mMaxValue;                  ///< Maximum value in mValues.
 };
 
 /**
  * Represents a denseley sampled spectrum.
  */
-class HD_RUZINO_API DenseleySampledSpectrum
-{
-public:
-    DenseleySampledSpectrum(float minWavelength, float maxWavelength, std::span<const float> values)
-        : mMinWavelength(minWavelength)
-        , mMaxWavelength(maxWavelength)
-        , mWavelengthStep((maxWavelength - minWavelength) / (values.size() - 1))
-        , mValues(values.begin(), values.end())
-        , mMaxValue(*std::max_element(values.begin(), values.end()))
-    {}
+class HD_RUZINO_API DenseleySampledSpectrum {
+   public:
+    DenseleySampledSpectrum(
+        float minWavelength,
+        float maxWavelength,
+        std::span<const float> values)
+        : mMinWavelength(minWavelength),
+          mMaxWavelength(maxWavelength),
+          mWavelengthStep(
+              (maxWavelength - minWavelength) / (values.size() - 1)),
+          mValues(values.begin(), values.end()),
+          mMaxValue(*std::max_element(values.begin(), values.end()))
+    {
+    }
 
     template<typename S>
     DenseleySampledSpectrum(const S& spectrum, float wavelengthStep = 1.f)
@@ -140,11 +157,12 @@ public:
         size_t count = (size_t)std::ceil((range.y - range.x) / wavelengthStep);
         mMinWavelength = range.x;
         mMaxWavelength = range.y;
-        // max(1, count - 1) handles edge case where wavelengthStep > wavelength range.
-        mWavelengthStep = (mMaxWavelength - mMinWavelength) / std::max(1ul, count - 1);
+        // max(1, count - 1) handles edge case where wavelengthStep > wavelength
+        // range.
+        mWavelengthStep =
+            (mMaxWavelength - mMinWavelength) / std::max(1ul, count - 1);
         mValues.resize(count);
-        for (size_t i = 0; i < count; ++i)
-        {
+        for (size_t i = 0; i < count; ++i) {
             mValues[i] = spectrum.eval(mMinWavelength + i * mWavelengthStep);
         }
         mMaxValue = *std::max_element(mValues.begin(), mValues.end());
@@ -158,7 +176,8 @@ public:
      */
     float eval(float wavelength) const
     {
-        int index = std::lroundf((wavelength - mMinWavelength) / mWavelengthStep);
+        int index =
+            std::lroundf((wavelength - mMinWavelength) / mWavelengthStep);
         if (index < 0 || index >= (int)mValues.size())
             return 0.f;
         return mValues[index];
@@ -168,15 +187,21 @@ public:
      * Return the wavelength range.
      * @return The wavelength range of the spectrum.
      */
-    float2 getWavelengthRange() const { return {mMinWavelength, mMaxWavelength}; }
+    float2 getWavelengthRange() const
+    {
+        return { mMinWavelength, mMaxWavelength };
+    }
 
     /**
      * Get the maximum value in the spectrum.
      * @return The maximum value.
      */
-    float getMaxValue() const { return mMaxValue; }
+    float getMaxValue() const
+    {
+        return mMaxValue;
+    }
 
-private:
+   private:
     float mMinWavelength;
     float mMaxWavelength;
     float mWavelengthStep;
@@ -195,9 +220,8 @@ HD_RUZINO_API float blackbodyEmission(float wavelength, float temperature);
 /**
  * Represents a blackbody emission spectrum.
  */
-class HD_RUZINO_API BlackbodySpectrum
-{
-public:
+class HD_RUZINO_API BlackbodySpectrum {
+   public:
     /**
      * Create blackbody emission spectrum.
      * @param[in] temperature Temperature in K.
@@ -210,22 +234,33 @@ public:
      * @param wavelength Wavelength in nm.
      * @return Value.
      */
-    float eval(float wavelength) const { return blackbodyEmission(wavelength, mTemperature) * mNormalizationFactor; }
+    float eval(float wavelength) const
+    {
+        return blackbodyEmission(wavelength, mTemperature) *
+               mNormalizationFactor;
+    }
 
     /**
      * Return the wavelength range.
      * @return The wavelength range of the spectrum.
      */
-    float2 getWavelengthRange() const { return {-std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity()}; }
+    float2 getWavelengthRange() const
+    {
+        return { -std::numeric_limits<float>::infinity(),
+                 std::numeric_limits<float>::infinity() };
+    }
 
     /**
      * Get the maximum value in the spectrum.
      * @return The maximum value.
      */
-    float getMaxValue() const { return mMaxValue; }
+    float getMaxValue() const
+    {
+        return mMaxValue;
+    }
 
-private:
-    float mTemperature; ///< Temperature in K.
+   private:
+    float mTemperature;  ///< Temperature in K.
     float mNormalizationFactor;
     float mMaxValue;
 };
@@ -233,8 +268,7 @@ private:
 /**
  * Collection of useful spectra.
  */
-struct HD_RUZINO_API Spectra
-{
+struct HD_RUZINO_API Spectra {
     // CIE 1931
     static const DenseleySampledSpectrum kCIE_X;
     static const DenseleySampledSpectrum kCIE_Y;
@@ -246,7 +280,8 @@ struct HD_RUZINO_API Spectra
      * @param[in] name Spectrum name.
      * @return The spectrum or nullptr if not found.
      */
-    static const PiecewiseLinearSpectrum* getNamedSpectrum(const std::string& name);
+    static const PiecewiseLinearSpectrum* getNamedSpectrum(
+        const std::string& name);
 };
 
 /**
@@ -260,8 +295,8 @@ float innerProduct(const A& a, const B& b)
     float minWavelength = std::max(rangeA.x, rangeB.x);
     float maxWavelength = std::min(rangeA.y, rangeB.y);
     float integral = 0.f;
-    for (float wavelength = minWavelength; wavelength <= maxWavelength; wavelength += 1.f)
-    {
+    for (float wavelength = minWavelength; wavelength <= maxWavelength;
+         wavelength += 1.f) {
         integral += a.eval(wavelength) * b.eval(wavelength);
     }
     return integral;
@@ -273,7 +308,10 @@ float innerProduct(const A& a, const B& b)
 template<typename S>
 float3 spectrumToXYZ(const S& s)
 {
-    return float3(innerProduct(s, Spectra::kCIE_X), innerProduct(s, Spectra::kCIE_Y), innerProduct(s, Spectra::kCIE_Z)) /
+    return float3(
+               innerProduct(s, Spectra::kCIE_X),
+               innerProduct(s, Spectra::kCIE_Y),
+               innerProduct(s, Spectra::kCIE_Z)) /
            Spectra::kCIE_Y_Integral;
 }
 
@@ -285,4 +323,4 @@ float3 spectrumToRGB(const S& s)
 {
     return XYZtoRGB_Rec709(spectrumToXYZ(s));
 }
-} // namespace Ruzino
+}  // namespace Ruzino

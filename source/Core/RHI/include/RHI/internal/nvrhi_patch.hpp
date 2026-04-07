@@ -1,8 +1,8 @@
 #pragma once
+#include <RHI/api.h>
 #include <nvrhi/nvrhi.h>
 
 #include <memory>
-#include <RHI/api.h>
 
 namespace nvrhi {
 using CommandListDesc = nvrhi::CommandListParameters;

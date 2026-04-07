@@ -1,7 +1,7 @@
 option (ENABLE_GL_BASED_RENDERER "Enable GL based renderer" OFF)
 
 if (ENABLE_GL_BASED_RENDERER)
-	
+
 	RUZINO_ADD_LIB(
 		hd_RUZINO_GL
 		SHARED
@@ -15,7 +15,7 @@ if (ENABLE_GL_BASED_RENDERER)
 	)
 
 	add_nodes(
-		TARGET_NAME gl_based_render_nodes 
+		TARGET_NAME gl_based_render_nodes
 		SRC_DIRS nodes
 		DEP_LIBS usd RHI hd_RUZINO_GL usdImaging glf
 		COMPILE_DEFS NOMINMAX RENDER_NODES_FILES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/nodes" RUZINO_BACKEND_GL

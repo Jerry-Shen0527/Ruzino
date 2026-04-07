@@ -222,27 +222,27 @@ __device__ inline float compute_cotangent_angle(
     float e1x = v1[0] - v0[0];
     float e1y = v1[1] - v0[1];
     float e1z = v1[2] - v0[2];
-    
+
     float e2x = v2[0] - v0[0];
     float e2y = v2[1] - v0[1];
     float e2z = v2[2] - v0[2];
-    
+
     // cos(angle) = dot(e1, e2) / (|e1| * |e2|)
     // sin(angle) = |cross(e1, e2)| / (|e1| * |e2|)
     // cot(angle) = cos / sin
-    
+
     float dot_prod = dot(e1x, e1y, e1z, e2x, e2y, e2z);
-    
+
     // Cross product
     float crossx = e1y * e2z - e1z * e2y;
     float crossy = e1z * e2x - e1x * e2z;
     float crossz = e1x * e2y - e1y * e2x;
     float cross_len = length(crossx, crossy, crossz);
-    
+
     // Avoid division by zero
     if (cross_len < 1e-8f)
         return 0.0f;
-    
+
     return dot_prod / cross_len;
 }
 
@@ -260,49 +260,49 @@ __global__ void compute_cotangent_weights_kernel(
     unsigned face_id = blockIdx.x * blockDim.x + threadIdx.x;
     if (face_id >= num_faces)
         return;
-    
+
     // Get triangle vertex indices
     unsigned v0 = face_indices[face_id * 3 + 0];
     unsigned v1 = face_indices[face_id * 3 + 1];
     unsigned v2 = face_indices[face_id * 3 + 2];
-    
+
     // Process each edge of the triangle
     // Edge (v0, v1): opposite vertex is v2
     // Edge (v1, v2): opposite vertex is v0
     // Edge (v2, v0): opposite vertex is v1
-    
+
     unsigned edges[3][2] = {{v0, v1}, {v1, v2}, {v2, v0}};
     unsigned opposite[3] = {v2, v0, v1};
-    
+
     for (int e = 0; e < 3; ++e) {
         unsigned vi = edges[e][0];
         unsigned vj = edges[e][1];
         unsigned vo = opposite[e];
-        
+
         // Compute cotangent of angle at vo
         const float* p_vo = &vertices[vo * 3];
         const float* p_vi = &vertices[vi * 3];
         const float* p_vj = &vertices[vj * 3];
-        
+
         float cot = compute_cotangent_angle(p_vo, p_vi, p_vj);
-        
+
         // For undirected edges, add weight in BOTH directions: (vi, vj) and (vj, vi)
-        
+
         // Direction 1: Find edge (vi, vj) in vi's neighbor list
         unsigned offset_vi = offset_buffer[vi];
         unsigned degree_vi = adjacency_list[offset_vi];
-        
+
         for (unsigned k = 0; k < degree_vi; ++k) {
             if (adjacency_list[offset_vi + 1 + k] == vj) {
                 atomicAdd(&edge_weights[offset_vi + 1 + k], cot * 0.5f);
                 break;
             }
         }
-        
+
         // Direction 2: Find edge (vj, vi) in vj's neighbor list
         unsigned offset_vj = offset_buffer[vj];
         unsigned degree_vj = adjacency_list[offset_vj];
-        
+
         for (unsigned k = 0; k < degree_vj; ++k) {
             if (adjacency_list[offset_vj + 1 + k] == vi) {
                 atomicAdd(&edge_weights[offset_vj + 1 + k], cot * 0.5f);
@@ -320,32 +320,32 @@ cuda::CUDALinearBufferHandle compute_cotangent_weights(
 {
     auto adjacency_list_handle = std::get<0>(adjacency_map);
     auto offset_buffer_handle = std::get<1>(adjacency_map);
-    
+
     auto vertices_ptr = (float*)vertices->get_device_ptr();
     auto face_indices_ptr = (unsigned*)face_indices->get_device_ptr();
     auto adjacency_list_ptr = (unsigned*)adjacency_list_handle->get_device_ptr();
     auto offset_buffer_ptr = (unsigned*)offset_buffer_handle->get_device_ptr();
-    
+
     unsigned num_vertices = vertices->getDesc().element_count / 3;  // 3 floats per vertex
     unsigned num_faces = face_indices->getDesc().element_count / 3;  // 3 indices per triangle
-    
+
     // Allocate edge weights buffer (same size as adjacency_list)
     unsigned adjacency_list_size = adjacency_list_handle->getDesc().element_count;
     cuda::CUDALinearBufferDesc weight_desc;
     weight_desc.element_count = adjacency_list_size;
     weight_desc.element_size = sizeof(float);
-    
+
     auto weight_buffer = cuda::create_cuda_linear_buffer(weight_desc);
     auto weights_ptr = (float*)weight_buffer->get_device_ptr();
-    
+
     // Initialize weights to zero
     thrust::device_ptr<float> weights_dev_ptr(weights_ptr);
     thrust::fill(thrust::device, weights_dev_ptr, weights_dev_ptr + adjacency_list_size, 0.0f);
-    
+
     // Launch kernel: one thread per triangle
     int threads_per_block = 256;
     int blocks = (num_faces + threads_per_block - 1) / threads_per_block;
-    
+
     compute_cotangent_weights_kernel<<<blocks, threads_per_block>>>(
         vertices_ptr,
         face_indices_ptr,
@@ -355,7 +355,7 @@ cuda::CUDALinearBufferHandle compute_cotangent_weights(
         num_vertices,
         weights_ptr);
     cudaDeviceSynchronize();
-    
+
     return weight_buffer;
 }
 

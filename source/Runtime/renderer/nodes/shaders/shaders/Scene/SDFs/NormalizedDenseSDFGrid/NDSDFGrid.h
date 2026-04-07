@@ -29,50 +29,63 @@
 
 #include "Scene/SDFs/SDFGrid.h"
 
+namespace Ruzino {
+/** A normalized dense SDF grid, represented as a set of textures. Can only be
+ * accessed on the GPU.
+ */
+class HD_RUZINO_API NDSDFGrid : public SDFGrid {
+   public:
+    struct SharedData;
 
-namespace Ruzino
-{
-    /** A normalized dense SDF grid, represented as a set of textures. Can only be accessed on the GPU.
+    /** Create a new, empty normalized dense SDF grid.
+        \param[in] narrowBandThickness NDSDFGrids operate on normalized
+       distances, the distances are normalized so that a normalized distance of
+       +- 1 represents a distance of "narrowBandThickness" voxel diameters.
+       Should not be less than 1.
+        \return NDSDFGrid object, or nullptr if errors occurred.
     */
-    class HD_RUZINO_API NDSDFGrid : public SDFGrid
+    static ref<NDSDFGrid> create(ref<Device> pDevice, float narrowBandThickness)
     {
-    public:
-        struct SharedData;
+        return make_ref<NDSDFGrid>(pDevice, narrowBandThickness);
+    }
 
-        /** Create a new, empty normalized dense SDF grid.
-            \param[in] narrowBandThickness NDSDFGrids operate on normalized distances, the distances are normalized so that a normalized distance of +- 1 represents a distance of "narrowBandThickness" voxel diameters. Should not be less than 1.
-            \return NDSDFGrid object, or nullptr if errors occurred.
-        */
-        static ref<NDSDFGrid> create(ref<Device> pDevice, float narrowBandThickness) { return make_ref<NDSDFGrid>(pDevice, narrowBandThickness); }
+    NDSDFGrid(ref<Device> pDevice, float narrowBandThickness);
 
-        NDSDFGrid(ref<Device> pDevice, float narrowBandThickness);
+    virtual size_t getSize() const override;
+    virtual uint32_t getMaxPrimitiveIDBits() const override;
+    virtual Type getType() const override
+    {
+        return Type::NormalizedDenseGrid;
+    }
 
-        virtual size_t getSize() const override;
-        virtual uint32_t getMaxPrimitiveIDBits() const override;
-        virtual Type getType() const override { return Type::NormalizedDenseGrid; }
+    virtual void createResources(
+        RenderContext* pRenderContext,
+        bool deleteScratchData = true) override;
+    virtual const nvrhi::BufferHandle& getAABBBuffer() const override;
+    virtual uint32_t getAABBCount() const override
+    {
+        return 1;
+    }
+    virtual void bindShaderData(const ShaderVar& var) const override;
 
+   protected:
+    virtual void setValuesInternal(
+        const std::vector<float>& cornerValues) override;
 
-        virtual void createResources(RenderContext* pRenderContext, bool deleteScratchData = true) override;
-        virtual const nvrhi::BufferHandle& getAABBBuffer() const override;
-        virtual uint32_t getAABBCount() const override { return 1; }
-        virtual void bindShaderData(const ShaderVar& var) const override;
+    float calculateNormalizationFactor(uint32_t gridWidth) const;
 
-    protected:
-        virtual void setValuesInternal(const std::vector<float>& cornerValues) override;
+   private:
+    // CPU data.
+    std::vector<std::vector<int8_t>> mValues;
 
-        float calculateNormalizationFactor(uint32_t gridWidth) const;
+    // Specs.
+    uint32_t mCoarsestLODGridWidth = 0;
+    float mCoarsestLODNormalizationFactor = 0.0f;
+    float mNarrowBandThickness = 0.0f;
 
-    private:
-        // CPU data.
-        std::vector<std::vector<int8_t>> mValues;
-
-        // Specs.
-        uint32_t mCoarsestLODGridWidth = 0;
-        float mCoarsestLODNormalizationFactor = 0.0f;
-        float mNarrowBandThickness = 0.0f;
-
-        // GPU data.
-        std::vector<nvrhi::TextureHandle> mNDSDFTextures;
-        std::shared_ptr<SharedData> mpSharedData; ///< Shared data among all instances.
-    };
-}
+    // GPU data.
+    std::vector<nvrhi::TextureHandle> mNDSDFTextures;
+    std::shared_ptr<SharedData>
+        mpSharedData;  ///< Shared data among all instances.
+};
+}  // namespace Ruzino

@@ -19,13 +19,13 @@ def check_material_creation(file_path, file_name):
     print(f"\n{'='*100}")
     print(f"CHECKING: {file_name}")
     print(f"{'='*100}\n")
-    
+
     if not os.path.exists(file_path):
         print(f"ERROR: File not found!")
         return
-    
+
     stage = Usd.Stage.Open(file_path)
-    
+
     print("MATERIALS AND THEIR PROPERTIES:")
     for prim in stage.Traverse():
         if prim.IsA(UsdShade.Material):
@@ -40,13 +40,13 @@ def check_material_creation(file_path, file_name):
             print(f"    HasAuthoredReferences: {prim.HasAuthoredReferences()}")
             print(f"    HasPayload: {prim.HasPayload()}")
             print(f"    HasVariantSets: {prim.HasVariantSets()}")
-            
+
             # Check the composition structure
             prim_stack = prim.GetPrimStack()
             print(f"    PrimStack layers: {len(prim_stack)}")
             for i, spec in enumerate(prim_stack):
                 print(f"      [{i}] {spec.layer.identifier} : {spec.path}")
-            
+
             # Check if material is in a referenced prim
             parent = prim.GetParent()
             while parent:
@@ -57,13 +57,13 @@ def check_material_creation(file_path, file_name):
 
 def main():
     workspace_root = os.path.abspath(os.path.join(script_dir, "..", "..", "..", ".."))
-    
+
     chess_set_file = os.path.join(workspace_root, "Assets", "OpenChessSet", "chess_set.usda")
     shader_ball = os.path.join(binary_dir, "material_tests", "shader_ball_TH_Rough_Wood.usdc")
-    
+
     check_material_creation(chess_set_file, "chess_set.usda (NOT WORKING)")
     check_material_creation(shader_ball, "shader_ball (WORKING)")
-    
+
     print(f"\n{'='*100}")
     print("HYPOTHESIS:")
     print(f"{'='*100}")

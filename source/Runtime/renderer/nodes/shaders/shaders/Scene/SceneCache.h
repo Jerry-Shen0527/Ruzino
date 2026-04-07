@@ -26,107 +26,145 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Scene.h"
-#include "Animation/Animation.h"
-#include "Camera/Camera.h"
-#include "Lights/EnvMap.h"
-#include "Lights/Light.h"
-#include "Volume/Grid.h"
-#include "Volume/GridVolume.h"
-#include "Material/BasicMaterial.h"
-#include "Material/MaterialSystem.h"
-#include "Material/MaterialTextureLoader.h"
-
-#include "Core/Macros.h"
-
-#include "utils/CryptoUtils.h"
-
 #include <filesystem>
 #include <string>
 #include <vector>
 
-namespace Ruzino
-{
-    template<typename T, bool TUseByteAddressBuffer>
-    class SplitBuffer;
+#include "Animation/Animation.h"
+#include "Camera/Camera.h"
+#include "Core/Macros.h"
+#include "Lights/EnvMap.h"
+#include "Lights/Light.h"
+#include "Material/BasicMaterial.h"
+#include "Material/MaterialSystem.h"
+#include "Material/MaterialTextureLoader.h"
+#include "Scene.h"
+#include "Volume/Grid.h"
+#include "Volume/GridVolume.h"
+#include "utils/CryptoUtils.h"
 
-    /** Helper class for reading and writing scene cache files.
-        The scene cache is used to heavily reduce load times of more complex assets.
-        The cache stores a binary representation of `Scene::SceneData` which contains everything to re-create a `Scene`.
+namespace Ruzino {
+template<typename T, bool TUseByteAddressBuffer>
+class SplitBuffer;
+
+/** Helper class for reading and writing scene cache files.
+    The scene cache is used to heavily reduce load times of more complex assets.
+    The cache stores a binary representation of `Scene::SceneData` which
+   contains everything to re-create a `Scene`.
+*/
+class HD_RUZINO_API SceneCache {
+   public:
+    using Key = SHA1::MD;
+
+    /** Check if there is a valid scene cache for a given cache key.
+        \param[in] key Cache key.
+        \return Returns true if a valid cache exists.
     */
-    class HD_RUZINO_API SceneCache
-    {
-    public:
-        using Key = SHA1::MD;
+    static bool hasValidCache(const Key& key);
 
-        /** Check if there is a valid scene cache for a given cache key.
-            \param[in] key Cache key.
-            \return Returns true if a valid cache exists.
-        */
-        static bool hasValidCache(const Key& key);
+    /** Write a scene cache.
+        \param[in] sceneData Scene data.
+        \param[in] key Cache key.
+    */
+    static void writeCache(const Scene::SceneData& sceneData, const Key& key);
 
-        /** Write a scene cache.
-            \param[in] sceneData Scene data.
-            \param[in] key Cache key.
-        */
-        static void writeCache(const Scene::SceneData& sceneData, const Key& key);
+    /** Read a scene cache.
+        \param[in] pDevice GPU device.
+        \param[in] key Cache key.
+        \return Returns the loaded scene data.
+    */
+    static Scene::SceneData readCache(ref<Device> pDevice, const Key& key);
 
-        /** Read a scene cache.
-            \param[in] pDevice GPU device.
-            \param[in] key Cache key.
-            \return Returns the loaded scene data.
-        */
-        static Scene::SceneData readCache(ref<Device> pDevice, const Key& key);
+   private:
+    class OutputStream;
+    class InputStream;
 
-    private:
-        class OutputStream;
-        class InputStream;
+    static std::filesystem::path getCachePath(const Key& key);
 
-        static std::filesystem::path getCachePath(const Key& key);
+    static void writeSceneData(
+        OutputStream& stream,
+        const Scene::SceneData& sceneData);
+    static Scene::SceneData readSceneData(
+        InputStream& stream,
+        ref<Device> pDevice);
 
-        static void writeSceneData(OutputStream& stream, const Scene::SceneData& sceneData);
-        static Scene::SceneData readSceneData(InputStream& stream, ref<Device> pDevice);
+    static void writeMetadata(
+        OutputStream& stream,
+        const Scene::Metadata& metadata);
+    static Scene::Metadata readMetadata(InputStream& stream);
 
-        static void writeMetadata(OutputStream& stream, const Scene::Metadata& metadata);
-        static Scene::Metadata readMetadata(InputStream& stream);
+    static void writeCamera(OutputStream& stream, const ref<Camera>& pCamera);
+    static ref<Camera> readCamera(InputStream& stream);
 
-        static void writeCamera(OutputStream& stream, const ref<Camera>& pCamera);
-        static ref<Camera> readCamera(InputStream& stream);
+    static void writeLight(OutputStream& stream, const ref<Light>& pLight);
+    static ref<Light> readLight(InputStream& stream);
 
-        static void writeLight(OutputStream& stream, const ref<Light>& pLight);
-        static ref<Light> readLight(InputStream& stream);
+    static void writeMaterials(
+        OutputStream& stream,
+        const MaterialSystem& materialSystem);
+    static void writeMaterial(
+        OutputStream& stream,
+        const ref<Material>& pMaterial);
+    static void writeBasicMaterial(
+        OutputStream& stream,
+        const ref<BasicMaterial>& pMaterial);
+    static void readMaterials(
+        InputStream& stream,
+        MaterialSystem& materialSystem,
+        MaterialTextureLoader& materialTextureLoader,
+        ref<Device> pDevice);
+    static ref<Material> readMaterial(
+        InputStream& stream,
+        MaterialTextureLoader& materialTextureLoader,
+        ref<Device> pDevice);
+    static void readBasicMaterial(
+        InputStream& stream,
+        MaterialTextureLoader& materialTextureLoader,
+        const ref<BasicMaterial>& pMaterial,
+        ref<Device> pDevice);
 
-        static void writeMaterials(OutputStream& stream, const MaterialSystem& materialSystem);
-        static void writeMaterial(OutputStream& stream, const ref<Material>& pMaterial);
-        static void writeBasicMaterial(OutputStream& stream, const ref<BasicMaterial>& pMaterial);
-        static void readMaterials(InputStream& stream, MaterialSystem& materialSystem, MaterialTextureLoader& materialTextureLoader, ref<Device> pDevice);
-        static ref<Material> readMaterial(InputStream& stream, MaterialTextureLoader& materialTextureLoader, ref<Device> pDevice);
-        static void readBasicMaterial(InputStream& stream, MaterialTextureLoader& materialTextureLoader, const ref<BasicMaterial>& pMaterial, ref<Device> pDevice);
+    static void writeSampler(
+        OutputStream& stream,
+        const nvrhi::SamplerHandle& pSampler);
+    static nvrhi::SamplerHandle readSampler(
+        InputStream& stream,
+        ref<Device> pDevice);
 
-        static void writeSampler(OutputStream& stream, const nvrhi::SamplerHandle& pSampler);
-        static nvrhi::SamplerHandle readSampler(InputStream& stream, ref<Device> pDevice);
+    static void writeGridVolume(
+        OutputStream& stream,
+        const ref<GridVolume>& pVolume,
+        const std::vector<ref<Grid>>& grids);
+    static ref<GridVolume> readGridVolume(
+        InputStream& stream,
+        const std::vector<ref<Grid>>& grids,
+        ref<Device> pDevice);
 
-        static void writeGridVolume(OutputStream& stream, const ref<GridVolume>& pVolume, const std::vector<ref<Grid>>& grids);
-        static ref<GridVolume> readGridVolume(InputStream& stream, const std::vector<ref<Grid>>& grids, ref<Device> pDevice);
+    static void writeGrid(OutputStream& stream, const ref<Grid>& pGrid);
+    static ref<Grid> readGrid(InputStream& stream, ref<Device> pDevice);
 
-        static void writeGrid(OutputStream& stream, const ref<Grid>& pGrid);
-        static ref<Grid> readGrid(InputStream& stream, ref<Device> pDevice);
+    static void writeEnvMap(OutputStream& stream, const ref<EnvMap>& pEnvMap);
+    static ref<EnvMap> readEnvMap(InputStream& stream, ref<Device> pDevice);
 
-        static void writeEnvMap(OutputStream& stream, const ref<EnvMap>& pEnvMap);
-        static ref<EnvMap> readEnvMap(InputStream& stream, ref<Device> pDevice);
+    static void writeTransform(
+        OutputStream& stream,
+        const Transform& transform);
+    static Transform readTransform(InputStream& stream);
 
-        static void writeTransform(OutputStream& stream, const Transform& transform);
-        static Transform readTransform(InputStream& stream);
+    static void writeAnimation(
+        OutputStream& stream,
+        const ref<Animation>& pAnimation);
+    static ref<Animation> readAnimation(InputStream& stream);
 
-        static void writeAnimation(OutputStream& stream, const ref<Animation>& pAnimation);
-        static ref<Animation> readAnimation(InputStream& stream);
+    static void writeMarker(OutputStream& stream, const std::string& id);
+    static void readMarker(InputStream& stream, const std::string& id);
 
-        static void writeMarker(OutputStream& stream, const std::string& id);
-        static void readMarker(InputStream& stream, const std::string& id);
-
-        template<typename T, bool TUseByteAddressBuffer>
-        static void writeSplitBuffer(OutputStream& stream, const SplitBuffer<T, TUseByteAddressBuffer>& buffer);
-        template<typename T, bool TUseByteAddressBuffer>
-        static void readSplitBuffer(InputStream& stream, SplitBuffer<T, TUseByteAddressBuffer>& buffer);
-    };
-}
+    template<typename T, bool TUseByteAddressBuffer>
+    static void writeSplitBuffer(
+        OutputStream& stream,
+        const SplitBuffer<T, TUseByteAddressBuffer>& buffer);
+    template<typename T, bool TUseByteAddressBuffer>
+    static void readSplitBuffer(
+        InputStream& stream,
+        SplitBuffer<T, TUseByteAddressBuffer>& buffer);
+};
+}  // namespace Ruzino

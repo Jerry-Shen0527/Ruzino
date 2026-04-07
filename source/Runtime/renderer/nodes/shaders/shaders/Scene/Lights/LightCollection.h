@@ -63,10 +63,8 @@ class HD_RUZINO_API LightCollection : public ILightCollection {
         \return A pointer to a new light collection object, or throws an
        exception if creation failed.
     */
-    static ref<LightCollection> create(
-        ref<Device> pDevice,
-        RenderContext* pRenderContext,
-        Scene* pScene)
+    static ref<LightCollection>
+    create(ref<Device> pDevice, RenderContext* pRenderContext, Scene* pScene)
     {
         return make_ref<LightCollection>(pDevice, pRenderContext, pScene);
     }

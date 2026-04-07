@@ -82,7 +82,7 @@ float skyRadianceAtWavelength(float lambda, float3 viewDir, float3 sunDir)
     // Zenith angle
     float zenithAngle = acos(clamp(viewDir.z, -1.0, 1.0));
     float sunZenith = acos(clamp(sunDir.z, -1.0, 1.0));
-    
+
     // For directions below horizon (viewDir.z < 0), provide ambient ground radiance
     if (viewDir.z < 0.0) {
         // Ground ambient: reflected skylight (simplified as wavelength-dependent diffuse)
