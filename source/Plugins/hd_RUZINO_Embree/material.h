@@ -3,7 +3,7 @@
 #include "api.h"
 #include "color.h"
 #include "pxr/imaging/hd/material.h"
-#include "pxr/imaging/hio/image.h"
+#include "texture.h"
 
 namespace pxr {
 class Hio_OpenEXRImage;

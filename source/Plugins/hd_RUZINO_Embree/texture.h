@@ -2,8 +2,8 @@
 #include "api.h"
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec4f.h"
+#include "pxr/imaging/hio/image.h"
 #include "pxr/usd/sdf/assetPath.h"
-#include "surfaceInteraction.h"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
