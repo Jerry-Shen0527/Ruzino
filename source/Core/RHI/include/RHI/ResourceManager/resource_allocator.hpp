@@ -7,7 +7,7 @@
 #include <unordered_map>
 
 #ifdef RUZINO_BACKEND_GL
-#include "GL/GLresources.hpp"
+#include "GL/GLResources.hpp"
 #undef RUZINO_BACKEND_NVRHI
 #endif
 

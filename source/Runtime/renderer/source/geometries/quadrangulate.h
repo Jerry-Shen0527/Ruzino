@@ -91,8 +91,8 @@ class HdSt_MeshTopology;
 class HdSt_QuadInfoBuilderComputation : public HdNullBufferSource {
    public:
     HdSt_QuadInfoBuilderComputation(
-        HdSt_MeshTopology *topology,
-        SdfPath const &id);
+        HdSt_MeshTopology* topology,
+        SdfPath const& id);
     bool Resolve() override;
 
    protected:
@@ -100,7 +100,7 @@ class HdSt_QuadInfoBuilderComputation : public HdNullBufferSource {
 
    private:
     SdfPath const _id;
-    HdSt_MeshTopology *_topology;
+    HdSt_MeshTopology* _topology;
 };
 
 /// \class HdSt_QuadIndexBuilderComputation
@@ -126,10 +126,10 @@ class HdSt_QuadInfoBuilderComputation : public HdNullBufferSource {
 class HdSt_QuadIndexBuilderComputation : public HdComputedBufferSource {
    public:
     HdSt_QuadIndexBuilderComputation(
-        HdSt_MeshTopology *topology,
-        HdSt_QuadInfoBuilderComputationSharedPtr const &quadInfoBuilder,
-        SdfPath const &id);
-    void GetBufferSpecs(pxr::HdBufferSpecVector *specs) const override;
+        HdSt_MeshTopology* topology,
+        HdSt_QuadInfoBuilderComputationSharedPtr const& quadInfoBuilder,
+        SdfPath const& id);
+    void GetBufferSpecs(pxr::HdBufferSpecVector* specs) const override;
     bool Resolve() override;
 
     bool HasChainedBuffer() const override;
@@ -140,12 +140,11 @@ class HdSt_QuadIndexBuilderComputation : public HdComputedBufferSource {
 
    private:
     SdfPath const _id;
-    HdSt_MeshTopology *_topology;
+    HdSt_MeshTopology* _topology;
     HdSt_QuadInfoBuilderComputationSharedPtr _quadInfoBuilder;
     HdBufferSourceSharedPtr _primitiveParam;
     HdBufferSourceSharedPtr _quadsEdgeIndices;
 };
-
 
 /// \class HdSt_QuadrangulateComputation
 ///
@@ -154,11 +153,11 @@ class HdSt_QuadIndexBuilderComputation : public HdComputedBufferSource {
 class HdSt_QuadrangulateComputation : public HdComputedBufferSource {
    public:
     HdSt_QuadrangulateComputation(
-        HdSt_MeshTopology *topology,
-        HdBufferSourceSharedPtr const &source,
-        HdBufferSourceSharedPtr const &quadInfoBuilder,
-        SdfPath const &id);
-    void GetBufferSpecs(pxr::HdBufferSpecVector *specs) const override;
+        HdSt_MeshTopology* topology,
+        HdBufferSourceSharedPtr const& source,
+        HdBufferSourceSharedPtr const& quadInfoBuilder,
+        SdfPath const& id);
+    void GetBufferSpecs(pxr::HdBufferSpecVector* specs) const override;
     bool Resolve() override;
     HdTupleType GetTupleType() const override;
 
@@ -170,7 +169,7 @@ class HdSt_QuadrangulateComputation : public HdComputedBufferSource {
 
    private:
     SdfPath const _id;
-    HdSt_MeshTopology *_topology;
+    HdSt_MeshTopology* _topology;
     HdBufferSourceSharedPtr _source;
     HdBufferSourceSharedPtr _quadInfoBuilder;
 };
@@ -182,11 +181,11 @@ class HdSt_QuadrangulateComputation : public HdComputedBufferSource {
 class HdSt_QuadrangulateFaceVaryingComputation : public HdComputedBufferSource {
    public:
     HdSt_QuadrangulateFaceVaryingComputation(
-        HdSt_MeshTopology *topolgoy,
-        HdBufferSourceSharedPtr const &source,
-        SdfPath const &id);
+        HdSt_MeshTopology* topolgoy,
+        HdBufferSourceSharedPtr const& source,
+        SdfPath const& id);
 
-    void GetBufferSpecs(pxr::HdBufferSpecVector *specs) const override;
+    void GetBufferSpecs(pxr::HdBufferSpecVector* specs) const override;
     bool Resolve() override;
 
    protected:
@@ -194,7 +193,7 @@ class HdSt_QuadrangulateFaceVaryingComputation : public HdComputedBufferSource {
 
    private:
     SdfPath const _id;
-    HdSt_MeshTopology *_topology;
+    HdSt_MeshTopology* _topology;
     HdBufferSourceSharedPtr _source;
 };
 

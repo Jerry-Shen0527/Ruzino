@@ -26,23 +26,20 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Core/Error.h"
-
-
-#include "utils/Math/Vector.h"
 #include <filesystem>
 #include <memory>
 #include <string>
 
-namespace Ruzino
-{
+#include "Core/Error.h"
+#include "utils/Math/Vector.h"
+
+namespace Ruzino {
 /**
  * This class holds data and texture used to render text.
  * It represents a mono-spaced font.
  */
-class Font
-{
-public:
+class Font {
+   public:
     /**
      * Constructor. Throws an exception if creation failed.
      * @param[in] path File path without extension.
@@ -52,18 +49,23 @@ public:
     ~Font();
 
     /**
-     * The structs contains information on the location of the character in the texture
+     * The structs contains information on the location of the character in the
+     * texture
      */
-    struct CharTexCrdDesc
-    {
-        float2 topLeft; ///< Non-normalized origin of the character in the texture
-        float2 size;    ///< Size in pixels of the character. This should be used to initialize the texture-coordinate when rendering.
+    struct CharTexCrdDesc {
+        float2
+            topLeft;  ///< Non-normalized origin of the character in the texture
+        float2 size;  ///< Size in pixels of the character. This should be used
+                      ///< to initialize the texture-coordinate when rendering.
     };
 
     /**
      * Get the texture containing the characters
      */
-    nvrhi::TextureHandle getTexture() const { return mpTexture; }
+    nvrhi::TextureHandle getTexture() const
+    {
+        return mpTexture;
+    }
 
     /**
      * Get the character descriptor
@@ -77,19 +79,29 @@ public:
     /**
      * Get the height in pixels of the font
      */
-    float getFontHeight() const { return mFontHeight; }
+    float getFontHeight() const
+    {
+        return mFontHeight;
+    }
 
     /**
      * Get the width in pixels of the tab character
      */
-    float getTabWidth() const { return mTabWidth; }
+    float getTabWidth() const
+    {
+        return mTabWidth;
+    }
 
     /**
-     * Get the spacing in pixels between 2 characters. This is measured as (start-of-char-2) - (start-of-char-1).
+     * Get the spacing in pixels between 2 characters. This is measured as
+     * (start-of-char-2) - (start-of-char-1).
      */
-    float getLettersSpacing() const { return mLetterSpacing; }
+    float getLettersSpacing() const
+    {
+        return mLetterSpacing;
+    }
 
-private:
+   private:
     Font(const Font&) = delete;
     Font& operator=(const Font&) = delete;
 
@@ -106,4 +118,4 @@ private:
     float mTabWidth;
     float mLetterSpacing;
 };
-} // namespace Ruzino
+}  // namespace Ruzino

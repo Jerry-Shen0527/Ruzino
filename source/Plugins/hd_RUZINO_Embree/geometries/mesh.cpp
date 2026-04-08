@@ -899,9 +899,7 @@ Hd_RUZINO_InstanceContext* Hd_RUZINO_Mesh::_GetInstanceContext(
         rtcGetGeometryUserData(_rtcInstanceGeometries[i]));
 }
 
-void Hd_RUZINO_Mesh::_InitRepr(
-    const TfToken& reprToken,
-    HdDirtyBits* dirtyBits)
+void Hd_RUZINO_Mesh::_InitRepr(const TfToken& reprToken, HdDirtyBits* dirtyBits)
 {
 }
 
@@ -948,8 +946,8 @@ void Hd_RUZINO_Mesh::Sync(
 
 void Hd_RUZINO_Mesh::Finalize(HdRenderParam* renderParam)
 {
-    RTCScene scene = static_cast<Hd_RUZINO_RenderParam*>(renderParam)
-                         ->AcquireSceneForEdit();
+    RTCScene scene =
+        static_cast<Hd_RUZINO_RenderParam*>(renderParam)->AcquireSceneForEdit();
     // Delete any instances of this mesh in the top-level embree scene.
     for (size_t i = 0; i < _rtcInstanceIds.size(); ++i) {
         // Delete the instance context first...

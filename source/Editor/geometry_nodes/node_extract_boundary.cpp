@@ -1,9 +1,11 @@
+#include <spdlog/spdlog.h>
+
+#include <Eigen/Sparse>
+#include <cmath>
+
 #include "GCore/Components/MeshComponent.h"
 #include "GCore/util_openmesh_bind.h"
 #include "geom_node_base.h"
-#include <cmath>
-#include <Eigen/Sparse>
-#include <spdlog/spdlog.h>
 
 NODE_DEF_OPEN_SCOPE
 NODE_DECLARATION_FUNCTION(extract_boundary)
@@ -25,7 +27,7 @@ NODE_EXECUTION_FUNCTION(extract_boundary)
     }
 
     auto halfedge_mesh = operand_to_openmesh(&input);
-    
+
     // Extract all boundarys
     int n_vertices = halfedge_mesh->n_vertices();
     std::vector<std::vector<int>> boundarys;
@@ -35,7 +37,8 @@ NODE_EXECUTION_FUNCTION(extract_boundary)
         if (halfedge_handle.is_boundary()) {
             if (boundary_edges[halfedge_handle.from().idx()] != -1)
                 std::cout << "Something goes wrong!\n";
-            boundary_edges[halfedge_handle.from().idx()] = halfedge_handle.to().idx();
+            boundary_edges[halfedge_handle.from().idx()] =
+                halfedge_handle.to().idx();
             n_boundarys++;
         }
 
@@ -49,7 +52,7 @@ NODE_EXECUTION_FUNCTION(extract_boundary)
             if (boundary_edges[pointer] >= 0 && !boundary_visited[pointer])
                 break;
 
-        boundarys.push_back({pointer});
+        boundarys.push_back({ pointer });
         boundary_visited[pointer] = true;
         int tmp = pointer;
         do {
@@ -62,8 +65,10 @@ NODE_EXECUTION_FUNCTION(extract_boundary)
     }
 
     // Extract the longest boundary
-    std::sort(boundarys.begin(), boundarys.end(), [](auto& a, auto& b) {return a.size() > b.size();});
-    
+    std::sort(boundarys.begin(), boundarys.end(), [](auto& a, auto& b) {
+        return a.size() > b.size();
+    });
+
     // The last integer of a boundary is the same as the first
     Eigen::VectorXi boundary(boundarys[0].size());
     for (int i = 0; i < boundarys[0].size(); i++)

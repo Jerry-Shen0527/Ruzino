@@ -24,22 +24,25 @@
 #ifndef EXTRAS_IMAGING_EXAMPLES_HD_TINY_RENDER_DELEGATE_H
 #define EXTRAS_IMAGING_EXAMPLES_HD_TINY_RENDER_DELEGATE_H
 
+#include "nodes/system/node_system.hpp"
 #include "pxr/base/tf/staticTokens.h"
 #include "pxr/imaging/hd/renderDelegate.h"
 #include "pxr/pxr.h"
 #include "renderParam.h"
 #include "renderer.h"
-#include "nodes/system/node_system.hpp"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 class Hd_RUZINO_Material;
 class Hd_RUZINO_Light;
 using namespace pxr;
-#define HDEMBREE_RENDER_SETTINGS_TOKENS \
-    (enableAmbientOcclusion)(enableSceneColors)(ambientOcclusionSamples)(renderMode)
+#define HDEMBREE_RENDER_SETTINGS_TOKENS          \
+    (enableAmbientOcclusion)(enableSceneColors)( \
+        ambientOcclusionSamples)(renderMode)
 // Also: HdRenderSettingsTokens->convergedSamplesPerPixel
 
-TF_DECLARE_PUBLIC_TOKENS(HdEmbreeRenderSettingsTokens, HDEMBREE_RENDER_SETTINGS_TOKENS);
+TF_DECLARE_PUBLIC_TOKENS(
+    HdEmbreeRenderSettingsTokens,
+    HDEMBREE_RENDER_SETTINGS_TOKENS);
 
 class Hd_RUZINO_RenderDelegate final : public HdRenderDelegate {
    public:
@@ -63,17 +66,21 @@ class Hd_RUZINO_RenderDelegate final : public HdRenderDelegate {
         HdRenderIndex* index,
         const HdRprimCollection& collection) override;
 
-    HdInstancer* CreateInstancer(HdSceneDelegate* delegate, const SdfPath& id) override;
+    HdInstancer* CreateInstancer(HdSceneDelegate* delegate, const SdfPath& id)
+        override;
     void DestroyInstancer(HdInstancer* instancer) override;
 
-    HdRprim* CreateRprim(const TfToken& typeId, const SdfPath& rprimId) override;
+    HdRprim* CreateRprim(const TfToken& typeId, const SdfPath& rprimId)
+        override;
     void DestroyRprim(HdRprim* rPrim) override;
 
-    HdSprim* CreateSprim(const TfToken& typeId, const SdfPath& sprimId) override;
+    HdSprim* CreateSprim(const TfToken& typeId, const SdfPath& sprimId)
+        override;
     HdSprim* CreateFallbackSprim(const TfToken& typeId) override;
     void DestroySprim(HdSprim* sprim) override;
 
-    HdBprim* CreateBprim(const TfToken& typeId, const SdfPath& bprimId) override;
+    HdBprim* CreateBprim(const TfToken& typeId, const SdfPath& bprimId)
+        override;
     HdBprim* CreateFallbackBprim(const TfToken& typeId) override;
     void DestroyBprim(HdBprim* bprim) override;
 
@@ -82,7 +89,7 @@ class Hd_RUZINO_RenderDelegate final : public HdRenderDelegate {
     HdRenderParam* GetRenderParam() const override;
     VtValue GetRenderSetting(const TfToken& key) const override;
 
-private:
+   private:
     static const TfTokenVector SUPPORTED_RPRIM_TYPES;
     static const TfTokenVector SUPPORTED_SPRIM_TYPES;
     static const TfTokenVector SUPPORTED_BPRIM_TYPES;
@@ -105,7 +112,8 @@ private:
     static HdResourceRegistrySharedPtr _resourceRegistry;
 
     Hd_RUZINO_RenderDelegate(const Hd_RUZINO_RenderDelegate&) = delete;
-    Hd_RUZINO_RenderDelegate& operator=(const Hd_RUZINO_RenderDelegate&) = delete;
+    Hd_RUZINO_RenderDelegate& operator=(const Hd_RUZINO_RenderDelegate&) =
+        delete;
 
    public:
     HdAovDescriptor GetDefaultAovDescriptor(const TfToken& name) const override;

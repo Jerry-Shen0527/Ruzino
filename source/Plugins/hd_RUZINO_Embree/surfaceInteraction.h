@@ -18,12 +18,16 @@ class SurfaceInteraction {
     GfVec3f shadingNormal;
     GfVec2f texcoord;
 
-    Color Sample(GfVec3f& dir, float& pdf, const std::function<float()>& function) const;
+    Color Sample(
+        GfVec3f& dir,
+        float& pdf,
+        const std::function<float()>& function) const;
     Color Eval(GfVec3f wi) const;
     float Pdf(GfVec3f wi, GfVec3f wo) const;
 
     void PrepareTransforms();
-    // This is for transforming vector! It would be different for transforming points.
+    // This is for transforming vector! It would be different for transforming
+    // points.
     GfVec3f TangentToWorld(const GfVec3f& v_tangent_space) const;
     GfVec3f WorldToTangent(const GfVec3f& v_world_space) const;
     void flipNormal();
@@ -35,12 +39,15 @@ class SurfaceInteraction {
     GfMatrix3f worldToTangent;
 };
 
-inline Color
-SurfaceInteraction::Sample(GfVec3f& dir, float& pdf, const std::function<float()>& function) const
+inline Color SurfaceInteraction::Sample(
+    GfVec3f& dir,
+    float& pdf,
+    const std::function<float()>& function) const
 {
     GfVec3f sampled_dir;
     auto wo = WorldToTangent(this->wo);
-    const auto color = material->Sample(wo, sampled_dir, pdf, texcoord, function);
+    const auto color =
+        material->Sample(wo, sampled_dir, pdf, texcoord, function);
     dir = TangentToWorld(sampled_dir);
     return color;
 }
@@ -62,12 +69,14 @@ inline void SurfaceInteraction::PrepareTransforms()
     worldToTangent = tangentToWorld.GetInverse();
 }
 
-inline GfVec3f SurfaceInteraction::TangentToWorld(const GfVec3f& v_tangent_space) const
+inline GfVec3f SurfaceInteraction::TangentToWorld(
+    const GfVec3f& v_tangent_space) const
 {
     return tangentToWorld * v_tangent_space;
 }
 
-inline GfVec3f SurfaceInteraction::WorldToTangent(const GfVec3f& v_world_space) const
+inline GfVec3f SurfaceInteraction::WorldToTangent(
+    const GfVec3f& v_world_space) const
 {
     return worldToTangent * v_world_space;
 }

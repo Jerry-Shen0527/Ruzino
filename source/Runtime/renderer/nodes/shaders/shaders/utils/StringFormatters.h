@@ -26,14 +26,13 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include <format>
 #include <filesystem>
+#include <format>
 #include <optional>
 #include <string>
 
 template<>
-struct std::formatter<std::filesystem::path> : formatter<std::string>
-{
+struct std::formatter<std::filesystem::path> : formatter<std::string> {
     template<typename FormatContext>
     auto format(const std::filesystem::path& p, FormatContext& ctx)
     {
@@ -42,13 +41,11 @@ struct std::formatter<std::filesystem::path> : formatter<std::string>
 };
 
 template<typename T>
-struct std::formatter<std::optional<T>> : formatter<T>
-{
+struct std::formatter<std::optional<T>> : formatter<T> {
     template<typename FormatContext>
     auto format(const std::optional<T>& opt, FormatContext& ctx)
     {
-        if (opt)
-        {
+        if (opt) {
             formatter<T>::format(*opt, ctx);
             return ctx.out();
         }

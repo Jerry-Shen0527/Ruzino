@@ -44,7 +44,9 @@ using namespace pxr;
 ///
 class Hd_RUZINO_RenderParam final : public HdRenderParam {
    public:
-    Hd_RUZINO_RenderParam(HdRenderThread *renderThread, std::atomic<int> *sceneVersion)
+    Hd_RUZINO_RenderParam(
+        HdRenderThread* renderThread,
+        std::atomic<int>* sceneVersion)
         : _renderThread(renderThread),
           _sceneVersion(sceneVersion)
     {
@@ -64,8 +66,8 @@ class Hd_RUZINO_RenderParam final : public HdRenderParam {
     }
 
     friend class Hd_RUZINO_Renderer;
-    pxr::TfHashMap<SdfPath, Hd_RUZINO_Material *, TfHash> *materials = nullptr;
-    pxr::VtArray<Hd_RUZINO_Light *> *lights = nullptr;
+    pxr::TfHashMap<SdfPath, Hd_RUZINO_Material*, TfHash>* materials = nullptr;
+    pxr::VtArray<Hd_RUZINO_Light*>* lights = nullptr;
 
    private:
     /// A handle to the top-level embree scene.
@@ -73,9 +75,9 @@ class Hd_RUZINO_RenderParam final : public HdRenderParam {
     /// A handle to the top-level embree device (library handle).
     RTCDevice _device = nullptr;
     /// A handle to the global render thread.
-    HdRenderThread *_renderThread = nullptr;
+    HdRenderThread* _renderThread = nullptr;
     /// A version counter for edits to _scene.
-    std::atomic<int> *_sceneVersion;
+    std::atomic<int>* _sceneVersion;
 };
 
 RUZINO_NAMESPACE_CLOSE_SCOPE

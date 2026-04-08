@@ -26,7 +26,7 @@ NODE_EXECUTION_FUNCTION(get_polyscope_vertices)
     if (polyscope::hasStructure("Surface Mesh", structure_name)) {
         auto structure =
             polyscope::getStructure("Surface Mesh", structure_name);
-        auto mesh = dynamic_cast<polyscope::SurfaceMesh *>(structure);
+        auto mesh = dynamic_cast<polyscope::SurfaceMesh*>(structure);
         auto vertices = mesh->vertexPositions.data;
         pxr::VtVec3fArray v;
         for (auto vertex : vertices) {
@@ -37,7 +37,7 @@ NODE_EXECUTION_FUNCTION(get_polyscope_vertices)
     // If the input structure is a point cloud
     else if (polyscope::hasStructure("Point Cloud", structure_name)) {
         auto structure = polyscope::getStructure("Point Cloud", structure_name);
-        auto point_cloud = dynamic_cast<polyscope::PointCloud *>(structure);
+        auto point_cloud = dynamic_cast<polyscope::PointCloud*>(structure);
         auto points = point_cloud->points.data;
         pxr::VtVec3fArray p;
         for (auto point : points) {
@@ -49,7 +49,7 @@ NODE_EXECUTION_FUNCTION(get_polyscope_vertices)
     else if (polyscope::hasStructure("Curve Network", structure_name)) {
         auto structure =
             polyscope::getStructure("Curve Network", structure_name);
-        auto curve_network = dynamic_cast<polyscope::CurveNetwork *>(structure);
+        auto curve_network = dynamic_cast<polyscope::CurveNetwork*>(structure);
         auto nodes = curve_network->nodePositions.data;
         pxr::VtVec3fArray n;
         for (auto node : nodes) {

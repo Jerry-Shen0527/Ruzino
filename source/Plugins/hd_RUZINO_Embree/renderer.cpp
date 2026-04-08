@@ -3,11 +3,11 @@
 #include "embree4/rtcore_scene.h"
 #include "integrators/ao.h"
 #include "integrators/direct.h"
+#include "integrators/path.h"
 #include "pxr/imaging/hd/renderBuffer.h"
 #include "pxr/imaging/hd/tokens.h"
 #include "renderBuffer.h"
 #include "renderParam.h"
-#include "integrators/path.h"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
@@ -38,7 +38,8 @@ void Hd_RUZINO_Renderer::Render(HdRenderThread* renderThread)
         // We aren't going to render anything. Just mark all AOVs as converged
         // so that we will stop rendering.
         for (size_t i = 0; i < _aovBindings.size(); ++i) {
-            auto rb = static_cast<Hd_RUZINO_RenderBuffer*>(_aovBindings[i].renderBuffer);
+            auto rb = static_cast<Hd_RUZINO_RenderBuffer*>(
+                _aovBindings[i].renderBuffer);
             rb->SetConverged(true);
         }
         // XXX:validation
@@ -46,11 +47,15 @@ void Hd_RUZINO_Renderer::Render(HdRenderThread* renderThread)
         return;
     }
 
-//    auto integrator = std::make_shared<AOIntegrator>(
-//        camera_, static_cast<Hd_RUZINO_RenderBuffer*>(_aovBindings[0].renderBuffer), renderThread);
+    //    auto integrator = std::make_shared<AOIntegrator>(
+    //        camera_,
+    //        static_cast<Hd_RUZINO_RenderBuffer*>(_aovBindings[0].renderBuffer),
+    //        renderThread);
 
-     auto integrator = std::make_shared<DirectLightIntegrator>(
-        camera_, static_cast<Hd_RUZINO_RenderBuffer*>(_aovBindings[0].renderBuffer), renderThread);
+    auto integrator = std::make_shared<DirectLightIntegrator>(
+        camera_,
+        static_cast<Hd_RUZINO_RenderBuffer*>(_aovBindings[0].renderBuffer),
+        renderThread);
 
     integrator->rtc_scene = _rtcScene;
     integrator->render_param = render_param;
@@ -69,7 +74,8 @@ void Hd_RUZINO_Renderer::Clear()
             continue;
         }
 
-        auto rb = static_cast<Hd_RUZINO_RenderBuffer*>(_aovBindings[i].renderBuffer);
+        auto rb =
+            static_cast<Hd_RUZINO_RenderBuffer*>(_aovBindings[i].renderBuffer);
 
         rb->Map();
         if (_aovNames[i].name == HdAovTokens->color) {
@@ -109,42 +115,60 @@ GfVec4f Hd_RUZINO_Renderer::_GetClearColor(const VtValue& clearValue)
 
     switch (type.type) {
         case HdTypeFloatVec3: {
-            GfVec3f f = *(static_cast<const GfVec3f*>(HdGetValueData(clearValue)));
+            GfVec3f f =
+                *(static_cast<const GfVec3f*>(HdGetValueData(clearValue)));
             return GfVec4f(f[0], f[1], f[2], 1.0f);
         }
         case HdTypeFloatVec4: {
-            GfVec4f f = *(static_cast<const GfVec4f*>(HdGetValueData(clearValue)));
+            GfVec4f f =
+                *(static_cast<const GfVec4f*>(HdGetValueData(clearValue)));
             return f;
         }
         case HdTypeDoubleVec3: {
-            GfVec3d f = *(static_cast<const GfVec3d*>(HdGetValueData(clearValue)));
+            GfVec3d f =
+                *(static_cast<const GfVec3d*>(HdGetValueData(clearValue)));
             return GfVec4f(f[0], f[1], f[2], 1.0f);
         }
         case HdTypeDoubleVec4: {
-            GfVec4d f = *(static_cast<const GfVec4d*>(HdGetValueData(clearValue)));
+            GfVec4d f =
+                *(static_cast<const GfVec4d*>(HdGetValueData(clearValue)));
             return GfVec4f(f);
         }
         default: return GfVec4f(0.0f, 0.0f, 0.0f, 1.0f);
     }
 }
 
-void Hd_RUZINO_Renderer::HandleRtcError(void* userPtr, RTCError code, const char* msg)
+void Hd_RUZINO_Renderer::HandleRtcError(
+    void* userPtr,
+    RTCError code,
+    const char* msg)
 {
     // Forward RTC error messages through to hydra logging.
     switch (code) {
-        case RTC_ERROR_UNKNOWN: TF_CODING_ERROR("Embree unknown error: %s", msg); break;
-        case RTC_ERROR_INVALID_ARGUMENT: TF_CODING_ERROR("Embree invalid argument: %s", msg); break;
+        case RTC_ERROR_UNKNOWN:
+            TF_CODING_ERROR("Embree unknown error: %s", msg);
+            break;
+        case RTC_ERROR_INVALID_ARGUMENT:
+            TF_CODING_ERROR("Embree invalid argument: %s", msg);
+            break;
         case RTC_ERROR_INVALID_OPERATION:
             TF_CODING_ERROR("Embree invalid operation: %s", msg);
             break;
-        case RTC_ERROR_OUT_OF_MEMORY: TF_CODING_ERROR("Embree out of memory: %s", msg); break;
-        case RTC_ERROR_UNSUPPORTED_CPU: TF_CODING_ERROR("Embree unsupported CPU: %s", msg); break;
-        case RTC_ERROR_CANCELLED: TF_CODING_ERROR("Embree cancelled: %s", msg); break;
+        case RTC_ERROR_OUT_OF_MEMORY:
+            TF_CODING_ERROR("Embree out of memory: %s", msg);
+            break;
+        case RTC_ERROR_UNSUPPORTED_CPU:
+            TF_CODING_ERROR("Embree unsupported CPU: %s", msg);
+            break;
+        case RTC_ERROR_CANCELLED:
+            TF_CODING_ERROR("Embree cancelled: %s", msg);
+            break;
         default: TF_CODING_ERROR("Embree invalid error code: %s", msg); break;
     }
 }
 
-void Hd_RUZINO_Renderer::SetAovBindings(const HdRenderPassAovBindingVector& aovBindings)
+void Hd_RUZINO_Renderer::SetAovBindings(
+    const HdRenderPassAovBindingVector& aovBindings)
 {
     _aovBindings = aovBindings;
     _aovNames.resize(_aovBindings.size());
@@ -159,14 +183,17 @@ void Hd_RUZINO_Renderer::SetAovBindings(const HdRenderPassAovBindingVector& aovB
 void Hd_RUZINO_Renderer::MarkAovBuffersUnconverged()
 {
     for (size_t i = 0; i < _aovBindings.size(); ++i) {
-        auto rb = static_cast<Hd_RUZINO_RenderBuffer*>(_aovBindings[i].renderBuffer);
+        auto rb =
+            static_cast<Hd_RUZINO_RenderBuffer*>(_aovBindings[i].renderBuffer);
         rb->SetConverged(false);
     }
 }
 
-void Hd_RUZINO_Renderer::renderTimeUpdateCamera(const HdRenderPassStateSharedPtr& renderPassState)
+void Hd_RUZINO_Renderer::renderTimeUpdateCamera(
+    const HdRenderPassStateSharedPtr& renderPassState)
 {
-    camera_ = static_cast<const Hd_RUZINO_Camera*>(renderPassState->GetCamera());
+    camera_ =
+        static_cast<const Hd_RUZINO_Camera*>(renderPassState->GetCamera());
     camera_->update(renderPassState);
 }
 
@@ -183,17 +210,22 @@ bool Hd_RUZINO_Renderer::_ValidateAovBindings()
         // By the time the attachment gets here, there should be a bound
         // output buffer.
         if (_aovBindings[i].renderBuffer == nullptr) {
-            TF_WARN("Aov '%s' doesn't have any renderbuffer bound", _aovNames[i].name.GetText());
+            TF_WARN(
+                "Aov '%s' doesn't have any renderbuffer bound",
+                _aovNames[i].name.GetText());
             _aovBindingsValid = false;
             continue;
         }
 
         if (_aovNames[i].name != HdAovTokens->color &&
             _aovNames[i].name != HdAovTokens->cameraDepth &&
-            _aovNames[i].name != HdAovTokens->depth && _aovNames[i].name != HdAovTokens->primId &&
+            _aovNames[i].name != HdAovTokens->depth &&
+            _aovNames[i].name != HdAovTokens->primId &&
             _aovNames[i].name != HdAovTokens->instanceId &&
-            _aovNames[i].name != HdAovTokens->elementId && _aovNames[i].name != HdAovTokens->Neye &&
-            _aovNames[i].name != HdAovTokens->normal && !_aovNames[i].isPrimvar) {
+            _aovNames[i].name != HdAovTokens->elementId &&
+            _aovNames[i].name != HdAovTokens->Neye &&
+            _aovNames[i].name != HdAovTokens->normal &&
+            !_aovNames[i].isPrimvar) {
             TF_WARN(
                 "Unsupported attachment with Aov '%s' won't be rendered to",
                 _aovNames[i].name.GetText());
@@ -225,7 +257,8 @@ bool Hd_RUZINO_Renderer::_ValidateAovBindings()
         }
 
         // Normal is only supported for vec3 attachments of float.
-        if ((_aovNames[i].name == HdAovTokens->Neye || _aovNames[i].name == HdAovTokens->normal) &&
+        if ((_aovNames[i].name == HdAovTokens->Neye ||
+             _aovNames[i].name == HdAovTokens->normal) &&
             format != HdFormatFloat32Vec3) {
             TF_WARN(
                 "Aov '%s' has unsupported format '%s'",
@@ -267,7 +300,8 @@ bool Hd_RUZINO_Renderer::_ValidateAovBindings()
         // make sure the clear value is reasonable for the format of the
         // attached buffer.
         if (!_aovBindings[i].clearValue.IsEmpty()) {
-            HdTupleType clearType = HdGetValueTupleType(_aovBindings[i].clearValue);
+            HdTupleType clearType =
+                HdGetValueTupleType(_aovBindings[i].clearValue);
 
             // array-valued clear types aren't supported.
             if (clearType.count != 1) {
@@ -279,8 +313,10 @@ bool Hd_RUZINO_Renderer::_ValidateAovBindings()
             }
 
             // color only supports float/double vec3/4
-            if (_aovNames[i].name == HdAovTokens->color && clearType.type != HdTypeFloatVec3 &&
-                clearType.type != HdTypeFloatVec4 && clearType.type != HdTypeDoubleVec3 &&
+            if (_aovNames[i].name == HdAovTokens->color &&
+                clearType.type != HdTypeFloatVec3 &&
+                clearType.type != HdTypeFloatVec4 &&
+                clearType.type != HdTypeDoubleVec3 &&
                 clearType.type != HdTypeDoubleVec4) {
                 TF_WARN(
                     "Aov '%s' clear value type '%s' isn't compatible",
@@ -293,7 +329,8 @@ bool Hd_RUZINO_Renderer::_ValidateAovBindings()
             // with float3.
             if ((format == HdFormatFloat32 && clearType.type != HdTypeFloat) ||
                 (format == HdFormatInt32 && clearType.type != HdTypeInt32) ||
-                (format == HdFormatFloat32Vec3 && clearType.type != HdTypeFloatVec3)) {
+                (format == HdFormatFloat32Vec3 &&
+                 clearType.type != HdTypeFloatVec3)) {
                 TF_WARN(
                     "Aov '%s' clear value type '%s' isn't compatible with"
                     " format %s",

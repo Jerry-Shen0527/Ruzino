@@ -2,10 +2,11 @@
 
 #include "../source/internal/memory/DeviceMemoryPool.hpp"
 // SceneTypes
+#include <spdlog/spdlog.h>
+
 #include <random>
 
 #include "../nodes/shaders/shaders/Scene/SceneTypes.slang"
-#include <spdlog/spdlog.h>
 
 using namespace Ruzino;
 
@@ -115,8 +116,12 @@ TEST_F(MemoryPoolTest, multi_threaded_allocation)
 
     std::vector<std::thread> threads;
     for (int i = 0; i < 500; ++i) {
-        threads.push_back(std::thread(
-            [this, &rng_engine, &float_rng, &int_handles, &float_handles]() {
+        threads.push_back(
+            std::thread([this,
+                         &rng_engine,
+                         &float_rng,
+                         &int_handles,
+                         &float_handles]() {
                 if (float_rng(rng_engine) < 0.5) {
                     auto handle = pool.allocate(10);
                     std::vector<int> data(10, 42);

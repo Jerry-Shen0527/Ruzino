@@ -27,22 +27,19 @@
  **************************************************************************/
 #pragma once
 
-#include "Core/Macros.h"
-
 #include <filesystem>
 
-namespace Ruzino
-{
+#include "Core/Macros.h"
+
+namespace Ruzino {
 
 /**
  * Helper class abstracting lock files.
  * Uses LockFileEx() on Windows systems and flock() on POSIX systems.
  */
-class HD_RUZINO_API LockFile
-{
-public:
-    enum class LockType
-    {
+class HD_RUZINO_API LockFile {
+   public:
+    enum class LockType {
         Exclusive,
         Shared,
     };
@@ -50,7 +47,8 @@ public:
     LockFile() = default;
 
     /**
-     * Construct and open the loc file. This will create the file if it doesn't exist yet.
+     * Construct and open the loc file. This will create the file if it doesn't
+     * exist yet.
      * @note Use isOpen() to check if the file was successfully opened.
      * @param path File path.
      */
@@ -69,7 +67,10 @@ public:
     void close();
 
     /// Returns true if the lock file is open.
-    bool isOpen() const { return mIsOpen; }
+    bool isOpen() const
+    {
+        return mIsOpen;
+    }
 
     /**
      * Acquire the lock in non-blocking mode.
@@ -91,7 +92,7 @@ public:
      */
     bool unlock();
 
-private:
+   private:
     LockFile(const LockFile&) = delete;
     LockFile(LockFile&) = delete;
     LockFile& operator=(const LockFile&) = delete;
@@ -109,4 +110,4 @@ private:
     bool mIsOpen = false;
 };
 
-} // namespace Ruzino
+}  // namespace Ruzino

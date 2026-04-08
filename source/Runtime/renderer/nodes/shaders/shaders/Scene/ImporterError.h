@@ -26,47 +26,57 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Core/Macros.h"
-#include "Core/Error.h"
-#include "Core/Platform/OS.h"
 #include <filesystem>
 #include <string>
 
-/// ImporterError split from the Importer.h file to allow using it without bringing in pybind11 types (via SceneBuilder)
+#include "Core/Error.h"
+#include "Core/Macros.h"
+#include "Core/Platform/OS.h"
 
-namespace Ruzino
-{
-    /** Exception thrown during scene import.
-        Holds the path of the imported asset and a description of the exception.
-    */
-    class HD_RUZINO_API ImporterError : public Exception
+/// ImporterError split from the Importer.h file to allow using it without
+/// bringing in pybind11 types (via SceneBuilder)
+
+namespace Ruzino {
+/** Exception thrown during scene import.
+    Holds the path of the imported asset and a description of the exception.
+*/
+class HD_RUZINO_API ImporterError : public Exception {
+   public:
+    ImporterError() noexcept
     {
-    public:
-        ImporterError() noexcept
-        {}
+    }
 
-        ImporterError(const std::filesystem::path& path, std::string_view what)
-            : Exception(what)
-            , mpPath(std::make_shared<std::filesystem::path>(path))
-        {}
+    ImporterError(const std::filesystem::path& path, std::string_view what)
+        : Exception(what),
+          mpPath(std::make_shared<std::filesystem::path>(path))
+    {
+    }
 
-        template<typename... Args>
-        explicit ImporterError(const std::filesystem::path& path, std::format_string<Args...> format, Args&&... args)
-            : ImporterError(path, std::format(format, std::forward<Args>(args)...))
-        {}
+    template<typename... Args>
+    explicit ImporterError(
+        const std::filesystem::path& path,
+        std::format_string<Args...> format,
+        Args&&... args)
+        : ImporterError(path, std::format(format, std::forward<Args>(args)...))
+    {
+    }
 
-        virtual ~ImporterError() override
-        {}
+    virtual ~ImporterError() override
+    {
+    }
 
-        ImporterError(const ImporterError& other) noexcept
-        {
-            mpWhat = other.mpWhat;
-            mpPath = other.mpPath;
-        }
+    ImporterError(const ImporterError& other) noexcept
+    {
+        mpWhat = other.mpWhat;
+        mpPath = other.mpPath;
+    }
 
-        const std::filesystem::path& path() const noexcept { return *mpPath; }
+    const std::filesystem::path& path() const noexcept
+    {
+        return *mpPath;
+    }
 
-    private:
-        std::shared_ptr<std::filesystem::path> mpPath;
-    };
-}
+   private:
+    std::shared_ptr<std::filesystem::path> mpPath;
+};
+}  // namespace Ruzino

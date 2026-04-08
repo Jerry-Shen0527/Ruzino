@@ -1,10 +1,12 @@
+#include <spdlog/spdlog.h>
+#include <time.h>
+
+#include <Eigen/Sparse>
+#include <cmath>
+
 #include "GCore/Components/MeshComponent.h"
 #include "GCore/util_openmesh_bind.h"
 #include "geom_node_base.h"
-#include <cmath>
-#include <time.h>
-#include <Eigen/Sparse>
-#include <spdlog/spdlog.h>
 
 NODE_DEF_OPEN_SCOPE
 NODE_DECLARATION_FUNCTION(lscm)
@@ -28,7 +30,7 @@ NODE_EXECUTION_FUNCTION(lscm)
 
     auto halfedge_mesh = operand_to_openmesh(&input);
 
-    //Initialization
+    // Initialization
     clock_t start_time = clock();
     int n_faces = halfedge_mesh->n_faces();
     int n_vertices = halfedge_mesh->n_vertices();
@@ -46,9 +48,12 @@ NODE_EXECUTION_FUNCTION(lscm)
             vertex_idx[i++] = vertex_handle.idx();
 
         for (int i = 0; i < 3; i++)
-            edge_length[i] = (halfedge_mesh->point(halfedge_mesh->vertex_handle(vertex_idx[(i + 1) % 3])) -
-                              halfedge_mesh->point(halfedge_mesh->vertex_handle(vertex_idx[(i + 2) % 3])))
-                              .length();
+            edge_length[i] =
+                (halfedge_mesh->point(
+                     halfedge_mesh->vertex_handle(vertex_idx[(i + 1) % 3])) -
+                 halfedge_mesh->point(
+                     halfedge_mesh->vertex_handle(vertex_idx[(i + 2) % 3])))
+                    .length();
 
         // Calculate the area of the face
         double tmp = (edge_length[0] + edge_length[1] + edge_length[2]) / 2;
@@ -58,11 +63,15 @@ NODE_EXECUTION_FUNCTION(lscm)
         area[face_idx] = sqrt(area[face_idx]);
 
         // Record the edges of the face
-        // Their indexes are related to the point indexes opposite to them 
+        // Their indexes are related to the point indexes opposite to them
         edges[face_idx].resize(3);
-        double cos_angle = (edge_length[1] * edge_length[1] + edge_length[2] * edge_length[2] - edge_length[0] * edge_length[0]) / (2 * edge_length[1] * edge_length[2]);
+        double cos_angle =
+            (edge_length[1] * edge_length[1] + edge_length[2] * edge_length[2] -
+             edge_length[0] * edge_length[0]) /
+            (2 * edge_length[1] * edge_length[2]);
         double sin_angle = sqrt(1 - cos_angle * cos_angle);
-        edges[face_idx][1] << -edge_length[1] * cos_angle, -edge_length[1] * sin_angle;
+        edges[face_idx][1] << -edge_length[1] * cos_angle,
+            -edge_length[1] * sin_angle;
         edges[face_idx][2] << edge_length[2], 0;
         edges[face_idx][0] = -edges[face_idx][1] - edges[face_idx][2];
     }
@@ -75,7 +84,8 @@ NODE_EXECUTION_FUNCTION(lscm)
         if (halfedge_handle.is_boundary()) {
             if (idx1 == -1)
                 idx1 = halfedge_handle.from().idx();
-            const auto& v1 = halfedge_mesh->point(halfedge_mesh->vertex_handle(idx1));
+            const auto& v1 =
+                halfedge_mesh->point(halfedge_mesh->vertex_handle(idx1));
             const auto& v2 = halfedge_mesh->point(halfedge_handle.from());
             if ((v1 - v2).length() > max_dist) {
                 max_dist = (v1 - v2).length();
@@ -140,7 +150,8 @@ NODE_EXECUTION_FUNCTION(lscm)
                 A.coeffRef(face_idx, mat_idx) = dx;
                 A.coeffRef(face_idx + n_faces, mat_idx) = dy;
                 A.coeffRef(face_idx, mat_idx + n_vertices - fixed) = -dy;
-                A.coeffRef(face_idx + n_faces, mat_idx + n_vertices - fixed) = dx;
+                A.coeffRef(face_idx + n_faces, mat_idx + n_vertices - fixed) =
+                    dx;
             }
             i++;
         }
@@ -157,7 +168,8 @@ NODE_EXECUTION_FUNCTION(lscm)
         int mat_idx = ori2mat[idx];
         if (mat_idx != -1) {
             halfedge_mesh->point(vertex_handle)[0] = u(mat_idx);
-            halfedge_mesh->point(vertex_handle)[1] = u(mat_idx + n_vertices - fixed);
+            halfedge_mesh->point(vertex_handle)[1] =
+                u(mat_idx + n_vertices - fixed);
         }
         halfedge_mesh->point(vertex_handle)[2] = 0;
     }

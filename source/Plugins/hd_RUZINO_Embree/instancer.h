@@ -24,14 +24,11 @@
 #ifndef PXR_IMAGING_PLUGIN_HD_EMBREE_INSTANCER_H
 #define PXR_IMAGING_PLUGIN_HD_EMBREE_INSTANCER_H
 #include "api.h"
-
-#include "pxr/pxr.h"
-
-#include "pxr/imaging/hd/instancer.h"
-#include "pxr/imaging/hd/vtBufferSource.h"
-
 #include "pxr/base/tf/hashmap.h"
 #include "pxr/base/tf/token.h"
+#include "pxr/imaging/hd/instancer.h"
+#include "pxr/imaging/hd/vtBufferSource.h"
+#include "pxr/pxr.h"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
@@ -49,9 +46,8 @@ using namespace pxr;
 /// cartesian product of the transform arrays at each nesting level, to
 /// create a flattened transform array.
 ///
-class Hd_RUZINO_Instancer : public HdInstancer
-{
-public:
+class Hd_RUZINO_Instancer : public HdInstancer {
+   public:
     /// Constructor.
     ///   \param delegate The scene delegate backing this instancer's data.
     ///   \param id The unique id of this instancer.
@@ -79,7 +75,7 @@ public:
         HdRenderParam* renderParam,
         HdDirtyBits* dirtyBits) override;
 
-private:
+   private:
     // Updates the cached primvars in _primvarMap based on scene delegate
     // data.  This is a helper function for Sync().
     void _SyncPrimvars(HdSceneDelegate* delegate, HdDirtyBits dirtyBits);
@@ -87,11 +83,8 @@ private:
     // Map of the latest primvar data for this instancer, keyed by
     // primvar name. Primvar values are VtValue, an any-type; they are
     // interpreted at consumption time (here, in ComputeInstanceTransforms).
-    TfHashMap<TfToken,
-              HdVtBufferSource*,
-              TfToken::HashFunctor> _primvarMap;
+    TfHashMap<TfToken, HdVtBufferSource*, TfToken::HashFunctor> _primvarMap;
 };
-
 
 RUZINO_NAMESPACE_CLOSE_SCOPE
 

@@ -22,6 +22,7 @@
 #endif
 
 #include <algorithm>
+#include <cstring>
 #include <filesystem>
 #include <future>
 #include <map>

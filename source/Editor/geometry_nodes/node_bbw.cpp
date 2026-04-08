@@ -1,8 +1,10 @@
-#include <Eigen/Eigen>
-#include "nodes/core/def/node_def.hpp"
+#include <igl/barycentric_coordinates.h>
 #include <igl/biharmonic_coordinates.h>
 #include <igl/triangle/triangulate.h>
-#include <igl/barycentric_coordinates.h>
+
+#include <Eigen/Eigen>
+
+#include "nodes/core/def/node_def.hpp"
 
 std::function<Eigen::MatrixXd(const Eigen::MatrixXd&)> generate_weight_function(
     const Eigen::MatrixXd& C,

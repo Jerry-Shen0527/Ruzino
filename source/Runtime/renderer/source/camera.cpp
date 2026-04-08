@@ -1,12 +1,12 @@
 #include "camera.h"
-#include "pxr/imaging/hd/camera.h"
 
 #include "config.h"
-#include "renderDelegate.h"
 #include "pxr/base/gf/matrix4f.h"
 #include "pxr/base/gf/rect2i.h"
 #include "pxr/imaging/cameraUtil/framing.h"
+#include "pxr/imaging/hd/camera.h"
 #include "pxr/imaging/hd/renderPassState.h"
+#include "renderDelegate.h"
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
 void Hd_RUZINO_Camera::Sync(
@@ -18,7 +18,7 @@ void Hd_RUZINO_Camera::Sync(
 
     projMatrix = GfMatrix4f(this->ComputeProjectionMatrix());
     inverseProjMatrix = projMatrix.GetInverse();
-     
+
     inverseViewMatrix = GfMatrix4f(GetTransform());
     viewMatrix = inverseViewMatrix.GetInverse();
 }

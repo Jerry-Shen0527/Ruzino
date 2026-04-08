@@ -27,47 +27,44 @@
  **************************************************************************/
 #pragma once
 
-#include "Core/Macros.h"
-#include "Core/Error.h"
-
 #include <cstdint>
 
-namespace Ruzino
-{
+#include "Core/Error.h"
+#include "Core/Macros.h"
 
-namespace detail
-{
-template<typename TUInt>
-struct FNVHashConstants
-{};
+namespace Ruzino {
 
-template<>
-struct FNVHashConstants<uint64_t>
-{
-    static constexpr uint64_t kOffsetBasis = UINT64_C(4695981039346656037);
-    static constexpr uint64_t kPrime = UINT64_C(1099511628211);
-};
+namespace detail {
+    template<typename TUInt>
+    struct FNVHashConstants { };
 
-template<>
-struct FNVHashConstants<uint32_t>
-{
-    static constexpr uint32_t kOffsetBasis = UINT32_C(2166136261);
-    static constexpr uint32_t kPrime = UINT32_C(16777619);
-};
-} // namespace detail
+    template<>
+    struct FNVHashConstants<uint64_t> {
+        static constexpr uint64_t kOffsetBasis = UINT64_C(4695981039346656037);
+        static constexpr uint64_t kPrime = UINT64_C(1099511628211);
+    };
+
+    template<>
+    struct FNVHashConstants<uint32_t> {
+        static constexpr uint32_t kOffsetBasis = UINT32_C(2166136261);
+        static constexpr uint32_t kPrime = UINT32_C(16777619);
+    };
+}  // namespace detail
 
 /**
  * Accumulates Fowler-Noll-Vo hash for inserted data.
- * To hash multiple items, create one Hash and insert all the items into it if at all possible.
- * This is superior to hashing the items individually and combining the hashes.
+ * To hash multiple items, create one Hash and insert all the items into it if
+ * at all possible. This is superior to hashing the items individually and
+ * combining the hashes.
  *
- * @tparam TUInt - type of the storage for the hash, either 32 or 64 unsigned integer
+ * @tparam TUInt - type of the storage for the hash, either 32 or 64 unsigned
+ * integer
  */
 template<typename TUInt>
-class FNVHash
-{
-public:
-    static constexpr TUInt kOffsetBasis = detail::FNVHashConstants<TUInt>::kOffsetBasis;
+class FNVHash {
+   public:
+    static constexpr TUInt kOffsetBasis =
+        detail::FNVHashConstants<TUInt>::kOffsetBasis;
     static constexpr TUInt kPrime = detail::FNVHashConstants<TUInt>::kPrime;
 
     /**
@@ -80,8 +77,7 @@ public:
         FALCOR_ASSERT(begin <= end);
         const uint8_t* srcData8 = reinterpret_cast<const uint8_t*>(begin);
 
-        for (; srcData8 != end; ++srcData8)
-        {
+        for (; srcData8 != end; ++srcData8) {
             mHash *= kPrime;
             mHash ^= *srcData8;
         }
@@ -104,21 +100,42 @@ public:
         insert(&data, sizeof(T));
     }
 
-    TUInt get() const { return mHash; }
+    TUInt get() const
+    {
+        return mHash;
+    }
 
-    constexpr bool operator==(const FNVHash& rhs) { return get() == rhs.get(); }
+    constexpr bool operator==(const FNVHash& rhs)
+    {
+        return get() == rhs.get();
+    }
 
-    constexpr bool operator!=(const FNVHash& rhs) { return get() != rhs.get(); }
+    constexpr bool operator!=(const FNVHash& rhs)
+    {
+        return get() != rhs.get();
+    }
 
-    constexpr bool operator<=(const FNVHash& rhs) { return get() <= rhs.get(); }
+    constexpr bool operator<=(const FNVHash& rhs)
+    {
+        return get() <= rhs.get();
+    }
 
-    constexpr bool operator>=(const FNVHash& rhs) { return get() >= rhs.get(); }
+    constexpr bool operator>=(const FNVHash& rhs)
+    {
+        return get() >= rhs.get();
+    }
 
-    constexpr bool operator<(const FNVHash& rhs) { return get() < rhs.get(); }
+    constexpr bool operator<(const FNVHash& rhs)
+    {
+        return get() < rhs.get();
+    }
 
-    constexpr bool operator>(const FNVHash& rhs) { return get() > rhs.get(); }
+    constexpr bool operator>(const FNVHash& rhs)
+    {
+        return get() > rhs.get();
+    }
 
-private:
+   private:
     TUInt mHash = kOffsetBasis;
 };
 
@@ -139,4 +156,4 @@ inline uint32_t fnvHashArray32(const void* data, size_t size)
     return hash.get();
 }
 
-} // namespace Ruzino
+}  // namespace Ruzino

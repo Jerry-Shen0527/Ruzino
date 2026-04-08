@@ -85,14 +85,14 @@
 #define FALCOR_D3D12_AGILITY_SDK_PATH    ".\\D3D12\\"
 // To enable the D3D12 Agility SDK, this macro needs to be added to the main
 // source file of the executable.
-#define FALCOR_EXPORT_D3D12_AGILITY_SDK                               \
-    extern "C" {                                                      \
+#define FALCOR_EXPORT_D3D12_AGILITY_SDK                              \
+    extern "C" {                                                     \
     HD_RUZINO_API_EXPORT extern const unsigned int D3D12SDKVersion = \
-        FALCOR_D3D12_AGILITY_SDK_VERSION;                             \
-    }                                                                 \
-    extern "C" {                                                      \
+        FALCOR_D3D12_AGILITY_SDK_VERSION;                            \
+    }                                                                \
+    extern "C" {                                                     \
     HD_RUZINO_API_EXPORT extern const char* D3D12SDKPath =           \
-        FALCOR_D3D12_AGILITY_SDK_PATH;                                \
+        FALCOR_D3D12_AGILITY_SDK_PATH;                               \
     }
 #else
 #define FALCOR_EXPORT_D3D12_AGILITY_SDK

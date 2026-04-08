@@ -2,7 +2,7 @@
 
 #ifdef _MSC_VER
 #pragma warning(push)
-#pragma warning(disable: 4190) // C linkage with std::string
+#pragma warning(disable : 4190)  // C linkage with std::string
 #endif
 
 NODE_DEF_OPEN_SCOPE

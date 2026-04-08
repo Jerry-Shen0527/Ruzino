@@ -30,13 +30,10 @@ RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
 // Hd_RUZINO_RTCBufferAllocator
 
-int
-Hd_RUZINO_RTCBufferAllocator::Allocate()
+int Hd_RUZINO_RTCBufferAllocator::Allocate()
 {
-    for (size_t i = 0; i < _bitset.size(); ++i)
-    {
-        if (!_bitset.test(i))
-        {
+    for (size_t i = 0; i < _bitset.size(); ++i) {
+        if (!_bitset.test(i)) {
             _bitset.set(i);
             return static_cast<int>(i);
         }
@@ -44,25 +41,20 @@ Hd_RUZINO_RTCBufferAllocator::Allocate()
     return -1;
 }
 
-void
-Hd_RUZINO_RTCBufferAllocator::Free(int bufferIndex)
+void Hd_RUZINO_RTCBufferAllocator::Free(int bufferIndex)
 {
     _bitset.reset(bufferIndex);
 }
 
-
-unsigned int
-Hd_RUZINO_RTCBufferAllocator::NumBuffers()
+unsigned int Hd_RUZINO_RTCBufferAllocator::NumBuffers()
 {
     // Technically this may overcount, since a buffer may have been freed
     // but we don't move back to fill the slot, however it will be filled
     // before more are allocated. Now that there are possible a "large"
     // number of buffers it might want to be handled differently in the
     // future.
-    for (int i = _bitset.size() - 1; i >= 0; i--)
-    {
-        if (_bitset.test(i))
-        {
+    for (int i = _bitset.size() - 1; i >= 0; i--) {
+        if (_bitset.test(i)) {
             return i + 1;
         }
     }
@@ -71,8 +63,7 @@ Hd_RUZINO_RTCBufferAllocator::NumBuffers()
 
 // Hd_RUZINO_ConstantSampler
 
-bool
-Hd_RUZINO_ConstantSampler::Sample(
+bool Hd_RUZINO_ConstantSampler::Sample(
     unsigned int element,
     float u,
     float v,
@@ -84,20 +75,17 @@ Hd_RUZINO_ConstantSampler::Sample(
 
 // Hd_RUZINO_UniformSampler
 
-bool
-Hd_RUZINO_UniformSampler::Sample(
+bool Hd_RUZINO_UniformSampler::Sample(
     unsigned int element,
     float u,
     float v,
     void* value,
     HdTupleType dataType) const
 {
-    if (_primitiveParams.empty())
-    {
+    if (_primitiveParams.empty()) {
         return _sampler.Sample(element, value, dataType);
     }
-    if (element >= _primitiveParams.size())
-    {
+    if (element >= _primitiveParams.size()) {
         return false;
     }
     return _sampler.Sample(
@@ -109,23 +97,20 @@ Hd_RUZINO_UniformSampler::Sample(
 
 // Hd_RUZINO_TriangleVertexSampler
 
-bool
-Hd_RUZINO_TriangleVertexSampler::Sample(
+bool Hd_RUZINO_TriangleVertexSampler::Sample(
     unsigned int element,
     float u,
     float v,
     void* value,
     HdTupleType dataType) const
 {
-    if (element >= _indices.size())
-    {
+    if (element >= _indices.size()) {
         return false;
     }
     Hd_RUZINO_TypeHelper::PrimvarTypeContainer corners[3];
     if (!_sampler.Sample(_indices[element][0], &corners[0], dataType) ||
         !_sampler.Sample(_indices[element][1], &corners[1], dataType) ||
-        !_sampler.Sample(_indices[element][2], &corners[2], dataType))
-    {
+        !_sampler.Sample(_indices[element][2], &corners[2], dataType)) {
         return false;
     }
     void* samples[3] = { static_cast<void*>(&corners[0]),
@@ -139,8 +124,7 @@ Hd_RUZINO_TriangleVertexSampler::Sample(
 
 // Hd_RUZINO_TriangleFaceVaryingSampler
 
-bool
-Hd_RUZINO_TriangleFaceVaryingSampler::Sample(
+bool Hd_RUZINO_TriangleFaceVaryingSampler::Sample(
     unsigned int element,
     float u,
     float v,
@@ -150,8 +134,7 @@ Hd_RUZINO_TriangleFaceVaryingSampler::Sample(
     Hd_RUZINO_TypeHelper::PrimvarTypeContainer corners[3];
     if (!_sampler.Sample(element * 3 + 0, &corners[0], dataType) ||
         !_sampler.Sample(element * 3 + 1, &corners[1], dataType) ||
-        !_sampler.Sample(element * 3 + 2, &corners[2], dataType))
-    {
+        !_sampler.Sample(element * 3 + 2, &corners[2], dataType)) {
         return false;
     }
     void* samples[3] = { static_cast<void*>(&corners[0]),
@@ -164,8 +147,7 @@ Hd_RUZINO_TriangleFaceVaryingSampler::Sample(
 }
 
 /* static */
-VtValue
-Hd_RUZINO_TriangleFaceVaryingSampler::_Triangulate(
+VtValue Hd_RUZINO_TriangleFaceVaryingSampler::_Triangulate(
     const TfToken& name,
     const VtValue& value,
     HdMeshUtil& meshUtil)
@@ -173,14 +155,12 @@ Hd_RUZINO_TriangleFaceVaryingSampler::_Triangulate(
     HdVtBufferSource buffer(name, value);
     VtValue triangulated;
     if (!meshUtil.ComputeTriangulatedFaceVaryingPrimvar(
-        buffer.GetData(),
-        buffer.GetNumElements(),
-        buffer.GetTupleType().type,
-        &triangulated))
-    {
+            buffer.GetData(),
+            buffer.GetNumElements(),
+            buffer.GetTupleType().type,
+            &triangulated)) {
         TF_CODING_ERROR(
-            "[%s] Could not triangulate face-varying data.",
-            name.GetText());
+            "[%s] Could not triangulate face-varying data.", name.GetText());
         return VtValue();
     }
     return triangulated;
@@ -194,31 +174,25 @@ Hd_RUZINO_SubdivVertexSampler::Hd_RUZINO_SubdivVertexSampler(
     RTCScene meshScene,
     unsigned meshId,
     Hd_RUZINO_RTCBufferAllocator* allocator)
-    : _embreeBufferId(-1)
-      , _buffer(name, value)
-      , _meshScene(meshScene)
-      , _meshId(meshId)
-      , _allocator(allocator)
+    : _embreeBufferId(-1),
+      _buffer(name, value),
+      _meshScene(meshScene),
+      _meshId(meshId),
+      _allocator(allocator)
 {
     // Arrays are not supported
-    if (_buffer.GetTupleType().count != 1)
-    {
+    if (_buffer.GetTupleType().count != 1) {
         TF_WARN("Unsupported array size for vertex primvar");
         return;
     }
 
     // The embree API only supports float-component primvars.
     RTCFormat format = RTC_FORMAT_FLOAT;
-    switch (HdGetComponentType(_buffer.GetTupleType().type))
-    {
-        case HdTypeFloat: format = RTC_FORMAT_FLOAT;
-            break;
-        case HdTypeFloatVec2: format = RTC_FORMAT_FLOAT2;
-            break;
-        case HdTypeFloatVec3: format = RTC_FORMAT_FLOAT3;
-            break;
-        case HdTypeFloatVec4: format = RTC_FORMAT_FLOAT4;
-            break;
+    switch (HdGetComponentType(_buffer.GetTupleType().type)) {
+        case HdTypeFloat: format = RTC_FORMAT_FLOAT; break;
+        case HdTypeFloatVec2: format = RTC_FORMAT_FLOAT2; break;
+        case HdTypeFloatVec3: format = RTC_FORMAT_FLOAT3; break;
+        case HdTypeFloatVec4: format = RTC_FORMAT_FLOAT4; break;
         default:
             TF_WARN(
                 "Embree subdivision meshes only support float-based"
@@ -229,8 +203,7 @@ Hd_RUZINO_SubdivVertexSampler::Hd_RUZINO_SubdivVertexSampler(
     _embreeBufferId = _allocator->Allocate();
     // The embree API has a constant number of primvar slots (16 at last
     // count), shared between vertex and face-varying modes.
-    if (_embreeBufferId == -1)
-    {
+    if (_embreeBufferId == -1) {
         TF_WARN(
             "Embree subdivision meshes only support %d primvars"
             " in vertex interpolation mode, excceded for rprim ",
@@ -240,15 +213,14 @@ Hd_RUZINO_SubdivVertexSampler::Hd_RUZINO_SubdivVertexSampler(
 
     // Set number of vertex attributes correctly
     rtcSetGeometryVertexAttributeCount(
-        rtcGetGeometry(_meshScene, _meshId),
-        _allocator->NumBuffers());
+        rtcGetGeometry(_meshScene, _meshId), _allocator->NumBuffers());
 
     // The start address (`byteOffset` argument) and stride (`byteStride`
     // argument) must be both aligned to 4 bytes; otherwise the
-    // `rtcSetGeometryBuffer` function will fail. Pretty sure we are interpolating
-    // floats, so this will be ok, but this is possibly not robust. Not sure
-    // that it will be easy to enforce this alignment on the data
-    // that is gotten from the HdVtBufferSource
+    // `rtcSetGeometryBuffer` function will fail. Pretty sure we are
+    // interpolating floats, so this will be ok, but this is possibly not
+    // robust. Not sure that it will be easy to enforce this alignment on the
+    // data that is gotten from the HdVtBufferSource
     rtcSetSharedGeometryBuffer(
         rtcGetGeometry(_meshScene, _meshId),
         /* RTCGeometry geometry */
@@ -269,14 +241,12 @@ Hd_RUZINO_SubdivVertexSampler::Hd_RUZINO_SubdivVertexSampler(
 
 Hd_RUZINO_SubdivVertexSampler::~Hd_RUZINO_SubdivVertexSampler()
 {
-    if (_embreeBufferId != -1)
-    {
+    if (_embreeBufferId != -1) {
         _allocator->Free(_embreeBufferId);
     }
 }
 
-bool
-Hd_RUZINO_SubdivVertexSampler::Sample(
+bool Hd_RUZINO_SubdivVertexSampler::Sample(
     unsigned int element,
     float u,
     float v,
@@ -284,8 +254,7 @@ Hd_RUZINO_SubdivVertexSampler::Sample(
     HdTupleType dataType) const
 {
     // Make sure the buffer type and sample type have the same arity.
-    if (_embreeBufferId == -1 || dataType != _buffer.GetTupleType())
-    {
+    if (_embreeBufferId == -1 || dataType != _buffer.GetTupleType()) {
         return false;
     }
 

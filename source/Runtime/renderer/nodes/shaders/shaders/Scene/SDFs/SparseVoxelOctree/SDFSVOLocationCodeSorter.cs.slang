@@ -33,7 +33,7 @@
 cbuffer CB
 {
     uint gAlgorithm;
-    uint gComparisonHeight; 
+    uint gComparisonHeight;
 };
 
 RWByteAddressBuffer gBuffer;

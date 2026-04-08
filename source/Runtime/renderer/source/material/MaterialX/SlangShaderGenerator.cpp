@@ -304,10 +304,7 @@ void SlangShaderGenerator::emitSpecularEnvironment(
             "pbrlib/genslang/lib/mx_environment_fis.slang", context, stage);
     }
     else if (specularMethod == SPECULAR_ENVIRONMENT_PREFILTER) {
-        emitLibraryInclude(
-            "pbrlib/genslang/lib/.slang",
-            context,
-            stage);
+        emitLibraryInclude("pbrlib/genslang/lib/.slang", context, stage);
     }
     else if (specularMethod == SPECULAR_ENVIRONMENT_NONE) {
         emitLibraryInclude(

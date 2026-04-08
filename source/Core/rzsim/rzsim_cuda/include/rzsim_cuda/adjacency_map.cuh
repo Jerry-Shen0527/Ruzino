@@ -41,7 +41,7 @@ class RZSIM_CUDA_API VolumeAdjacencyMap {
     cuda::CUDALinearBufferHandle offsets_buffer() const { return offset_buffer_; }
     cuda::CUDALinearBufferHandle element_to_vertex_buffer() const { return element_to_vertex_; }
     cuda::CUDALinearBufferHandle element_to_local_face_buffer() const { return element_to_local_face_; }
-    
+
     unsigned num_elements() const { return num_elements_; }
 
    private:

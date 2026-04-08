@@ -19,8 +19,8 @@ namespace {
             // For now, simple recreation. In a more advanced system, we might resize.
             // But CUDALinearBuffer doesn't support resize, so we recreate.
             // We allocate slightly more to avoid frequent reallocations if size grows slowly
-            size_t alloc_size = (size_t)(size * 1.2); 
-            
+            size_t alloc_size = (size_t)(size * 1.2);
+
             // Create a temporary buffer with the right size effectively
             // Since we can't easily create a raw buffer without type, we use char/byte buffer
             // But here we rely on the specific create_cuda_linear_buffer overloads
@@ -102,7 +102,7 @@ class CuSolverQRSolver : public LinearSolver {
             cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ZERO);
 
             int singularity = 0;
-            
+
             // Call cuSOLVER QR solver
             // Note: cusolverSpScsrlsvqr solves A*x = b
             cusolverStatus_t status = cusolverSpScsrlsvqr(
@@ -134,7 +134,7 @@ class CuSolverQRSolver : public LinearSolver {
                 result.converged = true;
                 result.iterations = 1;  // Direct solver, single "iteration"
                 result.final_residual = 0.0f;  // Direct solver
-                
+
                 if (config.verbose) {
                     std::cout << "cuSOLVER QR direct solve completed successfully" << std::endl;
                 }
@@ -170,7 +170,7 @@ class CuSolverQRSolver : public LinearSolver {
             if (n != cached_n || nnz != cached_nnz || !d_csrVal_cached) {
                 cached_n = n;
                 cached_nnz = nnz;
-                
+
                 Ruzino::cuda::CUDALinearBufferDesc val_desc, rowptr_desc, colind_desc, vec_desc;
                 val_desc.element_count = nnz;
                 val_desc.element_size = sizeof(float);
@@ -191,7 +191,7 @@ class CuSolverQRSolver : public LinearSolver {
             // Convert to CSR format on host
             // (Note: For max performance, this conversion should happen on GPU or use Cached direct interface)
             Eigen::SparseMatrix<float, Eigen::RowMajor> A_csr = A;
-            
+
             // We still use host vectors for the transfer, but we could optimize this further
             // if we had access to Eigen internal buffers or if we did the conversion on GPU
             std::vector<float> csrVal(nnz);
@@ -209,7 +209,7 @@ class CuSolverQRSolver : public LinearSolver {
                 }
                 csrRowPtr[i + 1] = idx;
             }
-            
+
             // Debug output
             if (config.verbose) {
                 std::cout << "Matrix size: " << n << "x" << n << std::endl;
@@ -267,7 +267,7 @@ class CuSolverQRSolver : public LinearSolver {
         }
 
         // Add host overhead to timing if needed, but result.solve_time currently reflects GPU time
-        
+
         return result;
     }
 };

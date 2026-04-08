@@ -30,14 +30,14 @@ struct BPM_API GridParameters {
 
     // Advanced features
 #ifdef __CUDACC__
-    float bendingRoC = 1e38f;     // Use large float instead of INFINITY for CUDA
+    float bendingRoC = 1e38f;  // Use large float instead of INFINITY for CUDA
 #else
     float bendingRoC = INFINITY;  // Radius of curvature for bending
 #endif
-    float bendDirection = 0.0f;   // Bending direction [deg]
-    float taperScaling = 1.0f;    // Tapering factor
-    float twistRate = 0.0f;       // Twist rate [rad/m]
-    float rho_e = 0.22f;          // Elasto-optic coefficient
+    float bendDirection = 0.0f;  // Bending direction [deg]
+    float taperScaling = 1.0f;   // Tapering factor
+    float twistRate = 0.0f;      // Twist rate [rad/m]
+    float rho_e = 0.22f;         // Elasto-optic coefficient
 
     bool useGPU = false;
     bool useAllCPUs = false;
@@ -108,7 +108,7 @@ class BPM_API BPMSolver {
 class BPM_API FDBPMPropagator {
    public:
     struct Parameters {
-        int Nx, Ny;      // Grid dimensions
+        int Nx, Ny;  // Grid dimensions
         float dx, dy, dz;
         Complex ax, ay;  // Finite difference coefficients
         float d;         // Phase accumulation coefficient

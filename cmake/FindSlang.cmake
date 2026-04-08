@@ -5,7 +5,7 @@ set(SLANG_SEARCH_DIR ${SLANG_ROOT_DIR})
 ##################################
 # Find the SLANG include dir
 ##################################
-  
+
 find_path(SLANG_INCLUDE_DIRS slang.h
     HINTS ${SLANG_INCLUDE_DIR} ${SLANG_SEARCH_DIR}/include)
 

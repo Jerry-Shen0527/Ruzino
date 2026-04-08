@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.28) 
+cmake_minimum_required(VERSION 3.28)
 
 #
 # Project details
@@ -143,21 +143,19 @@ set(OpenSubdiv_DIR ${CMAKE_CURRENT_SOURCE_DIR}/SDK/OpenUSD/${SDK_FOLDER}/lib/cma
 find_package(pxr)
 
 if(pxr_FOUND)
-  set_target_properties(tf PROPERTIES INTERFACE_COMPILE_DEFINITIONS "TBB_SUPPRESS_DEPRECATED_MESSAGES=1")
-endif()
-
-if(pxr_FOUND)
   message("Found OpenUSD version ${pxr_VERSION}")
   find_package(OpenGL REQUIRED)
   set(RUZINO_WITH_OPENUSD ON)
-
-  if(${CMAKE_BUILD_TYPE} MATCHES "Debug")
-    if(Python3_LIBRARY MATCHES "_d.lib$")
-      set_target_properties(usd PROPERTIES INTERFACE_COMPILE_DEFINITIONS "TBB_USE_DEBUG=1; BOOST_DEBUG_PYTHON")
-    else()
-      set_target_properties(usd PROPERTIES INTERFACE_COMPILE_DEFINITIONS "TBB_USE_DEBUG=1")
-    endif()
+  add_library(usd_wrapped INTERFACE)
+  if(TARGET usd_ms)
+    target_link_libraries(usd_wrapped INTERFACE usd_ms)
+  else()
+    target_link_libraries(usd_wrapped INTERFACE usd tf hioOpenVDB usdShade usdMtlx usdImaging hdx usdVolImaging glf usdGeom usdImagingGL hdSt garch hgi python boost)
   endif()
+  target_compile_definitions(usd_wrapped INTERFACE
+    TBB_SUPPRESS_DEPRECATED_MESSAGES=1
+    $<$<CONFIG:Debug>:TBB_USE_DEBUG=1>
+    $<$<CONFIG:Debug>:BOOST_DEBUG_PYTHON>)
 else()
   message(WARNING "OpenUSD not found")
   set(RUZINO_WITH_OPENUSD OFF)
@@ -168,15 +166,21 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 if(WIN32)
   find_package(NVAPI REQUIRED)
+  set(AgilitySDK_ROOT_DIR SDK/d3d12)
+  find_package(AgilitySDK REQUIRED)
+endif()
+
+if(UNIX AND NOT APPLE)
+  find_package(X11 REQUIRED)
+  find_package(Boost REQUIRED)
+  if(RUZINO_WITH_OPENUSD)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(EGL REQUIRED IMPORTED_TARGET egl)
+  endif()
 endif()
 
 set(SLANG_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/SDK/slang)
 find_package(Slang REQUIRED COMPONENTS slang slang-rt gfx)
-
-set(AgilitySDK_ROOT_DIR SDK/d3d12)
-if(WIN32)
-  find_package(AgilitySDK REQUIRED)
-endif()
 
 # Find Embree from SDK
 set(embree_DIR ${CMAKE_CURRENT_SOURCE_DIR}/SDK/embree/lib/cmake/embree-4.4.0)
@@ -213,7 +217,7 @@ if (ENABLE_SUBMISSION)
     if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/submissions_inner)
       add_subdirectory(submissions_inner)
     endif ()
-    
+
     if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../submissions)
       get_filename_component(
         ABS_SUBMISSION
@@ -222,7 +226,7 @@ if (ENABLE_SUBMISSION)
         BASE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
       )
       message(STATUS "[ABS DIR] " ${ABS_SUBMISSION})
-    
+
       add_subdirectory(${ABS_SUBMISSION} "OuterSubmissions")
     endif ()
 endif ()
@@ -230,19 +234,19 @@ endif ()
 # ========== Package Configuration for find_package ==========
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     include(CMakePackageConfigHelpers)
-    
+
     # Generate the version file
     write_basic_package_version_file(
         "${CMAKE_CURRENT_BINARY_DIR}/RuzinoConfigVersion.cmake"
         VERSION ${PROJECT_VERSION}
         COMPATIBILITY SameMajorVersion
     )
-    
+
     # Set install directories
     set(CMAKE_INSTALL_INCLUDEDIR "include")
     set(CMAKE_INSTALL_LIBDIR "lib")
     set(CMAKE_INSTALL_BINDIR "bin")
-    
+
     # Configure the config file
     configure_package_config_file(
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RuzinoConfig.cmake.in"
@@ -250,7 +254,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         INSTALL_DESTINATION lib/cmake/Ruzino
         PATH_VARS CMAKE_INSTALL_INCLUDEDIR CMAKE_INSTALL_LIBDIR CMAKE_INSTALL_BINDIR
     )
-    
+
     # Install config files
     install(FILES
         "${CMAKE_CURRENT_BINARY_DIR}/RuzinoConfig.cmake"
@@ -263,7 +267,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         "${CMAKE_CURRENT_SOURCE_DIR}/source/Editor/geometry_nodes/macro_map.h"
         DESTINATION include/geometry_nodes
     )
-    
+
     # Install node system build tools
     install(FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/source/Core/rznode/cmake/AddLibrary.cmake"
@@ -271,21 +275,21 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         "${CMAKE_CURRENT_SOURCE_DIR}/source/Core/rznode/cmake/nodes_json.py"
         DESTINATION lib/cmake/Ruzino/rznode/cmake
     )
-    
+
     # Install Find modules
     install(DIRECTORY
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/"
         DESTINATION lib/cmake/Ruzino
         FILES_MATCHING PATTERN "Find*.cmake"
     )
-    
+
     # Install geometry_nodes headers for plugin development
     install(FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/source/Editor/geometry_nodes/geom_node_base.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/source/Editor/geometry_nodes/macro_map.h"
         DESTINATION include/geometry_nodes
     )
-    
+
     message(STATUS "Install prefix: ${CMAKE_INSTALL_PREFIX}")
     message(STATUS "Build tools will be installed for plugin development")
 endif()

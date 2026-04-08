@@ -167,12 +167,14 @@ GraphicsContext& GraphicsContext::finish_setting_frame_buffer()
 #if RUZINO_WITH_OPENUSD
 GraphicsContext& GraphicsContext::set_viewport(pxr::GfVec2f size)
 {
+    float x = size[0];
+    float y = size[1];
     viewport.scissorRects.resize(1);
-    viewport.scissorRects[0].maxX = static_cast<int>(size[0]);
-    viewport.scissorRects[0].maxY = static_cast<int>(size[1]);
+    viewport.scissorRects[0].maxX = static_cast<int>(x);
+    viewport.scissorRects[0].maxY = static_cast<int>(y);
     viewport.viewports.resize(1);
-    viewport.viewports[0].maxX = size[0];
-    viewport.viewports[0].maxY = size[1];
+    viewport.viewports[0].maxX = x;
+    viewport.viewports[0].maxY = y;
 
     return *this;
 }

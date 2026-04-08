@@ -46,7 +46,7 @@ float mx_oren_nayar_diffuse_dir_albedo_monte_carlo(float NdotV, float roughness)
 
         // Compute the incoming light direction.
         float3 L = mx_uniform_sample_hemisphere(Xi);
-        
+
         // Compute dot products for this sample.
         float NdotL = clamp(L.z, M_FLOAT_EPS, 1.0);
         float LdotV = clamp(dot(L, V), M_FLOAT_EPS, 1.0);
@@ -89,7 +89,7 @@ float mx_oren_nayar_fujii_diffuse_avg_albedo(float roughness)
 {
     float A = 1.0 / (1.0 + FUJII_CONSTANT_1 * roughness);
     return A * (1.0 + FUJII_CONSTANT_2 * roughness);
-}   
+}
 
 // Energy-compensated Oren-Nayar diffuse from OpenPBR Surface:
 // https://academysoftwarefoundation.github.io/OpenPBR/

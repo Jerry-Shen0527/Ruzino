@@ -30,33 +30,43 @@
 #include "Core/Macros.h"
 #include "utils/Math/Vector.h"
 
-namespace Ruzino
-{
+namespace Ruzino {
 /**
  * Sample pattern generator for the Direct3D 8x MSAA/SSAA pattern.
  */
-class HD_RUZINO_API DxSamplePattern : public CPUSampleGenerator
-{
-public:
+class HD_RUZINO_API DxSamplePattern : public CPUSampleGenerator {
+   public:
     /**
      * Create DirectX MSAA sample pattern generator.
      * @param[in] sampleCount The sample count. This must be 8 currently.
      * @return New object, or throws an exception on error.
      */
-    static ref<DxSamplePattern> create(uint32_t sampleCount = 8) { return make_ref<DxSamplePattern>(sampleCount); }
+    static ref<DxSamplePattern> create(uint32_t sampleCount = 8)
+    {
+        return make_ref<DxSamplePattern>(sampleCount);
+    }
 
     DxSamplePattern(uint32_t sampleCount);
     virtual ~DxSamplePattern() = default;
 
-    virtual uint32_t getSampleCount() const override { return kSampleCount; }
+    virtual uint32_t getSampleCount() const override
+    {
+        return kSampleCount;
+    }
 
-    virtual void reset(uint32_t startID = 0) override { mCurSample = 0; }
+    virtual void reset(uint32_t startID = 0) override
+    {
+        mCurSample = 0;
+    }
 
-    virtual float2 next() override { return kPattern[(mCurSample++) % kSampleCount]; }
+    virtual float2 next() override
+    {
+        return kPattern[(mCurSample++) % kSampleCount];
+    }
 
-protected:
+   protected:
     uint32_t mCurSample = 0;
     static constexpr uint32_t kSampleCount = 8;
     static const float2 kPattern[kSampleCount];
 };
-} // namespace Ruzino
+}  // namespace Ruzino

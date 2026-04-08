@@ -38,7 +38,8 @@ void ClosureCompoundNodeSlang::emitFunctionDefinition(
 
         if (isStandardSurface || isUsdPreviewSurface) {
             // Emit a minimal opacity fetch function
-            // The actual texture sampling code will be injected by materialX.cpp
+            // The actual texture sampling code will be injected by
+            // materialX.cpp
             shadergen.emitLineBreak(stage);
             shadergen.emitComment(
                 "Opacity fetch function - computes opacity from material graph",
@@ -53,8 +54,9 @@ void ClosureCompoundNodeSlang::emitFunctionDefinition(
 
             // Emit bindless data loading placeholder
             shadergen.emitLine("$BindlessDataLoading", stage, false);
-            
-            // Emit placeholder for texture sampling code (will be copied from fetch_shader_data)
+
+            // Emit placeholder for texture sampling code (will be copied from
+            // fetch_shader_data)
             shadergen.emitLine("$TextureSamplingForOpacity", stage, false);
 
             // Emit opacity computation placeholder (will be filled by

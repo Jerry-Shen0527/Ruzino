@@ -21,10 +21,14 @@ class Hd_RUZINO_Renderer {
 
     void MarkAovBuffersUnconverged();
 
-    void renderTimeUpdateCamera(const HdRenderPassStateSharedPtr& renderPassState);
+    void renderTimeUpdateCamera(
+        const HdRenderPassStateSharedPtr& renderPassState);
 
    protected:
-    void _RenderTiles(HdRenderThread* renderThread, size_t tileStart, size_t tileEnd);
+    void _RenderTiles(
+        HdRenderThread* renderThread,
+        size_t tileStart,
+        size_t tileEnd);
     static GfVec4f _GetClearColor(const VtValue& clearValue);
     RTCDevice _rtcDevice;
 

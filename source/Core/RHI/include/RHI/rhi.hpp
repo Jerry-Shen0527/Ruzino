@@ -15,8 +15,11 @@ RUZINO_NAMESPACE_OPEN_SCOPE
 class DeviceManager;
 
 namespace RHI {
-
+#ifdef _WIN32
 RHI_API int init(bool with_window = false, bool use_dx12 = true);
+#else
+RHI_API int init(bool with_window = false, bool use_dx12 = false);
+#endif
 RHI_API int shutdown();
 
 RHI_API nvrhi::IDevice* get_device();

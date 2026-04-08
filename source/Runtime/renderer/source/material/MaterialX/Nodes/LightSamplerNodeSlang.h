@@ -11,14 +11,16 @@
 MATERIALX_NAMESPACE_BEGIN
 
 /// Utility node for sampling lights for SLANG.
-class HD_RUZINO_API LightSamplerNodeSlang : public SlangImplementation
-{
-  public:
+class HD_RUZINO_API LightSamplerNodeSlang : public SlangImplementation {
+   public:
     LightSamplerNodeSlang();
 
     static ShaderNodeImplPtr create();
 
-    void emitFunctionDefinition(const ShaderNode& node, GenContext& context, ShaderStage& stage) const override;
+    void emitFunctionDefinition(
+        const ShaderNode& node,
+        GenContext& context,
+        ShaderStage& stage) const override;
 };
 
 MATERIALX_NAMESPACE_END

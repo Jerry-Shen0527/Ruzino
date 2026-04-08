@@ -26,19 +26,18 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Core/Macros.h"
 #include <memory>
 #include <string>
 #include <vector>
 
-namespace Ruzino
-{
+#include "Core/Macros.h"
+
+namespace Ruzino {
 /**
  * Creates a progress bar visual and manages a new thread for it.
  */
-class HD_RUZINO_API ProgressBar
-{
-public:
+class HD_RUZINO_API ProgressBar {
+   public:
     struct Window;
 
     ProgressBar();
@@ -59,9 +58,12 @@ public:
      * Check if the progress bar is currently active.
      * @return Returns true if progress bar is active.
      */
-    bool isActive() const { return mpWindow != nullptr; }
+    bool isActive() const
+    {
+        return mpWindow != nullptr;
+    }
 
-private:
+   private:
     std::unique_ptr<Window> mpWindow;
 };
-} // namespace Ruzino
+}  // namespace Ruzino

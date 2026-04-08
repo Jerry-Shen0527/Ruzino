@@ -18,10 +18,10 @@
 #include "usd_nodejson.hpp"
 
 // USD includes
+#include <rzpython/rzpython.hpp>
+
 #include "pxr/base/tf/setenv.h"
 #include "pxr/usd/usd/stage.h"
-
-#include <rzpython/rzpython.hpp>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -46,18 +46,9 @@ int main(int argc, char* argv[])
     // Parse command line using cmdparser
     cmdline::parser parser;
     parser.add<std::string>("usd", 'u', "USD scene file", true);
-    parser.add<int>(
-        "frames",
-        'f',
-        "Number of frames to simulate",
-        false,
-        10);
+    parser.add<int>("frames", 'f', "Number of frames to simulate", false, 10);
     parser.add<float>(
-        "fps",
-        'r',
-        "Frames per second (simulation delta time)",
-        false,
-        60.0f);
+        "fps", 'r', "Frames per second (simulation delta time)", false, 60.0f);
     parser.add("verbose", 'v', "Enable verbose logging");
 
     parser.parse_check(argc, argv);
@@ -94,12 +85,13 @@ int main(int argc, char* argv[])
             throw std::runtime_error(
                 "Failed to load USD stage from " + usd_file);
         }
-        
+
         printf("Starting simulation...\n");
-        printf("Total frames: %d, Delta time: %.4fs (%.0f fps)\n",
-               num_frames,
-               delta_time,
-               fps);
+        printf(
+            "Total frames: %d, Delta time: %.4fs (%.0f fps)\n",
+            num_frames,
+            delta_time,
+            fps);
         fflush(stdout);
 
         auto total_start_time = std::chrono::high_resolution_clock::now();
@@ -107,7 +99,7 @@ int main(int argc, char* argv[])
         // Simulation loop
         for (int frame = 0; frame < num_frames; ++frame) {
             auto frame_start = std::chrono::high_resolution_clock::now();
-            
+
             // Update simulation (skip first frame)
             if (frame > 0) {
                 stage->tick(delta_time);

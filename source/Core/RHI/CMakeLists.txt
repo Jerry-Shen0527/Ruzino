@@ -4,7 +4,7 @@ if(SLANG_FOUND)
         SHARED
         WITH_CUDA
         PUBLIC_LIBS nvrhi SLANG::slang nodes_core
-        PRIVATE_LIBS spdlog::spdlog glfw glm::glm 
+        PRIVATE_LIBS spdlog::spdlog glfw glm::glm
         PYTHON_WRAP_DIR python
         COMPILE_DEFS
         NOMINMAX
@@ -20,10 +20,19 @@ if(SLANG_FOUND)
 
     target_compile_definitions(RHI PRIVATE RELATIVE_TO_PROJROOT="${RELATIVE_TO_PROJROOT}")
 
-    if(TARGET hgi)
-        target_link_libraries(RHI PUBLIC hgi)
-        target_compile_definitions(RHI PUBLIC RHI_WITH_OPENUSD_HGI=1)
-    endif()
+    get_target_property(_slang_includes SLANG::slang INTERFACE_INCLUDE_DIRECTORIES)
+    add_custom_command(TARGET RHI POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "${OUT_BINARY_DIR}/rti/"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${_slang_includes} "${OUT_BINARY_DIR}/rti/slang"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${RUZINO_ROOT_DIR}/source/Runtime/renderer/resources/nvapi"
+            "${OUT_BINARY_DIR}/rti/nvapi"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${RUZINO_ROOT_DIR}/source/Core/RHI/include/RHI/internal/optix"
+            "${OUT_BINARY_DIR}/rti/optix"
+    )
 
     if(WIN32)
         target_compile_definitions(RHI PUBLIC RUZINO_WITH_DX12=1)
@@ -34,8 +43,8 @@ if(SLANG_FOUND)
         target_compile_definitions(RHI PUBLIC RUZINO_WITH_VULKAN=1)
     endif()
 
-    if(TARGET garch)
-        target_link_libraries(RHI PUBLIC garch)
+    if(TARGET usd_wrapped)
+        target_link_libraries(RHI PUBLIC usd_wrapped)
     endif()
 
     if(RUZINO_WITH_OPENUSD)

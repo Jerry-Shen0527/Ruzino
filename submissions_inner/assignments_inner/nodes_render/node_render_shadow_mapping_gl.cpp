@@ -67,7 +67,6 @@ NODE_EXECUTION_FUNCTION(shadow_mapping)
             bool has_light = false;
             if (lights[light_id]->GetLightType() ==
                 HdPrimTypeTokens->sphereLight) {
-
                 GfFrustum frustum;
                 GfVec3f light_position = { light_params.GetPosition()[0],
                                            light_params.GetPosition()[1],

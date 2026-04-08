@@ -26,19 +26,20 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Core/Error.h"
-#include "Core/Enum.h"
-#include "Core/ObjectPython.h"
-#include <pybind11/pybind11.h>
 #include <pybind11/functional.h>
+#include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/stl/filesystem.h>
+
 #include <functional>
 #include <string>
 #include <type_traits>
 
-namespace Ruzino::ScriptBindings
-{
+#include "Core/Enum.h"
+#include "Core/Error.h"
+#include "Core/ObjectPython.h"
+
+namespace Ruzino::ScriptBindings {
 /**
  * Callback function to add python bindings to a module.
  */
@@ -46,10 +47,11 @@ using RegisterBindingFunc = std::function<void(pybind11::module& m)>;
 
 /**
  * Initialize the binding module.
- * This is called from the pybind11 module to initialize bindings (see FalcorPython.cpp).
- * First, this function will go through the list of all deferred bindings and execute them.
- * Next, it stores a reference to the python module to allow further bindings to be added at runtime.
- * The reference to the module is automatically released when the module is unloaded.
+ * This is called from the pybind11 module to initialize bindings (see
+ * FalcorPython.cpp). First, this function will go through the list of all
+ * deferred bindings and execute them. Next, it stores a reference to the python
+ * module to allow further bindings to be added at runtime. The reference to the
+ * module is automatically released when the module is unloaded.
  */
 HD_RUZINO_API void initModule(pybind11::module& m);
 
@@ -62,25 +64,30 @@ HD_RUZINO_API void registerBinding(RegisterBindingFunc f);
 
 /**
  * Register a deferred script binding function.
- * This is used to register a script binding function before scripting is initialized.
- * The execution of the binding function is deferred until scripting is finally initialized.
- * Note: This is called from `registerBinding()` if called before scripting is initialized
- * and from the FALCOR_SCRIPT_BINDING macro.
+ * This is used to register a script binding function before scripting is
+ * initialized. The execution of the binding function is deferred until
+ * scripting is finally initialized. Note: This is called from
+ * `registerBinding()` if called before scripting is initialized and from the
+ * FALCOR_SCRIPT_BINDING macro.
  * @param[in] name Name if the binding.
  * @param[in] f Function to be called for registering the binding.
  */
-HD_RUZINO_API void registerDeferredBinding(const std::string& name, RegisterBindingFunc f);
+HD_RUZINO_API void registerDeferredBinding(
+    const std::string& name,
+    RegisterBindingFunc f);
 
 /**
  * Resolve a deferred script binding by name.
- * This immediately executes the deferred binding function registered to the given name
- * and can be used to control the order of execution of the binding functions.
- * Note: This is used by the FALCOR_SCRIPT_BINDING_DEPENDENCY macro to ensure dependent bindings
- * are registered ahead of time.
+ * This immediately executes the deferred binding function registered to the
+ * given name and can be used to control the order of execution of the binding
+ * functions. Note: This is used by the FALCOR_SCRIPT_BINDING_DEPENDENCY macro
+ * to ensure dependent bindings are registered ahead of time.
  * @param[in] name Name of the binding to resolve.
  * @param[in] m Python module.
  */
-HD_RUZINO_API void resolveDeferredBinding(const std::string& name, pybind11::module& m);
+HD_RUZINO_API void resolveDeferredBinding(
+    const std::string& name,
+    pybind11::module& m);
 
 /************************************************************************/
 /* Helpers                                                              */
@@ -88,14 +95,19 @@ HD_RUZINO_API void resolveDeferredBinding(const std::string& name, pybind11::mod
 
 /**
  * Adds binary and/or operators to a Python enum.
- * This allows the enum to be used as a set of flags instead of just a list of choices.
+ * This allows the enum to be used as a set of flags instead of just a list of
+ * choices.
  * @param[in] e Enum to be extended.
  */
 template<typename T>
 static void addEnumBinaryOperators(pybind11::enum_<T>& e)
 {
-    e.def("__and__", [](const T& value1, const T& value2) { return T(int(value1) & int(value2)); });
-    e.def("__or__", [](const T& value1, const T& value2) { return T(int(value1) | int(value2)); });
+    e.def("__and__", [](const T& value1, const T& value2) {
+        return T(int(value1) & int(value2));
+    });
+    e.def("__or__", [](const T& value1, const T& value2) {
+        return T(int(value1) | int(value2));
+    });
 }
 
 /**
@@ -110,45 +122,51 @@ static std::string repr(const T& value)
 }
 
 #ifndef _staticlibrary
-#define FALCOR_SCRIPT_BINDING(_name)                                               \
-    static void ScriptBinding##_name(pybind11::module& m);                         \
-    struct ScriptBindingRegisterer##_name                                          \
-    {                                                                              \
-        ScriptBindingRegisterer##_name()                                           \
-        {                                                                          \
-            ScriptBindings::registerDeferredBinding(#_name, ScriptBinding##_name); \
-        }                                                                          \
-    } gScriptBinding##_name;                                                       \
-    static void ScriptBinding##_name(pybind11::module& m) /* over to the user for the braces */
-#define FALCOR_SCRIPT_BINDING_DEPENDENCY(_name) ScriptBindings::resolveDeferredBinding(#_name, m);
+#define FALCOR_SCRIPT_BINDING(_name)                       \
+    static void ScriptBinding##_name(pybind11::module& m); \
+    struct ScriptBindingRegisterer##_name {                \
+        ScriptBindingRegisterer##_name()                   \
+        {                                                  \
+            ScriptBindings::registerDeferredBinding(       \
+                #_name, ScriptBinding##_name);             \
+        }                                                  \
+    } gScriptBinding##_name;                               \
+    static void ScriptBinding##_name(                      \
+        pybind11::module& m) /* over to the user for the braces */
+#define FALCOR_SCRIPT_BINDING_DEPENDENCY(_name) \
+    ScriptBindings::resolveDeferredBinding(#_name, m);
 #else
-#define FALCOR_SCRIPT_BINDING(_name)                                                                                                   \
-    static_assert(                                                                                                                     \
-        false,                                                                                                                         \
-        "Using FALCOR_SCRIPT_BINDING() in a static-library is not supported. The C++ linker usually doesn't pull static-initializers " \
-        "into the EXE. "                                                                                                               \
-        "Call 'registerBinding()' yourself from a code that is guarenteed to run."                                                     \
-    );
-#endif // _staticlibrary
+#define FALCOR_SCRIPT_BINDING(_name)                                           \
+    static_assert(                                                             \
+        false,                                                                 \
+        "Using FALCOR_SCRIPT_BINDING() in a static-library is not supported. " \
+        "The C++ linker usually doesn't pull static-initializers "             \
+        "into the EXE. "                                                       \
+        "Call 'registerBinding()' yourself from a code that is guarenteed to " \
+        "run.");
+#endif  // _staticlibrary
 
-} // namespace Ruzino::ScriptBindings
+}  // namespace Ruzino::ScriptBindings
 
-namespace pybind11
-{
+namespace pybind11 {
 
 template<typename T>
-class falcor_enum : public enum_<T>
-{
-public:
-    static_assert(::Ruzino::has_enum_info_v<T>, "pybind11::falcor_enum<> requires an enumeration type with infos!");
+class falcor_enum : public enum_<T> {
+   public:
+    static_assert(
+        ::Ruzino::has_enum_info_v<T>,
+        "pybind11::falcor_enum<> requires an enumeration type with infos!");
 
     using Base = enum_<T>;
 
     template<typename... Extra>
-    explicit falcor_enum(const handle& scope, const char* name, const Extra&... extra) : Base(scope, name, extra...)
+    explicit falcor_enum(
+        const handle& scope,
+        const char* name,
+        const Extra&... extra)
+        : Base(scope, name, extra...)
     {
-        for (const auto& item : ::Ruzino::EnumInfo<T>::items())
-        {
+        for (const auto& item : ::Ruzino::EnumInfo<T>::items()) {
             const char* value_name = item.second.c_str();
             // Handle reserved Python keywords.
             if (item.second == "None")
@@ -157,4 +175,4 @@ public:
         }
     }
 };
-} // namespace pybind11
+}  // namespace pybind11

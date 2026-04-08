@@ -26,21 +26,21 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "CpuTimer.h"
-#include "Core/Macros.h"
 #include <string>
 #include <utility>
 #include <vector>
 
-namespace Ruzino
-{
+#include "Core/Macros.h"
+#include "CpuTimer.h"
+
+namespace Ruzino {
 /**
- * Utility class to record a number of timing measurements and print them afterwards.
- * This is mainly intended for measuring longer running tasks on the CPU.
+ * Utility class to record a number of timing measurements and print them
+ * afterwards. This is mainly intended for measuring longer running tasks on the
+ * CPU.
  */
-class HD_RUZINO_API TimeReport
-{
-public:
+class HD_RUZINO_API TimeReport {
+   public:
     TimeReport();
 
     /**
@@ -60,7 +60,8 @@ public:
 
     /**
      * Records a time measurement.
-     * Measures time since last call to reset() or measure(), whichever happened more recently.
+     * Measures time since last call to reset() or measure(), whichever happened
+     * more recently.
      * @param[in] name Name of the record.
      */
     void measure(const std::string& name);
@@ -71,9 +72,9 @@ public:
      */
     void addTotal(const std::string name = "Total");
 
-private:
+   private:
     CpuTimer::TimePoint mLastMeasureTime;
     std::vector<std::pair<std::string, double>> mMeasurements;
     double mTotal = 0.0;
 };
-} // namespace Ruzino
+}  // namespace Ruzino

@@ -24,12 +24,12 @@
 #ifndef PXR_IMAGING_PLUGIN_HD_EMBREE_RENDER_BUFFER_H
 #define PXR_IMAGING_PLUGIN_HD_EMBREE_RENDER_BUFFER_H
 
+#include <nvrhi/nvrhi.h>
+
 #include "api.h"
 #include "pxr/imaging/garch/glApi.h"
 #include "pxr/imaging/hd/renderBuffer.h"
 #include "pxr/pxr.h"
-
-#include <nvrhi/nvrhi.h>
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
 class Hd_RUZINO_RenderBuffer : public HdRenderBuffer {
@@ -116,10 +116,10 @@ class Hd_RUZINO_RenderBuffer : public HdRenderBuffer {
     // Release any allocated resources.
     void _Deallocate() override;
 
-public:
+   public:
     void Resolve() override;
 
-private:
+   private:
     // Buffer width.
     unsigned int _width;
     // Buffer height.

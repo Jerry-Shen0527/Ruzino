@@ -17,23 +17,23 @@ __global__ void substep1a_cuda_kernel(
     uint8_t xSymmetry, uint8_t ySymmetry
 ) {
     __shared__ CudaComplex tile[TILE_DIM][TILE_DIM+1];
-    
+
     bool xAntiSymm = xSymmetry == 2;
     bool yAntiSymm = ySymmetry == 2;
-    
+
     int xTiles = (Nx + TILE_DIM - 1) / TILE_DIM;
     int yTiles = (Ny + TILE_DIM - 1) / TILE_DIM;
-    
+
     for (int tileNum = blockIdx.x; tileNum < xTiles * yTiles; tileNum += gridDim.x) {
         int tilexoffset = TILE_DIM * (tileNum % xTiles);
         int tileyoffset = TILE_DIM * (tileNum / xTiles);
         int ix = tilexoffset + threadIdx.x;
         int iy = tileyoffset + threadIdx.y;
-        
+
         if (ix < Nx && iy < Ny) {
             int i = ix + iy * Nx;
             tile[threadIdx.x][threadIdx.y] = E1[i];
-            
+
             if (ix != 0)
                 tile[threadIdx.x][threadIdx.y] += (E1[i-1] - E1[i]) * ax;
             if (ix != Nx-1 && (!yAntiSymm || ix != 0))
@@ -44,7 +44,7 @@ __global__ void substep1a_cuda_kernel(
                 tile[threadIdx.x][threadIdx.y] += (E1[i+Nx] - E1[i]) * ay * 2.0f;
         }
         __syncthreads();
-        
+
         // Transpose to yx
         ix = tilexoffset + threadIdx.y;
         iy = tileyoffset + threadIdx.x;
@@ -64,12 +64,12 @@ __global__ void substep1b_cuda_kernel(
 ) {
     int threadNum = threadIdx.x + blockIdx.x * blockDim.x;
     bool yAntiSymm = ySymmetry == 2;
-    
+
     for (int iy = threadNum; iy < Ny; iy += gridDim.x * blockDim.x) {
         // Forward sweep
         for (int ix = 0; ix < Nx; ++ix) {
             int i = iy + ix * Ny;
-            
+
             if (ix == 0 && yAntiSymm)
                 b[i] = 1.0f;
             else if (ix == 0)
@@ -78,14 +78,14 @@ __global__ void substep1b_cuda_kernel(
                 b[i] = 1.0f + 2.0f * ax;
             else
                 b[i] = 1.0f + ax;
-            
+
             if (ix > 0) {
                 CudaComplex w = -ax / b[i - Ny];
                 b[i] += w * (ix == 1 && yAntiSymm ? CudaComplex(0) : ax);
                 Eyx[i] -= w * Eyx[i - Ny];
             }
         }
-        
+
         // Backward sweep
         for (int ix = Nx-1; ix >= (yAntiSymm ? 1 : 0); --ix) {
             int i = iy + ix * Ny;
@@ -103,22 +103,22 @@ __global__ void substep2a_cuda_kernel(
     uint8_t xSymmetry
 ) {
     __shared__ CudaComplex tile[TILE_DIM][TILE_DIM+1];
-    
+
     bool xAntiSymm = xSymmetry == 2;
     int xTiles = (Nx + TILE_DIM - 1) / TILE_DIM;
     int yTiles = (Ny + TILE_DIM - 1) / TILE_DIM;
-    
+
     for (int tileNum = blockIdx.x; tileNum < xTiles * yTiles; tileNum += gridDim.x) {
         int tilexoffset = TILE_DIM * (tileNum % xTiles);
         int tileyoffset = TILE_DIM * (tileNum / xTiles);
         int ix = tilexoffset + threadIdx.y;
         int iy = tileyoffset + threadIdx.x;
-        
+
         __syncthreads();
-        if (ix < Nx && iy < Ny) 
+        if (ix < Nx && iy < Ny)
             tile[threadIdx.y][threadIdx.x] = Eyx[ix*Ny + iy];
         __syncthreads();
-        
+
         ix = tilexoffset + threadIdx.x;
         iy = tileyoffset + threadIdx.y;
         if (ix < Nx && iy < Ny) {
@@ -144,12 +144,12 @@ __global__ void substep2b_cuda_kernel(
     float powerThread = 0.0f;
     int threadNum = threadIdx.x + blockIdx.x * blockDim.x;
     bool xAntiSymm = xSymmetry == 2;
-    
+
     for (int ix = threadNum; ix < Nx; ix += gridDim.x * blockDim.x) {
         // Forward sweep
         for (int iy = 0; iy < Ny; ++iy) {
             int i = ix + iy * Nx;
-            
+
             if (iy == 0 && xAntiSymm)
                 b[i] = 1.0f;
             else if (iy == 0)
@@ -158,14 +158,14 @@ __global__ void substep2b_cuda_kernel(
                 b[i] = 1.0f + 2.0f * ay;
             else
                 b[i] = 1.0f + ay;
-            
+
             if (iy > 0) {
                 CudaComplex w = -ay / b[i-Nx];
                 b[i] += w * (iy == 1 && xAntiSymm ? CudaComplex(0) : ay);
                 E2[i] -= w * E2[i-Nx];
             }
         }
-        
+
         // Backward sweep - compute power here
         for (int iy = Ny-1; iy >= (xAntiSymm ? 1 : 0); --iy) {
             int i = ix + iy * Nx;
@@ -173,7 +173,7 @@ __global__ void substep2b_cuda_kernel(
             powerThread += thrust::norm(E2[i]);
         }
     }
-    
+
     atomicAdd(EfieldPower, powerThread);
 }
 
@@ -192,31 +192,31 @@ __global__ void applyMultiplier_cuda_kernel(
     float powerDiffThread = 0.0f;
     int threadNum = threadIdx.x + blockIdx.x * blockDim.x;
     float fieldCorrection = sqrtf(static_cast<float>(precisePower) / EfieldPower);
-    
+
     for (int i = threadNum; i < Nx*Ny; i += gridDim.x * blockDim.x) {
         //int ix = i % Nx;  // unused
         //int iy = i / Nx;  // unused
-        
+
         // Calculate coordinates (unused for now)
         //float x = dx * (ix - (Nx - 1) / 2.0f * (ySymmetry == 0));
         //float y = dy * (iy - (Ny - 1) / 2.0f * (xSymmetry == 0));
-        
+
         CudaComplex n = n_mat[i];
         if (iz == iz_end - 1) n_out[i] = n;
-        
+
         float n_real = n.real();
         float n_imag = n.imag();
-        CudaComplex phase = thrust::exp(CudaComplex(0, 
+        CudaComplex phase = thrust::exp(CudaComplex(0,
             d * (n_imag + (n_real*n_real - n_0*n_0) / (2.0f*n_0))));
         CudaComplex a = multiplier[i] * phase;
-        
+
         E2[i] *= fieldCorrection * a;
-        
+
         float a_norm_sqr = thrust::norm(a);
         if (fabsf(a_norm_sqr - 1.0f) < 10*FLT_EPSILON) a_norm_sqr = 1.0f;
         powerDiffThread += thrust::norm(E2[i]) * (1.0f - 1.0f/a_norm_sqr);
     }
-    
+
     atomicAdd(precisePowerDiff, powerDiffThread);
 }
 
@@ -227,7 +227,7 @@ namespace cuda {
     ) {
         int nBlocks = 256;
         dim3 blockDims(TILE_DIM, TILE_DIM);
-        
+
         substep1a_cuda_kernel<<<nBlocks, blockDims>>>(
             reinterpret_cast<CudaComplex*>(E1),
             reinterpret_cast<CudaComplex*>(E2),
@@ -238,7 +238,7 @@ namespace cuda {
             p.xSymmetry, p.ySymmetry
         );
     }
-    
+
     void substep1b_kernel(
         Complex* Eyx, Complex* b,
         const FDBPMPropagator::Parameters& p
@@ -252,7 +252,7 @@ namespace cuda {
             p.ySymmetry
         );
     }
-    
+
     void substep2a_kernel(Complex* E1, Complex* Eyx, Complex* E2,
                           const FDBPMPropagator::Parameters& p) {
         int nBlocks = 256;
@@ -266,7 +266,7 @@ namespace cuda {
             p.xSymmetry
         );
     }
-    
+
     void substep2b_kernel(Complex* E2, Complex* b, float* EfieldPower,
                           const FDBPMPropagator::Parameters& p) {
         int nBlocks = 256;
@@ -280,13 +280,13 @@ namespace cuda {
         );
         cudaDeviceSynchronize();
     }
-    
+
     void applyMultiplier_kernel(Complex* E2, Complex* n_out,
                                 const FDBPMPropagator::Parameters& p,
                                 int iz, float* precisePowerDiff) {
         int nBlocks = 256;
         float EfieldPower = 0.0f; // This should be passed from substep2b
-        
+
         applyMultiplier_cuda_kernel<<<nBlocks, 256>>>(
             reinterpret_cast<CudaComplex*>(E2),
             reinterpret_cast<CudaComplex*>(n_out),

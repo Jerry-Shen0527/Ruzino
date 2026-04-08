@@ -42,8 +42,8 @@
 
 #include "Core/Enum.h"
 #include "Core/Platform/OS.h"
-#include "utils/Math/VectorTypes.h"
 #include "slang-com-ptr.h"
+#include "utils/Math/VectorTypes.h"
 
 namespace Ruzino {
 class RtStateObject;

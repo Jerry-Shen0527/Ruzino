@@ -28,29 +28,28 @@
 //// QUICK PATH /////////////////
 /////////////////////////////////
 
-// the slash's buttons in path cna be used for quick select parallles directories
-// #define USE_QUICK_PATH_SELECT
+// the slash's buttons in path cna be used for quick select parallles
+// directories #define USE_QUICK_PATH_SELECT
 
 /////////////////////////////////
 //// THUMBNAILS /////////////////
 /////////////////////////////////
 
 #define USE_THUMBNAILS
-// the thumbnail generation use the stb_image and stb_resize lib who need to define the implementation
-// btw if you already use them in your app, you can have compiler error due to "implemntation found in double"
-// so uncomment these line for prevent the creation of implementation of these libs again
-// #define DONT_DEFINE_AGAIN__STB_IMAGE_IMPLEMENTATION
-// #define DONT_DEFINE_AGAIN__STB_IMAGE_RESIZE_IMPLEMENTATION
-// #define IMGUI_RADIO_BUTTON RadioButton
-// #define DisplayMode_ThumbailsList_ImageHeight 32.0f
-// #define tableHeaderFileThumbnailsString "Thumbnails"
-// #define DisplayMode_FilesList_ButtonString "FL"
-// #define DisplayMode_FilesList_ButtonHelp "File List"
-// #define DisplayMode_ThumbailsList_ButtonString "TL"
-// #define DisplayMode_ThumbailsList_ButtonHelp "Thumbnails List"
-// todo
-// #define DisplayMode_ThumbailsGrid_ButtonString "TG"
-// #define DisplayMode_ThumbailsGrid_ButtonHelp "Thumbnails Grid"
+// the thumbnail generation use the stb_image and stb_resize lib who need to
+// define the implementation btw if you already use them in your app, you can
+// have compiler error due to "implemntation found in double" so uncomment these
+// line for prevent the creation of implementation of these libs again #define
+// DONT_DEFINE_AGAIN__STB_IMAGE_IMPLEMENTATION #define
+// DONT_DEFINE_AGAIN__STB_IMAGE_RESIZE_IMPLEMENTATION #define IMGUI_RADIO_BUTTON
+// RadioButton #define DisplayMode_ThumbailsList_ImageHeight 32.0f #define
+// tableHeaderFileThumbnailsString "Thumbnails" #define
+// DisplayMode_FilesList_ButtonString "FL" #define
+// DisplayMode_FilesList_ButtonHelp "File List" #define
+// DisplayMode_ThumbailsList_ButtonString "TL" #define
+// DisplayMode_ThumbailsList_ButtonHelp "Thumbnails List" todo #define
+// DisplayMode_ThumbailsGrid_ButtonString "TG" #define
+// DisplayMode_ThumbailsGrid_ButtonHelp "Thumbnails Grid"
 
 /////////////////////////////////
 //// EXPLORATION BY KEYS ////////
@@ -60,13 +59,13 @@
 // this mapping by default is for GLFW but you can use another
 #include <GLFW/glfw3.h>
 // Up key for explore to the top
- #define IGFD_KEY_UP ImGuiKey_UpArrow
+#define IGFD_KEY_UP ImGuiKey_UpArrow
 // Down key for explore to the bottom
- #define IGFD_KEY_DOWN ImGuiKey_DownArrow
+#define IGFD_KEY_DOWN ImGuiKey_DownArrow
 // Enter key for open directory
- #define IGFD_KEY_ENTER ImGuiKey_Enter
+#define IGFD_KEY_ENTER ImGuiKey_Enter
 // BackSpace for comming back to the last directory
- #define IGFD_KEY_BACKSPACE ImGuiKey_Backspace
+#define IGFD_KEY_BACKSPACE ImGuiKey_Backspace
 
 /////////////////////////////////
 //// SHORTCUTS => ctrl + KEY ////
@@ -89,16 +88,12 @@
 // widget
 // begin combo widget
 // #define IMGUI_BEGIN_COMBO ImGui::BeginCombo
-// when auto resized, FILTER_COMBO_MIN_WIDTH will be considered has minimum width
-// FILTER_COMBO_AUTO_SIZE is enabled by default now to 1
-// uncomment if you want disable
-// #define FILTER_COMBO_AUTO_SIZE 0
-// filter combobox width
-// #define FILTER_COMBO_MIN_WIDTH 120.0f
-// button widget use for compose path
-// #define IMGUI_PATH_BUTTON ImGui::Button
-// standard button
-// #define IMGUI_BUTTON ImGui::Button
+// when auto resized, FILTER_COMBO_MIN_WIDTH will be considered has minimum
+// width FILTER_COMBO_AUTO_SIZE is enabled by default now to 1 uncomment if you
+// want disable #define FILTER_COMBO_AUTO_SIZE 0 filter combobox width #define
+// FILTER_COMBO_MIN_WIDTH 120.0f button widget use for compose path #define
+// IMGUI_PATH_BUTTON ImGui::Button standard button #define IMGUI_BUTTON
+// ImGui::Button
 
 /////////////////////////////////
 //// STRING'S ///////////////////
@@ -117,12 +112,11 @@
 // #define dirNameString "Directory Path :"
 // #define buttonResetSearchString "Reset search"
 // #define buttonDriveString "Devices"
-// #define buttonEditPathString "Edit path\nYou can also right click on path buttons"
-// #define buttonResetPathString "Reset to current directory"
-// #define buttonCreateDirString "Create Directory"
-// #define OverWriteDialogTitleString "The file Already Exist !"
-// #define OverWriteDialogMessageString "Would you like to OverWrite it ?"
-// #define OverWriteDialogConfirmButtonString "Confirm"
+// #define buttonEditPathString "Edit path\nYou can also right click on path
+// buttons" #define buttonResetPathString "Reset to current directory" #define
+// buttonCreateDirString "Create Directory" #define OverWriteDialogTitleString
+// "The file Already Exist !" #define OverWriteDialogMessageString "Would you
+// like to OverWrite it ?" #define OverWriteDialogConfirmButtonString "Confirm"
 // #define OverWriteDialogCancelButtonString "Cancel"
 
 // Validation buttons
@@ -157,14 +151,12 @@
 // #define fileSizeMegaBytes "Mo"
 // #define fileSizeGigaBytes "Go"
 
-// default table sort field (must be FIELD_FILENAME, FIELD_TYPE, FIELD_SIZE, FIELD_DATE or FIELD_THUMBNAILS)
-// #define defaultSortField FIELD_FILENAME
+// default table sort field (must be FIELD_FILENAME, FIELD_TYPE, FIELD_SIZE,
+// FIELD_DATE or FIELD_THUMBNAILS) #define defaultSortField FIELD_FILENAME
 
-// default table sort order for each field (true => Descending, false => Ascending)
-// #define defaultSortOrderFilename true
-// #define defaultSortOrderType true
-// #define defaultSortOrderSize true
-// #define defaultSortOrderDate true
+// default table sort order for each field (true => Descending, false =>
+// Ascending) #define defaultSortOrderFilename true #define defaultSortOrderType
+// true #define defaultSortOrderSize true #define defaultSortOrderDate true
 // #define defaultSortOrderThumbnails true
 
 /////////////////////////////////
@@ -186,18 +178,17 @@
 //// PLACES FEATURES : BOOKMARKS /////
 //////////////////////////////////////
 
-// a group for bookmarks will be added by default, but you can also create it yourself and many more
-// #define USE_PLACES_BOOKMARKS
-// #define PLACES_BOOKMARK_DEFAULT_OPEPEND true
-// #define placesBookmarksGroupName "Bookmarks"
-// #define placesBookmarksDisplayOrder 0  // to the first
+// a group for bookmarks will be added by default, but you can also create it
+// yourself and many more #define USE_PLACES_BOOKMARKS #define
+// PLACES_BOOKMARK_DEFAULT_OPEPEND true #define placesBookmarksGroupName
+// "Bookmarks" #define placesBookmarksDisplayOrder 0  // to the first
 
 //////////////////////////////////////
 //// PLACES FEATURES : DEVICES ///////
 //////////////////////////////////////
 
-// a group for system devices (returned by IFileSystem), but you can also add yours
-// by ex if you would like to display a specific icon for some devices
+// a group for system devices (returned by IFileSystem), but you can also add
+// yours by ex if you would like to display a specific icon for some devices
 // #define USE_PLACES_DEVICES
 // #define PLACES_DEVICES_DEFAULT_OPEPEND true
 // #define placesDevicesGroupName "Devices"

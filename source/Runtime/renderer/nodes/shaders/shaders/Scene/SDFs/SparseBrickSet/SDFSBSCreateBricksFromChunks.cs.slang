@@ -71,7 +71,7 @@ float evalCoords(const uint3 coords)
 #ifdef _BUILD_WITH_SD_FIELD
     sd = gParamBlock.sdfGrid[coords];
 #endif
-    
+
     for (uint primitiveID = 0; primitiveID < gParamBlock.primitiveCount; primitiveID++)
     {
         SDF3DPrimitive primitive = gParamBlock.primitives[primitiveID];

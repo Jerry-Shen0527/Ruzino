@@ -65,23 +65,23 @@ class HdSt_OsdIndexComputation final : public HdComputedBufferSource {
 
    public:
     HdSt_OsdIndexComputation(
-        HdSt_MeshTopology *topology,
-        HdBufferSourceSharedPtr const &osdTopology);
+        HdSt_MeshTopology* topology,
+        HdBufferSourceSharedPtr const& osdTopology);
     bool Resolve() override;
     bool HasChainedBuffer() const override;
-    void GetBufferSpecs(pxr::HdBufferSpecVector *specs) const override;
+    void GetBufferSpecs(pxr::HdBufferSpecVector* specs) const override;
     HdBufferSourceSharedPtrVector GetChainedBuffers() const override;
 
    private:
     bool _CheckValid() const override;
 
     void _PopulateUniformPrimitiveBuffer(
-        HdSt_Subdivision::PatchTable const *patchTable);
+        HdSt_Subdivision::PatchTable const* patchTable);
     void _PopulatePatchPrimitiveBuffer(
-        HdSt_Subdivision::PatchTable const *patchTable);
-    void _CreateBaseFaceMapping(std::vector<BaseFaceInfo> *result);
+        HdSt_Subdivision::PatchTable const* patchTable);
+    void _CreateBaseFaceMapping(std::vector<BaseFaceInfo>* result);
 
-    HdSt_MeshTopology *_topology;
+    HdSt_MeshTopology* _topology;
     HdBufferSourceSharedPtr _osdTopology;
     HdBufferSourceSharedPtr _primitiveBuffer;
     HdBufferSourceSharedPtr _edgeIndicesBuffer;
@@ -92,12 +92,12 @@ class HdSt_OsdIndexComputation final : public HdComputedBufferSource {
 class HdSt_OsdFvarIndexComputation final : public HdComputedBufferSource {
    public:
     HdSt_OsdFvarIndexComputation(
-        HdSt_MeshTopology *topology,
-        HdBufferSourceSharedPtr const &osdTopology,
+        HdSt_MeshTopology* topology,
+        HdBufferSourceSharedPtr const& osdTopology,
         int channel);
     bool HasChainedBuffer() const override;
     bool Resolve() override;
-    void GetBufferSpecs(pxr::HdBufferSpecVector *specs) const override;
+    void GetBufferSpecs(pxr::HdBufferSpecVector* specs) const override;
     HdBufferSourceSharedPtrVector GetChainedBuffers() const override;
 
    protected:
@@ -105,9 +105,9 @@ class HdSt_OsdFvarIndexComputation final : public HdComputedBufferSource {
 
    private:
     void _PopulateFvarPatchParamBuffer(
-        HdSt_Subdivision::PatchTable const *patchTable);
+        HdSt_Subdivision::PatchTable const* patchTable);
 
-    HdSt_MeshTopology *_topology;
+    HdSt_MeshTopology* _topology;
     HdBufferSourceSharedPtr _osdTopology;
     HdBufferSourceSharedPtr _fvarPatchParamBuffer;
     int _channel;
@@ -119,16 +119,16 @@ class HdSt_OsdFvarIndexComputation final : public HdComputedBufferSource {
 /// \class Hd_OsdTopologyComputation
 class HdSt_OsdTopologyComputation final : public HdComputedBufferSource {
    public:
-    HdSt_OsdTopologyComputation(HdSt_MeshTopology *topology, SdfPath const &id);
+    HdSt_OsdTopologyComputation(HdSt_MeshTopology* topology, SdfPath const& id);
 
     bool Resolve() override;
-    void GetBufferSpecs(pxr::HdBufferSpecVector *specs) const override;
+    void GetBufferSpecs(pxr::HdBufferSpecVector* specs) const override;
 
    protected:
     bool _CheckValid() const override;
 
    private:
-    HdSt_MeshTopology *_topology;
+    HdSt_MeshTopology* _topology;
     SdfPath const _id;
 };
 
@@ -138,19 +138,19 @@ class HdSt_OsdBaseFaceToRefinedFacesMapComputation final
     : public HdComputedBufferSource {
    public:
     HdSt_OsdBaseFaceToRefinedFacesMapComputation(
-        HdSt_Subdivision const *subdivision,
-        HdBufferSourceSharedPtr const &osdTopology);
+        HdSt_Subdivision const* subdivision,
+        HdBufferSourceSharedPtr const& osdTopology);
 
     bool HasChainedBuffer() const override;
     bool Resolve() override;
-    void GetBufferSpecs(pxr::HdBufferSpecVector *specs) const override;
+    void GetBufferSpecs(pxr::HdBufferSpecVector* specs) const override;
     HdBufferSourceSharedPtrVector GetChainedBuffers() const override;
 
    protected:
     bool _CheckValid() const override;
 
    private:
-    HdSt_Subdivision const *_subdivision;
+    HdSt_Subdivision const* _subdivision;
     HdBufferSourceSharedPtr _osdTopology;
     HdBufferSourceSharedPtr _refinedFaceCounts;
 };
@@ -164,16 +164,16 @@ class HdSt_OsdBaseFaceToRefinedFacesMapComputation final
 class HdSt_OsdStencilTableBufferSource final : public pxr::HdBufferSource {
    public:
     HdSt_OsdStencilTableBufferSource(
-        HdSt_Subdivision const *subdivision,
-        HdBufferSourceSharedPtr const &osdTopology,
-        TfToken const &name,
+        HdSt_Subdivision const* subdivision,
+        HdBufferSourceSharedPtr const& osdTopology,
+        TfToken const& name,
         HdSt_MeshTopology::Interpolation interpolation,
         int fvarChannel = 0);
 
     bool Resolve() override;
-    void GetBufferSpecs(pxr::HdBufferSpecVector *specs) const override;
+    void GetBufferSpecs(pxr::HdBufferSpecVector* specs) const override;
 
-    TfToken const &GetName() const override
+    TfToken const& GetName() const override
     {
         return _name;
     }
@@ -181,7 +181,7 @@ class HdSt_OsdStencilTableBufferSource final : public pxr::HdBufferSource {
     {
         return 0;
     }
-    void const *GetData() const override
+    void const* GetData() const override
     {
         return _resultData;
     }
@@ -198,20 +198,20 @@ class HdSt_OsdStencilTableBufferSource final : public pxr::HdBufferSource {
     bool _CheckValid() const override;
 
    private:
-    HdSt_Subdivision const *_subdivision;
+    HdSt_Subdivision const* _subdivision;
     pxr::HdBufferSourceSharedPtr const _osdTopology;
     TfToken _name;
     HdSt_MeshTopology::Interpolation const _interpolation;
     int const _fvarChannel;
-    void const *_resultData;
+    void const* _resultData;
     size_t _resultNumElements;
     HdTupleType _resultTupleType;
 };
 
 HdSt_OsdStencilTableBufferSource::HdSt_OsdStencilTableBufferSource(
-    HdSt_Subdivision const *subdivision,
-    HdBufferSourceSharedPtr const &osdTopology,
-    TfToken const &name,
+    HdSt_Subdivision const* subdivision,
+    HdBufferSourceSharedPtr const& osdTopology,
+    TfToken const& name,
     HdSt_MeshTopology::Interpolation interpolation,
     int fvarChannel)
     : _subdivision(subdivision),
@@ -233,7 +233,7 @@ bool HdSt_OsdStencilTableBufferSource::Resolve()
     if (!_TryLock())
         return false;
 
-    HdSt_Subdivision::StencilTable const *stencilTable =
+    HdSt_Subdivision::StencilTable const* stencilTable =
         _subdivision->GetStencilTable(_interpolation, _fvarChannel);
 
     if (_name == _tokens->sizes) {
@@ -264,7 +264,7 @@ bool HdSt_OsdStencilTableBufferSource::Resolve()
 }
 
 void HdSt_OsdStencilTableBufferSource::GetBufferSpecs(
-    pxr::HdBufferSpecVector *) const
+    pxr::HdBufferSpecVector*) const
 {
     // nothing
 }
@@ -274,7 +274,7 @@ bool HdSt_OsdStencilTableBufferSource::_CheckValid() const
     return true;
 }
 
-HdSt_Subdivision::StencilTable const *HdSt_Subdivision::GetStencilTable(
+HdSt_Subdivision::StencilTable const* HdSt_Subdivision::GetStencilTable(
     HdSt_MeshTopology::Interpolation interpolation,
     int fvarChannel) const
 {
@@ -295,7 +295,7 @@ HdSt_Subdivision::StencilTable const *HdSt_Subdivision::GetStencilTable(
                : _faceVaryingStencils[fvarChannel].get();
 }
 
-bool HdSt_Subdivision::RefinesToTriangles(TfToken const &scheme)
+bool HdSt_Subdivision::RefinesToTriangles(TfToken const& scheme)
 {
     if (scheme == PxOsdOpenSubdivTokens->loop) {
         return true;
@@ -303,12 +303,12 @@ bool HdSt_Subdivision::RefinesToTriangles(TfToken const &scheme)
     return false;
 }
 
-bool HdSt_Subdivision::RefinesToBSplinePatches(TfToken const &scheme)
+bool HdSt_Subdivision::RefinesToBSplinePatches(TfToken const& scheme)
 {
     return scheme == PxOsdOpenSubdivTokens->catmullClark;
 }
 
-bool HdSt_Subdivision::RefinesToBoxSplineTrianglePatches(TfToken const &scheme)
+bool HdSt_Subdivision::RefinesToBoxSplineTrianglePatches(TfToken const& scheme)
 {
 #if OPENSUBDIV_VERSION_NUMBER >= 30400
     // v3.4.0 added support for limit surface patches for loop meshes
@@ -323,7 +323,7 @@ bool HdSt_Subdivision::RefinesToBoxSplineTrianglePatches(TfToken const &scheme)
 
 /*virtual*/
 void HdSt_OsdIndexComputation::GetBufferSpecs(
-    pxr::HdBufferSpecVector *specs) const
+    pxr::HdBufferSpecVector* specs) const
 {
     if (_topology->RefinesToBSplinePatches()) {
         // bi-cubic bspline patches
@@ -395,9 +395,9 @@ bool HdSt_OsdIndexComputation::_CheckValid() const
 ///
 ///
 HdSt_OsdRefineComputationCPU::HdSt_OsdRefineComputationCPU(
-    HdSt_MeshTopology *topology,
-    HdBufferSourceSharedPtr const &source,
-    HdBufferSourceSharedPtr const &osdTopology,
+    HdSt_MeshTopology* topology,
+    HdBufferSourceSharedPtr const& source,
+    HdBufferSourceSharedPtr const& osdTopology,
     HdSt_MeshTopology::Interpolation interpolation,
     int fvarChannel)
     : _topology(topology),
@@ -410,13 +410,13 @@ HdSt_OsdRefineComputationCPU::HdSt_OsdRefineComputationCPU(
 
 HdSt_OsdRefineComputationCPU::~HdSt_OsdRefineComputationCPU() = default;
 
-TfToken const &HdSt_OsdRefineComputationCPU::GetName() const
+TfToken const& HdSt_OsdRefineComputationCPU::GetName() const
 {
     return _source->GetName();
 }
 
 template<class HashState>
-void TfHashAppend(HashState &h, HdSt_OsdRefineComputationCPU const &bs)
+void TfHashAppend(HashState& h, HdSt_OsdRefineComputationCPU const& bs)
 {
     h.Append(bs.GetInterpolation());
 }
@@ -426,7 +426,7 @@ size_t HdSt_OsdRefineComputationCPU::ComputeHash() const
     return TfHash()(*this);
 }
 
-void const *HdSt_OsdRefineComputationCPU::GetData() const
+void const* HdSt_OsdRefineComputationCPU::GetData() const
 {
     return _primvarBuffer.data();
 }
@@ -463,7 +463,7 @@ bool HdSt_OsdRefineComputationCPU::Resolve()
     HD_TRACE_FUNCTION();
     HF_MALLOC_TAG_FUNCTION();
 
-    HdSt_Subdivision *subdivision = _topology->GetSubdivision();
+    HdSt_Subdivision* subdivision = _topology->GetSubdivision();
     if (!TF_VERIFY(subdivision)) {
         _SetResolved();
         return true;
@@ -490,7 +490,7 @@ bool HdSt_OsdRefineComputationCPU::_CheckValid() const
 }
 
 void HdSt_OsdRefineComputationCPU::GetBufferSpecs(
-    pxr::HdBufferSpecVector *specs) const
+    pxr::HdBufferSpecVector* specs) const
 {
     // produces same buffer specs as source
     _source->GetBufferSpecs(specs);
@@ -519,10 +519,10 @@ HdSt_Subdivision::HdSt_Subdivision(bool adaptive, int refineLevel)
 HdSt_Subdivision::~HdSt_Subdivision() = default;
 
 void HdSt_Subdivision::SetRefinementTables(
-    std::unique_ptr<StencilTable const> &&vertexStencils,
-    std::unique_ptr<StencilTable const> &&varyingStencils,
-    std::vector<std::unique_ptr<StencilTable const>> &&faceVaryingStencils,
-    std::unique_ptr<PatchTable const> &&patchTable)
+    std::unique_ptr<StencilTable const>&& vertexStencils,
+    std::unique_ptr<StencilTable const>&& varyingStencils,
+    std::vector<std::unique_ptr<StencilTable const>>&& faceVaryingStencils,
+    std::unique_ptr<PatchTable const>&& patchTable)
 {
     _vertexStencils = std::move(vertexStencils);
     _varyingStencils = std::move(varyingStencils);
@@ -593,27 +593,27 @@ VtIntArray HdSt_Subdivision::GetRefinedFvarIndices(int channel) const
 namespace {
 
 void _EvalStencilsCPU(
-    std::vector<float> *primvarBuffer,
+    std::vector<float>* primvarBuffer,
     int const elementStride,
     int const numCoarsePoints,
     int const numRefinedPoints,
-    std::vector<int> const &sizes,
-    std::vector<int> const &offsets,
-    std::vector<int> const &indices,
-    std::vector<float> const &weights);
+    std::vector<int> const& sizes,
+    std::vector<int> const& offsets,
+    std::vector<int> const& indices,
+    std::vector<float> const& weights);
 
 };  // namespace
 
 void HdSt_Subdivision::RefineCPU(
-    HdBufferSourceSharedPtr const &source,
-    std::vector<float> *primvarBuffer,
+    HdBufferSourceSharedPtr const& source,
+    std::vector<float>* primvarBuffer,
     HdSt_MeshTopology::Interpolation interpolation,
     int fvarChannel)
 {
     HD_TRACE_FUNCTION();
     HF_MALLOC_TAG_FUNCTION();
 
-    HdSt_Subdivision::StencilTable const *stencilTable =
+    HdSt_Subdivision::StencilTable const* stencilTable =
         GetStencilTable(interpolation, fvarChannel);
 
     if (!TF_VERIFY(stencilTable))
@@ -641,7 +641,7 @@ void HdSt_Subdivision::RefineCPU(
         numSrcElements = stencilTable->GetNumControlVertices();
     }
 
-    float const *srcData = static_cast<float const *>(source->GetData());
+    float const* srcData = static_cast<float const*>(source->GetData());
     std::copy(
         srcData,
         srcData + (numSrcElements * elementStride),
@@ -659,22 +659,22 @@ void HdSt_Subdivision::RefineCPU(
 }
 
 HdBufferSourceSharedPtr HdSt_Subdivision::CreateTopologyComputation(
-    HdSt_MeshTopology *topology,
-    SdfPath const &id)
+    HdSt_MeshTopology* topology,
+    SdfPath const& id)
 {
     return std::make_shared<HdSt_OsdTopologyComputation>(topology, id);
 }
 
 HdBufferSourceSharedPtr HdSt_Subdivision::CreateIndexComputation(
-    HdSt_MeshTopology *topology,
-    HdBufferSourceSharedPtr const &osdTopology)
+    HdSt_MeshTopology* topology,
+    HdBufferSourceSharedPtr const& osdTopology)
 {
     return std::make_shared<HdSt_OsdIndexComputation>(topology, osdTopology);
 }
 
 HdBufferSourceSharedPtr HdSt_Subdivision::CreateFvarIndexComputation(
-    HdSt_MeshTopology *topology,
-    HdBufferSourceSharedPtr const &osdTopology,
+    HdSt_MeshTopology* topology,
+    HdBufferSourceSharedPtr const& osdTopology,
     int channel)
 {
     return std::make_shared<HdSt_OsdFvarIndexComputation>(
@@ -682,9 +682,9 @@ HdBufferSourceSharedPtr HdSt_Subdivision::CreateFvarIndexComputation(
 }
 
 HdBufferSourceSharedPtr HdSt_Subdivision::CreateRefineComputationCPU(
-    HdSt_MeshTopology *topology,
-    HdBufferSourceSharedPtr const &source,
-    HdBufferSourceSharedPtr const &osdTopology,
+    HdSt_MeshTopology* topology,
+    HdBufferSourceSharedPtr const& source,
+    HdBufferSourceSharedPtr const& osdTopology,
     HdSt_MeshTopology::Interpolation interpolation,
     int fvarChannel)
 {
@@ -694,7 +694,7 @@ HdBufferSourceSharedPtr HdSt_Subdivision::CreateRefineComputationCPU(
 
 HdBufferSourceSharedPtr
 HdSt_Subdivision::CreateBaseFaceToRefinedFacesMapComputation(
-    HdBufferSourceSharedPtr const &osdTopology)
+    HdBufferSourceSharedPtr const& osdTopology)
 {
     return std::make_shared<HdSt_OsdBaseFaceToRefinedFacesMapComputation>(
         this, osdTopology);
@@ -702,15 +702,15 @@ HdSt_Subdivision::CreateBaseFaceToRefinedFacesMapComputation(
 
 // ---------------------------------------------------------------------------
 HdSt_OsdTopologyComputation::HdSt_OsdTopologyComputation(
-    HdSt_MeshTopology *topology,
-    SdfPath const &id)
+    HdSt_MeshTopology* topology,
+    SdfPath const& id)
     : _topology(topology),
       _id(id)
 {
 }
 
 void HdSt_OsdTopologyComputation::GetBufferSpecs(
-    pxr::HdBufferSpecVector *specs) const
+    pxr::HdBufferSpecVector* specs) const
 {
     // nothing
 }
@@ -732,7 +732,7 @@ bool HdSt_OsdTopologyComputation::Resolve()
         return true;
     }
 
-    HdSt_Subdivision *subdivision = _topology->GetSubdivision();
+    HdSt_Subdivision* subdivision = _topology->GetSubdivision();
     if (!TF_VERIFY(subdivision)) {
         _SetResolved();
         return true;
@@ -830,7 +830,7 @@ bool HdSt_OsdTopologyComputation::Resolve()
     // merge local point stencils
     if (patchTable && patchTable->GetLocalPointStencilTable()) {
         // append stencils
-        if (Far::StencilTable const *vertexStencilsWithLocalPoints =
+        if (Far::StencilTable const* vertexStencilsWithLocalPoints =
                 Far::StencilTableFactory::AppendLocalPointStencilTable(
                     *refiner,
                     vertexStencils.get(),
@@ -840,7 +840,7 @@ bool HdSt_OsdTopologyComputation::Resolve()
     }
     if (patchTable && patchTable->GetLocalPointVaryingStencilTable()) {
         // append stencils
-        if (Far::StencilTable const *varyingStencilsWithLocalPoints =
+        if (Far::StencilTable const* varyingStencilsWithLocalPoints =
                 Far::StencilTableFactory::AppendLocalPointStencilTableVarying(
                     *refiner,
                     varyingStencils.get(),
@@ -851,7 +851,7 @@ bool HdSt_OsdTopologyComputation::Resolve()
     for (int i = 0; i < numFvarChannels; ++i) {
         if (patchTable && patchTable->GetLocalPointFaceVaryingStencilTable(i)) {
             // append stencils
-            if (Far::StencilTable const *faceVaryingStencilsWithLocalPoints =
+            if (Far::StencilTable const* faceVaryingStencilsWithLocalPoints =
                     Far::StencilTableFactory ::
                         AppendLocalPointStencilTableFaceVarying(
                             *refiner,
@@ -884,8 +884,8 @@ bool HdSt_OsdTopologyComputation::_CheckValid() const
 // ---------------------------------------------------------------------------
 
 HdSt_OsdIndexComputation::HdSt_OsdIndexComputation(
-    HdSt_MeshTopology *topology,
-    HdBufferSourceSharedPtr const &osdTopology)
+    HdSt_MeshTopology* topology,
+    HdBufferSourceSharedPtr const& osdTopology)
     : _topology(topology),
       _osdTopology(osdTopology)
 {
@@ -901,16 +901,16 @@ bool HdSt_OsdIndexComputation::Resolve()
     if (!_TryLock())
         return false;
 
-    HdSt_Subdivision *subdivision = _topology->GetSubdivision();
+    HdSt_Subdivision* subdivision = _topology->GetSubdivision();
     if (!TF_VERIFY(subdivision)) {
         _SetResolved();
         return true;
     }
 
-    HdSt_Subdivision::PatchTable const *patchTable =
+    HdSt_Subdivision::PatchTable const* patchTable =
         subdivision->GetPatchTable();
 
-    Far::Index const *firstIndex = NULL;
+    Far::Index const* firstIndex = NULL;
     size_t ptableSize = 0;
     if (patchTable) {
         ptableSize = patchTable->GetPatchControlVerticesTable().size();
@@ -919,7 +919,7 @@ bool HdSt_OsdIndexComputation::Resolve()
         }
     }
 
-    TfToken const &scheme = _topology->GetScheme();
+    TfToken const& scheme = _topology->GetScheme();
 
     if (_topology->RefinesToBSplinePatches() ||
         _topology->RefinesToBoxSplineTrianglePatches()) {
@@ -944,7 +944,7 @@ bool HdSt_OsdIndexComputation::Resolve()
         // populate refined triangle indices.
         VtArray<GfVec3i> indices(ptableSize / 3);
         memcpy(
-            reinterpret_cast<Far::Index *>(indices.data()),
+            reinterpret_cast<Far::Index*>(indices.data()),
             firstIndex,
             ptableSize * sizeof(int));
 
@@ -989,7 +989,7 @@ bool HdSt_OsdIndexComputation::Resolve()
 }
 
 void HdSt_OsdIndexComputation::_CreateBaseFaceMapping(
-    std::vector<HdSt_OsdIndexComputation::BaseFaceInfo> *result)
+    std::vector<HdSt_OsdIndexComputation::BaseFaceInfo>* result)
 {
     HD_TRACE_FUNCTION();
     HF_MALLOC_TAG_FUNCTION();
@@ -997,7 +997,7 @@ void HdSt_OsdIndexComputation::_CreateBaseFaceMapping(
     if (!TF_VERIFY(result))
         return;
 
-    int const *numVertsPtr = _topology->GetFaceVertexCounts().cdata();
+    int const* numVertsPtr = _topology->GetFaceVertexCounts().cdata();
     size_t const numFaces = _topology->GetFaceVertexCounts().size();
     size_t const numVertIndices = _topology->GetFaceVertexIndices().size();
 
@@ -1062,7 +1062,7 @@ void HdSt_OsdIndexComputation::_CreateBaseFaceMapping(
 }
 
 void HdSt_OsdIndexComputation::_PopulateUniformPrimitiveBuffer(
-    HdSt_Subdivision::PatchTable const *patchTable)
+    HdSt_Subdivision::PatchTable const* patchTable)
 {
     HD_TRACE_FUNCTION();
     HF_MALLOC_TAG_FUNCTION();
@@ -1076,17 +1076,17 @@ void HdSt_OsdIndexComputation::_PopulateUniformPrimitiveBuffer(
     VtVec2iArray edgeIndices(numPatches);
 
     for (size_t i = 0; i < numPatches; ++i) {
-        OpenSubdiv::Far::PatchParam const &patchParam =
+        OpenSubdiv::Far::PatchParam const& patchParam =
             patchTable->GetPatchParamTable()[i];
 
         int patchFaceIndex = patchParam.GetFaceId();
-        BaseFaceInfo const &info = patchFaceToBaseFaceMapping[patchFaceIndex];
+        BaseFaceInfo const& info = patchFaceToBaseFaceMapping[patchFaceIndex];
 
         unsigned int field0 = patchParam.field0;
         unsigned int field1 = patchParam.field1;
         primitiveParam[i][0] = info.baseFaceParam;
-        primitiveParam[i][1] = *((int *)&field0);
-        primitiveParam[i][2] = *((int *)&field1);
+        primitiveParam[i][1] = *((int*)&field0);
+        primitiveParam[i][2] = *((int*)&field1);
 
         edgeIndices[i] = info.baseFaceEdgeIndices;
     }
@@ -1099,7 +1099,7 @@ void HdSt_OsdIndexComputation::_PopulateUniformPrimitiveBuffer(
 }
 
 void HdSt_OsdIndexComputation::_PopulatePatchPrimitiveBuffer(
-    HdSt_Subdivision::PatchTable const *patchTable)
+    HdSt_Subdivision::PatchTable const* patchTable)
 {
     HD_TRACE_FUNCTION();
     HF_MALLOC_TAG_FUNCTION();
@@ -1113,7 +1113,7 @@ void HdSt_OsdIndexComputation::_PopulatePatchPrimitiveBuffer(
     VtVec2iArray edgeIndices(numPatches);
 
     for (size_t i = 0; i < numPatches; ++i) {
-        OpenSubdiv::Far::PatchParam const &patchParam =
+        OpenSubdiv::Far::PatchParam const& patchParam =
             patchTable->GetPatchParamTable()[i];
 
         float sharpness = 0.0;
@@ -1125,13 +1125,13 @@ void HdSt_OsdIndexComputation::_PopulatePatchPrimitiveBuffer(
         }
 
         int patchFaceIndex = patchParam.GetFaceId();
-        BaseFaceInfo const &info = patchFaceToBaseFaceMapping[patchFaceIndex];
+        BaseFaceInfo const& info = patchFaceToBaseFaceMapping[patchFaceIndex];
 
         unsigned int field0 = patchParam.field0;
         unsigned int field1 = patchParam.field1;
         primitiveParam[i][0] = info.baseFaceParam;
-        primitiveParam[i][1] = *((int *)&field0);
-        primitiveParam[i][2] = *((int *)&field1);
+        primitiveParam[i][1] = *((int*)&field0);
+        primitiveParam[i][2] = *((int*)&field1);
 
         int sharpnessAsInt = static_cast<int>(sharpness);
         primitiveParam[i][3] = sharpnessAsInt;
@@ -1148,8 +1148,8 @@ void HdSt_OsdIndexComputation::_PopulatePatchPrimitiveBuffer(
 // ---------------------------------------------------------------------------
 
 HdSt_OsdFvarIndexComputation::HdSt_OsdFvarIndexComputation(
-    HdSt_MeshTopology *topology,
-    HdBufferSourceSharedPtr const &osdTopology,
+    HdSt_MeshTopology* topology,
+    HdBufferSourceSharedPtr const& osdTopology,
     int channel)
     : _topology(topology),
       _osdTopology(osdTopology),
@@ -1171,20 +1171,20 @@ bool HdSt_OsdFvarIndexComputation::Resolve()
     if (!_TryLock())
         return false;
 
-    HdSt_Subdivision *subdivision = _topology->GetSubdivision();
+    HdSt_Subdivision* subdivision = _topology->GetSubdivision();
     if (!TF_VERIFY(subdivision)) {
         _SetResolved();
         return true;
     }
 
-    Far::PatchTable const *patchTable = subdivision->GetPatchTable();
+    Far::PatchTable const* patchTable = subdivision->GetPatchTable();
     size_t const numPatches = patchTable ? patchTable->GetNumPatchesTotal() : 0;
 
     VtIntArray fvarIndices = subdivision->GetRefinedFvarIndices(_channel);
-    Far::Index const *firstIndex =
+    Far::Index const* firstIndex =
         !fvarIndices.empty() ? fvarIndices.cdata() : nullptr;
 
-    TfToken const &scheme = _topology->GetScheme();
+    TfToken const& scheme = _topology->GetScheme();
 
     if (_topology->RefinesToBSplinePatches() ||
         _topology->RefinesToBoxSplineTrianglePatches()) {
@@ -1209,7 +1209,7 @@ bool HdSt_OsdFvarIndexComputation::Resolve()
         // populate refined triangle indices.
         VtArray<GfVec3i> indices(numPatches);
         memcpy(
-            reinterpret_cast<Far::Index *>(indices.data()),
+            reinterpret_cast<Far::Index*>(indices.data()),
             firstIndex,
             3 * numPatches * sizeof(int));
 
@@ -1221,7 +1221,7 @@ bool HdSt_OsdFvarIndexComputation::Resolve()
         // populate refined quad indices.
         VtArray<GfVec4i> indices(numPatches);
         memcpy(
-            reinterpret_cast<Far::Index *>(indices.data()),
+            reinterpret_cast<Far::Index*>(indices.data()),
             firstIndex,
             4 * numPatches * sizeof(int));
 
@@ -1235,7 +1235,7 @@ bool HdSt_OsdFvarIndexComputation::Resolve()
 }
 
 void HdSt_OsdFvarIndexComputation::_PopulateFvarPatchParamBuffer(
-    HdSt_Subdivision::PatchTable const *patchTable)
+    HdSt_Subdivision::PatchTable const* patchTable)
 {
     HD_TRACE_FUNCTION();
     HF_MALLOC_TAG_FUNCTION();
@@ -1249,7 +1249,7 @@ void HdSt_OsdFvarIndexComputation::_PopulateFvarPatchParamBuffer(
         fvarPatchParam.resize(numPatches);
 
         for (size_t i = 0; i < numPatches; ++i) {
-            OpenSubdiv::Far::PatchParam const &patchParam = patchParamArray[i];
+            OpenSubdiv::Far::PatchParam const& patchParam = patchParamArray[i];
             fvarPatchParam[i][0] = patchParam.field0;
             fvarPatchParam[i][1] = patchParam.field1;
         }
@@ -1260,7 +1260,7 @@ void HdSt_OsdFvarIndexComputation::_PopulateFvarPatchParamBuffer(
 }
 
 void HdSt_OsdFvarIndexComputation::GetBufferSpecs(
-    pxr::HdBufferSpecVector *specs) const
+    pxr::HdBufferSpecVector* specs) const
 {
     if (_topology->RefinesToBSplinePatches()) {
         // bi-cubic bspline patches
@@ -1310,15 +1310,15 @@ bool HdSt_OsdFvarIndexComputation::_CheckValid() const
 
 HdSt_OsdBaseFaceToRefinedFacesMapComputation::
     HdSt_OsdBaseFaceToRefinedFacesMapComputation(
-        HdSt_Subdivision const *subdivision,
-        HdBufferSourceSharedPtr const &osdTopology)
+        HdSt_Subdivision const* subdivision,
+        HdBufferSourceSharedPtr const& osdTopology)
     : _subdivision(subdivision),
       _osdTopology(osdTopology)
 {
 }
 
 void HdSt_OsdBaseFaceToRefinedFacesMapComputation::GetBufferSpecs(
-    pxr::HdBufferSpecVector *specs) const
+    pxr::HdBufferSpecVector* specs) const
 {
     specs->emplace_back(
         _tokens->baseFaceToRefinedFacesMap, HdTupleType{ HdTypeInt32, 1 });
@@ -1339,7 +1339,7 @@ bool HdSt_OsdBaseFaceToRefinedFacesMapComputation::Resolve()
         return true;
     }
 
-    HdSt_Subdivision::PatchTable const *patchTable =
+    HdSt_Subdivision::PatchTable const* patchTable =
         _subdivision->GetPatchTable();
     const size_t numPatches =
         patchTable ? patchTable->GetPatchParamTable().size() : 0;
@@ -1348,7 +1348,7 @@ bool HdSt_OsdBaseFaceToRefinedFacesMapComputation::Resolve()
     std::vector<std::vector<int>> baseFaceToRefinedFacesMap(numBaseFaces);
 
     for (size_t i = 0; i < numPatches; ++i) {
-        OpenSubdiv::Far::PatchParam const &patchParam =
+        OpenSubdiv::Far::PatchParam const& patchParam =
             patchTable->GetPatchParamTable()[i];
         baseFaceToRefinedFacesMap[patchParam.GetFaceId()].push_back(i);
     }
@@ -1397,14 +1397,14 @@ bool HdSt_OsdBaseFaceToRefinedFacesMapComputation::_CheckValid() const
 namespace {
 
 void _EvalStencilsCPU(
-    std::vector<float> *primvarBuffer,
+    std::vector<float>* primvarBuffer,
     int const elementStride,
     int const numCoarsePoints,
     int const numRefinedPoints,
-    std::vector<int> const &sizes,
-    std::vector<int> const &offsets,
-    std::vector<int> const &indices,
-    std::vector<float> const &weights)
+    std::vector<int> const& sizes,
+    std::vector<int> const& offsets,
+    std::vector<int> const& indices,
+    std::vector<float> const& weights)
 {
     int const numElements = elementStride;
     std::vector<float> dst(numElements);

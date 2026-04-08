@@ -154,9 +154,10 @@ class FEMSolver2D : public ElementSolver {
                 std::vector<int> ordered_vertices;
                 for (auto fv_it : face_vertices) {
                     ordered_vertices.push_back(fv_it.idx());
-                    tri_verts.push_back(pxr::GfVec2d(
-                        openmesh_->point(fv_it)[0],
-                        openmesh_->point(fv_it)[1]));
+                    tri_verts.push_back(
+                        pxr::GfVec2d(
+                            openmesh_->point(fv_it)[0],
+                            openmesh_->point(fv_it)[1]));
                 }
 
                 // Find the position of current vertex in the face
@@ -203,12 +204,13 @@ class FEMSolver2D : public ElementSolver {
                 auto calc_inner_product =
                     [j00, j01, j10, j11, &final_expressions](int id) {
                         if (id < 3)
-                            final_expressions[id].bind_variables({
-                                { "j00", j00 },
-                                { "j01", j01 },
-                                { "j10", j10 },
-                                { "j11", j11 },
-                            });
+                            final_expressions[id].bind_variables(
+                                {
+                                    { "j00", j00 },
+                                    { "j01", j01 },
+                                    { "j10", j10 },
+                                    { "j11", j11 },
+                                });
                         auto integrated = fem_bem::integrate_over_simplex(
                             final_expressions[id], { "u1", "u2" }, nullptr, 2);
                         return integrated;
@@ -368,7 +370,7 @@ class FEMSolver3D : public ElementSolver {
         volumemesh_ = operand_to_openvolumemesh(geom_ptr);
 
         // Validate the volume mesh
-//        validate_volume_mesh();
+        //        validate_volume_mesh();
     }
 
     void validate_volume_mesh()
@@ -520,15 +522,16 @@ class FEMSolver3D : public ElementSolver {
                     compute_inverse_jacobian_squared(tet_coords, vertex_pos);
 
                 auto calc_inner_product = [&](int id) {
-                    final_expressions[id].bind_variables({ { "j00", j00 },
-                                                           { "j01", j01 },
-                                                           { "j02", j02 },
-                                                           { "j10", j10 },
-                                                           { "j11", j11 },
-                                                           { "j12", j12 },
-                                                           { "j20", j20 },
-                                                           { "j21", j21 },
-                                                           { "j22", j22 } });
+                    final_expressions[id].bind_variables(
+                        { { "j00", j00 },
+                          { "j01", j01 },
+                          { "j02", j02 },
+                          { "j10", j10 },
+                          { "j11", j11 },
+                          { "j12", j12 },
+                          { "j20", j20 },
+                          { "j21", j21 },
+                          { "j22", j22 } });
                     return fem_bem::integrate_over_simplex(
                         final_expressions[id],
                         { "u1", "u2", "u3" },
@@ -700,7 +703,8 @@ class FEMSolver3D : public ElementSolver {
         const Eigen::SparseMatrix<float>& A,
         const Eigen::VectorXf& b)
     {
-        auto solver = Solver::SolverFactory::create(Solver::SolverType::EIGEN_ITERATIVE_BICGSTAB);
+        auto solver = Solver::SolverFactory::create(
+            Solver::SolverType::EIGEN_ITERATIVE_BICGSTAB);
 
         Eigen::VectorXf x = Eigen::VectorXf::Zero(b.size());
 

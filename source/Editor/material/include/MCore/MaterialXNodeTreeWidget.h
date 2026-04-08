@@ -234,18 +234,20 @@ class MCORE_API MaterialXNodeTreeWidget : public NodeEditorWidgetBase {
     std::vector<std::string> _currGraphName;
     mx::FilePath mtlx_path_;
     std::string material_path_;
-    
+
     // Debounce mechanism for USD updates
     float _usdUpdateTimer = 0.0f;
     bool _pendingUsdUpdate = false;  // Track if we need to update USD
-    bool _anyControlActive = false;   // Track if any ImGui control is being edited
-    static constexpr float USD_UPDATE_DELAY = 0.3f; // Wait 0.3s after last change
+    bool _anyControlActive =
+        false;  // Track if any ImGui control is being edited
+    static constexpr float USD_UPDATE_DELAY =
+        0.3f;  // Wait 0.3s after last change
 
     // Color picker popup state
     struct ColorPickerState {
         bool isOpen = false;
         std::string socketId;
-        float color[4] = {0, 0, 0, 0};
+        float color[4] = { 0, 0, 0, 0 };
         int numComponents = 3;
         NodeSocket* socket = nullptr;
     };

@@ -23,7 +23,5 @@ NODE_EXECUTION_FUNCTION(iteration_begin)
     return true;
 }
 
-
-
 NODE_DECLARATION_UI(iteration);
 NODE_DEF_CLOSE_SCOPE

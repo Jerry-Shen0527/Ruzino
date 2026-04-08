@@ -1,9 +1,3 @@
-#define _USE_MATH_DEFINES
-#include <cmath>
-
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
 #include <gtest/gtest.h>
 
 #include <Eigen/Eigen>
@@ -11,6 +5,7 @@
 #include <RZSolver/Solver.hpp>
 #include <iomanip>
 #include <iostream>
+#include <numbers>
 
 using namespace Ruzino::Solver;
 
@@ -57,7 +52,8 @@ class SolverComparisonTest : public ::testing::Test {
 
         // Print condition number estimate for large matrices
         if (n >= 1000) {
-            double condition_estimate = 4.0 * n * n / (M_PI * M_PI);
+            double condition_estimate =
+                4.0 * n * n / (std::numbers::pi * std::numbers::pi);
             std::cout << "Matrix size: " << n << "x" << n
                       << ", estimated condition number: " << condition_estimate
                       << " (log10: " << log10(condition_estimate) << ")"
@@ -123,8 +119,8 @@ class SolverComparisonTest : public ::testing::Test {
                 // Use provided condition number or estimate for tridiagonal
                 double condition_estimate = expected_condition;
                 if (condition_estimate <= 0.0) {
-                    condition_estimate =
-                        4.0 * A.rows() * A.rows() / (M_PI * M_PI);
+                    condition_estimate = 4.0 * A.rows() * A.rows() /
+                                         (std::numbers::pi * std::numbers::pi);
                 }
 
                 // Direct solvers lose accuracy with ill-conditioned matrices
@@ -153,10 +149,6 @@ class SolverComparisonTest : public ::testing::Test {
                     else {
                         // On non-SPD matrices, BiCGSTAB should perform well
                         tolerance = 1e-3f;
-                    }
-                    // CUDA BiCGSTAB has higher numerical error
-                    if (solver_name.find("CUDA") != std::string::npos) {
-                        tolerance = std::max(tolerance, 1e-1f);
                     }
                 }
 

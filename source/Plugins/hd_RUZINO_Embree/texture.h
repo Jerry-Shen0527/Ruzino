@@ -2,15 +2,17 @@
 #include "api.h"
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec4f.h"
+#include "pxr/imaging/hio/image.h"
 #include "pxr/usd/sdf/assetPath.h"
-#include "surfaceInteraction.h"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
 class Texture2D {
    public:
     Texture2D();
-    Texture2D(SdfAssetPath path, HioImage::SourceColorSpace colorSpace = HioImage::Auto);
+    Texture2D(
+        SdfAssetPath path,
+        HioImage::SourceColorSpace colorSpace = HioImage::Auto);
 
     bool isValid()
     {

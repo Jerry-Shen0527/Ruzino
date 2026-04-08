@@ -240,13 +240,13 @@ size = leaf_size_base × level_factor × terminal_bonus
 **Stava et al. 2014，第4.2节（Foliage）**：
 - ✅ 论文："叶子位于终端分支上"
   - 实现：`leaves_on_terminal_only` 和 `is_terminal()` 检查
-  
+
 - ✅ 论文："使用Livny et al.的程序化系统"
   - 实现：改进的叶序和朝向计算
-  
+
 - ✅ 论文："增加树冠密度，特别是扫描模型"
   - 实现：终端分支叶子尺寸奖励机制
-  
+
 - ✅ 论文："在生长周期结束时生成叶子"
   - 实现：在 `grow_one_cycle` 最后调用 `create_leaves`
 
@@ -606,6 +606,6 @@ Stava, O., Pirk, S., Kratt, J., Chen, B., Měch, R., Deussen, O., & Benes, B. (2
 
 ---
 
-**作者**：TreeGen Plugin Team  
-**版本**：1.0  
+**作者**：TreeGen Plugin Team
+**版本**：1.0
 **最后更新**：2024

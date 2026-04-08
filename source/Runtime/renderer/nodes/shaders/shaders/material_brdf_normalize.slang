@@ -18,19 +18,19 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
 {
     uint2 pixel = dispatchThreadID.xy;
     uint resolution = normalize_params.resolution;
-    
+
     if (any(pixel >= resolution)) {
         return;
     }
-    
+
     uint pixel_index = pixel.y * resolution + pixel.x;
-    
+
     // Read accumulated values (stored as uint, convert back to float)
     float value = asfloat(sample_buffer[pixel_index * 2 + 0]);
     float count = asfloat(sample_buffer[pixel_index * 2 + 1]);
-    
+
     float output_value;
-    
+
     if (normalize_params.min_samples_threshold == 0) {
         // Sample distribution mode: just copy raw values (normalization done in Python)
         output_value = value;
@@ -42,7 +42,7 @@ void main(uint3 dispatchThreadID : SV_DispatchThreadID)
             output_value = 0.0;  // Not enough samples
         }
     }
-    
+
     // Output: RGB = value, A = count for debugging
     sample_output[pixel] = float4(output_value, output_value, output_value, count);
 }

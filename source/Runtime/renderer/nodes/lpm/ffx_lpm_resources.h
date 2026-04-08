@@ -1,7 +1,7 @@
 // This file is part of the FidelityFX SDK.
 //
 // Copyright (C) 2024 Advanced Micro Devices, Inc.
-// 
+//
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files(the "Software"), to deal
 // in the Software without restriction, including without limitation the rights
@@ -24,14 +24,14 @@
 #define FFX_LPM_RESOURCES_H
 
 #if defined(FFX_CPU) || defined(FFX_GPU)
-#define FFX_LPM_RESOURCE_IDENTIFIER_NULL                                          0
-#define FFX_LPM_RESOURCE_IDENTIFIER_INPUT_COLOR                                   1
-#define FFX_LPM_RESOURCE_IDENTIFIER_OUTPUT_COLOR                                  2
+#define FFX_LPM_RESOURCE_IDENTIFIER_NULL         0
+#define FFX_LPM_RESOURCE_IDENTIFIER_INPUT_COLOR  1
+#define FFX_LPM_RESOURCE_IDENTIFIER_OUTPUT_COLOR 2
 
-#define FFX_LPM_RESOURCE_IDENTIFIER_COUNT                                         3
+#define FFX_LPM_RESOURCE_IDENTIFIER_COUNT 3
 
-#define FFX_LPM_CONSTANTBUFFER_IDENTIFIER_LPM                                     0
+#define FFX_LPM_CONSTANTBUFFER_IDENTIFIER_LPM 0
 
-#endif // #if defined(FFX_CPU) || defined(FFX_GPU)
+#endif  // #if defined(FFX_CPU) || defined(FFX_GPU)
 
-#endif //!defined( FFX_LPM_RESOURCES_H )
+#endif  //! defined( FFX_LPM_RESOURCES_H )

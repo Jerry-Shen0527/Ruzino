@@ -1,6 +1,7 @@
 #include "MCore/MaterialXDocumentViewer.hpp"
 
 #include <MaterialXFormat/XmlIo.h>
+
 #include <sstream>
 
 RUZINO_NAMESPACE_OPEN_SCOPE
@@ -15,7 +16,7 @@ MaterialXDocumentViewer::MaterialXDocumentViewer(
     SetLanguage(Language::XML);
     SetReadOnly(true);
     SetFontSize(14.0f);
-    
+
     // Initial document refresh
     RefreshDocument();
 }
@@ -26,24 +27,24 @@ void MaterialXDocumentViewer::RefreshDocument()
         UpdateText("<!-- No MaterialX node tree available -->");
         return;
     }
-    
+
     try {
         // Get the MaterialX document from the node tree
         auto doc = node_tree_->_graphDoc;
-        
+
         if (!doc) {
             UpdateText("<!-- No MaterialX document available -->");
             return;
         }
-        
+
         // Convert document to XML string
         mx::XmlWriteOptions writeOptions;
         writeOptions.writeXIncludeEnable = false;
         writeOptions.elementPredicate = node_tree_->getElementPredicate();
-        
+
         std::stringstream ss;
         mx::writeToXmlStream(doc, ss, &writeOptions);
-        
+
         // Update the text editor with the XML content
         UpdateText(ss.str());
     }

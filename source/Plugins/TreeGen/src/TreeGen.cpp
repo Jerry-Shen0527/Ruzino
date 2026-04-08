@@ -7,12 +7,14 @@
 namespace TreeGen {
 
 // Version information - export this to force lib generation
-TREEGEN_API const char* GetVersion() {
+TREEGEN_API const char* GetVersion()
+{
     return "1.0.0";
 }
 
-TREEGEN_API const char* GetPluginName() {
+TREEGEN_API const char* GetPluginName()
+{
     return "TreeGen";
 }
 
-} // namespace TreeGen
+}  // namespace TreeGen

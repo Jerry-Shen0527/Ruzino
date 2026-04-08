@@ -31,4 +31,4 @@ Texture2D t_BindlessTextures[] : register(t0, space2);
 // 0=point, 1=linear, 2=aniso for filter types
 SamplerState samplers[9];
 
-#endif 
+#endif

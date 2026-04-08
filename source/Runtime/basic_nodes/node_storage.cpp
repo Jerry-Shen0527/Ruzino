@@ -123,7 +123,4 @@ NODE_EXECUTION_FUNCTION(storage_clear)
 NODE_DECLARATION_UI(storage);
 NODE_DEF_CLOSE_SCOPE
 
-// 静态成员定义必须在 extern "C" 之外，因为 std::map 是 C++ 类型
-namespace Ruzino {
-std::map<std::string, entt::meta_any> Storage::storage;
-}
+std::map<std::string, entt::meta_any> Ruzino::Storage::storage;

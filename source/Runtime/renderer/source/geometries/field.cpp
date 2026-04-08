@@ -24,8 +24,9 @@
 
 #include "field.h"
 
-#include "../renderParam.h"
 #include <spdlog/spdlog.h>
+
+#include "../renderParam.h"
 #include "pxr/imaging/hd/tokens.h"
 
 RUZINO_NAMESPACE_OPEN_SCOPE

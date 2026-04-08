@@ -20,7 +20,7 @@ void main(uint3 DTid: SV_DispatchThreadID)
 
         float4x4 transform;
 
-        
+
         float3x3 rotationMatrix;
         float3 xAxis = worldDir;
         float3 yAxis = float3(0, 1, 0);

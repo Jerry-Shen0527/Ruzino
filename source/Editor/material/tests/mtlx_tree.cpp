@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
-#include "MCore/MaterialXNodeTreeWidget.h"
 #include "MCore/MaterialXNodeTree.hpp"
+#include "MCore/MaterialXNodeTreeWidget.h"
 
 using namespace Ruzino;
 

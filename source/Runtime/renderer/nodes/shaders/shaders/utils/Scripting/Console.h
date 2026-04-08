@@ -26,21 +26,20 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Core/Macros.h"
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "Core/Macros.h"
+
 // Forward declaration.
 struct ImGuiInputTextCallbackData;
 
-namespace Ruzino
-{
+namespace Ruzino {
 class Gui;
 
-class HD_RUZINO_API Console
-{
-public:
+class HD_RUZINO_API Console {
+   public:
     /**
      * Clears the console.
      */
@@ -62,7 +61,7 @@ public:
      */
     bool flush();
 
-private:
+   private:
     void enterCommand();
     std::optional<std::string> browseHistory(bool upOrDown);
     static int inputTextCallback(ImGuiInputTextCallbackData* data);
@@ -74,4 +73,4 @@ private:
     int32_t mHistoryIndex = -1;
     bool mScrollToBottom = true;
 };
-} // namespace Ruzino
+}  // namespace Ruzino

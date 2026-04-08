@@ -33,7 +33,7 @@
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
 
-Hd_RUZINO_RenderBuffer::Hd_RUZINO_RenderBuffer(SdfPath const &id)
+Hd_RUZINO_RenderBuffer::Hd_RUZINO_RenderBuffer(SdfPath const& id)
     : HdRenderBuffer(id),
       _width(0),
       _height(0),
@@ -54,17 +54,17 @@ Hd_RUZINO_RenderBuffer::~Hd_RUZINO_RenderBuffer()
 
 /*virtual*/
 void Hd_RUZINO_RenderBuffer::Sync(
-    HdSceneDelegate *sceneDelegate,
-    HdRenderParam *renderParam,
-    HdDirtyBits *dirtyBits)
+    HdSceneDelegate* sceneDelegate,
+    HdRenderParam* renderParam,
+    HdDirtyBits* dirtyBits)
 {
-    auto ruzino_renderParam = static_cast<Hd_RUZINO_RenderParam *>(renderParam);
+    auto ruzino_renderParam = static_cast<Hd_RUZINO_RenderParam*>(renderParam);
     nvrhi_device = RHI::get_device();
     HdRenderBuffer::Sync(sceneDelegate, renderParam, dirtyBits);
 }
 
 /*virtual*/
-void Hd_RUZINO_RenderBuffer::Finalize(HdRenderParam *renderParam)
+void Hd_RUZINO_RenderBuffer::Finalize(HdRenderParam* renderParam)
 {
     HdRenderBuffer::Finalize(renderParam);
 }
@@ -93,7 +93,7 @@ void Hd_RUZINO_RenderBuffer::Resolve()
 }
 
 bool Hd_RUZINO_RenderBuffer::Allocate(
-    GfVec3i const &dimensions,
+    GfVec3i const& dimensions,
     HdFormat format,
     bool multiSampled)
 {
@@ -149,14 +149,14 @@ void Hd_RUZINO_RenderBuffer::Present(nvrhi::TextureHandle handle)
     for (int i = 0; i < handle->getDesc().height; ++i) {
         memcpy(
             _buffer.data() + i * _width * HdDataSizeOfFormat(_format),
-            (uint8_t *)mapped + i * pitch,
+            (uint8_t*)mapped + i * pitch,
             _width * HdDataSizeOfFormat(_format));
     }
 
     nvrhi_device->unmapStagingTexture(staging);
 #endif
 }
-void *Hd_RUZINO_RenderBuffer::Map()
+void* Hd_RUZINO_RenderBuffer::Map()
 {
     nvrhi_device->waitForIdle();
     _mappers++;

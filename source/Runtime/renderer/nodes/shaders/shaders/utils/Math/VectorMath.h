@@ -27,23 +27,20 @@
  **************************************************************************/
 #pragma once
 
-#include "VectorTypes.h"
-#include "ScalarMath.h"
-
 #include <format>
-
 #include <string>
 
-namespace Ruzino
-{
-namespace math
-{
+#include "ScalarMath.h"
+#include "VectorTypes.h"
 
-// ----------------------------------------------------------------------------
-// Boolean reductions
-// ----------------------------------------------------------------------------
+namespace Ruzino {
+namespace math {
 
-// clang-format off
+    // ----------------------------------------------------------------------------
+    // Boolean reductions
+    // ----------------------------------------------------------------------------
+
+    // clang-format off
 [[nodiscard]] constexpr bool any(const bool1 v) noexcept { return v.x; }
 [[nodiscard]] constexpr bool any(const bool2 v) noexcept { return v.x || v.y; }
 [[nodiscard]] constexpr bool any(const bool3 v) noexcept { return v.x || v.y || v.z; }
@@ -58,73 +55,83 @@ namespace math
 [[nodiscard]] constexpr bool none(const bool2 v) noexcept { return !any(v); }
 [[nodiscard]] constexpr bool none(const bool3 v) noexcept { return !any(v); }
 [[nodiscard]] constexpr bool none(const bool4 v) noexcept { return !any(v); }
-// clang-format on
+    // clang-format on
 
-// ----------------------------------------------------------------------------
-// Unary operators
-// ----------------------------------------------------------------------------
+    // ----------------------------------------------------------------------------
+    // Unary operators
+    // ----------------------------------------------------------------------------
 
-/// Unary plus operator
-template<typename T, int N, std::enable_if_t<is_arithmetic_v<T>, bool> = false>
-[[nodiscard]] constexpr auto operator+(const vector<T, N> v) noexcept
-{
-    return v;
-}
+    /// Unary plus operator
+    template<
+        typename T,
+        int N,
+        std::enable_if_t<is_arithmetic_v<T>, bool> = false>
+    [[nodiscard]] constexpr auto operator+(const vector<T, N> v) noexcept
+    {
+        return v;
+    }
 
 #if FALCOR_MSVC
 #pragma warning(push)
-#pragma warning(disable : 4146) // unary minus operator applied to unsigned type, result still unsigned
+#pragma warning(disable : 4146)  // unary minus operator applied to unsigned
+                                 // type, result still unsigned
 #endif
-/// Unary minus operator
-template<typename T, int N, std::enable_if_t<is_arithmetic_v<T>, bool> = false>
-[[nodiscard]] constexpr auto operator-(const vector<T, N> v) noexcept
-{
-    if constexpr (N == 1)
-        return vector<T, N>{-v.x};
-    else if constexpr (N == 2)
-        return vector<T, N>{-v.x, -v.y};
-    else if constexpr (N == 3)
-        return vector<T, N>{-v.x, -v.y, -v.z};
-    else
-        return vector<T, N>{-v.x, -v.y, -v.z, -v.w};
-}
+    /// Unary minus operator
+    template<
+        typename T,
+        int N,
+        std::enable_if_t<is_arithmetic_v<T>, bool> = false>
+    [[nodiscard]] constexpr auto operator-(const vector<T, N> v) noexcept
+    {
+        if constexpr (N == 1)
+            return vector<T, N>{ -v.x };
+        else if constexpr (N == 2)
+            return vector<T, N>{ -v.x, -v.y };
+        else if constexpr (N == 3)
+            return vector<T, N>{ -v.x, -v.y, -v.z };
+        else
+            return vector<T, N>{ -v.x, -v.y, -v.z, -v.w };
+    }
 #if FALCOR_MSVC
 #pragma warning(pop)
 #endif
 
-/// Unary not operator
-template<typename T, int N>
-[[nodiscard]] constexpr auto operator!(const vector<T, N> v) noexcept
-{
-    if constexpr (N == 1)
-        return bool1{!v.x};
-    else if constexpr (N == 2)
-        return bool2{!v.x, !v.y};
-    else if constexpr (N == 3)
-        return bool3{!v.x, !v.y, !v.z};
-    else
-        return bool4{!v.x, !v.y, !v.z, !v.w};
-}
+    /// Unary not operator
+    template<typename T, int N>
+    [[nodiscard]] constexpr auto operator!(const vector<T, N> v) noexcept
+    {
+        if constexpr (N == 1)
+            return bool1{ !v.x };
+        else if constexpr (N == 2)
+            return bool2{ !v.x, !v.y };
+        else if constexpr (N == 3)
+            return bool3{ !v.x, !v.y, !v.z };
+        else
+            return bool4{ !v.x, !v.y, !v.z, !v.w };
+    }
 
-/// Unary not operator
-template<typename T, int N, std::enable_if_t<is_integral_v<T>, bool> = false>
-[[nodiscard]] constexpr auto operator~(const vector<T, N> v) noexcept
-{
-    if constexpr (N == 1)
-        return vector<T, N>{~v.x};
-    else if constexpr (N == 2)
-        return vector<T, N>{~v.x, ~v.y};
-    else if constexpr (N == 3)
-        return vector<T, N>{~v.x, ~v.y, ~v.z};
-    else
-        return vector<T, N>{~v.x, ~v.y, ~v.z, ~v.w};
-}
+    /// Unary not operator
+    template<
+        typename T,
+        int N,
+        std::enable_if_t<is_integral_v<T>, bool> = false>
+    [[nodiscard]] constexpr auto operator~(const vector<T, N> v) noexcept
+    {
+        if constexpr (N == 1)
+            return vector<T, N>{ ~v.x };
+        else if constexpr (N == 2)
+            return vector<T, N>{ ~v.x, ~v.y };
+        else if constexpr (N == 3)
+            return vector<T, N>{ ~v.x, ~v.y, ~v.z };
+        else
+            return vector<T, N>{ ~v.x, ~v.y, ~v.z, ~v.w };
+    }
 
-// ----------------------------------------------------------------------------
-// Binary operators
-// ----------------------------------------------------------------------------
+    // ----------------------------------------------------------------------------
+    // Binary operators
+    // ----------------------------------------------------------------------------
 
-// clang-format off
+    // clang-format off
 /* <<<PYMACRO
 def print_binary_operator(op, enable_if):
     print(f"""/// Binary {op} operator
@@ -448,13 +455,13 @@ template<typename T, int N, std::enable_if_t<is_integral_v<T>, bool> = false>
 }
 
 /* <<<PYMACROEND>>> */
-// clang-format on
+    // clang-format on
 
-// ----------------------------------------------------------------------------
-// Binary logic operators
-// ----------------------------------------------------------------------------
+    // ----------------------------------------------------------------------------
+    // Binary logic operators
+    // ----------------------------------------------------------------------------
 
-// clang-format off
+    // clang-format off
 /* <<<PYMACRO
 def print_binary_operator(op, enable_if):
     print(f"""/// Binary {op} operator
@@ -720,13 +727,13 @@ template<typename T, int N, std::enable_if_t<is_arithmetic_v<T>, bool> = false>
 }
 
 /* <<<PYMACROEND>>> */
-// clang-format on
+    // clang-format on
 
-// ----------------------------------------------------------------------------
-// Assignment operators
-// ----------------------------------------------------------------------------
+    // ----------------------------------------------------------------------------
+    // Assignment operators
+    // ----------------------------------------------------------------------------
 
-// clang-format off
+    // clang-format off
 /* <<<PYMACRO
 def print_assignment_operator(op, enable_if):
     print(f"""/// {op} assignment operator
@@ -973,13 +980,13 @@ constexpr vector<T, N> operator^=(vector<T, N>& lhs, T rhs)
 }
 
 /* <<<PYMACROEND>>> */
-// clang-format on
+    // clang-format on
 
-// ----------------------------------------------------------------------------
-// Intrinsics
-// ----------------------------------------------------------------------------
+    // ----------------------------------------------------------------------------
+    // Intrinsics
+    // ----------------------------------------------------------------------------
 
-// clang-format off
+    // clang-format off
 /* <<<PYMACRO
 def print_section(name):
     print(f"""// ----------------------------------------------------------------------------
@@ -1648,113 +1655,140 @@ template<typename T, int N, std::enable_if_t<is_floating_point_v<T>, bool> = fal
 }
 
 /* <<<PYMACROEND>>> */
-// clang-format on
+    // clang-format on
 
-// ----------------------------------------------------------------------------
-// Conversion
-// ----------------------------------------------------------------------------
+    // ----------------------------------------------------------------------------
+    // Conversion
+    // ----------------------------------------------------------------------------
 
-[[nodiscard]] inline float2 f16tof32(const uint2& value) noexcept
-{
-    return float2{f16tof32(value.x), f16tof32(value.y)};
-}
+    [[nodiscard]] inline float2 f16tof32(const uint2& value) noexcept
+    {
+        return float2{ f16tof32(value.x), f16tof32(value.y) };
+    }
 
-[[nodiscard]] inline float3 f16tof32(const uint3& value) noexcept
-{
-    return float3{f16tof32(value.x), f16tof32(value.y), f16tof32(value.z)};
-}
+    [[nodiscard]] inline float3 f16tof32(const uint3& value) noexcept
+    {
+        return float3{ f16tof32(value.x),
+                       f16tof32(value.y),
+                       f16tof32(value.z) };
+    }
 
-[[nodiscard]] inline float4 f16tof32(const uint4& value) noexcept
-{
-    return float4{f16tof32(value.x), f16tof32(value.y), f16tof32(value.z), f16tof32(value.w)};
-}
+    [[nodiscard]] inline float4 f16tof32(const uint4& value) noexcept
+    {
+        return float4{ f16tof32(value.x),
+                       f16tof32(value.y),
+                       f16tof32(value.z),
+                       f16tof32(value.w) };
+    }
 
-[[nodiscard]] inline uint2 f32tof16(const float2& value) noexcept
-{
-    return uint2{f32tof16(value.x), f32tof16(value.y)};
-}
+    [[nodiscard]] inline uint2 f32tof16(const float2& value) noexcept
+    {
+        return uint2{ f32tof16(value.x), f32tof16(value.y) };
+    }
 
-[[nodiscard]] inline uint3 f32tof16(const float3& value) noexcept
-{
-    return uint3{f32tof16(value.x), f32tof16(value.y), f32tof16(value.z)};
-}
+    [[nodiscard]] inline uint3 f32tof16(const float3& value) noexcept
+    {
+        return uint3{ f32tof16(value.x), f32tof16(value.y), f32tof16(value.z) };
+    }
 
-[[nodiscard]] inline uint4 f32tof16(const float4& value) noexcept
-{
-    return uint4{f32tof16(value.x), f32tof16(value.y), f32tof16(value.z), f32tof16(value.w)};
-}
+    [[nodiscard]] inline uint4 f32tof16(const float4& value) noexcept
+    {
+        return uint4{ f32tof16(value.x),
+                      f32tof16(value.y),
+                      f32tof16(value.z),
+                      f32tof16(value.w) };
+    }
 
-// TODO(@skallweit) should we have implicit scalar -> vector conversion?
-template<typename T, int N, std::enable_if_t<is_floating_point_v<T>, bool> = false>
-[[nodiscard]] constexpr vector<T, N> lerp(const vector<T, N>& a, const vector<T, N>& b, const T& s)
-{
-    if constexpr (N == 1)
-        return vector<T, N>{lerp(a.x, b.x, s)};
-    else if constexpr (N == 2)
-        return vector<T, N>{lerp(a.x, b.x, s), lerp(a.y, b.y, s)};
-    else if constexpr (N == 3)
-        return vector<T, N>{lerp(a.x, b.x, s), lerp(a.y, b.y, s), lerp(a.z, b.z, s)};
-    else if constexpr (N == 4)
-        return vector<T, N>{lerp(a.x, b.x, s), lerp(a.y, b.y, s), lerp(a.z, b.z, s), lerp(a.w, b.w, s)};
-}
+    // TODO(@skallweit) should we have implicit scalar -> vector conversion?
+    template<
+        typename T,
+        int N,
+        std::enable_if_t<is_floating_point_v<T>, bool> = false>
+    [[nodiscard]] constexpr vector<T, N>
+    lerp(const vector<T, N>& a, const vector<T, N>& b, const T& s)
+    {
+        if constexpr (N == 1)
+            return vector<T, N>{ lerp(a.x, b.x, s) };
+        else if constexpr (N == 2)
+            return vector<T, N>{ lerp(a.x, b.x, s), lerp(a.y, b.y, s) };
+        else if constexpr (N == 3)
+            return vector<T, N>{ lerp(a.x, b.x, s),
+                                 lerp(a.y, b.y, s),
+                                 lerp(a.z, b.z, s) };
+        else if constexpr (N == 4)
+            return vector<T, N>{ lerp(a.x, b.x, s),
+                                 lerp(a.y, b.y, s),
+                                 lerp(a.z, b.z, s),
+                                 lerp(a.w, b.w, s) };
+    }
 
-/// dot
-template<typename T, int N>
-[[nodiscard]] constexpr T dot(const vector<T, N>& lhs, const vector<T, N>& rhs)
-{
-    T result = lhs.x * rhs.x;
-    if constexpr (N >= 2)
-        result += lhs.y * rhs.y;
-    if constexpr (N >= 3)
-        result += lhs.z * rhs.z;
-    if constexpr (N >= 4)
-        result += lhs.w * rhs.w;
-    return result;
-}
+    /// dot
+    template<typename T, int N>
+    [[nodiscard]] constexpr T dot(
+        const vector<T, N>& lhs,
+        const vector<T, N>& rhs)
+    {
+        T result = lhs.x * rhs.x;
+        if constexpr (N >= 2)
+            result += lhs.y * rhs.y;
+        if constexpr (N >= 3)
+            result += lhs.z * rhs.z;
+        if constexpr (N >= 4)
+            result += lhs.w * rhs.w;
+        return result;
+    }
 
-/// cross
-template<typename T>
-[[nodiscard]] constexpr vector<T, 3> cross(const vector<T, 3>& lhs, const vector<T, 3>& rhs)
-{
-    return vector<T, 3>(lhs.y * rhs.z - lhs.z * rhs.y, lhs.z * rhs.x - lhs.x * rhs.z, lhs.x * rhs.y - lhs.y * rhs.x);
-}
+    /// cross
+    template<typename T>
+    [[nodiscard]] constexpr vector<T, 3> cross(
+        const vector<T, 3>& lhs,
+        const vector<T, 3>& rhs)
+    {
+        return vector<T, 3>(
+            lhs.y * rhs.z - lhs.z * rhs.y,
+            lhs.z * rhs.x - lhs.x * rhs.z,
+            lhs.x * rhs.y - lhs.y * rhs.x);
+    }
 
-/// length
-template<typename T, int N>
-[[nodiscard]] constexpr T length(const vector<T, N>& v)
-{
-    return sqrt(dot(v, v));
-}
+    /// length
+    template<typename T, int N>
+    [[nodiscard]] constexpr T length(const vector<T, N>& v)
+    {
+        return sqrt(dot(v, v));
+    }
 
-/// normalize
-template<typename T, int N>
-[[nodiscard]] constexpr vector<T, N> normalize(const vector<T, N>& v)
-{
-    return v * rsqrt(dot(v, v));
-}
+    /// normalize
+    template<typename T, int N>
+    [[nodiscard]] constexpr vector<T, N> normalize(const vector<T, N>& v)
+    {
+        return v * rsqrt(dot(v, v));
+    }
 
-/// reflect
-template<typename T, int N>
-[[nodiscard]] constexpr vector<T, N> reflect(const vector<T, N>& v, const vector<T, N>& n)
-{
-    return v - T(2) * dot(v, n) * n;
-}
+    /// reflect
+    template<typename T, int N>
+    [[nodiscard]] constexpr vector<T, N> reflect(
+        const vector<T, N>& v,
+        const vector<T, N>& n)
+    {
+        return v - T(2) * dot(v, n) * n;
+    }
 
-/// Convert vector to string.
-template<typename T, int N>
-[[nodiscard]] std::string to_string(const vector<T, N>& v)
-{
-    return ::std::format("{}", v);
-}
+    /// Convert vector to string.
+    template<typename T, int N>
+    [[nodiscard]] std::string to_string(const vector<T, N>& v)
+    {
+        return ::std::format("{}", v);
+    }
 
-} // namespace math
-} // namespace Ruzino
+}  // namespace math
+}  // namespace Ruzino
 
 // Specialize std::less to allow using vectors as key in std::map for example.
 template<typename T, int N>
-struct std::less<::Ruzino::math::vector<T, N>>
-{
-    constexpr bool operator()(const ::Ruzino::math::vector<T, N>& lhs, const ::Ruzino::math::vector<T, N>& rhs) const
+struct std::less<::Ruzino::math::vector<T, N>> {
+    constexpr bool operator()(
+        const ::Ruzino::math::vector<T, N>& lhs,
+        const ::Ruzino::math::vector<T, N>& rhs) const
     {
         for (int i = 0; i < N; ++i)
             if (lhs[i] != rhs[i])
@@ -1764,9 +1798,10 @@ struct std::less<::Ruzino::math::vector<T, N>>
 };
 
 template<typename T, int N>
-struct std::equal_to<::Ruzino::math::vector<T, N>>
-{
-    constexpr bool operator()(const ::Ruzino::math::vector<T, N>& lhs, const ::Ruzino::math::vector<T, N>& rhs) const
+struct std::equal_to<::Ruzino::math::vector<T, N>> {
+    constexpr bool operator()(
+        const ::Ruzino::math::vector<T, N>& lhs,
+        const ::Ruzino::math::vector<T, N>& rhs) const
     {
         for (int i = 0; i < N; ++i)
             if (lhs[i] != rhs[i])
@@ -1775,9 +1810,10 @@ struct std::equal_to<::Ruzino::math::vector<T, N>>
     }
 };
 template<typename T, int N>
-struct std::not_equal_to<::Ruzino::math::vector<T, N>>
-{
-    constexpr bool operator()(const ::Ruzino::math::vector<T, N>& lhs, const ::Ruzino::math::vector<T, N>& rhs) const
+struct std::not_equal_to<::Ruzino::math::vector<T, N>> {
+    constexpr bool operator()(
+        const ::Ruzino::math::vector<T, N>& lhs,
+        const ::Ruzino::math::vector<T, N>& rhs) const
     {
         for (int i = 0; i < N; ++i)
             if (lhs[i] == rhs[i])
@@ -1787,27 +1823,25 @@ struct std::not_equal_to<::Ruzino::math::vector<T, N>>
 };
 
 template<typename T, int N>
-struct std::hash<::Ruzino::math::vector<T, N>>
-{
+struct std::hash<::Ruzino::math::vector<T, N>> {
     constexpr int operator()(const ::Ruzino::math::vector<T, N>& v) const
     {
         size_t result = 0;
         for (int i = 0; i < N; ++i)
-            result ^= std::hash<T>()(v[i]) + 0x9e3779b9 + (result << 6) + (result >> 2);
+            result ^= std::hash<T>()(v[i]) + 0x9e3779b9 + (result << 6) +
+                      (result >> 2);
         return result;
     }
 };
 
 /// Vector string formatter.
 template<typename T, int N>
-struct std::formatter<Ruzino::math::vector<T, N>> : formatter<T>
-{
+struct std::formatter<Ruzino::math::vector<T, N>> : formatter<T> {
     template<typename FormatContext>
     auto format(const Ruzino::math::vector<T, N>& v, FormatContext& ctx) const
     {
         auto out = ctx.out();
-        for (int i = 0; i < N; ++i)
-        {
+        for (int i = 0; i < N; ++i) {
             out = ::std::format_to(out, "{}", (i == 0) ? "{" : ", ");
             out = formatter<T>::format(v[i], ctx);
         }

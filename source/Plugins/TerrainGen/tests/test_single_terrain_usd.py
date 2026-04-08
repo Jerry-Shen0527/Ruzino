@@ -3,19 +3,15 @@ Test single terrain generation with USD output
 Simplified test that doesn't require merge nodes
 """
 import os
-import sys
-
-test_dir = os.path.dirname(os.path.abspath(__file__))
-binary_dir = os.path.join(test_dir, '..', '..', '..', '..', 'Binaries', 'Release')
-binary_dir = os.path.abspath(binary_dir)
-sys.path.insert(0, binary_dir)
-
-rznode_python = os.path.join(test_dir, '..', '..', '..', 'Core', 'rznode', 'python')
-sys.path.insert(0, os.path.abspath(rznode_python))
-os.chdir(binary_dir)
-
 from ruzino_graph import RuzinoGraph
 import stage_py
+
+
+def get_binary_dir():
+    """Get the binary directory path"""
+    test_dir = os.path.dirname(os.path.abspath(__file__))
+    binary_dir = os.path.join(test_dir, '..', '..', '..', '..', 'Binaries', 'Release')
+    return os.path.abspath(binary_dir)
 
 
 def test_single_terrain():
@@ -23,30 +19,31 @@ def test_single_terrain():
     print("\n" + "="*70)
     print("TEST: Single Terrain USD Generation")
     print("="*70)
-    
+
+    binary_dir = get_binary_dir()
     output_file = os.path.join(binary_dir, "terrain_single.usdc")
-    
+
     g = RuzinoGraph("SingleTerrain")
-    
+
     # Load configurations
     g.loadConfiguration(os.path.join(binary_dir, "geometry_nodes.json"))
     print(f"✓ Loaded geometry nodes configuration")
-    
+
     g.loadConfiguration(os.path.join(binary_dir, "Plugins", "TerrainGen_geometry_nodes.json"))
     print(f"✓ Loaded TerrainGen configuration")
-    
+
     # Create terrain generation node
     terrain_gen = g.createNode("terrain_generate", name="terrain")
     print(f"✓ Created terrain_generate node")
-    
+
     # Create write node
     write_node = g.createNode("write_usd", name="writer")
     print(f"✓ Created write_usd node")
-    
+
     # Connect terrain directly to write
     g.addEdge(terrain_gen, "Height Field", write_node, "Geometry")
     print(f"✓ Connected nodes")
-    
+
     # Set terrain generation parameters
     inputs = {}
     inputs[(terrain_gen, "Grid Resolution")] = int(128)
@@ -59,58 +56,39 @@ def test_single_terrain():
     inputs[(terrain_gen, "Enable Multi Scale")] = bool(True)
     inputs[(terrain_gen, "Mountain Amplitude")] = float(30.0)
     inputs[(terrain_gen, "Random Seed")] = int(42)
-    
+
     print(f"\nParameters set: 128×128 terrain, Frequency=3.0, Multi-scale enabled")
-    
+
     # Create Stage and convert to GeomPayload
     stage = stage_py.Stage(output_file)
     geom_payload = stage_py.create_payload_from_stage(stage, "/terrain")
     g.setGlobalParams(geom_payload)
-    
+
     print(f"\nExecuting graph...")
-    
+
     # Execute
     g.prepare_and_execute(inputs, required_node=write_node)
     print(f"✓ Executed graph")
-    
+
     # Save the stage
     stage.save()
-    
+
     # Check file size
     if os.path.exists(output_file):
         file_size = os.path.getsize(output_file)
-        
-        # Check modifier layer file (where actual data is stored)
-        modifier_file = os.path.join(binary_dir, "terrain_single_modifiers.usdc")
-        
-        if os.path.exists(modifier_file):
-            modifier_size = os.path.getsize(modifier_file)
-            file_size_mb = modifier_size / (1024 * 1024)
-            print(f"\n{'='*70}")
-            print(f"✅ SUCCESS: Single Terrain Generated!")
-            print(f"{'='*70}")
-            print(f"Resolution: 128×128 vertices")
-            print(f"File size: {file_size:,} bytes (main) + {modifier_size:,} bytes (modifier)")
-            print(f"Total: {modifier_size:,} bytes ({file_size_mb:.2f} MB)")
-            print(f"Output: {output_file}")
-            print(f"{'='*70}")
-            
-            # Verify modifier file has reasonable size
-            assert modifier_size > 10000, f"Modifier file unexpectedly small: {modifier_size} bytes"
-        else:
-            file_size_mb = file_size / (1024 * 1024)
-            print(f"\n{'='*70}")
-            print(f"✅ SUCCESS: Single Terrain Generated!")
-            print(f"{'='*70}")
-            print(f"Resolution: 128×128 vertices")
-            print(f"File size: {file_size:,} bytes ({file_size_mb:.2f} MB)")
-            print(f"Output: {output_file}")
-            print(f"{'='*70}")
-            
-            assert file_size > 10000, f"File unexpectedly small: {file_size} bytes"
-        
+        file_size_mb = file_size / (1024 * 1024)
+        print(f"\n{'='*70}")
+        print(f"✅ SUCCESS: Single Terrain Generated!")
+        print(f"{'='*70}")
+        print(f"Resolution: 128×128 vertices")
+        print(f"File size: {file_size:,} bytes ({file_size_mb:.2f} MB)")
+        print(f"Output: {output_file}")
+        print(f"{'='*70}")
+
+        # Verify reasonable file size
+        assert file_size > 10000, f"File unexpectedly small: {file_size} bytes"
         print(f"\n✓ File size validation passed")
-        
+
     else:
         print(f"✗ USD file not found: {output_file}")
         assert False, f"File not created: {output_file}"

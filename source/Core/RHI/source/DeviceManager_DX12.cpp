@@ -49,13 +49,13 @@ freely, subject to the following restrictions:
 
 #ifdef _WIN32
 
-#include <spdlog/spdlog.h>
 #include <RHI/DeviceManager/DeviceManager.h>
 #include <Windows.h>
 #include <dxgi1_5.h>
 #include <dxgidebug.h>
 #include <nvrhi/d3d12.h>
 #include <nvrhi/validation.h>
+#include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <sstream>
@@ -531,7 +531,8 @@ bool DeviceManager_DX12::CreateRenderTargets()
         textureDesc.isUAV = false;
         textureDesc.initialState = nvrhi::ResourceStates::Present;
         textureDesc.keepInitialState = true;
-        // Set clear value for swap chain buffer to avoid D3D12 performance warning
+        // Set clear value for swap chain buffer to avoid D3D12 performance
+        // warning
         textureDesc.useClearValue = true;
         textureDesc.clearValue = nvrhi::Color(0.0f, 0.0f, 0.0f, 1.0f);
 

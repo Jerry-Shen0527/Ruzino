@@ -46,7 +46,7 @@ window.run()
 class MyWidget(gui.IWidget):
     def __init__(self, title="My Widget"):
         super().__init__(title)
-    
+
     def BuildUI(self):
         # Your ImGui code here
         return True

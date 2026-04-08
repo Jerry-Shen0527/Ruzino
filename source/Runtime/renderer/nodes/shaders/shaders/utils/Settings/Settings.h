@@ -26,42 +26,43 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "AttributeFilters.h"
-#include "Core/Macros.h"
-#include "Core/Error.h"
-
 #include <Utils/json.hpp>
-
-#include <optional>
-#include <map>
 #include <filesystem>
+#include <map>
+#include <optional>
 #include <vector>
 
-namespace pybind11
-{
+#include "AttributeFilters.h"
+#include "Core/Error.h"
+#include "Core/Macros.h"
+
+namespace pybind11 {
 class dict;
 class list;
-} // namespace pybind11
+}  // namespace pybind11
 
-namespace Ruzino
-{
+namespace Ruzino {
 
-class HD_RUZINO_API Settings
-{
-public:
+class HD_RUZINO_API Settings {
+   public:
     using Options = settings::Attributes;
     using Attributes = settings::Attributes;
     using TypeError = settings::detail::TypeError;
 
-public:
+   public:
     using SearchDirectories = std::vector<std::filesystem::path>;
 
     /// Get the global settings instance.
     static Settings& getGlobalSettings();
 
-    Settings() : mData(1) {}
+    Settings() : mData(1)
+    {
+    }
 
-    const Options& getOptions() const { return getActive().mOptions; }
+    const Options& getOptions() const
+    {
+        return getActive().mOptions;
+    }
 
     template<typename T>
     std::optional<T> getOption(std::string_view optionName) const
@@ -81,43 +82,60 @@ public:
     void addOptions(const pybind11::dict& options);
     void addOptions(const pybind11::list& options);
 
-    /// Add options from a JSON file, returning true on success and false on failure
+    /// Add options from a JSON file, returning true on success and false on
+    /// failure
     bool addOptions(const std::filesystem::path& path);
 
     // Clears the global options to defaults
-    void clearOptions() { getActive().mOptions.clear(); }
+    void clearOptions()
+    {
+        getActive().mOptions.clear();
+    }
 
     /**
-     * The Settings object now contains Attribute filters, that are applied once by one
-     * to a shape based on it name, to provide the final Attribute.
+     * The Settings object now contains Attribute filters, that are applied once
+     * by one to a shape based on it name, to provide the final Attribute.
      */
 
     template<typename T>
-    std::optional<T> getAttribute(std::string_view shapeName, std::string_view attributeName) const
+    std::optional<T> getAttribute(
+        std::string_view shapeName,
+        std::string_view attributeName) const
     {
-        return getActive().mAttributeFilters.getAttribute<T>(shapeName, attributeName);
+        return getActive().mAttributeFilters.getAttribute<T>(
+            shapeName, attributeName);
     }
 
     template<typename T>
-    T getAttribute(std::string_view shapeName, std::string_view attributeName, const T& def) const
+    T getAttribute(
+        std::string_view shapeName,
+        std::string_view attributeName,
+        const T& def) const
     {
-        return getActive().mAttributeFilters.getAttribute<T>(shapeName, attributeName, def);
+        return getActive().mAttributeFilters.getAttribute<T>(
+            shapeName, attributeName, def);
     }
 
-    Attributes getAttributes(std::string_view shapeName) const { return getActive().mAttributeFilters.getAttributes(shapeName); }
+    Attributes getAttributes(std::string_view shapeName) const
+    {
+        return getActive().mAttributeFilters.getAttributes(shapeName);
+    }
 
     /**
      * @brief Adds filtered attributes with the following syntax.
      *
      * Examples use the JSON with comments syntax.
-     * Full example, applies "foo":4 and "bar:foobar":5 to all shapes that start with "Fur":
+     * Full example, applies "foo":4 and "bar:foobar":5 to all shapes that start
+     * with "Fur":
      * {
      *     // optional name of the filter, not currently used
      *     "name" : "name of the filter",
-     *     // Optional regex that determines to what shape names will the attributes apply.
+     *     // Optional regex that determines to what shape names will the
+     * attributes apply.
      *     // Will be ".*" (apply to all) if not present.
      *     "regex" : "Fur.*",
-     *     // Attributes that will be applied. Can be nested dictionaries, but will be flattened to colon
+     *     // Attributes that will be applied. Can be nested dictionaries, but
+     * will be flattened to colon
      *     // separated names, e.g.: { "foo" : 4, "bar:foobar" : 5 }
      *     "attributes" :
      *     {
@@ -131,8 +149,8 @@ public:
      *
      * Simplified example, applies "foo":6 to every shape:
      * {
-     *     // If "attributes" is not part of the dictionary, the whole dictionary is taken as attributes block
-     *     "foo":6
+     *     // If "attributes" is not part of the dictionary, the whole
+     * dictionary is taken as attributes block "foo":6
      * }
      *
      * Can also set multiple such filters at once, as an array:
@@ -150,7 +168,8 @@ public:
      *     "bar.filter": ["<regex>", true]
      * }
      *
-     * @param attributes Dictionary or array of dictionaries that provides attributes and their filters
+     * @param attributes Dictionary or array of dictionaries that provides
+     * attributes and their filters
      */
     void addFilteredAttributes(const nlohmann::json& attributes);
     void addFilteredAttributes(const pybind11::dict& attributes);
@@ -178,11 +197,14 @@ public:
         if (it != mStandardSearchDirectories.end())
             return it->second;
 
-        static SearchDirectories sEmpty; // TODO: REMOVEGLOBAL
+        static SearchDirectories sEmpty;  // TODO: REMOVEGLOBAL
         return sEmpty;
     }
 
-    void pushSettingsStack() { mData.push_back(mData.back()); }
+    void pushSettingsStack()
+    {
+        mData.push_back(mData.back());
+    }
 
     void popSettingsStack()
     {
@@ -190,34 +212,45 @@ public:
         FALCOR_ASSERT(!mData.empty());
     }
 
-private:
-    struct SettingsData
-    {
+   private:
+    struct SettingsData {
         Options mOptions;
         settings::AttributeFilter mAttributeFilters;
     };
 
-    SettingsData& getActive() { return mData.back(); }
-    const SettingsData& getActive() const { return mData.back(); }
+    SettingsData& getActive()
+    {
+        return mData.back();
+    }
+    const SettingsData& getActive() const
+    {
+        return mData.back();
+    }
 
     void updateSearchPaths(const nlohmann::json& update);
 
-private:
+   private:
     std::vector<SettingsData> mData;
 
-    std::map<std::string, SearchDirectories, std::less<>> mStandardSearchDirectories;
+    std::map<std::string, SearchDirectories, std::less<>>
+        mStandardSearchDirectories;
     std::map<std::string, SearchDirectories, std::less<>> mSearchDirectories;
 };
 
-class ScopedSettings
-{
-public:
-    ScopedSettings(Settings& settings) : mSettings(settings) { mSettings.pushSettingsStack(); }
+class ScopedSettings {
+   public:
+    ScopedSettings(Settings& settings) : mSettings(settings)
+    {
+        mSettings.pushSettingsStack();
+    }
 
-    ~ScopedSettings() { mSettings.popSettingsStack(); }
+    ~ScopedSettings()
+    {
+        mSettings.popSettingsStack();
+    }
 
-private:
+   private:
     Settings& mSettings;
 };
 
-} // namespace Ruzino
+}  // namespace Ruzino

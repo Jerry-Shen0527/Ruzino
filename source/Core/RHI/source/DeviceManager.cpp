@@ -78,13 +78,13 @@ RUZINO_NAMESPACE_OPEN_SCOPE
 // that all DeviceManager instances can use.
 class JoyStickManager {
    public:
-    static JoyStickManager &Singleton()
+    static JoyStickManager& Singleton()
     {
         static JoyStickManager singleton;
         return singleton;
     }
 
-    void UpdateAllJoysticks(const std::list<IRenderPass *> &passes);
+    void UpdateAllJoysticks(const std::list<IRenderPass*>& passes);
 
     void EraseDisconnectedJoysticks();
     void EnumerateJoysticks();
@@ -96,92 +96,92 @@ class JoyStickManager {
     JoyStickManager()
     {
     }
-    void UpdateJoystick(int j, const std::list<IRenderPass *> &passes);
+    void UpdateJoystick(int j, const std::list<IRenderPass*>& passes);
 
     std::list<int> m_JoystickIDs, m_RemovedJoysticks;
 };
 
-static void ErrorCallback_GLFW(int error, const char *description)
+static void ErrorCallback_GLFW(int error, const char* description)
 {
     fprintf(stderr, "GLFW error: %s\n", description);
     exit(1);
 }
 
-static void WindowIconifyCallback_GLFW(GLFWwindow *window, int iconified)
+static void WindowIconifyCallback_GLFW(GLFWwindow* window, int iconified)
 {
-    DeviceManager *manager =
-        reinterpret_cast<DeviceManager *>(glfwGetWindowUserPointer(window));
+    DeviceManager* manager =
+        reinterpret_cast<DeviceManager*>(glfwGetWindowUserPointer(window));
     manager->WindowIconifyCallback(iconified);
 }
 
-static void WindowFocusCallback_GLFW(GLFWwindow *window, int focused)
+static void WindowFocusCallback_GLFW(GLFWwindow* window, int focused)
 {
-    DeviceManager *manager =
-        reinterpret_cast<DeviceManager *>(glfwGetWindowUserPointer(window));
+    DeviceManager* manager =
+        reinterpret_cast<DeviceManager*>(glfwGetWindowUserPointer(window));
     manager->WindowFocusCallback(focused);
 }
 
-static void WindowRefreshCallback_GLFW(GLFWwindow *window)
+static void WindowRefreshCallback_GLFW(GLFWwindow* window)
 {
-    DeviceManager *manager =
-        reinterpret_cast<DeviceManager *>(glfwGetWindowUserPointer(window));
+    DeviceManager* manager =
+        reinterpret_cast<DeviceManager*>(glfwGetWindowUserPointer(window));
     manager->WindowRefreshCallback();
 }
 
-static void WindowCloseCallback_GLFW(GLFWwindow *window)
+static void WindowCloseCallback_GLFW(GLFWwindow* window)
 {
-    DeviceManager *manager =
-        reinterpret_cast<DeviceManager *>(glfwGetWindowUserPointer(window));
+    DeviceManager* manager =
+        reinterpret_cast<DeviceManager*>(glfwGetWindowUserPointer(window));
     manager->WindowCloseCallback();
 }
 
-static void WindowPosCallback_GLFW(GLFWwindow *window, int xpos, int ypos)
+static void WindowPosCallback_GLFW(GLFWwindow* window, int xpos, int ypos)
 {
-    DeviceManager *manager =
-        reinterpret_cast<DeviceManager *>(glfwGetWindowUserPointer(window));
+    DeviceManager* manager =
+        reinterpret_cast<DeviceManager*>(glfwGetWindowUserPointer(window));
     manager->WindowPosCallback(xpos, ypos);
 }
 
 static void KeyCallback_GLFW(
-    GLFWwindow *window,
+    GLFWwindow* window,
     int key,
     int scancode,
     int action,
     int mods)
 {
-    DeviceManager *manager =
-        reinterpret_cast<DeviceManager *>(glfwGetWindowUserPointer(window));
+    DeviceManager* manager =
+        reinterpret_cast<DeviceManager*>(glfwGetWindowUserPointer(window));
     manager->KeyboardUpdate(key, scancode, action, mods);
 }
 
 static void
-CharModsCallback_GLFW(GLFWwindow *window, unsigned int unicode, int mods)
+CharModsCallback_GLFW(GLFWwindow* window, unsigned int unicode, int mods)
 {
-    DeviceManager *manager =
-        reinterpret_cast<DeviceManager *>(glfwGetWindowUserPointer(window));
+    DeviceManager* manager =
+        reinterpret_cast<DeviceManager*>(glfwGetWindowUserPointer(window));
     manager->KeyboardCharInput(unicode, mods);
 }
 
-static void MousePosCallback_GLFW(GLFWwindow *window, double xpos, double ypos)
+static void MousePosCallback_GLFW(GLFWwindow* window, double xpos, double ypos)
 {
-    DeviceManager *manager =
-        reinterpret_cast<DeviceManager *>(glfwGetWindowUserPointer(window));
+    DeviceManager* manager =
+        reinterpret_cast<DeviceManager*>(glfwGetWindowUserPointer(window));
     manager->MousePosUpdate(xpos, ypos);
 }
 
 static void
-MouseButtonCallback_GLFW(GLFWwindow *window, int button, int action, int mods)
+MouseButtonCallback_GLFW(GLFWwindow* window, int button, int action, int mods)
 {
-    DeviceManager *manager =
-        reinterpret_cast<DeviceManager *>(glfwGetWindowUserPointer(window));
+    DeviceManager* manager =
+        reinterpret_cast<DeviceManager*>(glfwGetWindowUserPointer(window));
     manager->MouseButtonUpdate(button, action, mods);
 }
 
 static void
-MouseScrollCallback_GLFW(GLFWwindow *window, double xoffset, double yoffset)
+MouseScrollCallback_GLFW(GLFWwindow* window, double xoffset, double yoffset)
 {
-    DeviceManager *manager =
-        reinterpret_cast<DeviceManager *>(glfwGetWindowUserPointer(window));
+    DeviceManager* manager =
+        reinterpret_cast<DeviceManager*>(glfwGetWindowUserPointer(window));
     manager->MouseScrollUpdate(xoffset, yoffset);
 }
 
@@ -447,12 +447,12 @@ static const struct {
     },
 };
 
-bool DeviceManager::CreateInstance(const InstanceParameters &params)
+bool DeviceManager::CreateInstance(const InstanceParameters& params)
 {
     if (m_InstanceCreated)
         return true;
 
-    static_cast<InstanceParameters &>(m_DeviceParams) = params;
+    static_cast<InstanceParameters&>(m_DeviceParams) = params;
 
     if (!params.headlessDevice) {
         if (!glfwInit())
@@ -469,7 +469,7 @@ bool DeviceManager::CreateInstance(const InstanceParameters &params)
     return m_InstanceCreated;
 }
 
-bool DeviceManager::CreateHeadlessDevice(const DeviceCreationParameters &params)
+bool DeviceManager::CreateHeadlessDevice(const DeviceCreationParameters& params)
 {
     m_DeviceParams = params;
     m_DeviceParams.headlessDevice = true;
@@ -481,8 +481,8 @@ bool DeviceManager::CreateHeadlessDevice(const DeviceCreationParameters &params)
 }
 
 bool DeviceManager::CreateWindowDeviceAndSwapChain(
-    const DeviceCreationParameters &params,
-    const char *windowTitle)
+    const DeviceCreationParameters& params,
+    const char* windowTitle)
 {
 #ifdef _WINDOWS
     if (params.enablePerMonitorDPI) {
@@ -507,7 +507,7 @@ bool DeviceManager::CreateWindowDeviceAndSwapChain(
     glfwDefaultWindowHints();
 
     bool foundFormat = false;
-    for (const auto &info : formatInfo) {
+    for (const auto& info : formatInfo) {
         if (info.format == params.swapChainFormat) {
             glfwWindowHint(GLFW_RED_BITS, info.redBits);
             glfwWindowHint(GLFW_GREEN_BITS, info.greenBits);
@@ -603,7 +603,7 @@ bool DeviceManager::CreateWindowDeviceAndSwapChain(
     return true;
 }
 
-void DeviceManager::AddRenderPassToFront(IRenderPass *pRenderPass)
+void DeviceManager::AddRenderPassToFront(IRenderPass* pRenderPass)
 {
     m_vRenderPasses.remove(pRenderPass);
     m_vRenderPasses.push_front(pRenderPass);
@@ -615,7 +615,7 @@ void DeviceManager::AddRenderPassToFront(IRenderPass *pRenderPass)
         m_DeviceParams.swapChainSampleCount);
 }
 
-void DeviceManager::AddRenderPassToBack(IRenderPass *pRenderPass)
+void DeviceManager::AddRenderPassToBack(IRenderPass* pRenderPass)
 {
     m_vRenderPasses.remove(pRenderPass);
     m_vRenderPasses.push_back(pRenderPass);
@@ -627,7 +627,7 @@ void DeviceManager::AddRenderPassToBack(IRenderPass *pRenderPass)
         m_DeviceParams.swapChainSampleCount);
 }
 
-void DeviceManager::RemoveRenderPass(IRenderPass *pRenderPass)
+void DeviceManager::RemoveRenderPass(IRenderPass* pRenderPass)
 {
     m_vRenderPasses.remove(pRenderPass);
 }
@@ -667,7 +667,7 @@ void DeviceManager::Animate(double elapsedTime)
 
 void DeviceManager::Render()
 {
-    nvrhi::IFramebuffer *framebuffer =
+    nvrhi::IFramebuffer* framebuffer =
         m_SwapChainFramebuffers[GetCurrentBackBufferIndex()];
 
     for (auto it : m_vRenderPasses) {
@@ -762,13 +762,13 @@ bool DeviceManager::AnimateRenderPresent()
     return true;
 }
 
-void DeviceManager::GetWindowDimensions(int &width, int &height)
+void DeviceManager::GetWindowDimensions(int& width, int& height)
 {
     width = m_DeviceParams.backBufferWidth;
     height = m_DeviceParams.backBufferHeight;
 }
 
-const DeviceCreationParameters &DeviceManager::GetDeviceParams()
+const DeviceCreationParameters& DeviceManager::GetDeviceParams()
 {
     return m_DeviceParams;
 }
@@ -930,25 +930,25 @@ void JoyStickManager::DisconnectJoystick(int id)
     m_RemovedJoysticks.push_back(id);
 }
 
-void JoyStickManager::UpdateAllJoysticks(const std::list<IRenderPass *> &passes)
+void JoyStickManager::UpdateAllJoysticks(const std::list<IRenderPass*>& passes)
 {
     for (auto j = m_JoystickIDs.begin(); j != m_JoystickIDs.end(); ++j)
         UpdateJoystick(*j, passes);
 }
 
-static void ApplyDeadZone(glm::vec2 &v, const float deadZone = 0.1f)
+static void ApplyDeadZone(glm::vec2& v, const float deadZone = 0.1f)
 {
     v *= std::max(length(v) - deadZone, 0.f) / (1.f - deadZone);
 }
 
 void JoyStickManager::UpdateJoystick(
     int j,
-    const std::list<IRenderPass *> &passes)
+    const std::list<IRenderPass*>& passes)
 {
     GLFWgamepadstate gamepadState;
     glfwGetGamepadState(j, &gamepadState);
 
-    float *axisValues = gamepadState.axes;
+    float* axisValues = gamepadState.axes;
 
     auto updateAxis = [&](int axis, float axisVal) {
         for (auto it = passes.crbegin(); it != passes.crend(); it++) {
@@ -1009,12 +1009,12 @@ void DeviceManager::Shutdown()
     m_InstanceCreated = false;
 }
 
-nvrhi::IFramebuffer *DeviceManager::GetCurrentFramebuffer()
+nvrhi::IFramebuffer* DeviceManager::GetCurrentFramebuffer()
 {
     return GetFramebuffer(GetCurrentBackBufferIndex());
 }
 
-nvrhi::IFramebuffer *DeviceManager::GetFramebuffer(uint32_t index)
+nvrhi::IFramebuffer* DeviceManager::GetFramebuffer(uint32_t index)
 {
     if (index < m_SwapChainFramebuffers.size())
         return m_SwapChainFramebuffers[index];
@@ -1022,7 +1022,7 @@ nvrhi::IFramebuffer *DeviceManager::GetFramebuffer(uint32_t index)
     return nullptr;
 }
 
-void DeviceManager::SetWindowTitle(const char *title)
+void DeviceManager::SetWindowTitle(const char* title)
 {
     assert(title);
     if (m_WindowTitle == title)
@@ -1034,9 +1034,9 @@ void DeviceManager::SetWindowTitle(const char *title)
 }
 
 void DeviceManager::SetInformativeWindowTitle(
-    const char *applicationName,
+    const char* applicationName,
     bool includeFramerate,
-    const char *extraInfo)
+    const char* extraInfo)
 {
     std::stringstream ss;
     ss << applicationName;
@@ -1070,7 +1070,7 @@ void DeviceManager::SetInformativeWindowTitle(
     SetWindowTitle(ss.str().c_str());
 }
 
-const char *DeviceManager::GetWindowTitle()
+const char* DeviceManager::GetWindowTitle()
 {
     return m_WindowTitle.c_str();
 }
@@ -1082,8 +1082,8 @@ void DeviceManager::SetFullscreen(bool enabled)
 
     if (enabled) {
         // Switch to fullscreen
-        GLFWmonitor *monitor = glfwGetPrimaryMonitor();
-        const GLFWvidmode *mode = glfwGetVideoMode(monitor);
+        GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+        const GLFWvidmode* mode = glfwGetVideoMode(monitor);
 
         // Store current window position and size for restoring later
         if (!glfwGetWindowMonitor(m_Window)) {
@@ -1093,8 +1093,8 @@ void DeviceManager::SetFullscreen(bool enabled)
                 &m_DeviceParams.windowPosY);
             glfwGetWindowSize(
                 m_Window,
-                (int *)&m_DeviceParams.backBufferWidth,
-                (int *)&m_DeviceParams.backBufferHeight);
+                (int*)&m_DeviceParams.backBufferWidth,
+                (int*)&m_DeviceParams.backBufferHeight);
         }
 
         glfwSetWindowMonitor(
@@ -1163,7 +1163,7 @@ bool DeviceManager::IsMaximized() const
     return glfwGetWindowAttrib(m_Window, GLFW_MAXIMIZED) == GLFW_TRUE;
 }
 
-DeviceManager *DeviceManager::Create(nvrhi::GraphicsAPI api)
+DeviceManager* DeviceManager::Create(nvrhi::GraphicsAPI api)
 {
     switch (api) {
 #if RUZINO_WITH_DX12
@@ -1176,7 +1176,7 @@ DeviceManager *DeviceManager::Create(nvrhi::GraphicsAPI api)
     }
 }
 
-DefaultMessageCallback &DefaultMessageCallback::GetInstance()
+DefaultMessageCallback& DefaultMessageCallback::GetInstance()
 {
     static DefaultMessageCallback Instance;
     return Instance;
@@ -1184,7 +1184,7 @@ DefaultMessageCallback &DefaultMessageCallback::GetInstance()
 
 void DefaultMessageCallback::message(
     nvrhi::MessageSeverity severity,
-    const char *messageText)
+    const char* messageText)
 {
     spdlog::level::level_enum spd_severity = spdlog::level::info;
     switch (severity) {

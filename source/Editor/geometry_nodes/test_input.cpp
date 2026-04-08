@@ -1,4 +1,5 @@
 #include <Eigen/Dense>
+
 #include "geom_node_base.h"
 #include "nodes/core/def/node_def.hpp"
 

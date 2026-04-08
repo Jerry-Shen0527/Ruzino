@@ -29,27 +29,27 @@ using PatchDrFloat = PatchDr<Float>;
 #define GetReal(x) dr::real(x)
 #define Log        log
 
+#define CalcPowerSeries(name)                     \
+    Float name##_power2 = (name) * name;          \
+    Float name##_power3 = (name) * name##_power2; \
+    Float name##_power4 = (name) * name##_power3; \
+    Float name##_power5 = (name) * name##_power4; \
+    Float name##_power6 = (name) * name##_power5;
 
-#define CalcPowerSeries(name)                   \
-    Float name##_power2 = (name)*name;          \
-    Float name##_power3 = (name)*name##_power2; \
-    Float name##_power4 = (name)*name##_power3; \
-    Float name##_power5 = (name)*name##_power4; \
-    Float name##_power6 = (name)*name##_power5;
-
-#define CalcPowerSeriesComplex(name)              \
-    Complex name##_power2 = (name)*name;          \
-    Complex name##_power3 = (name)*name##_power2; \
-    Complex name##_power4 = (name)*name##_power3; \
-    Complex name##_power5 = (name)*name##_power4; \
-    Complex name##_power6 = (name)*name##_power5;
+#define CalcPowerSeriesComplex(name)                \
+    Complex name##_power2 = (name) * name;          \
+    Complex name##_power3 = (name) * name##_power2; \
+    Complex name##_power4 = (name) * name##_power3; \
+    Complex name##_power5 = (name) * name##_power4; \
+    Complex name##_power6 = (name) * name##_power5;
 
 #define DeclarePowerSeries(name)                                               \
     Float name, Float name##_power2, Float name##_power3, Float name##_power4, \
         Float name##_power5, Float name##_power6
 
-#define UsePowerSeries(name) \
-    name, name##_power2, name##_power3, name##_power4, name##_power5, name##_power6
+#define UsePowerSeries(name)                                          \
+    name, name##_power2, name##_power3, name##_power4, name##_power5, \
+        name##_power6
 
 #undef Power
 
@@ -71,33 +71,38 @@ Complex sumpart(
     auto log_val_u = log(upper - y);
     auto log_val_l = log(lower - y);
 
-    auto a = -(
-        (((dr::pow(halfZ - Power(halfZ, 3) * Power(r, 2), 2) +
-           Power(halfX, 2) * (-1 + Power(halfZ, 4) * Power(r, 4))) *
-              Power(width, 3) -
-          4 * halfX * halfZ *
-              (-2 + (3 * Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 2) +
-               Power(halfZ, 2) * (Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 4)) *
-              Power(width, 2) * y +
-          4 *
-              (-7 * Power(halfX, 2) + 7 * Power(halfZ, 2) +
-               2 * (3 * Power(halfX, 4) - 2 * Power(halfX, 2) * Power(halfZ, 2) - 4 * Power(halfZ, 4)) *
-                   Power(r, 2) +
-               Power(halfZ, 2) * (Power(halfX, 2) + Power(halfZ, 2)) *
-                   (2 * Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 4)) *
-              width * Power(y, 2) +
-          64 * halfX * halfZ * (-1 + (Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 2)) *
-              Power(y, 3)) *
-         (log_val_u - log_val_l))) *
-            work_for_div;
-    auto b=(halfX * halfZ * Power(r, 2) * Power(width, 3) +
-         2 * (1 + (-2 * Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 2)) * Power(width, 2) * y -
-         12 * halfX * halfZ * Power(r, 2) * width * Power(y, 2) -
-                    8 * (-1 + Power(halfZ, 2) * Power(r, 2)) * Power(y, 3)) *
+    auto a =
+        -((((dr::pow(halfZ - Power(halfZ, 3) * Power(r, 2), 2) +
+             Power(halfX, 2) * (-1 + Power(halfZ, 4) * Power(r, 4))) *
+                Power(width, 3) -
+            4 * halfX * halfZ *
+                (-2 + (3 * Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 2) +
+                 Power(halfZ, 2) * (Power(halfX, 2) + Power(halfZ, 2)) *
+                     Power(r, 4)) *
+                Power(width, 2) * y +
+            4 *
+                (-7 * Power(halfX, 2) + 7 * Power(halfZ, 2) +
+                 2 *
+                     (3 * Power(halfX, 4) -
+                      2 * Power(halfX, 2) * Power(halfZ, 2) -
+                      4 * Power(halfZ, 4)) *
+                     Power(r, 2) +
+                 Power(halfZ, 2) * (Power(halfX, 2) + Power(halfZ, 2)) *
+                     (2 * Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 4)) *
+                width * Power(y, 2) +
+            64 * halfX * halfZ *
+                (-1 + (Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 2)) *
+                Power(y, 3)) *
+           (log_val_u - log_val_l))) *
+        work_for_div;
+    auto b = (halfX * halfZ * Power(r, 2) * Power(width, 3) +
+              2 * (1 + (-2 * Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 2)) *
+                  Power(width, 2) * y -
+              12 * halfX * halfZ * Power(r, 2) * width * Power(y, 2) -
+              8 * (-1 + Power(halfZ, 2) * Power(r, 2)) * Power(y, 3)) *
              work_for_div;
 
-
-    return  a/b;
+    return a / b;
 }
 
 auto calc_res(
@@ -113,7 +118,8 @@ auto calc_res(
         (4 *
          (halfX * halfZ * Power(r, 2) * (-1 + Power(halfZ, 2) * Power(r, 2)) *
               (-2 + (3 * Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 2) +
-               Power(halfZ, 2) * (Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 4)) *
+               Power(halfZ, 2) * (Power(halfX, 2) + Power(halfZ, 2)) *
+                   Power(r, 4)) *
               Power(width, 5) -
           2 *
               (dr::pow(-1.f + Power(halfZ, 2) * Power(r, 2), 3) *
@@ -121,12 +127,15 @@ auto calc_res(
                4 * Power(halfX, 4) * Power(halfZ, 2) * Power(r, 6) *
                    (3 + Power(halfZ, 2) * Power(r, 2)) +
                Power(halfX, 2) * Power(r, 2) *
-                   (2 - 11 * Power(halfZ, 2) * Power(r, 2) + 4 * Power(halfZ, 4) * Power(r, 4) +
+                   (2 - 11 * Power(halfZ, 2) * Power(r, 2) +
+                    4 * Power(halfZ, 4) * Power(r, 4) +
                     5 * Power(halfZ, 6) * Power(r, 6))) *
               Power(width, 4) * x +
           4 * halfX * halfZ * Power(r, 2) *
               (6 + (-19 * Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 2) +
-               2 * (6 * Power(halfX, 4) - Power(halfX, 2) * Power(halfZ, 2) - 4 * Power(halfZ, 4)) *
+               2 *
+                   (6 * Power(halfX, 4) - Power(halfX, 2) * Power(halfZ, 2) -
+                    4 * Power(halfZ, 4)) *
                    Power(r, 4) +
                Power(halfZ, 2) * (Power(halfX, 2) + Power(halfZ, 2)) *
                    (4 * Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 6)) *
@@ -134,24 +143,27 @@ auto calc_res(
           8 * (1 + Power(halfZ, 2) * Power(r, 2)) *
               (-1 + (2 * Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 2)) *
               (-2 + (3 * Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 2) +
-               Power(halfZ, 2) * (Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 4)) *
+               Power(halfZ, 2) * (Power(halfX, 2) + Power(halfZ, 2)) *
+                   Power(r, 4)) *
               Power(width, 2) * Power(x, 3) -
-          64 * halfX * halfZ * Power(r, 2) * (-1 + Power(halfZ, 2) * Power(r, 2)) *
-              (-1 + (Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 2)) * width * Power(x, 4) -
+          64 * halfX * halfZ * Power(r, 2) *
+              (-1 + Power(halfZ, 2) * Power(r, 2)) *
+              (-1 + (Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 2)) * width *
+              Power(x, 4) -
           32 * dr::pow(-1.f + Power(halfZ, 2) * Power(r, 2), 2) *
-              (-1 + (Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 2)) * Power(x, 5))) *
+              (-1 + (Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 2)) *
+              Power(x, 5))) *
         work_for_div;
 
     auto b = ((-1 + (Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 2)) *
-              (-((1 + halfZ * r) * Power(width, 2)) + 4 * halfX * r * width * x +
-               4 * (-1 + halfZ * r) * Power(x, 2)) *
+              (-((1 + halfZ * r) * Power(width, 2)) +
+               4 * halfX * r * width * x + 4 * (-1 + halfZ * r) * Power(x, 2)) *
               ((1 - halfZ * r) * Power(width, 2) + 4 * halfX * r * width * x +
                4 * (1 + halfZ * r) * Power(x, 2))) *
              work_for_div;
 
     return a / b;
 }
-
 
 inline Float AbsCosTheta(dr::Vector3f w)
 {
@@ -236,7 +248,8 @@ inline dr::Vector3f FrSchlick(dr::Vector3f R0, Float cosTheta)
     return dr::lerp(R0, dr::Vector3f(1.f, 1.f, 1.f), SchlickWeight(cosTheta));
 }
 
-inline dr::Vector3f DisneyFresnel(dr::Vector3f R0, Float metallic, Float eta, Float cosI)
+inline dr::Vector3f
+DisneyFresnel(dr::Vector3f R0, Float metallic, Float eta, Float cosI)
 {
     return FrSchlick(R0, cosI);
 }
@@ -251,7 +264,9 @@ inline dr::Vector3f Faceforward(dr::Vector3f v1, dr::Vector3f v2)
 inline Float Microfacet_G1(dr::Vector3f w, dr::Vector2f param)
 {
     Float absTanTheta = abs(TanTheta(w));
-    auto alpha = dr::sqrt(Cos2Phi(w) * param.x() * param.x() + Sin2Phi(w) * param.y() * param.y());
+    auto alpha = dr::sqrt(
+        Cos2Phi(w) * param.x() * param.x() +
+        Sin2Phi(w) * param.y() * param.y());
     Float alpha2Tan2Theta = (alpha * absTanTheta) * (alpha * absTanTheta);
     Float lambda = (-1 + sqrt(1.f + alpha2Tan2Theta)) / 2.f;
     return 1.f / (1.f + lambda);
@@ -275,8 +290,9 @@ inline Float MicrofacetDistribution(dr::Vector3f wh, dr::Vector2f param)
 {
     Float tan2Theta = Tan2Theta(wh);
     Float cos4Theta = Cos2Theta(wh) * Cos2Theta(wh);
-    Float e =
-        (Cos2Phi(wh) / (param.x() * param.x()) + Sin2Phi(wh) / (param.y() * param.y())) * tan2Theta;
+    Float e = (Cos2Phi(wh) / (param.x() * param.x()) +
+               Sin2Phi(wh) / (param.y() * param.y())) *
+              tan2Theta;
     return 1 / (DrPi * param.x() * param.y() * cos4Theta * (1 + e) * (1 + e));
 }
 
@@ -311,17 +327,23 @@ inline Float bsdf_f(
     // normalize lum. to isolate hue+sat
     auto Ctint = dr::select(
         lum > 0.f,
-        dr::Vector3f(baseColor.x() / lum, baseColor.y() / lum, baseColor.z() / lum),
+        dr::Vector3f(
+            baseColor.x() / lum, baseColor.y() / lum, baseColor.z() / lum),
         dr::Vector3f(1.f, 1.f, 1.f));
 
     auto Cspec0 = baseColor;
-    // Lerp(metalness, SchlickR0FromEta(eta) * Lerp(specTint, make_float3(1.), Ctint), baseColor);
+    // Lerp(metalness, SchlickR0FromEta(eta) * Lerp(specTint, make_float3(1.),
+    // Ctint), baseColor);
 
-    auto F =
-        DisneyFresnel(Cspec0, 1.f, 0.f, dr::dot(wi, Faceforward(wh, dr::Vector3f(0.f, 0.f, 1.f))));
+    auto F = DisneyFresnel(
+        Cspec0,
+        1.f,
+        0.f,
+        dr::dot(wi, Faceforward(wh, dr::Vector3f(0.f, 0.f, 1.f))));
 
-    return lum * MicrofacetDistribution(wh, micro_para) * Microfacet_G(wo, wi, micro_para) *
-           Lum(F) / (4.f * cosThetaI * cosThetaO);
+    return lum * MicrofacetDistribution(wh, micro_para) *
+           Microfacet_G(wo, wi, micro_para) * Lum(F) /
+           (4.f * cosThetaI * cosThetaO);
 }
 
 inline Float bsdf_f_line(
@@ -355,21 +377,31 @@ inline Float bsdf_f_line(
     // normalize lum. to isolate hue+sat
     auto Ctint = dr::select(
         lum > 0.f,
-        dr::Vector3f(baseColor.x() / lum, baseColor.y() / lum, baseColor.z() / lum),
+        dr::Vector3f(
+            baseColor.x() / lum, baseColor.y() / lum, baseColor.z() / lum),
         dr::Vector3f(1.f, 1.f, 1.f));
 
     auto Cspec0 = baseColor;
-    // Lerp(metalness, SchlickR0FromEta(eta) * Lerp(specTint, make_float3(1.), Ctint), baseColor);
+    // Lerp(metalness, SchlickR0FromEta(eta) * Lerp(specTint, make_float3(1.),
+    // Ctint), baseColor);
 
-    auto F =
-        DisneyFresnel(Cspec0, 1.f, 0.f, dr::dot(wi, Faceforward(wh, dr::Vector3f(0.f, 0.f, 1.f))));
+    auto F = DisneyFresnel(
+        Cspec0,
+        1.f,
+        0.f,
+        dr::dot(wi, Faceforward(wh, dr::Vector3f(0.f, 0.f, 1.f))));
 
-    return lum * Microfacet_G(wo, wi, micro_para) *
-           Lum(F) / (4.f * cosThetaI * cosThetaO);
+    return lum * Microfacet_G(wo, wi, micro_para) * Lum(F) /
+           (4.f * cosThetaI * cosThetaO);
 }
 
-
-Float lineShade(Float lower, Float upper, Float alpha, Float halfX, Float halfZ, Float width)
+Float lineShade(
+    Float lower,
+    Float upper,
+    Float alpha,
+    Float halfX,
+    Float halfZ,
+    Float width)
 {
     Float r = dr::sqrt(1 - alpha * alpha);
 
@@ -382,15 +414,16 @@ Float lineShade(Float lower, Float upper, Float alpha, Float halfX, Float halfZ,
         -Power(width, 2) + Power(halfX, 2) * Power(r, 2) * Power(width, 2) +
         Power(halfZ, 2) * Power(r, 2) * Power(width, 2));
 
-    Complex c[] = { (-(halfX * r * width) - temp) / (Float(2.) * (-1 + halfZ * r)),
-                    (-(halfX * r * width) - temp) / (Float(2.) * (1 + halfZ * r)),
-                    (-(halfX * r * width) + temp) / (Float(2.) * (-1 + halfZ * r)),
-                    (-(halfX * r * width) + temp) / (Float(2.) * (1 + halfZ * r)) };
+    Complex c[] = {
+        (-(halfX * r * width) - temp) / (Float(2.) * (-1 + halfZ * r)),
+        (-(halfX * r * width) - temp) / (Float(2.) * (1 + halfZ * r)),
+        (-(halfX * r * width) + temp) / (Float(2.) * (-1 + halfZ * r)),
+        (-(halfX * r * width) + temp) / (Float(2.) * (1 + halfZ * r))
+    };
 
     auto ret = Complex(0, 0);
 
-    for (int i = 0; i < 4; i++)
-    {
+    for (int i = 0; i < 4; i++) {
         auto part = sumpart(
             lower,
             upper,
@@ -403,8 +436,10 @@ Float lineShade(Float lower, Float upper, Float alpha, Float halfX, Float halfZ,
         ret += part;
     }
 
-    ret *= (Power(r, 2) * (-1 + Power(halfZ, 2) * Power(r, 2)) * width)*work_for_div /
-           ((-1 + (Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 2))*work_for_div);
+    ret *= (Power(r, 2) * (-1 + Power(halfZ, 2) * Power(r, 2)) * width) *
+           work_for_div /
+           ((-1 + (Power(halfX, 2) + Power(halfZ, 2)) * Power(r, 2)) *
+            work_for_div);
 
     ret += calc_res(
                upper,
@@ -418,13 +453,15 @@ Float lineShade(Float lower, Float upper, Float alpha, Float halfX, Float halfZ,
                UsePowerSeries(halfX),
                UsePowerSeries(halfZ),
                UsePowerSeries(r));
-    Float coeff = -alpha * alpha*work_for_div / ((Float(8.) * DrPi * dr::pow(-1.f + Power(halfZ, 2) * Power(r, 2), 3))*work_for_div);
+    Float coeff =
+        -alpha * alpha * work_for_div /
+        ((Float(8.) * DrPi * dr::pow(-1.f + Power(halfZ, 2) * Power(r, 2), 3)) *
+         work_for_div);
 
     ret *= coeff;
 
     return GetReal(ret);
 }
-
 
 using dr::Vector2f;
 using dr::Vector3f;
@@ -442,7 +479,8 @@ Float signed_area(const LineDrFloat& line, Vector2f point)
         point - (line.begin_point + line.end_point) / 2.f,
         dr::normalize(-line.begin_point + line.end_point));
 #elif defined(POINTDIR)
-    auto line_direction = dr::Vector2f(dr::cos(line.theta), dr::sin(line.theta));
+    auto line_direction =
+        dr::Vector2f(dr::cos(line.theta), dr::sin(line.theta));
     auto line_center = line.begin_point + line.length / 2.f * line_direction;
     return drjit_cross(point - line_center, line_direction);
 #else
@@ -460,14 +498,17 @@ Float integral_triangle_area(
     auto result = dr::select(
         t >= 0 && t <= dr::dot(p1 - p0, axis),
         dr::abs(drjit_cross(
-            t / dr::dot(p2 - p0, axis) * (p2 - p0), t / dr::dot(p1 - p0, axis) * (p1 - p0))) /
+            t / dr::dot(p2 - p0, axis) * (p2 - p0),
+            t / dr::dot(p1 - p0, axis) * (p1 - p0))) /
             2.f,
         dr::select(
             t > dr::dot(p1 - p0, axis) && t <= dr::dot(p2 - p0, axis),
             dr::abs(drjit_cross((p2 - p0), (p1 - p0))) / 2.f -
                 dr::abs(drjit_cross(
-                    (p1 - p2) * (dr::dot(p2 - p0, axis) - t) / dr::dot(p1 - p2, axis),
-                    (p0 - p2) * (dr::dot(p2 - p0, axis) - t) / dr::dot(p0 - p2, axis))) /
+                    (p1 - p2) * (dr::dot(p2 - p0, axis) - t) /
+                        dr::dot(p1 - p2, axis),
+                    (p0 - p2) * (dr::dot(p2 - p0, axis) - t) /
+                        dr::dot(p0 - p2, axis))) /
                     2.f,
             dr::select(
                 t > dr::dot(p2 - p0, axis),
@@ -493,7 +534,6 @@ Float intersect_triangle_area(
     auto line_dir = dr::Vector2f(dr::cos(line.theta), dr::sin(line.theta));
     auto line_pos = line.begin_point + line.length / 2.f * line_dir;
 
-    
 #else
     auto line_pos = line.position, line_dir = line.direction;
 #endif
@@ -502,20 +542,28 @@ Float intersect_triangle_area(
     Vector2f vertical_dir(line_dir.y(), -line_dir.x());
 
     p0_tmp = dr::select(
-        dr::dot(p0 - p1, vertical_dir) >= 0 && dr::dot(p2 - p1, vertical_dir) >= 0, p1, p0);
+        dr::dot(p0 - p1, vertical_dir) >= 0 &&
+            dr::dot(p2 - p1, vertical_dir) >= 0,
+        p1,
+        p0);
 
     p1_tmp = dr::select(
-        dr::dot(p0 - p1, vertical_dir) >= 0 && dr::dot(p2 - p1, vertical_dir) >= 0, p0, p1);
+        dr::dot(p0 - p1, vertical_dir) >= 0 &&
+            dr::dot(p2 - p1, vertical_dir) >= 0,
+        p0,
+        p1);
 
     auto p0_t = p0_tmp, p1_t = p1_tmp, p2_t = p2_tmp;
 
     p0_tmp = dr::select(
-        dr::dot(p0_t - p2_t, vertical_dir) >= 0 && dr::dot(p1_t - p2_t, vertical_dir) >= 0,
+        dr::dot(p0_t - p2_t, vertical_dir) >= 0 &&
+            dr::dot(p1_t - p2_t, vertical_dir) >= 0,
         p2_t,
         p0_t);
 
     p2_tmp = dr::select(
-        dr::dot(p0_t - p2_t, vertical_dir) >= 0 && dr::dot(p1_t - p2_t, vertical_dir) >= 0,
+        dr::dot(p0_t - p2_t, vertical_dir) >= 0 &&
+            dr::dot(p1_t - p2_t, vertical_dir) >= 0,
         p0_t,
         p2_t);
 
@@ -523,19 +571,25 @@ Float intersect_triangle_area(
     Float x_to_vertical_dir2 = dr::dot(p2_tmp - p0_tmp, vertical_dir);
 
     auto p1_tmptmp = p1_tmp, p2_tmptmp = p2_tmp;
-    p1_tmp = dr::select(x_to_vertical_dir1 >= x_to_vertical_dir2, p2_tmptmp, p1_tmptmp);
-    p2_tmp = dr::select(x_to_vertical_dir1 >= x_to_vertical_dir2, p1_tmptmp, p2_tmptmp);
+    p1_tmp = dr::select(
+        x_to_vertical_dir1 >= x_to_vertical_dir2, p2_tmptmp, p1_tmptmp);
+    p2_tmp = dr::select(
+        x_to_vertical_dir1 >= x_to_vertical_dir2, p1_tmptmp, p2_tmptmp);
 
     Float t1 = dr::dot(line_pos - p0_tmp, vertical_dir) - width_half;
     Float t2 = dr::dot(line_pos - p0_tmp, vertical_dir) + width_half;
 
-    auto result = integral_triangle_area(p0_tmp, p1_tmp, p2_tmp, t2, vertical_dir);
+    auto result =
+        integral_triangle_area(p0_tmp, p1_tmp, p2_tmp, t2, vertical_dir);
 
     return integral_triangle_area(p0_tmp, p1_tmp, p2_tmp, t2, vertical_dir) -
            integral_triangle_area(p0_tmp, p1_tmp, p2_tmp, t1, vertical_dir);
 }
 
-Float intersect_area(const LineDrFloat& line, const PatchDrFloat& patch, Float width)
+Float intersect_area(
+    const LineDrFloat& line,
+    const PatchDrFloat& patch,
+    Float width)
 {
     auto p0 = patch.uv0;
     auto p1 = patch.uv1;
@@ -546,7 +600,10 @@ Float intersect_area(const LineDrFloat& line, const PatchDrFloat& patch, Float w
            intersect_triangle_area(p2, p3, p0, line, width);
 }
 
-Vector2f ShadeLineElement(LineDrFloat& line, PatchDrFloat& patch, GlintsTracingParams params)
+Vector2f ShadeLineElement(
+    LineDrFloat& line,
+    PatchDrFloat& patch,
+    GlintsTracingParams params)
 {
     Vector3f camera_pos_uv = patch.camera_pos_uv;
     Vector3f light_pos_uv = patch.light_pos_uv;
@@ -574,13 +631,15 @@ Vector2f ShadeLineElement(LineDrFloat& line, PatchDrFloat& patch, GlintsTracingP
     auto line_direction = dr::normalize(line.end_point - line.begin_point);
 
 #elif defined(POINTDIR)
-    auto line_direction = dr::Vector2f(dr::cos(line.theta), dr::sin(line.theta));
+    auto line_direction =
+        dr::Vector2f(dr::cos(line.theta), dr::sin(line.theta));
 #else
     auto line_direction = line.direction;
 #endif
 
     auto local_cam_dir = Vector3f(
-        drjit_cross(cam_dir_2D, line_direction), dr::dot(cam_dir_2D, line_direction),
+        drjit_cross(cam_dir_2D, line_direction),
+        dr::dot(cam_dir_2D, line_direction),
         camera_dir.z());
 
     auto local_light_dir = Vector3f(
@@ -589,7 +648,6 @@ Vector2f ShadeLineElement(LineDrFloat& line, PatchDrFloat& patch, GlintsTracingP
         light_dir.z());
 
     auto half_vec = dr::normalize((local_cam_dir + local_light_dir));
-
 
     auto a0 = signed_area(line, p0);
     auto a1 = signed_area(line, p1);
@@ -603,41 +661,54 @@ Vector2f ShadeLineElement(LineDrFloat& line, PatchDrFloat& patch, GlintsTracingP
 
     Float cut = 0.4f;
 
-    auto temp = lineShade(
-                    dr::maximum(minimum, -cut * width),
-                    dr::minimum(maximum, cut * width),
-                    sqrt(Float(params.glints_roughness)),
-                    half_vec.x(),
-                    half_vec.z(),
-                    width) /
-                dr::norm(light_pos_uv - p) / dr::norm(light_pos_uv - p) * Float(params.exposure) *
-                bsdf_f_line(camera_dir, light_dir, Float(params.glints_roughness));
+    auto temp =
+        lineShade(
+            dr::maximum(minimum, -cut * width),
+            dr::minimum(maximum, cut * width),
+            sqrt(Float(params.glints_roughness)),
+            half_vec.x(),
+            half_vec.z(),
+            width) /
+        dr::norm(light_pos_uv - p) / dr::norm(light_pos_uv - p) *
+        Float(params.exposure) *
+        bsdf_f_line(camera_dir, light_dir, Float(params.glints_roughness));
 
     auto area = intersect_area(line, patch, 2.f * cut * width);
-    auto patch_area =
-        dr::abs(drjit_cross(p1 - p0, p2 - p0) / 2.f) + dr::abs(drjit_cross(p2 - p0, p3 - p0) / 2.f);
+    auto patch_area = dr::abs(drjit_cross(p1 - p0, p2 - p0) / 2.f) +
+                      dr::abs(drjit_cross(p2 - p0, p3 - p0) / 2.f);
 
-    Mask mask =
-        minimum * maximum > 0 && (dr::abs(minimum) > cut * width && dr::abs(maximum) > cut * width);
+    Mask mask = minimum * maximum > 0 && (dr::abs(minimum) > cut * width &&
+                                          dr::abs(maximum) > cut * width);
 
     auto result = dr::select(
         mask,
         0.f,
         temp * area / patch_area /
-            abs(dr::maximum(minimum, -cut * width) - dr::minimum(maximum, cut * width)));
+            abs(dr::maximum(minimum, -cut * width) -
+                dr::minimum(maximum, cut * width)));
 
-    return Vector2f(result,area);
+    return Vector2f(result, area);
 }
 
-Float line_interand(Float x, Float alpha, Float ratio1, Float ratio2, Float width)
+Float line_interand(
+    Float x,
+    Float alpha,
+    Float ratio1,
+    Float ratio2,
+    Float width)
 {
     return alpha * alpha / DrPi /
            dr::pow(
-               1.f +
-                   (alpha * alpha - 1.f) *
-                       dr::pow(ratio1 - 4.f * x / width / (1.f - 4.f * x * x / width / width), 2) /
-                       (1.f + ratio1 * ratio1 + ratio2 * ratio2) /
-                       (1.f +
-                        16.f * x * x / dr::pow(width * (1.f - 4.f * x * x / width / width), 2)),
+               1.f + (alpha * alpha - 1.f) *
+                         dr::pow(
+                             ratio1 - 4.f * x / width /
+                                          (1.f - 4.f * x * x / width / width),
+                             2) /
+                         (1.f + ratio1 * ratio1 + ratio2 * ratio2) /
+                         (1.f +
+                          16.f * x * x /
+                              dr::pow(
+                                  width * (1.f - 4.f * x * x / width / width),
+                                  2)),
                2);
 }

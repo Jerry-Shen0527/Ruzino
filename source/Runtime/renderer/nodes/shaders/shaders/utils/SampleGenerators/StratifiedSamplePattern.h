@@ -26,14 +26,14 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "CPUSampleGenerator.h"
-#include "Core/Macros.h"
-#include "utils/Math/Vector.h"
 #include <random>
 #include <vector>
 
-namespace Ruzino
-{
+#include "CPUSampleGenerator.h"
+#include "Core/Macros.h"
+#include "utils/Math/Vector.h"
+
+namespace Ruzino {
 /**
  * Stratified random sample pattern generator.
  *
@@ -45,28 +45,33 @@ namespace Ruzino
  * The order in which samples are generated is randomly permuted to avoid
  * correlation artefacts with low-discrepancy sample generators.
  */
-class HD_RUZINO_API StratifiedSamplePattern : public CPUSampleGenerator
-{
-public:
+class HD_RUZINO_API StratifiedSamplePattern : public CPUSampleGenerator {
+   public:
     /**
      * Create stratified random sample pattern generator.
      * @param[in] sampleCount The number of sampling bins to stratify over.
      * @return New object, or throws an exception on error.
      */
-    static ref<StratifiedSamplePattern> create(uint32_t sampleCount = 1) { return make_ref<StratifiedSamplePattern>(sampleCount); }
+    static ref<StratifiedSamplePattern> create(uint32_t sampleCount = 1)
+    {
+        return make_ref<StratifiedSamplePattern>(sampleCount);
+    }
 
     StratifiedSamplePattern(uint32_t sampleCount);
     virtual ~StratifiedSamplePattern() = default;
 
-    virtual uint32_t getSampleCount() const override { return mBinsX * mBinsY; }
+    virtual uint32_t getSampleCount() const override
+    {
+        return mBinsX * mBinsY;
+    }
     virtual void reset(uint32_t startID = 0) override;
     virtual float2 next() override;
 
-protected:
+   protected:
     uint32_t mBinsX = 0;
     uint32_t mBinsY = 0;
     uint32_t mCurSample = 0;
     std::mt19937 mRng;
     std::vector<uint32_t> mPermutation;
 };
-} // namespace Ruzino
+}  // namespace Ruzino

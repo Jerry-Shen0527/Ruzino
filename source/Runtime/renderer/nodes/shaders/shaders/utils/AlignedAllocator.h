@@ -26,14 +26,14 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Core/Error.h"
-#include "utils/Math/Common.h"
 #include <new>
 #include <utility>
 #include <vector>
 
-namespace Ruzino
-{
+#include "Core/Error.h"
+#include "utils/Math/Common.h"
+
+namespace Ruzino {
 
 /**
  * Utility class for aligned memory allocations on the GPU.
@@ -46,9 +46,8 @@ namespace Ruzino
  * cache line.  As such, it doesn't provide any alignment
  * guarantees on the CPU side (where it doesn't matter anyway).
  */
-class AlignedAllocator
-{
-public:
+class AlignedAllocator {
+   public:
     /**
      * Sets the minimum alignment for allocated objects. If a value of
      * zero is provided, no additional alignment is performed.
@@ -86,8 +85,8 @@ public:
     }
 
     /**
-     * Allocates an object of given type, potentially including additional memory at
-     * the end of it, and executes its constructor.
+     * Allocates an object of given type, potentially including additional
+     * memory at the end of it, and executes its constructor.
      * @param[in] size Amount of memory to allocate. Must be >= sizeof(T).
      * @param[in] args Arguments to pass to the constructor.
      * @return pointer to allocated object.
@@ -101,58 +100,79 @@ public:
         return new (ptr) T(std::forward<Args>(args)...);
     }
 
-    void reserve(size_t size) { mBuffer.reserve(size); }
+    void reserve(size_t size)
+    {
+        mBuffer.reserve(size);
+    }
 
-    void resize(size_t size) { mBuffer.resize(size, 0); }
+    void resize(size_t size)
+    {
+        mBuffer.resize(size, 0);
+    }
 
     /**
      * Returns the pointer to the start of the allocated buffer.
      */
-    void* getStartPointer() { return mBuffer.data(); }
-    const void* getStartPointer() const { return mBuffer.data(); }
+    void* getStartPointer()
+    {
+        return mBuffer.data();
+    }
+    const void* getStartPointer() const
+    {
+        return mBuffer.data();
+    }
 
     /**
      * Returns of the offset of the given pointer inside the allocation buffer.
      */
     size_t offsetOf(void* ptr) const
     {
-        FALCOR_ASSERT(ptr >= mBuffer.data() && ptr < mBuffer.data() + mBuffer.size());
+        FALCOR_ASSERT(
+            ptr >= mBuffer.data() && ptr < mBuffer.data() + mBuffer.size());
         return static_cast<uint8_t*>(ptr) - mBuffer.data();
     }
 
-    void reset() { mBuffer.clear(); }
+    void reset()
+    {
+        mBuffer.clear();
+    }
 
-    size_t getSize() const { return mBuffer.size(); }
-    size_t getCapacity() const { return mBuffer.capacity(); }
+    size_t getSize() const
+    {
+        return mBuffer.size();
+    }
+    size_t getCapacity() const
+    {
+        return mBuffer.capacity();
+    }
 
-private:
+   private:
     void computeAndAllocatePadding(size_t size)
     {
         size_t currentOffset = mBuffer.size();
 
-        if (mMinAlignment > 0 && (currentOffset % mMinAlignment) != 0)
-        {
+        if (mMinAlignment > 0 && (currentOffset % mMinAlignment) != 0) {
             // We're not at the minimum alignment; get aligned.
             currentOffset += mMinAlignment - (currentOffset % mMinAlignment);
         }
 
-        if (mCacheLineSize > 0)
-        {
+        if (mCacheLineSize > 0) {
             const size_t cacheLineOffset = currentOffset % mCacheLineSize;
-            if (size <= mCacheLineSize && cacheLineOffset + size > mCacheLineSize)
-            {
+            if (size <= mCacheLineSize &&
+                cacheLineOffset + size > mCacheLineSize) {
                 // The allocation is smaller than or equal to a cache line but
-                // would span two cache lines; move to the start of the next cache line.
+                // would span two cache lines; move to the start of the next
+                // cache line.
                 currentOffset += mCacheLineSize - cacheLineOffset;
             }
         }
 
         size_t pad = currentOffset - mBuffer.size();
-        if (pad > 0)
-        {
+        if (pad > 0) {
             allocInternal(pad);
         }
-        FALCOR_ASSERT(mMinAlignment == 0 || mBuffer.size() % mMinAlignment == 0);
+        FALCOR_ASSERT(
+            mMinAlignment == 0 || mBuffer.size() % mMinAlignment == 0);
     }
 
     void* allocInternal(size_t size)
@@ -165,4 +185,4 @@ private:
     size_t mCacheLineSize = 128;
     std::vector<uint8_t> mBuffer;
 };
-} // namespace Ruzino
+}  // namespace Ruzino

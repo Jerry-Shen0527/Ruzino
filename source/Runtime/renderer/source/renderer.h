@@ -49,7 +49,6 @@ class Hd_RUZINO_Renderer {
 
     const Hd_RUZINO_Camera* camera_ = nullptr;
     Hd_RUZINO_RenderParam* render_param;
-
 };
 
 RUZINO_NAMESPACE_CLOSE_SCOPE

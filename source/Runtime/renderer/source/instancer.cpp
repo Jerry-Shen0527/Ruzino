@@ -35,7 +35,6 @@
 #include "pxr/imaging/hd/sceneDelegate.h"
 #include "pxr/imaging/hd/tokens.h"
 
-
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
 

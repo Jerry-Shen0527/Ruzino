@@ -309,13 +309,13 @@ void TextEditor::AddUndo(UndoRecord& aValue)
     assert(!mReadOnly);
     // printf("AddUndo: (@%d.%d) +\'%s' [%d.%d .. %d.%d], -\'%s', [%d.%d ..
     // %d.%d] (@%d.%d)\n", 	aValue.mBefore.mCursorPosition.mLine,
-    //aValue.mBefore.mCursorPosition.mColumn, 	aValue.mAdded.c_str(),
-    //aValue.mAddedStart.mLine, aValue.mAddedStart.mColumn,
-    //aValue.mAddedEnd.mLine, aValue.mAddedEnd.mColumn, 	aValue.mRemoved.c_str(),
-    //aValue.mRemovedStart.mLine, aValue.mRemovedStart.mColumn,
-    //aValue.mRemovedEnd.mLine, aValue.mRemovedEnd.mColumn,
-    //	aValue.mAfter.mCursorPosition.mLine,
-    //aValue.mAfter.mCursorPosition.mColumn
+    // aValue.mBefore.mCursorPosition.mColumn, 	aValue.mAdded.c_str(),
+    // aValue.mAddedStart.mLine, aValue.mAddedStart.mColumn,
+    // aValue.mAddedEnd.mLine, aValue.mAddedEnd.mColumn,
+    // aValue.mRemoved.c_str(), aValue.mRemovedStart.mLine,
+    // aValue.mRemovedStart.mColumn, aValue.mRemovedEnd.mLine,
+    // aValue.mRemovedEnd.mColumn, 	aValue.mAfter.mCursorPosition.mLine,
+    // aValue.mAfter.mCursorPosition.mColumn
     //	);
 
     mUndoBuffer.resize((size_t)(mUndoIndex + 1));
@@ -1354,7 +1354,7 @@ void TextEditor::EnterCharacter(ImWchar aChar, bool aShift)
                 std::swap(start, end);
             start.mColumn = 0;
             //			end.mColumn = end.mLine < mLines.size() ?
-            //mLines[end.mLine].size() : 0;
+            // mLines[end.mLine].size() : 0;
             if (end.mColumn == 0 && end.mLine > 0)
                 --end.mLine;
             if (end.mLine >= (int)mLines.size())
@@ -4204,21 +4204,21 @@ const TextEditor::LanguageDefinition& TextEditor::LanguageDefinition::XML()
     static bool inited = false;
     static LanguageDefinition langDef;
     if (!inited) {
-        // XML doesn't have traditional keywords, but we can highlight common elements
+        // XML doesn't have traditional keywords, but we can highlight common
+        // elements
         static const char* const keywords[] = {
-            "xml", "version", "encoding", "standalone",
-            "DOCTYPE", "ELEMENT", "ATTLIST", "ENTITY", "NOTATION"
+            "xml",     "version", "encoding", "standalone", "DOCTYPE",
+            "ELEMENT", "ATTLIST", "ENTITY",   "NOTATION"
         };
 
         for (auto& k : keywords)
             langDef.mKeywords.insert(k);
 
         // Common XML entities
-        static const char* const identifiers[] = {
-            "lt", "gt", "amp", "quot", "apos",
-            "nbsp", "copy", "reg", "trade"
-        };
-        
+        static const char* const identifiers[] = { "lt",   "gt",   "amp",
+                                                   "quot", "apos", "nbsp",
+                                                   "copy", "reg",  "trade" };
+
         for (auto& k : identifiers) {
             Identifier id;
             id.mDeclaration = "XML Entity";
@@ -4232,23 +4232,22 @@ const TextEditor::LanguageDefinition& TextEditor::LanguageDefinition::XML()
         langDef.mTokenRegexStrings.push_back(
             std::make_pair<std::string, PaletteIndex>(
                 "\\\'[^\\\']*\\\'", PaletteIndex::String));
-        
+
         // Numbers
         langDef.mTokenRegexStrings.push_back(
             std::make_pair<std::string, PaletteIndex>(
                 "[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?",
                 PaletteIndex::Number));
-        
+
         // Tag names and attribute names
         langDef.mTokenRegexStrings.push_back(
             std::make_pair<std::string, PaletteIndex>(
                 "[a-zA-Z_:][-a-zA-Z0-9_:.]*", PaletteIndex::Identifier));
-        
+
         // Punctuation (< > / = etc.)
         langDef.mTokenRegexStrings.push_back(
             std::make_pair<std::string, PaletteIndex>(
-                "[\\<\\>\\/\\=\\?\\!]",
-                PaletteIndex::Punctuation));
+                "[\\<\\>\\/\\=\\?\\!]", PaletteIndex::Punctuation));
 
         langDef.mCommentStart = "<!--";
         langDef.mCommentEnd = "-->";

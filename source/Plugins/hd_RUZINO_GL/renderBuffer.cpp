@@ -25,7 +25,6 @@
 
 #include <iostream>
 
-#include "Windows.h"
 #include "pxr/base/gf/half.h"
 #include "renderParam.h"
 

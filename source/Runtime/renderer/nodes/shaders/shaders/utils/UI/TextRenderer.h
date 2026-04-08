@@ -27,65 +27,78 @@
  **************************************************************************/
 #pragma once
 #include "Core/Macros.h"
-
-
-
 #include "Core/Pass/RasterPass.h"
 #include "utils/Math/Vector.h"
 
-namespace Ruzino
-{
+namespace Ruzino {
 class Font;
 
 /**
  * Class that renders text into the screen.
  */
-class HD_RUZINO_API TextRenderer
-{
-public:
-    enum class Flags
-    {
-        None = 0x0,
-        Shadowed = 0x1
-    };
+class HD_RUZINO_API TextRenderer {
+   public:
+    enum class Flags { None = 0x0, Shadowed = 0x1 };
 
     TextRenderer(ref<Device> pDevice);
     ~TextRenderer();
 
     /**
      * Render text
-     * @param[in] pRenderContext A render-context which will be used to dispatch the draw
-     * @param[in] text The text to draw. It can include newlines, tabs, carriage returns and regular ASCII characters.
+     * @param[in] pRenderContext A render-context which will be used to dispatch
+     * the draw
+     * @param[in] text The text to draw. It can include newlines, tabs, carriage
+     * returns and regular ASCII characters.
      * @param[in] pDstFbo The target FBO
      * @param[in] pos Text position
      */
-    void render(RenderContext* pRenderContext, const std::string& text, const ref<Fbo>& pDstFbo, float2 pos);
+    void render(
+        RenderContext* pRenderContext,
+        const std::string& text,
+        const ref<Fbo>& pDstFbo,
+        float2 pos);
 
     /**
      * Returns the color of the text being rendered
      * @return current color The text color
      */
-    const float3& getColor() const { return mColor; }
+    const float3& getColor() const
+    {
+        return mColor;
+    }
 
     /**
      * Set the color of the text being rendered
      * @param[in] color The text color
      */
-    void setColor(const float3& color) { mColor = color; }
+    void setColor(const float3& color)
+    {
+        mColor = color;
+    }
 
     /**
      * Get the active flags
      */
-    Flags getFlags() const { return mFlags; }
+    Flags getFlags() const
+    {
+        return mFlags;
+    }
 
     /**
      * Set the flags
      */
-    void setFlags(Flags flags) { mFlags = flags; }
+    void setFlags(Flags flags)
+    {
+        mFlags = flags;
+    }
 
-private:
+   private:
     void setCbData(const ref<Fbo>& pDstFbo);
-    void renderText(RenderContext* pRenderContext, const std::string& text, const ref<Fbo>& pDstFbo, float2 pos);
+    void renderText(
+        RenderContext* pRenderContext,
+        const std::string& text,
+        const ref<Fbo>& pDstFbo,
+        float2 pos);
 
     // Use 3 rotating VAOs to avoid stalling the GPU.
     // A better way would be to upload the data using an upload heap.
@@ -101,4 +114,4 @@ private:
 };
 
 FALCOR_ENUM_CLASS_OPERATORS(TextRenderer::Flags);
-} // namespace Ruzino
+}  // namespace Ruzino

@@ -1,29 +1,28 @@
 #pragma once
 
-#include "PathTracer/Intersection.h"
 #include "OptikaUtils.h"
+#include "PathTracer/Intersection.h"
 #include "random.h"
 #include "vec_math.h"
 
-//#ifdef __CUDACC__
-//#define cos __cosf
-//#define sin __sinf
-//#define sqrt __fsqrt_rn
-//#endif
+// #ifdef __CUDACC__
+// #define cos __cosf
+// #define sin __sinf
+// #define sqrt __fsqrt_rn
+// #endif
 
-#include <cuda_runtime_api.h>
 #include <cuda_runtime.h>
+#include <cuda_runtime_api.h>
 
-
-__device__ OPTIKA_INLINE float FrDielectric(float cosThetaI, float etaI, float etaT)
+__device__ OPTIKA_INLINE float
+FrDielectric(float cosThetaI, float etaI, float etaT)
 {
     // TODO: Try if shilick is faster. How much.
 
     cosThetaI = Clamp(cosThetaI, -1, 1);
     // Potentially swap indices of refraction
     bool entering = cosThetaI > 0.f;
-    if (!entering)
-    {
+    if (!entering) {
         float temp = etaI;
         etaI = etaT;
         etaT = temp;
@@ -38,10 +37,10 @@ __device__ OPTIKA_INLINE float FrDielectric(float cosThetaI, float etaI, float e
     if (sinThetaT >= 1)
         return 1;
     float cosThetaT = sqrt(max((float)0, 1 - sinThetaT * sinThetaT));
-    float Rparl =
-        ((etaT * cosThetaI) - (etaI * cosThetaT)) / ((etaT * cosThetaI) + (etaI * cosThetaT));
-    float Rperp =
-        ((etaI * cosThetaI) - (etaT * cosThetaT)) / ((etaI * cosThetaI) + (etaT * cosThetaT));
+    float Rparl = ((etaT * cosThetaI) - (etaI * cosThetaT)) /
+                  ((etaT * cosThetaI) + (etaI * cosThetaT));
+    float Rperp = ((etaI * cosThetaI) - (etaT * cosThetaT)) /
+                  ((etaI * cosThetaI) + (etaT * cosThetaT));
     return (Rparl * Rparl + Rperp * Rperp) / 2;
 }
 
@@ -63,8 +62,7 @@ Refract(const float3& wi, const float3& n, float eta, float3& wt)
     return true;
 }
 
-struct microfacet_params
-{
+struct microfacet_params {
     float2 alpha;
 };
 
@@ -80,15 +78,19 @@ OPTIKA_INLINE __device__ float MicrofacetDistribution(
     float e = (Cos2Phi(wh) / (param.alpha.x * param.alpha.x) +
                Sin2Phi(wh) / (param.alpha.y * param.alpha.y)) *
               tan2Theta;
-    return 1 / (Pi * param.alpha.x * param.alpha.y * cos4Theta * (1 + e) * (1 + e));
+    return 1 /
+           (Pi * param.alpha.x * param.alpha.y * cos4Theta * (1 + e) * (1 + e));
 }
 
-OPTIKA_INLINE __device__ void
-TrowbridgeReitzSample11(float cosTheta, float U1, float U2, float* slope_x, float* slope_y)
+OPTIKA_INLINE __device__ void TrowbridgeReitzSample11(
+    float cosTheta,
+    float U1,
+    float U2,
+    float* slope_x,
+    float* slope_y)
 {
     // special case (normal incidence)
-    if (cosTheta > .9999)
-    {
+    if (cosTheta > .9999) {
         float r = sqrt(U1 / (1 - U1));
         float phi = 6.28318530718 * U2;
         *slope_x = r * cos(phi);
@@ -107,36 +109,40 @@ TrowbridgeReitzSample11(float cosTheta, float U1, float U2, float* slope_x, floa
     if (tmp > 1e10)
         tmp = 1e10;
     float B = tanTheta;
-    float D = sqrt(max(float(B * B * tmp * tmp - (A * A - B * B) * tmp), float(0)));
+    float D =
+        sqrt(max(float(B * B * tmp * tmp - (A * A - B * B) * tmp), float(0)));
     float slope_x_1 = B * tmp - D;
     float slope_x_2 = B * tmp + D;
     *slope_x = (A < 0 || slope_x_2 > 1.f / tanTheta) ? slope_x_1 : slope_x_2;
 
     // sample slope_y
     float S;
-    if (U2 > 0.5f)
-    {
+    if (U2 > 0.5f) {
         S = 1.f;
         U2 = 2.f * (U2 - .5f);
     }
-    else
-    {
+    else {
         S = -1.f;
         U2 = 2.f * (.5f - U2);
     }
-    float z = (U2 * (U2 * (U2 * 0.27385f - 0.73369f) + 0.46341f)) /
-              (U2 * (U2 * (U2 * 0.093073f + 0.309420f) - 1.000000f) + 0.597999f);
+    float z =
+        (U2 * (U2 * (U2 * 0.27385f - 0.73369f) + 0.46341f)) /
+        (U2 * (U2 * (U2 * 0.093073f + 0.309420f) - 1.000000f) + 0.597999f);
     *slope_y = S * z * sqrt(1.f + *slope_x * *slope_x);
 
     // CHECK(!std::isinf(*slope_y));
     // CHECK(!std::isnan(*slope_y));
 }
 
-OPTIKA_INLINE __device__ float3
-TrowbridgeReitzSample(const float3& wi, const microfacet_params& param, float U1, float U2)
+OPTIKA_INLINE __device__ float3 TrowbridgeReitzSample(
+    const float3& wi,
+    const microfacet_params& param,
+    float U1,
+    float U2)
 {
     // 1. stretch wi
-    float3 wiStretched = normalize(make_float3(param.alpha.x * wi.x, param.alpha.y * wi.y, wi.z));
+    float3 wiStretched = normalize(
+        make_float3(param.alpha.x * wi.x, param.alpha.y * wi.y, wi.z));
 
     // 2. simulate P22_{wi}(x_slope, y_slope, 1, 1)
     float slope_x, slope_y;
@@ -155,25 +161,31 @@ TrowbridgeReitzSample(const float3& wi, const microfacet_params& param, float U1
     return normalize(make_float3(-slope_x, -slope_y, 1.));
 }
 
-OPTIKA_INLINE __device__ float3
-MicrofacetSample_wh(const float3& wo, const microfacet_params& param, unsigned& random_seed)
+OPTIKA_INLINE __device__ float3 MicrofacetSample_wh(
+    const float3& wo,
+    const microfacet_params& param,
+    unsigned& random_seed)
 {
     float3 wh;
     bool flip = wo.z < 0;
-    wh = TrowbridgeReitzSample(flip ? -wo : wo, param, rnd(random_seed), rnd(random_seed));
+    wh = TrowbridgeReitzSample(
+        flip ? -wo : wo, param, rnd(random_seed), rnd(random_seed));
     if (flip)
         wh = -wh;
     return wh;
 }
 
-OPTIKA_INLINE __device__ float Microfacet_G1(const float3& w, microfacet_params param)
+OPTIKA_INLINE __device__ float Microfacet_G1(
+    const float3& w,
+    microfacet_params param)
 {
     float absTanTheta = abs(TanTheta(w));
     if (isinf(absTanTheta))
         return 0.f;
     // Compute _alpha_ for direction _w_
     float alpha = sqrt(
-        Cos2Phi(w) * param.alpha.x * param.alpha.x + Sin2Phi(w) * param.alpha.y * param.alpha.y);
+        Cos2Phi(w) * param.alpha.x * param.alpha.x +
+        Sin2Phi(w) * param.alpha.y * param.alpha.y);
     float alpha2Tan2Theta = (alpha * absTanTheta) * (alpha * absTanTheta);
     float lambda = (-1 + sqrt(1.f + alpha2Tan2Theta)) / 2.f;
     return 1.f / (1.f + lambda);
@@ -205,10 +217,10 @@ OPTIKA_INLINE __device__ void Tangent2Object(float3& v, const float3x3& TBN)
     v = Mul(TBN, v);
 }
 
-//OPTIKA_INLINE __device__ float Lerp(float t, float s1, float s2)
+// OPTIKA_INLINE __device__ float Lerp(float t, float s1, float s2)
 //{
-//    return (1 - t) * s1 + t * s2;
-//}
+//     return (1 - t) * s1 + t * s2;
+// }
 
 template<typename T>
 OPTIKA_INLINE __host__ __device__ T Lerp(float t, const T& s1, const T& s2)
@@ -260,8 +272,7 @@ OPTIKA_INLINE __device__ bool FrontFace(const Intersection& isect)
 }
 
 constexpr float bias_epsilon = 1E-3f;
-struct BSDF
-{
+struct BSDF {
     float3 baseColor;
     float3 emissive;
     float metalness;
@@ -275,19 +286,19 @@ struct BSDF
     float3 shadingNormal;
     microfacet_params micro_para;
 
-    __device__
-    BSDF(float3 basecolor = make_float3(1.0),
-     float3 emissive = make_float3(0.0),
-     float metal = 0,
-     float eta = 1,
-     float rough = 1,
-     float spectrans = 0,
-     float difftrans = 0,
-     float speculartint = 0,
-     float anisotropic = 0,
-     float sheen = 0,
-     float sheentint = 0.5,
-     float3 normalmap = make_float3(0.5,0.5,1))
+    __device__ BSDF(
+        float3 basecolor = make_float3(1.0),
+        float3 emissive = make_float3(0.0),
+        float metal = 0,
+        float eta = 1,
+        float rough = 1,
+        float spectrans = 0,
+        float difftrans = 0,
+        float speculartint = 0,
+        float anisotropic = 0,
+        float sheen = 0,
+        float sheentint = 0.5,
+        float3 normalmap = make_float3(0.5, 0.5, 1))
         : baseColor(basecolor),
           emissive(emissive),
           metalness(metal),
@@ -305,18 +316,15 @@ struct BSDF
         float ay = max(float(.001), sqrt(roughness) * aspect);
         micro_para = { make_float2(ax, ay) };
     }
-    __device__
-    BSDF(const BSDF& bsdf) = default;
-    __device__
-    BSDF& operator=(const BSDF& bsdf) = default;
+    __device__ BSDF(const BSDF& bsdf) = default;
+    __device__ BSDF& operator=(const BSDF& bsdf) = default;
 
     __device__ float3 f(const Intersection& isect, const RayDesc& ray_out) const
     {
         RayDesc ray_in = isect.path_state_in.ray;
 
         float3 t = isect.tangent;
-        if (length(isect.tangent) < 0.1)
-        {
+        if (length(isect.tangent) < 0.1) {
             t = make_float3(1, 0, 0);
             if (abs(dot(t, isect.normal)) > 0.999)
                 t = make_float3(0, 1, 0);
@@ -324,17 +332,16 @@ struct BSDF
         float3x3 TBN = GetTBNMatrix(isect.normal, t);
 
         // if exist normal map
-        if (shadingNormal.z < 0.99999)
-        {
-            float3x3 transform = GetTBNMatrix(shadingNormal, make_float3(1, 0, 0));
-            TBN = Mul(TBN,transform);
+        if (shadingNormal.z < 0.99999) {
+            float3x3 transform =
+                GetTBNMatrix(shadingNormal, make_float3(1, 0, 0));
+            TBN = Mul(TBN, transform);
         }
 
         float3 wo = ray_in.Direction, wi = ray_out.Direction;
         wo = -normalize(wo);
         Object2Tangent(wo, TBN);
         Object2Tangent(wi, TBN);
- 
 
         float strans = specTrans;
         float metallicWeight = metalness;
@@ -343,14 +350,13 @@ struct BSDF
 
         float3 scattered_color = make_float3(0);
         bool reflect = wi.z * wo.z > 0;
-        if (reflect)
-        {
+        if (reflect) {
             scattered_color +=
-                diffuseWeight * (diffuse_f(wo, wi) + diffuse_Retro_f(wo, wi) + Sheen_f(wo, wi));
+                diffuseWeight *
+                (diffuse_f(wo, wi) + diffuse_Retro_f(wo, wi) + Sheen_f(wo, wi));
             scattered_color += MicrofacetReflect_f(wo, wi);
         }
-        else
-        {
+        else {
             scattered_color += strans * MicrofacetTransmission_f(wo, wi);
         }
 
@@ -359,33 +365,36 @@ struct BSDF
         return scattered_color;
     }
 
-    __device__ float3
-    scatter(const Intersection& isect, RayDesc& ray_out, float& pdf, unsigned int& random_seed)
+    __device__ float3 scatter(
+        const Intersection& isect,
+        RayDesc& ray_out,
+        float& pdf,
+        unsigned int& random_seed)
     {
         // compute wo in tangent space
         RayDesc ray_in = isect.path_state_in.ray;
 
         float3 t = isect.tangent;
-        //float3 n = dot(isect.normal, ray_in.Direction) < 0 ? isect.normal : -isect.normal;
-        if (length(isect.tangent) < 0.00001)
-        {
+        // float3 n = dot(isect.normal, ray_in.Direction) < 0 ? isect.normal :
+        // -isect.normal;
+        if (length(isect.tangent) < 0.00001) {
             t = make_float3(1, 0, 0);
             if (abs(dot(t, isect.normal)) > 0.999)
                 t = make_float3(0, 1, 0);
         }
-        //float3 n = isect.normal;
+        // float3 n = isect.normal;
         float3x3 TBN = GetTBNMatrix(isect.normal, t);
 
         // if exist normal map
-        if (shadingNormal.z<0.99999)
-        {
-            float3x3 transform = GetTBNMatrix(shadingNormal, make_float3(1,0,0));
+        if (shadingNormal.z < 0.99999) {
+            float3x3 transform =
+                GetTBNMatrix(shadingNormal, make_float3(1, 0, 0));
             TBN = Mul(transform, TBN);
         }
 
         float3 wo = ray_in.Direction, wi = wo;
         wo = -normalize(wo);
-        Object2Tangent(wo, TBN);        
+        Object2Tangent(wo, TBN);
 
         // sample and compute coeffeients
         float strans = specTrans;
@@ -396,16 +405,12 @@ struct BSDF
         // sample direction wi
         int bxdf_selection = int(rnd(random_seed) * matchingComps);
 
-
         bool refract = false;
-        switch (bxdf_selection)
-        {
-            case 0: diffuse_Sample_f(wo, wi, random_seed);
-                break;
-            case 1: MicrofacetReflect_Samplef(wo, wi, random_seed);
-
-                break;
-            case 2: refract = MicrofacetTransmission_Samplef(wo, wi, random_seed);
+        switch (bxdf_selection) {
+            case 0: diffuse_Sample_f(wo, wi, random_seed); break;
+            case 1: MicrofacetReflect_Samplef(wo, wi, random_seed); break;
+            case 2:
+                refract = MicrofacetTransmission_Samplef(wo, wi, random_seed);
                 break;
             default: diffuse_Sample_f(wo, wi, random_seed);
         }
@@ -413,51 +418,51 @@ struct BSDF
         // compute scattered color
         float3 scattered_color = make_float3(0);
         bool reflect = wi.z * wo.z > 0;
-        if (reflect)
-        {
+        if (reflect) {
             scattered_color +=
-                diffuseWeight * (diffuse_f(wo, wi) + diffuse_Retro_f(wo, wi) + Sheen_f(wo, wi));
+                diffuseWeight *
+                (diffuse_f(wo, wi) + diffuse_Retro_f(wo, wi) + Sheen_f(wo, wi));
             scattered_color += MicrofacetReflect_f(wo, wi);
         }
-        else
-        {
-            if (refract)
-            {
-                scattered_color += strans * MicrofacetTransmission_f(wo, wi,strans>0);
+        else {
+            if (refract) {
+                scattered_color +=
+                    strans * MicrofacetTransmission_f(wo, wi, strans > 0);
             }
         }
 
         // compute pdf
-        pdf = default_pdf(wo, wi) + MicrofacetReflect_PDf(wo, wi) + MicrofacetTransmission_Pdf(wo, wi);
+        pdf = default_pdf(wo, wi) + MicrofacetReflect_PDf(wo, wi) +
+              MicrofacetTransmission_Pdf(wo, wi);
         pdf /= matchingComps;
 
-        //scattered_color*= AbsCosTheta(wi);
+        // scattered_color*= AbsCosTheta(wi);
 
         Tangent2Object(wi, TBN);
         ray_out = RayDesc(isect.position, wi);
-        if (dot(wi, isect.normal) < 0)
-        {
+        if (dot(wi, isect.normal) < 0) {
             ray_out.Origin -= (bias_epsilon * isect.normal);
         }
         else
             ray_out.Origin += (bias_epsilon * isect.normal);
 
-
         return scattered_color;
     }
 
-
-
-    OPTIKA_INLINE __device__ float default_pdf(const float3& wo, const float3& wi) const
+    OPTIKA_INLINE __device__ float default_pdf(
+        const float3& wo,
+        const float3& wi) const
     {
         // return AbsCosTheta(wi) * InvPi;
         return SameHemisphere(wo, wi) ? AbsCosTheta(normalize(wi)) * InvPi : 0;
     }
 
     // Both wi,wo should be normalized.
-    OPTIKA_INLINE __device__ float3 diffuse_f(const float3& wo, const float3& wi) const
+    OPTIKA_INLINE __device__ float3
+    diffuse_f(const float3& wo, const float3& wi) const
     {
-        float Fo = SchlickWeight(AbsCosTheta(wo)), Fi = SchlickWeight(AbsCosTheta(wi));
+        float Fo = SchlickWeight(AbsCosTheta(wo)),
+              Fi = SchlickWeight(AbsCosTheta(wi));
         // Diffuse fresnel - go from 1 at normal incidence to .5 at grazing.
         // Burley 2015, eq (4).
         return baseColor * InvPi * (1 - Fo / 2) * (1 - Fi / 2);
@@ -469,7 +474,8 @@ struct BSDF
         wi = CosineSampleHemisphere(rnd(random_seed), rnd(random_seed));
     }
 
-    OPTIKA_INLINE __device__ float3 diffuse_Retro_f(const float3& wo, const float3& wi) const
+    OPTIKA_INLINE __device__ float3
+    diffuse_Retro_f(const float3& wo, const float3& wi) const
     {
         float3 wh = wi + wo;
         if (wh.x == 0 && wh.y == 0 && wh.z == 0)
@@ -477,14 +483,16 @@ struct BSDF
         wh = normalize(wh);
         float cosThetaD = dot(wi, wh);
 
-        float Fo = SchlickWeight(AbsCosTheta(wo)), Fi = SchlickWeight(AbsCosTheta(wi));
+        float Fo = SchlickWeight(AbsCosTheta(wo)),
+              Fi = SchlickWeight(AbsCosTheta(wi));
         float Rr = 2 * roughness * cosThetaD * cosThetaD;
 
         // Burley 2015, eq (4).
         return baseColor * InvPi * Rr * (Fo + Fi + Fo * Fi * (Rr - 1));
     }
 
-    OPTIKA_INLINE __device__ float3 Sheen_f(const float3& wo, const float3& wi) const
+    OPTIKA_INLINE __device__ float3
+    Sheen_f(const float3& wo, const float3& wi) const
     {
         if (sheen == 0)
             return make_float3(0);
@@ -505,19 +513,24 @@ struct BSDF
     OPTIKA_INLINE __device__ float3
     DisneyFresnel(const float3& R0, float metallic, float eta, float cosI) const
     {
-        return Lerp(metallic, make_float3(FrDielectric(cosI, 1, eta)), FrSchlick(R0, cosI));
+        return Lerp(
+            metallic,
+            make_float3(FrDielectric(cosI, 1, eta)),
+            FrSchlick(R0, cosI));
     }
 
-
-
-    OPTIKA_INLINE __device__ float Microfacet_PDf(const float3& wo, const float3& wh) const
+    OPTIKA_INLINE __device__ float Microfacet_PDf(
+        const float3& wo,
+        const float3& wh) const
     {
-        return MicrofacetDistribution(wh, micro_para) * Microfacet_G1(wo, micro_para) *
-               abs(dot(wo, wh)) / AbsCosTheta(wo);
+        return MicrofacetDistribution(wh, micro_para) *
+               Microfacet_G1(wo, micro_para) * abs(dot(wo, wh)) /
+               AbsCosTheta(wo);
     }
 
-    OPTIKA_INLINE __device__ float MicrofacetReflect_PDf(const float3& wo, const float3& wi)
-        const
+    OPTIKA_INLINE __device__ float MicrofacetReflect_PDf(
+        const float3& wo,
+        const float3& wi) const
     {
         if (!SameHemisphere(wo, wi))
             return 0;
@@ -540,7 +553,8 @@ struct BSDF
 
         // Compute change of variables _dwh\_dwi_ for microfacet transmission
         float sqrtDenom = dot(wo, wh) + Eta * dot(wi, wh);
-        float dwh_dwi = abs((Eta * Eta * dot(wi, wh)) / (sqrtDenom * sqrtDenom));
+        float dwh_dwi =
+            abs((Eta * Eta * dot(wi, wh)) / (sqrtDenom * sqrtDenom));
         return Microfacet_PDf(wo, wh) * dwh_dwi;
     }
 
@@ -561,24 +575,34 @@ struct BSDF
         // normalize lum. to isolate hue+sat
         float3 Ctint = lum > 0 ? (baseColor / lum) : make_float3(1.);
         float3 Cspec0 = Lerp(
-            metalness, SchlickR0FromEta(eta) * Lerp(specTint, make_float3(1.), Ctint), baseColor);
-        float3 F =
-            DisneyFresnel(Cspec0, metalness, eta, dot(wi, Faceforward(wh, make_float3(0, 0, 1))));
+            metalness,
+            SchlickR0FromEta(eta) * Lerp(specTint, make_float3(1.), Ctint),
+            baseColor);
+        float3 F = DisneyFresnel(
+            Cspec0,
+            metalness,
+            eta,
+            dot(wi, Faceforward(wh, make_float3(0, 0, 1))));
 
         return make_float3(1.f) * MicrofacetDistribution(wh, micro_para) *
-               Microfacet_G(wo, wi, micro_para) * F / (4 * cosThetaI * cosThetaO);
+               Microfacet_G(wo, wi, micro_para) * F /
+               (4 * cosThetaI * cosThetaO);
     }
 
-    OPTIKA_INLINE __device__ void
-    MicrofacetReflect_Samplef(const float3& wo, float3& wi, unsigned& random_seed) const
+    OPTIKA_INLINE __device__ void MicrofacetReflect_Samplef(
+        const float3& wo,
+        float3& wi,
+        unsigned& random_seed) const
     {
         // Sample microfacet orientation $\wh$ and reflected direction$\wi$
         float3 wh = MicrofacetSample_wh(wo, micro_para, random_seed);
         wi = reflect(wo, wh);
     }
 
-    OPTIKA_INLINE __device__ float3
-    MicrofacetTransmission_f(const float3& wo, const float3& wi, bool log = false) const
+    OPTIKA_INLINE __device__ float3 MicrofacetTransmission_f(
+        const float3& wo,
+        const float3& wi,
+        bool log = false) const
     {
         if (SameHemisphere(wo, wi))
             return make_float3(0);  // transmission only
@@ -591,7 +615,7 @@ struct BSDF
         // Compute $\wh$ from $\wo$ and $\wi$ for microfacet transmission
         float Eta = CosTheta(wo) > 0 ? (eta / 1) : (1 / eta);
         float3 wh = normalize(wo + wi * Eta);
-        
+
         if (wh.z < 0)
             wh = -wh;
 
@@ -606,12 +630,13 @@ struct BSDF
         // float factor = (mode == TransportMode::Radiance) ? (1 / Eta) : 1;
         float factor = 1 / Eta;
 
-
-        float3 T = make_float3(sqrt(baseColor.x), sqrt(baseColor.y), sqrt(baseColor.z));
+        float3 T = make_float3(
+            sqrt(baseColor.x), sqrt(baseColor.y), sqrt(baseColor.z));
 
         auto ret = (make_float3(1.f) - F) * T *
-                   abs(MicrofacetDistribution(wh, micro_para) * Microfacet_G(wo, wi, micro_para) *
-                       Eta * Eta * abs(dot(wi, wh)) * abs(dot(wo, wh)) * factor * factor /
+                   abs(MicrofacetDistribution(wh, micro_para) *
+                       Microfacet_G(wo, wi, micro_para) * Eta * Eta *
+                       abs(dot(wi, wh)) * abs(dot(wo, wh)) * factor * factor /
                        (cosThetaI * cosThetaO * sqrtDenom * sqrtDenom));
 
         return ret;
@@ -627,9 +652,8 @@ struct BSDF
         float Eta = CosTheta(wo) > 0 ? (1 / eta) : (eta / 1);
         return Refract(wo, wh, Eta, wi);
     }
-
 };
 
 #undef cos
-#undef sin 
+#undef sin
 #undef sqrt

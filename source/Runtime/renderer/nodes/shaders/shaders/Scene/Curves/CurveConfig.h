@@ -27,11 +27,9 @@
  **************************************************************************/
 #pragma once
 
-namespace Ruzino
-{
-    enum class CurveTessellationMode
-    {
-        LinearSweptSphere,
-        PolyTube,
-    };
+namespace Ruzino {
+enum class CurveTessellationMode {
+    LinearSweptSphere,
+    PolyTube,
+};
 }

@@ -27,71 +27,99 @@
  **************************************************************************/
 #pragma once
 
-#include "Core/Object.h"
-
 #include <imgui.h>
 
+#include <functional>
 #include <string>
 #include <string_view>
-#include <functional>
 
-namespace Ruzino
-{
-namespace python_ui
-{
+#include "Core/Object.h"
 
-/// Base class for Python UI widgets.
-/// Widgets own their children.
-class Widget : public Object
-{
-    FALCOR_OBJECT(Widget)
-public:
-    Widget(Widget* parent) : m_parent(parent)
-    {
-        if (m_parent)
-            m_parent->m_children.push_back(ref<Widget>(this));
-    }
+namespace Ruzino {
+namespace python_ui {
 
-    virtual ~Widget() {}
+    /// Base class for Python UI widgets.
+    /// Widgets own their children.
+    class Widget : public Object {
+        FALCOR_OBJECT(Widget)
+       public:
+        Widget(Widget* parent) : m_parent(parent)
+        {
+            if (m_parent)
+                m_parent->m_children.push_back(ref<Widget>(this));
+        }
 
-    Widget* get_parent() { return m_parent; }
-    const Widget* get_parent() const { return m_parent; }
-    void set_parent(Widget* parent) { m_parent = parent; }
+        virtual ~Widget()
+        {
+        }
 
-    const std::vector<ref<Widget>>& get_children() const { return m_children; }
+        Widget* get_parent()
+        {
+            return m_parent;
+        }
+        const Widget* get_parent() const
+        {
+            return m_parent;
+        }
+        void set_parent(Widget* parent)
+        {
+            m_parent = parent;
+        }
 
-    bool get_visible() const { return m_visible; }
-    void set_visible(bool visible) { m_visible = visible; }
+        const std::vector<ref<Widget>>& get_children() const
+        {
+            return m_children;
+        }
 
-    bool get_enabled() const { return m_enabled; }
-    void set_enabled(bool enabled) { m_enabled = enabled; }
+        bool get_visible() const
+        {
+            return m_visible;
+        }
+        void set_visible(bool visible)
+        {
+            m_visible = visible;
+        }
 
-    virtual void render()
-    {
-        if (m_visible)
-            for (const auto& child : m_children)
-                child->render();
-    }
+        bool get_enabled() const
+        {
+            return m_enabled;
+        }
+        void set_enabled(bool enabled)
+        {
+            m_enabled = enabled;
+        }
 
-protected:
-    Widget* m_parent;
-    std::vector<ref<Widget>> m_children;
-    bool m_visible{true};
-    bool m_enabled{true};
-};
+        virtual void render()
+        {
+            if (m_visible)
+                for (const auto& child : m_children)
+                    child->render();
+        }
 
-/// This is the main widget that represents the screen.
-/// It is intended to be used as the parent for \c Window widgets.
-class Screen : public Widget
-{
-    FALCOR_OBJECT(Screen)
-public:
-    Screen() : Widget(nullptr) {}
+       protected:
+        Widget* m_parent;
+        std::vector<ref<Widget>> m_children;
+        bool m_visible{ true };
+        bool m_enabled{ true };
+    };
 
-    virtual void render() override { Widget::render(); }
-};
+    /// This is the main widget that represents the screen.
+    /// It is intended to be used as the parent for \c Window widgets.
+    class Screen : public Widget {
+        FALCOR_OBJECT(Screen)
+       public:
+        Screen() : Widget(nullptr)
+        {
+        }
 
-// The widgets are implemented in the C++ file as they are only exposed to Python.
+        virtual void render() override
+        {
+            Widget::render();
+        }
+    };
 
-} // namespace python_ui
-} // namespace Ruzino
+    // The widgets are implemented in the C++ file as they are only exposed to
+    // Python.
+
+}  // namespace python_ui
+}  // namespace Ruzino

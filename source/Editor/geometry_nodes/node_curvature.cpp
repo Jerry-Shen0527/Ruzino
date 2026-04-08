@@ -1,7 +1,8 @@
+#include <spdlog/spdlog.h>
+
 #include "GCore/Components/MeshComponent.h"
 #include "GCore/util_openmesh_bind.h"
 #include "geom_node_base.h"
-#include <spdlog/spdlog.h>
 
 NODE_DEF_OPEN_SCOPE
 NODE_DECLARATION_FUNCTION(curvature)
@@ -31,7 +32,8 @@ NODE_EXECUTION_FUNCTION(curvature)
 
     // (TO BE UPDATED) Avoid processing the node when there is no input
     if (!input.get_component<MeshComponent>()) {
-        spdlog::error("Curvature: Need Geometry Input - Input doesn't contain a mesh");
+        spdlog::error(
+            "Curvature: Need Geometry Input - Input doesn't contain a mesh");
         return false;
     }
 

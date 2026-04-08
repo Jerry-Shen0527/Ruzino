@@ -37,7 +37,7 @@ void main(int2 i_globalIdx: SV_DispatchThreadID)
     // Get particle mass for acceleration calculation
     float mass = sph_constants.mV;
     float rho_i = float(rho.Load(i * 4)) / INT_SCALE;
-    
+
     // Update velocity and position
     // Apply forces: a = F/m, v += a*dt
     float3 acceleration = (F_pres + F_visc) / mass + gravity;
@@ -58,7 +58,7 @@ void main(int2 i_globalIdx: SV_DispatchThreadID)
 
     // Apply damping to velocity on collision
     vel = (1 - 2 * (minflag + maxflag) * sqrt(0.7)) * vel;
-    
+
     // Recalculate velocity from actual position change (important for stability!)
     vel = (pos - pos_o) / dt;
 

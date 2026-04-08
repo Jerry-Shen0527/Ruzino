@@ -26,18 +26,17 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Core/Macros.h"
 #include <condition_variable>
+#include <cstdint>
 #include <functional>
 #include <mutex>
 #include <thread>
-#include <cstdint>
 
-namespace Ruzino
-{
-class HD_RUZINO_API Threading
-{
-public:
+#include "Core/Macros.h"
+
+namespace Ruzino {
+class HD_RUZINO_API Threading {
+   public:
     const static uint32_t kDefaultThreadCount = 16;
 
     /**
@@ -45,16 +44,15 @@ public:
      *
      * TODO: Implementation
      */
-    class Task
-    {
-    public:
+    class Task {
+       public:
         ///  Check if task is still executing
         bool isRunning();
 
         /// Wait for task to finish executing
         void finish();
 
-    private:
+       private:
         Task();
         friend class Threading;
     };
@@ -71,14 +69,19 @@ public:
     static void finish();
 
     /**
-     * Waits for all currently executing threads to finish and shuts down the thread pool
+     * Waits for all currently executing threads to finish and shuts down the
+     * thread pool
      */
     static void shutdown();
 
     /**
-     * Returns the maximum number of concurrent threads supported by the hardware
+     * Returns the maximum number of concurrent threads supported by the
+     * hardware
      */
-    static uint32_t getLogicalThreadCount() { return std::thread::hardware_concurrency(); }
+    static uint32_t getLogicalThreadCount()
+    {
+        return std::thread::hardware_concurrency();
+    }
 
     /**
      * Starts a task on an available thread.
@@ -89,15 +92,18 @@ public:
 
 /**
  * Simple thread barrier class.
- * TODO: Once we move to C++20, we should change users of Barrier to use std::barrier instead.
- * The only change necessary will be to use std::barrier::arrive_and_wait() in place of Barrier::wait().
+ * TODO: Once we move to C++20, we should change users of Barrier to use
+ * std::barrier instead. The only change necessary will be to use
+ * std::barrier::arrive_and_wait() in place of Barrier::wait().
  */
-class HD_RUZINO_API Barrier
-{
-public:
+class HD_RUZINO_API Barrier {
+   public:
     Barrier(size_t threadCount, std::function<void()> completionFunc = nullptr)
-        : mThreadCount(threadCount), mWaitCount(threadCount), mCompletionFunc(completionFunc)
-    {}
+        : mThreadCount(threadCount),
+          mWaitCount(threadCount),
+          mCompletionFunc(completionFunc)
+    {
+    }
 
     Barrier(const Barrier& barrier) = delete;
     Barrier& operator=(const Barrier& barrier) = delete;
@@ -108,21 +114,21 @@ public:
 
         auto generation = mGeneration;
 
-        if (--mWaitCount == 0)
-        {
+        if (--mWaitCount == 0) {
             if (mCompletionFunc)
                 mCompletionFunc();
             ++mGeneration;
             mWaitCount = mThreadCount;
             mCondition.notify_all();
         }
-        else
-        {
-            mCondition.wait(lock, [this, generation]() { return generation != mGeneration; });
+        else {
+            mCondition.wait(lock, [this, generation]() {
+                return generation != mGeneration;
+            });
         }
     }
 
-private:
+   private:
     size_t mThreadCount;
     size_t mWaitCount;
     size_t mGeneration = 0;
@@ -130,4 +136,4 @@ private:
     std::mutex mMutex;
     std::condition_variable mCondition;
 };
-} // namespace Ruzino
+}  // namespace Ruzino

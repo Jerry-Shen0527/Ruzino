@@ -40,9 +40,9 @@ class HdSt_TriangleIndexBuilderComputation
     : public pxr::HdComputedBufferSource {
    public:
     HdSt_TriangleIndexBuilderComputation(
-        HdSt_MeshTopology *topology,
-        pxr::SdfPath const &id);
-    virtual void GetBufferSpecs(pxr::HdBufferSpecVector *specs) const override;
+        HdSt_MeshTopology* topology,
+        pxr::SdfPath const& id);
+    virtual void GetBufferSpecs(pxr::HdBufferSpecVector* specs) const override;
     virtual bool Resolve() override;
 
     virtual bool HasChainedBuffer() const override;
@@ -54,7 +54,7 @@ class HdSt_TriangleIndexBuilderComputation
 
    private:
     pxr::SdfPath const _id;
-    HdSt_MeshTopology *_topology;
+    HdSt_MeshTopology* _topology;
     pxr::HdBufferSourceSharedPtr _primitiveParam;
     pxr::HdBufferSourceSharedPtr _trianglesEdgeIndices;
 };
@@ -69,11 +69,11 @@ class HdSt_TriangulateFaceVaryingComputation
     : public pxr::HdComputedBufferSource {
    public:
     HdSt_TriangulateFaceVaryingComputation(
-        HdSt_MeshTopology *topolgoy,
-        pxr::HdBufferSourceSharedPtr const &source,
-        pxr::SdfPath const &id);
+        HdSt_MeshTopology* topolgoy,
+        pxr::HdBufferSourceSharedPtr const& source,
+        pxr::SdfPath const& id);
 
-    virtual void GetBufferSpecs(pxr::HdBufferSpecVector *specs) const override;
+    virtual void GetBufferSpecs(pxr::HdBufferSpecVector* specs) const override;
     virtual bool Resolve() override;
 
    protected:
@@ -81,7 +81,7 @@ class HdSt_TriangulateFaceVaryingComputation
 
    private:
     pxr::SdfPath const _id;
-    HdSt_MeshTopology *_topology;
+    HdSt_MeshTopology* _topology;
     pxr::HdBufferSourceSharedPtr _source;
 };
 

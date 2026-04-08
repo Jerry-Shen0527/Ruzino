@@ -45,7 +45,7 @@ void BaseCamera::UpdateUsdTransform()
     pxr::UsdEditContext edit_ctx(
         GetPrim().GetStage(), GetPrim().GetStage()->GetRootLayer());
     pxr::GfMatrix4d worldToCamera = m_MatWorldToView.GetInverse();
-    xform_op.Set(worldToCamera, pxr::UsdTimeCode::Default());
+    xform_op.Set(worldToCamera, m_CurrentTime);
 }
 
 BaseCamera::BaseCamera(const pxr::UsdGeomCamera& camera)

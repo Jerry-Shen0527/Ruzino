@@ -21,16 +21,15 @@
 // KIND, either express or implied. See the Apache License for the specific
 // language governing permissions and limitations under the Apache License.
 //
-#include "api.h"
-
 #include "sampler.h"
+
+#include "api.h"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
 
-bool
-HdEmbreeBufferSampler::Sample(int index, void* value,
-                              HdTupleType dataType) const
+bool HdEmbreeBufferSampler::Sample(int index, void* value, HdTupleType dataType)
+    const
 {
     // Sanity checks: index is within the bounds of buffer,
     // and the sample type and buffer type (defined by the dataType)
@@ -47,16 +46,21 @@ HdEmbreeBufferSampler::Sample(int index, void* value,
     // Equivalent to:
     // *static_cast<ElementType*>(value) =
     //     static_cast<ElementType*>(_buffer.GetData())[index];
-    memcpy(value,
-        static_cast<const uint8_t*>(_buffer.GetData()) + offset, elemSize);
+    memcpy(
+        value,
+        static_cast<const uint8_t*>(_buffer.GetData()) + offset,
+        elemSize);
 
     return true;
 }
 
 template<typename T>
-static void
-_InterpolateImpl(void* out, void** samples, float* weights,
-                 size_t sampleCount, short numComponents)
+static void _InterpolateImpl(
+    void* out,
+    void** samples,
+    float* weights,
+    size_t sampleCount,
+    short numComponents)
 {
     // This is an implementation of a general blend of samples:
     // out = sum_j { sample[j] * weights[j] }.
@@ -71,9 +75,12 @@ _InterpolateImpl(void* out, void** samples, float* weights,
     }
 }
 
-/* static */ bool
-HdEmbreePrimvarSampler::_Interpolate(void* out, void** samples, float* weights,
-    size_t sampleCount, HdTupleType dataType)
+/* static */ bool HdEmbreePrimvarSampler::_Interpolate(
+    void* out,
+    void** samples,
+    float* weights,
+    size_t sampleCount,
+    HdTupleType dataType)
 {
     // Combine maps from component type tag to C++ type, and delegates to
     // the templated _InterpolateImpl.
@@ -83,39 +90,40 @@ HdEmbreePrimvarSampler::_Interpolate(void* out, void** samples, float* weights,
 
     HdType componentType = HdGetComponentType(dataType.type);
 
-    switch(componentType) {
+    switch (componentType) {
         case HdTypeBool:
             /* This function isn't meaningful on boolean types. */
             return false;
         case HdTypeInt8:
-            _InterpolateImpl<char>(out, samples, weights, sampleCount,
-                numComponents);
+            _InterpolateImpl<char>(
+                out, samples, weights, sampleCount, numComponents);
         case HdTypeInt16:
-            _InterpolateImpl<short>(out, samples, weights, sampleCount,
-                numComponents);
+            _InterpolateImpl<short>(
+                out, samples, weights, sampleCount, numComponents);
             return true;
         case HdTypeUInt16:
-            _InterpolateImpl<unsigned short>(out, samples, weights, sampleCount,
-                numComponents);
+            _InterpolateImpl<unsigned short>(
+                out, samples, weights, sampleCount, numComponents);
             return true;
         case HdTypeInt32:
-            _InterpolateImpl<int>(out, samples, weights, sampleCount,
-                numComponents);
+            _InterpolateImpl<int>(
+                out, samples, weights, sampleCount, numComponents);
             return true;
         case HdTypeUInt32:
-            _InterpolateImpl<unsigned int>(out, samples, weights, sampleCount,
-                numComponents);
+            _InterpolateImpl<unsigned int>(
+                out, samples, weights, sampleCount, numComponents);
             return true;
         case HdTypeFloat:
-            _InterpolateImpl<float>(out, samples, weights, sampleCount,
-                numComponents);
+            _InterpolateImpl<float>(
+                out, samples, weights, sampleCount, numComponents);
             return true;
         case HdTypeDouble:
-            _InterpolateImpl<double>(out, samples, weights, sampleCount,
-                numComponents);
+            _InterpolateImpl<double>(
+                out, samples, weights, sampleCount, numComponents);
             return true;
         default:
-            TF_CODING_ERROR("Unsupported type '%s' passed to _Interpolate",
+            TF_CODING_ERROR(
+                "Unsupported type '%s' passed to _Interpolate",
                 TfEnum::GetName(componentType).c_str());
             return false;
     }

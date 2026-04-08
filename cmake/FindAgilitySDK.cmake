@@ -7,7 +7,7 @@ set(AgilitySDK_SEARCH_DIR ${AgilitySDK_ROOT_DIR})
 ##################################
 
 message("Searching for Agility SDK in ${AgilitySDK_SEARCH_DIR}/build/native/include")
-  
+
 find_path(AgilitySDK_INCLUDE_DIRS d3d12.h
     PATHS ${AgilitySDK_SEARCH_DIR}/build/native/include)
 

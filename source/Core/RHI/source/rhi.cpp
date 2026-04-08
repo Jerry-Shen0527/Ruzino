@@ -76,7 +76,7 @@ int init(bool with_window, bool use_dx12)
 #endif
 
     params.swapChainFormat = nvrhi::Format::RGBA8_UNORM;
-#ifdef _WIN32
+#if RUZINO_WITH_DX11 || RUZINO_WITH_DX12
     params.featureLevel = D3D_FEATURE_LEVEL_12_2;
 #endif
 #ifdef _DEBUG

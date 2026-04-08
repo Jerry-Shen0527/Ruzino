@@ -119,22 +119,22 @@ float mx_ggx_smith_G1(float cosTheta, float alpha)
 
 // Anisotropic G1 for GGX
 // Based on: Understanding the Masking-Shadowing Function in Microfacet-Based BRDFs
-// https://jcgt.org/published/0003/02/03/paper.pdf  
+// https://jcgt.org/published/0003/02/03/paper.pdf
 // Equation 72: Lambda for anisotropic GGX
 float mx_ggx_smith_G1_aniso(float NdotV, float Vx, float Vy, float alpha_x, float alpha_y)
 {
     if (NdotV <= M_FLOAT_EPS) {
         return 0.0;
     }
-    
+
     // Compute lambda using equation 72
     // lambda(v) = (-1 + sqrt(1 + (alpha_x^2 * v_x^2 + alpha_y^2 * v_y^2) / v_z^2)) / 2
     float VxAlpha = alpha_x * Vx;
     float VyAlpha = alpha_y * Vy;
     float VzSq = mx_square(NdotV);
-    
+
     float lambda = (-1.0 + sqrt(1.0 + (mx_square(VxAlpha) + mx_square(VyAlpha)) / VzSq)) * 0.5;
-    
+
     // G1 = 1 / (1 + lambda)
     return 1.0 / (1.0 + lambda);
 }

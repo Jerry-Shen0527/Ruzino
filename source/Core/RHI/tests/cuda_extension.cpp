@@ -78,18 +78,19 @@ TEST(cuda_extension, create_optix_traversable)
 
     // mesh handle
     // vertex buffer describing a rectangle (but in 3D space), two triangles
-    auto vertex_buffer = create_cuda_linear_buffer(std::vector{ 0.0f,
-                                                                0.0f,
-                                                                0.0f,
-                                                                1.0f,
-                                                                0.0f,
-                                                                0.0f,
-                                                                0.0f,
-                                                                1.0f,
-                                                                0.0f,
-                                                                1.0f,
-                                                                1.0f,
-                                                                0.0f });
+    auto vertex_buffer = create_cuda_linear_buffer(
+        std::vector{ 0.0f,
+                     0.0f,
+                     0.0f,
+                     1.0f,
+                     0.0f,
+                     0.0f,
+                     0.0f,
+                     1.0f,
+                     0.0f,
+                     1.0f,
+                     1.0f,
+                     0.0f });
     // index buffer referencing the two triangles
     auto index_buffer =
         create_cuda_linear_buffer(std::vector{ 0, 1, 2, 1, 2, 3 });
@@ -124,9 +125,9 @@ TEST(cuda_extension, cuda_linear_buffer_to_nvrhi_texture)
     auto device = Ruzino::RHI::get_device();
     auto texture = cuda_linear_buffer_to_nvrhi_texture(device, buffer, desc);
     EXPECT_NE(texture, nullptr);
-    
+
     // Verify external memory resources are properly managed
-    CUDA_SYNC_CHECK(); // Ensure all operations complete
+    CUDA_SYNC_CHECK();  // Ensure all operations complete
 }
 
 TEST(cuda_extension, nvrhi_texture_to_cuda_linear_buffer)

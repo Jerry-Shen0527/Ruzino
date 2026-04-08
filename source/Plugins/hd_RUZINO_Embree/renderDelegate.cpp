@@ -24,9 +24,10 @@
 
 #include "renderDelegate.h"
 
+#include <spdlog/spdlog.h>
+
 #include <iostream>
 
-#include <spdlog/spdlog.h>
 #include "config.h"
 #include "geometries/mesh.h"
 #include "instancer.h"
@@ -100,14 +101,16 @@ void Hd_RUZINO_RenderDelegate::_Initialize()
     _settingDescriptors[2] = {
         "Ambient Occlusion Samples",
         Hd_RUZINO_RenderSettingsTokens->ambientOcclusionSamples,
-        VtValue(static_cast<int>(
-            Hd_RUZINO_Config::GetInstance().ambientOcclusionSamples))
+        VtValue(
+            static_cast<int>(
+                Hd_RUZINO_Config::GetInstance().ambientOcclusionSamples))
     };
     _settingDescriptors[3] = {
         "Samples To Convergence",
         HdRenderSettingsTokens->convergedSamplesPerPixel,
-        VtValue(static_cast<int>(
-            Hd_RUZINO_Config::GetInstance().samplesToConvergence))
+        VtValue(
+            static_cast<int>(
+                Hd_RUZINO_Config::GetInstance().samplesToConvergence))
     };
 
     _settingDescriptors[4] = { "Render Mode",
@@ -115,8 +118,8 @@ void Hd_RUZINO_RenderDelegate::_Initialize()
                                VtValue(0) };
     _PopulateDefaultSettings(_settingDescriptors);
 
-    _renderParam = std::make_shared<Hd_RUZINO_RenderParam>(
-        &_renderThread, &_sceneVersion);
+    _renderParam =
+        std::make_shared<Hd_RUZINO_RenderParam>(&_renderThread, &_sceneVersion);
     lights.reserve(16);
     _renderParam->lights = &lights;
     _renderParam->materials = &materials;

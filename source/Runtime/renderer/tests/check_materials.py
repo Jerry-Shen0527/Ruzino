@@ -27,10 +27,10 @@ for path in test_paths:
     if not prim:
         print(f"  ERROR: Prim not found!")
         continue
-    
+
     print(f"  Type: {prim.GetTypeName()}")
     print(f"  Valid: {prim.IsValid()}")
-    
+
     material = UsdShade.Material(prim)
     if material:
         surface_output = material.GetSurfaceOutput()

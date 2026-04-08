@@ -9,24 +9,28 @@
 /// @file
 /// SLANG resource binding context
 
-#include "Export.h"
-
 #include <MaterialXGenShader/HwShaderGenerator.h>
+
+#include "Export.h"
 
 MATERIALX_NAMESPACE_BEGIN
 
 /// Shared pointer to a SlangResourceBindingContext
-using SlangResourceBindingContextPtr = shared_ptr<class SlangResourceBindingContext>;
+using SlangResourceBindingContextPtr =
+    shared_ptr<class SlangResourceBindingContext>;
 
 /// @class SlangResourceBindingContext
 /// Class representing a resource binding for Slang shader resources.
-class HD_RUZINO_API SlangResourceBindingContext : public HwResourceBindingContext
-{
-  public:
-    SlangResourceBindingContext(size_t uniformBindingLocation, size_t samplerBindingLocation);
+class HD_RUZINO_API SlangResourceBindingContext
+    : public HwResourceBindingContext {
+   public:
+    SlangResourceBindingContext(
+        size_t uniformBindingLocation,
+        size_t samplerBindingLocation);
 
     static SlangResourceBindingContextPtr create(
-        size_t uniformBindingLocation = 0, size_t samplerBindingLocation = 0)
+        size_t uniformBindingLocation = 0,
+        size_t samplerBindingLocation = 0)
     {
         return std::make_shared<SlangResourceBindingContext>(
             uniformBindingLocation, samplerBindingLocation);
@@ -39,17 +43,27 @@ class HD_RUZINO_API SlangResourceBindingContext : public HwResourceBindingContex
     void emitDirectives(GenContext& context, ShaderStage& stage) override;
 
     // Emit uniforms with binding information
-    void emitResourceBindings(GenContext& context, const VariableBlock& uniforms, ShaderStage& stage) override;
+    void emitResourceBindings(
+        GenContext& context,
+        const VariableBlock& uniforms,
+        ShaderStage& stage) override;
 
-    // Emit structured uniforms with binding information and align members where possible
-    void emitStructuredResourceBindings(GenContext& context, const VariableBlock& uniforms,
-                                        ShaderStage& stage, const std::string& structInstanceName,
-                                        const std::string& arraySuffix) override;
+    // Emit structured uniforms with binding information and align members where
+    // possible
+    void emitStructuredResourceBindings(
+        GenContext& context,
+        const VariableBlock& uniforms,
+        ShaderStage& stage,
+        const std::string& structInstanceName,
+        const std::string& arraySuffix) override;
 
     // Emit separate binding locations for sampler and uniform table
-    void enableSeparateBindingLocations(bool separateBindingLocation) { _separateBindingLocation = separateBindingLocation; };
+    void enableSeparateBindingLocations(bool separateBindingLocation)
+    {
+        _separateBindingLocation = separateBindingLocation;
+    };
 
-  protected:
+   protected:
     // List of required extensions
     StringSet _requiredExtensions;
 
@@ -66,8 +80,8 @@ class HD_RUZINO_API SlangResourceBindingContext : public HwResourceBindingContex
     size_t _hwInitSamplerBindLocation = 0;
 
     // Separate binding locations flag
-    // Indicates whether to use a shared binding counter for samplers and uniforms or separate ones.
-    // By default a shader counter is used.
+    // Indicates whether to use a shared binding counter for samplers and
+    // uniforms or separate ones. By default a shader counter is used.
     bool _separateBindingLocation = false;
 };
 

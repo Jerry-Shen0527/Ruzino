@@ -1,9 +1,3 @@
-#define _USE_MATH_DEFINES
-#include <cmath>
-
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
 #include <gtest/gtest.h>
 
 #include <Eigen/Eigen>
@@ -11,6 +5,7 @@
 #include <RZSolver/Solver.hpp>
 #include <chrono>
 #include <iomanip>
+#include <numbers>
 #include <random>
 
 using namespace Ruzino::Solver;
@@ -275,11 +270,11 @@ class LargeScaleTest : public ::testing::Test {
             }
 
             // Memory and time constraints for large problems
-            if (A.rows() >= 5000) {
-                EXPECT_LT(total_time.count(), 30000)
-                    << "Solver took too long (>30s) on large matrix";
-                EXPECT_LT(memory_mb, 500)
-                    << "Excessive memory usage (>500MB) estimated";
+            if (A.rows() >= 10000) {
+                EXPECT_LT(total_time.count(), 60000)
+                    << "Solver took too long (>60s) on large matrix";
+                EXPECT_LT(memory_mb, 2000)
+                    << "Excessive memory usage (>2GB) estimated";
             }
         }
         catch (const std::exception& e) {
@@ -311,7 +306,7 @@ TEST_F(LargeScaleTest, TridiagonalScaling)
     std::cout << "\n=== Tridiagonal Matrix Scaling Test ===" << std::endl;
     printHeader();
 
-    std::vector<int> sizes = { 1000, 5000, 10000, 20000 };
+    std::vector<int> sizes = { 10000, 50000, 100000, 200000, 500000 };
     auto available_types = SolverFactory::getAvailableTypes();
 
     for (int n : sizes) {
@@ -335,12 +330,13 @@ TEST_F(LargeScaleTest, TridiagonalScaling)
         // Estimate condition number - 更准确的估计
         double condition_estimate;
         if (n <= 1000) {
-            condition_estimate = 4.0 * n * n / (M_PI * M_PI);
+            condition_estimate =
+                4.0 * n * n / (std::numbers::pi * std::numbers::pi);
         }
         else {
             // 对于我们改进的矩阵，条件数应该更小
-            condition_estimate =
-                main_diag * main_diag * n / (4.0 * M_PI * M_PI);
+            condition_estimate = main_diag * main_diag * n /
+                                 (4.0 * std::numbers::pi * std::numbers::pi);
         }
         std::cout << "Estimated condition number: " << std::scientific
                   << condition_estimate << std::endl;
@@ -350,7 +346,7 @@ TEST_F(LargeScaleTest, TridiagonalScaling)
         }
 
         // Stop at reasonable size to avoid excessive test time
-        if (n >= 10000) {
+        if (n >= 200000) {
             std::cout << "Stopping at " << n << " to avoid excessive test time"
                       << std::endl;
             break;
@@ -363,7 +359,9 @@ TEST_F(LargeScaleTest, Poisson2DScaling)
     std::cout << "\n=== 2D Poisson Matrix Scaling Test ===" << std::endl;
     printHeader();
 
-    std::vector<int> grid_sizes = { 32, 64, 100, 141 };  // n = 1K, 4K, 10K, 20K
+    std::vector<int> grid_sizes = {
+        100, 200, 316, 447, 707
+    };  // n = 10K, 40K, 100K, 200K, 500K
     auto available_types = SolverFactory::getAvailableTypes();
 
     for (int grid_size : grid_sizes) {
@@ -391,7 +389,7 @@ TEST_F(LargeScaleTest, Poisson2DScaling)
             testSolverOnMatrix(type, A, b, "Poisson2D", true);
         }
 
-        if (n >= 10000)
+        if (n >= 200000)
             break;  // Time constraint
     }
 }
@@ -402,9 +400,10 @@ TEST_F(LargeScaleTest, RandomSparseScaling)
     printHeader();
 
     std::vector<std::pair<int, float>> test_cases = {
-        { 2000, 0.01f },   // 2K x 2K, 1% density
-        { 5000, 0.005f },  // 5K x 5K, 0.5% density
-        { 10000, 0.002f }  // 10K x 10K, 0.2% density
+        { 20000, 0.01f },    // 20K x 20K, 1% density
+        { 50000, 0.005f },   // 50K x 50K, 0.5% density
+        { 100000, 0.002f },  // 100K x 100K, 0.2% density
+        { 200000, 0.001f }   // 200K x 200K, 0.1% density
     };
 
     auto available_types = SolverFactory::getAvailableTypes();
@@ -434,7 +433,7 @@ TEST_F(LargeScaleTest, RandomSparseScaling)
             testSolverOnMatrix(type, A, b, "RandomSparse", true);
         }
 
-        if (n >= 5000)
+        if (n >= 100000)
             break;  // Time constraint for random matrices
     }
 }
@@ -453,20 +452,20 @@ TEST_F(LargeScaleTest, ChallengingProblems)
     };
 
     std::vector<ChallengingTest> tests = {
-        { "ConvDiff-1K",
-          1000,
+        { "ConvDiff-10K",
+          10000,
           [this](auto& A, auto& b, int n) {
               createLargeConvectionDiffusion(A, b, n);
           },
           false },
-        { "ConvDiff-5K",
-          5000,
-          [this](auto& A, auto& b, int n) {
-              createLargeConvectionDiffusion(A, b, n);
-          },
-          false },
-        { "Tri-50K",
+        { "ConvDiff-50K",
           50000,
+          [this](auto& A, auto& b, int n) {
+              createLargeConvectionDiffusion(A, b, n);
+          },
+          false },
+        { "Tri-1M",
+          1000000,
           [this](auto& A, auto& b, int n) { createLargeTridiagonal(A, b, n); },
           true },
     };
@@ -495,7 +494,7 @@ TEST_F(LargeScaleTest, ChallengingProblems)
                   << std::endl;
 
         // Only test iterative methods on very large or difficult problems
-        auto test_types = (test.size >= 10000)
+        auto test_types = (test.size >= 500000)
                               ? iterative_types
                               : SolverFactory::getAvailableTypes();
 
@@ -511,8 +510,8 @@ TEST_F(LargeScaleTest, MemoryStressTest)
 
     // Test with very large but sparse matrices to stress memory management
     std::vector<std::tuple<int, float, std::string>> stress_tests = {
-        { 50000, 0.0001f, "VeryLargeSparse" },    // 50K x 50K, very sparse
-        { 100000, 0.00005f, "UltraLargeSparse" }  // 100K x 100K, ultra sparse
+        { 500000, 0.0001f, "VeryLargeSparse" },    // 500K x 500K, very sparse
+        { 1000000, 0.00005f, "UltraLargeSparse" }  // 1M x 1M, ultra sparse
     };
 
     printHeader();
@@ -570,16 +569,16 @@ TEST_F(LargeScaleTest, PerformanceProfile)
     std::vector<ProfileTest> profile_tests = {
         { "Medium-Tri",
           0,
-          [this](auto& A, auto& b) { createLargeTridiagonal(A, b, 5000); } },
+          [this](auto& A, auto& b) { createLargeTridiagonal(A, b, 50000); } },
         { "Medium-Poisson",
           0,
           [this](auto& A, auto& b) {
-              createLarge2DPoisson(A, b, 71);
-          } },  // ~5K
+              createLarge2DPoisson(A, b, 224);
+          } },  // ~50K
         { "Large-Sparse",
           0,
           [this](auto& A, auto& b) {
-              createLargeRandomSparse(A, b, 10000, 0.002f);
+              createLargeRandomSparse(A, b, 100000, 0.002f);
           } }
     };
 

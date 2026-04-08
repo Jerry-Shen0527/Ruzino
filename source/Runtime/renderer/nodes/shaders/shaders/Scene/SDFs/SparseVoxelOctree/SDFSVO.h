@@ -27,72 +27,84 @@
  **************************************************************************/
 #pragma once
 
+#include "Core/Pass/ComputePass.h"
 #include "Scene/SDFs/SDFGrid.h"
 
+namespace Ruzino {
+/** SDF Sparse Voxel Octree. Can only be utilized on the GPU.
+ */
+class HD_RUZINO_API SDFSVO : public SDFGrid {
+   public:
+    struct SharedData;
 
-#include "Core/Pass/ComputePass.h"
-
-namespace Ruzino
-{
-    /** SDF Sparse Voxel Octree. Can only be utilized on the GPU.
-    */
-    class HD_RUZINO_API SDFSVO : public SDFGrid
+    static ref<SDFSVO> create(ref<Device> pDevice)
     {
-    public:
-        struct SharedData;
+        return make_ref<SDFSVO>(pDevice);
+    }
 
-        static ref<SDFSVO> create(ref<Device> pDevice) { return make_ref<SDFSVO>(pDevice); }
+    /// Create an empty SDFSVO.
+    SDFSVO(ref<Device> pDevice);
 
-        /// Create an empty SDFSVO.
-        SDFSVO(ref<Device> pDevice);
+    uint32_t getSVOIndexBitCount() const
+    {
+        return mSVOIndexBitCount;
+    }
 
-        uint32_t getSVOIndexBitCount() const { return mSVOIndexBitCount; }
+    virtual size_t getSize() const override;
+    virtual uint32_t getMaxPrimitiveIDBits() const override;
 
-        virtual size_t getSize() const override;
-        virtual uint32_t getMaxPrimitiveIDBits() const override;
+    virtual Type getType() const override
+    {
+        return Type::SparseVoxelOctree;
+    }
 
-        virtual Type getType() const override { return Type::SparseVoxelOctree; }
+    virtual void createResources(
+        RenderContext* pRenderContext,
+        bool deleteScratchData = true) override;
 
-        virtual void createResources(RenderContext* pRenderContext, bool deleteScratchData = true) override;
+    virtual const nvrhi::BufferHandle& getAABBBuffer() const override;
+    virtual uint32_t getAABBCount() const override
+    {
+        return 1;
+    }
 
-        virtual const nvrhi::BufferHandle& getAABBBuffer() const override;
-        virtual uint32_t getAABBCount() const override { return 1; }
+    virtual void bindShaderData(const ShaderVar& var) const override;
 
-        virtual void bindShaderData(const ShaderVar& var) const override;
+   protected:
+    virtual void setValuesInternal(
+        const std::vector<float>& cornerValues) override;
 
-    protected:
-        virtual void setValuesInternal(const std::vector<float>& cornerValues) override;
+   private:
+    // CPU data.
+    std::vector<int8_t> mValues;
 
-    private:
-        // CPU data.
-        std::vector<int8_t> mValues;
+    // Specs.
+    uint32_t mLevelCount = 0;
+    uint32_t mSVOElementCount = 0;
+    uint32_t mVirtualGridWidth = 0;
+    uint32_t mSVOIndexBitCount = 0;
 
-        // Specs.
-        uint32_t mLevelCount = 0;
-        uint32_t mSVOElementCount = 0;
-        uint32_t mVirtualGridWidth = 0;
-        uint32_t mSVOIndexBitCount = 0;
+    // GPU Data.
+    nvrhi::BufferHandle mpSVOBuffer;
+    std::shared_ptr<SharedData>
+        mpSharedData;  ///< Shared data among all instances.
 
-        // GPU Data.
-        nvrhi::BufferHandle mpSVOBuffer;
-        std::shared_ptr<SharedData> mpSharedData; ///< Shared data among all instances.
+    // Compute passes used to build the SVO.
+    ref<ComputePass> mpCountSurfaceVoxelsPass;
+    ref<ComputePass> mpBuildFinestLevelFromDistanceTexturePass;
+    ref<ComputePass> mpBuildLevelFromDistanceTexturePass;
+    ref<ComputePass> mpSortLocationCodesPass;
+    ref<ComputePass> mpWriteSVOOffsetsPass;
+    ref<ComputePass> mpBuildOctreePass;
 
-        // Compute passes used to build the SVO.
-        ref<ComputePass> mpCountSurfaceVoxelsPass;
-        ref<ComputePass> mpBuildFinestLevelFromDistanceTexturePass;
-        ref<ComputePass> mpBuildLevelFromDistanceTexturePass;
-        ref<ComputePass> mpSortLocationCodesPass;
-        ref<ComputePass> mpWriteSVOOffsetsPass;
-        ref<ComputePass> mpBuildOctreePass;
-
-        // Scratch data used for building.
-        nvrhi::TextureHandle mpSDFGridTexture;
-        nvrhi::BufferHandle mpSurfaceVoxelCounter;
-        nvrhi::BufferHandle mpSurfaceVoxelCounterStagingBuffer;
-        nvrhi::BufferHandle mpVoxelCountPerLevelBuffer;
-        nvrhi::BufferHandle mpVoxelCountPerLevelStagingBuffer;
-        nvrhi::BufferHandle mpHashTableBuffer;
-        nvrhi::BufferHandle mpLocationCodesBuffer;
-        nvrhi::EventQueryHandle mpReadbackFence;
-    };
-}
+    // Scratch data used for building.
+    nvrhi::TextureHandle mpSDFGridTexture;
+    nvrhi::BufferHandle mpSurfaceVoxelCounter;
+    nvrhi::BufferHandle mpSurfaceVoxelCounterStagingBuffer;
+    nvrhi::BufferHandle mpVoxelCountPerLevelBuffer;
+    nvrhi::BufferHandle mpVoxelCountPerLevelStagingBuffer;
+    nvrhi::BufferHandle mpHashTableBuffer;
+    nvrhi::BufferHandle mpLocationCodesBuffer;
+    nvrhi::EventQueryHandle mpReadbackFence;
+};
+}  // namespace Ruzino

@@ -33,21 +33,22 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+
 #include <fstream>
 #include <iostream>
 
-namespace Ruzino
-{
+namespace Ruzino {
 /**
- * Opens a console window and redirects std::cout, std::cerr, and std::cin there.
- * Upon destruction of the object, the console is closed and the streams are restored to the previous state.
+ * Opens a console window and redirects std::cout, std::cerr, and std::cin
+ * there. Upon destruction of the object, the console is closed and the streams
+ * are restored to the previous state.
  */
-class DebugConsole
-{
-public:
+class DebugConsole {
+   public:
     /**
      * Opens a console window. The destructor closes it again.
-     * @param[in] waitForKey If true, the console waits for a key press before closing.
+     * @param[in] waitForKey If true, the console waits for a key press before
+     * closing.
      */
     DebugConsole(bool waitForKey = true) : mWaitForKey(waitForKey)
     {
@@ -75,8 +76,7 @@ public:
     virtual ~DebugConsole()
     {
         flush();
-        if (mWaitForKey)
-        {
+        if (mWaitForKey) {
             pause();
         }
 
@@ -106,7 +106,7 @@ public:
         std::cerr.flush();
     }
 
-private:
+   private:
     std::ofstream mCout;
     std::ofstream mCerr;
     std::ifstream mCin;
@@ -117,6 +117,6 @@ private:
 
     bool mWaitForKey = true;
 };
-} // namespace Ruzino
+}  // namespace Ruzino
 
-#endif // FALCOR_WINDOWS
+#endif  // FALCOR_WINDOWS

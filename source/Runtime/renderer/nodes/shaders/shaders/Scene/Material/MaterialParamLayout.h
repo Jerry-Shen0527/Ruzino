@@ -26,14 +26,12 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include <vector>
 #include <cstdint>
+#include <vector>
 
-namespace Ruzino
-{
+namespace Ruzino {
 
-struct MaterialParamLayoutEntry
-{
+struct MaterialParamLayoutEntry {
     const char* name;
     const char* pythonName;
     uint32_t size;
@@ -42,4 +40,4 @@ struct MaterialParamLayoutEntry
 
 using MaterialParamLayout = std::vector<MaterialParamLayoutEntry>;
 
-} // namespace Ruzino
+}  // namespace Ruzino

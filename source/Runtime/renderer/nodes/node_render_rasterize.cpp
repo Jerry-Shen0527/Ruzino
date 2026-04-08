@@ -82,17 +82,7 @@ NODE_EXECUTION_FUNCTION(rasterize)
         .finish_setting_frame_buffer();
 
     auto size = get_size(params);
-#if RUZINO_WITH_OPENUSD
-    context
-        .set_viewport(
-            pxr::GfVec2f(
-                static_cast<float>(size[0]), static_cast<float>(size[1])))
-        .finish_setting_pso();
-#else
-    context
-        .set_viewport(static_cast<float>(size[0]), static_cast<float>(size[1]))
-        .finish_setting_pso();
-#endif
+    context.set_viewport(size[0], size[1]).finish_setting_pso();
 
     instance_collection->draw_indirect_pool.compress();
 

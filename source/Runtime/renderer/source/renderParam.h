@@ -40,7 +40,7 @@ namespace Ruzino {
 class Hd_RUZINO_Material;
 class NodeSystem;
 class LensSystem;
-using MaterialMap = pxr::TfHashMap<SdfPath, Hd_RUZINO_Material *, TfHash>;
+using MaterialMap = pxr::TfHashMap<SdfPath, Hd_RUZINO_Material*, TfHash>;
 }  // namespace Ruzino
 
 namespace Ruzino {
@@ -60,10 +60,10 @@ using namespace pxr;
 class Hd_RUZINO_RenderParam final : public HdRenderParam {
    public:
     Hd_RUZINO_RenderParam(
-        HdRenderThread *renderThread,
-        std::atomic<int> *sceneVersion,
-        NodeSystem *node_system,
-        MaterialMap *m)
+        HdRenderThread* renderThread,
+        std::atomic<int>* sceneVersion,
+        NodeSystem* node_system,
+        MaterialMap* m)
         : _renderThread(renderThread),
           material_map(m),
           _sceneVersion(sceneVersion),
@@ -78,21 +78,22 @@ class Hd_RUZINO_RenderParam final : public HdRenderParam {
     {
     }
 
-    HdRenderThread *_renderThread = nullptr;
+    HdRenderThread* _renderThread = nullptr;
 
-    MaterialMap *material_map;
+    MaterialMap* material_map;
 
-    NodeSystem *node_system;
+    NodeSystem* node_system;
     std::unique_ptr<Hd_RUZINO_RenderInstanceCollection> InstanceCollection;
 
     // Support multiple named output textures from present nodes
     std::map<std::string, nvrhi::TextureHandle> presented_textures;
-    
-    // Legacy: name of default texture in presented_textures (for backward compatibility)
-    // This avoids duplication - just stores which texture is the default one
+
+    // Legacy: name of default texture in presented_textures (for backward
+    // compatibility) This avoids duplication - just stores which texture is the
+    // default one
     std::string default_texture_name;
-    
-    LensSystem *lens_system = nullptr;
+
+    LensSystem* lens_system = nullptr;
 
     std::vector<std::thread> texture_loading_threads;
     std::vector<std::thread> material_loading_threads;
@@ -100,7 +101,7 @@ class Hd_RUZINO_RenderParam final : public HdRenderParam {
    private:
     /// A handle to the global render thread.
     /// A version counter for edits to _scene.
-    std::atomic<int> *_sceneVersion;
+    std::atomic<int>* _sceneVersion;
 };
 
 RUZINO_NAMESPACE_CLOSE_SCOPE

@@ -47,12 +47,12 @@ using namespace pxr;
 class Hd_RUZINO_RenderParam final : public HdRenderParam {
    public:
     Hd_RUZINO_RenderParam(
-        HdRenderThread *renderThread,
-        std::atomic<int> *sceneVersion,
-        pxr::VtArray<Hd_RUZINO_Light *> *lights,
-        pxr::VtArray<Hd_RUZINO_Camera *> *cameras,
-        pxr::VtArray<Hd_RUZINO_Mesh *> *meshes,
-        pxr::TfHashMap<SdfPath, Hd_RUZINO_Material *, TfHash> *materials)
+        HdRenderThread* renderThread,
+        std::atomic<int>* sceneVersion,
+        pxr::VtArray<Hd_RUZINO_Light*>* lights,
+        pxr::VtArray<Hd_RUZINO_Camera*>* cameras,
+        pxr::VtArray<Hd_RUZINO_Mesh*>* meshes,
+        pxr::TfHashMap<SdfPath, Hd_RUZINO_Material*, TfHash>* materials)
         : _renderThread(renderThread),
           _sceneVersion(sceneVersion),
           lights(lights),
@@ -61,19 +61,19 @@ class Hd_RUZINO_RenderParam final : public HdRenderParam {
           materials(materials)
     {
     }
-    HdRenderThread *_renderThread = nullptr;
+    HdRenderThread* _renderThread = nullptr;
 
-    NodeSystem *node_system;
+    NodeSystem* node_system;
 
-    pxr::VtArray<Hd_RUZINO_Light *> *lights = nullptr;
-    pxr::VtArray<Hd_RUZINO_Camera *> *cameras = nullptr;
-    pxr::VtArray<Hd_RUZINO_Mesh *> *meshes = nullptr;
-    pxr::TfHashMap<SdfPath, Hd_RUZINO_Material *, TfHash> *materials = nullptr;
+    pxr::VtArray<Hd_RUZINO_Light*>* lights = nullptr;
+    pxr::VtArray<Hd_RUZINO_Camera*>* cameras = nullptr;
+    pxr::VtArray<Hd_RUZINO_Mesh*>* meshes = nullptr;
+    pxr::TfHashMap<SdfPath, Hd_RUZINO_Material*, TfHash>* materials = nullptr;
 
    private:
     /// A handle to the global render thread.
     /// A version counter for edits to _scene.
-    std::atomic<int> *_sceneVersion;
+    std::atomic<int>* _sceneVersion;
 };
 
 RUZINO_NAMESPACE_CLOSE_SCOPE

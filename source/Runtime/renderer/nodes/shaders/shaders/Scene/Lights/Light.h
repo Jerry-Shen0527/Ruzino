@@ -26,325 +26,414 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "LightData.slang"
-#include "Core/Macros.h"
-#include "utils/Math/Vector.h"
-#include "utils/Math/Matrix.h"
-#include "Scene/Animation/Animatable.h"
 #include <memory>
 #include <string>
 
-namespace Ruzino
-{
-    class Scene;
-    struct ShaderVar;
+#include "Core/Macros.h"
+#include "LightData.slang"
+#include "Scene/Animation/Animatable.h"
+#include "utils/Math/Matrix.h"
+#include "utils/Math/Vector.h"
 
-    /** Base class for light sources. All light sources should inherit from this.
-    */
-    class HD_RUZINO_API Light : public Animatable
+namespace Ruzino {
+class Scene;
+struct ShaderVar;
+
+/** Base class for light sources. All light sources should inherit from this.
+ */
+class HD_RUZINO_API Light : public Animatable {
+    FALCOR_OBJECT(Light)
+   public:
+    virtual ~Light() = default;
+
+    /** Set the light parameters into a shader variable. To use this you need to
+     * include/import 'ShaderCommon' inside your shader.
+     */
+    virtual void bindShaderData(const ShaderVar& var);
+
+    /** Get total light power
+     */
+    virtual float getPower() const = 0;
+
+    /** Get the light type
+     */
+    LightType getType() const
     {
-        FALCOR_OBJECT(Light)
-    public:
-        virtual ~Light() = default;
+        return (LightType)mData.type;
+    }
 
-        /** Set the light parameters into a shader variable. To use this you need to include/import 'ShaderCommon' inside your shader.
-        */
-        virtual void bindShaderData(const ShaderVar& var);
+    /** Get the light data
+     */
+    inline const LightData& getData() const
+    {
+        return mData;
+    }
 
-        /** Get total light power
-        */
-        virtual float getPower() const = 0;
+    /** Name the light
+     */
+    void setName(const std::string& Name)
+    {
+        mName = Name;
+    }
 
-        /** Get the light type
-        */
-        LightType getType() const { return (LightType)mData.type; }
+    /** Get the light's name
+     */
+    const std::string& getName() const
+    {
+        return mName;
+    }
 
-        /** Get the light data
-        */
-        inline const LightData& getData() const { return mData; }
+    /** Activate/deactivate the light
+     */
+    void setActive(bool active);
 
-        /** Name the light
-        */
-        void setName(const std::string& Name) { mName = Name; }
+    /** Check if light is active
+     */
+    bool isActive() const
+    {
+        return mActive;
+    }
 
-        /** Get the light's name
-        */
-        const std::string& getName() const { return mName; }
+    /** Gets the size of a single light data struct in bytes
+     */
+    static uint32_t getShaderStructSize()
+    {
+        return kDataSize;
+    }
 
-        /** Activate/deactivate the light
-        */
-        void setActive(bool active);
+    /** Set the light intensity.
+     */
+    virtual void setIntensity(const float3& intensity);
 
-        /** Check if light is active
-        */
-        bool isActive() const { return mActive; }
+    /** Get the light intensity.
+     */
+    const float3& getIntensity() const
+    {
+        return mData.intensity;
+    }
 
-        /** Gets the size of a single light data struct in bytes
-        */
-        static uint32_t getShaderStructSize() { return kDataSize; }
-
-        /** Set the light intensity.
-        */
-        virtual void setIntensity(const float3& intensity);
-
-        /** Get the light intensity.
-        */
-        const float3& getIntensity() const { return mData.intensity; }
-
-        enum class Changes
-        {
-            None = 0x0,
-            Active = 0x1,
-            Position = 0x2,
-            Direction = 0x4,
-            Intensity = 0x8,
-            SurfaceArea = 0x10,
-        };
-
-        /** Begin a new frame. Returns the changes from the previous frame
-        */
-        Changes beginFrame();
-
-        /** Returns the changes from the previous frame
-        */
-        Changes getChanges() const { return mChanges; }
-
-        void updateFromAnimation(const float4x4& transform) override {}
-
-    protected:
-        Light(const std::string& name, LightType type);
-
-        static constexpr size_t kDataSize = sizeof(LightData);
-
-        // UI callbacks for keeping the intensity in-sync.
-        float3 getColorForUI();
-        void setColorFromUI(const float3& uiColor);
-        float getIntensityForUI();
-        void setIntensityFromUI(float intensity);
-
-        std::string mName;
-        bool mActive = true;
-        bool mActiveChanged = false;
-
-        // These two variables track mData values for consistent UI operation.
-        float3 mUiLightIntensityColor = float3(0.5f, 0.5f, 0.5f);
-        float mUiLightIntensityScale = 1.0f;
-        LightData mData;
-        LightData mPrevData;
-        Changes mChanges = Changes::None;
-
-        friend class SceneCache;
+    enum class Changes {
+        None = 0x0,
+        Active = 0x1,
+        Position = 0x2,
+        Direction = 0x4,
+        Intensity = 0x8,
+        SurfaceArea = 0x10,
     };
 
-    /** Point light source.
-        Simple infinitely-small point light with quadratic attenuation.
-    */
-    class HD_RUZINO_API PointLight : public Light
+    /** Begin a new frame. Returns the changes from the previous frame
+     */
+    Changes beginFrame();
+
+    /** Returns the changes from the previous frame
+     */
+    Changes getChanges() const
     {
-    public:
-        static ref<PointLight> create(const std::string& name = "") { return make_ref<PointLight>(name); }
+        return mChanges;
+    }
 
-        PointLight(const std::string& name);
-        ~PointLight() = default;
-
-        /** Get total light power (needed for light picking)
-        */
-        float getPower() const override;
-
-        /** Set the light's world-space position
-        */
-        void setWorldPosition(const float3& pos);
-
-        /** Set the light's world-space direction.
-            \param[in] dir Light direction. Does not have to be normalized.
-        */
-        void setWorldDirection(const float3& dir);
-
-        /** Set the cone opening half-angle for use as a spot light
-            \param[in] openingAngle Angle in radians.
-        */
-        void setOpeningAngle(float openingAngle);
-
-        /** Get the light's world-space position
-        */
-        const float3& getWorldPosition() const { return mData.posW; }
-
-        /** Get the light's world-space direction
-        */
-        const float3& getWorldDirection() const { return mData.dirW; }
-
-        /** Get the penumbra half-angle
-        */
-        float getPenumbraAngle() const { return mData.penumbraAngle; }
-
-        /** Set the penumbra half-angle
-            \param[in] angle Angle in radians
-        */
-        void setPenumbraAngle(float angle);
-
-        /** Get the cone opening half-angle
-        */
-        float getOpeningAngle() const { return mData.openingAngle; }
-
-        void updateFromAnimation(const float4x4& transform) override;
-    };
-
-
-    /** Directional light source.
-    */
-    class HD_RUZINO_API DirectionalLight : public Light
+    void updateFromAnimation(const float4x4& transform) override
     {
-    public:
-        static ref<DirectionalLight> create(const std::string& name = "") { return make_ref<DirectionalLight>(name); }
+    }
 
-        DirectionalLight(const std::string& name);
-        ~DirectionalLight() = default;
+   protected:
+    Light(const std::string& name, LightType type);
 
-        /** Set the light's world-space direction.
-            \param[in] dir Light direction. Does not have to be normalized.
-        */
-        void setWorldDirection(const float3& dir);
+    static constexpr size_t kDataSize = sizeof(LightData);
 
-        /** Set the scene parameters
-        */
-        void setWorldParams(const float3& center, float radius);
+    // UI callbacks for keeping the intensity in-sync.
+    float3 getColorForUI();
+    void setColorFromUI(const float3& uiColor);
+    float getIntensityForUI();
+    void setIntensityFromUI(float intensity);
 
-        /** Get the light's world-space direction.
-        */
-        const float3& getWorldDirection() const { return mData.dirW; }
+    std::string mName;
+    bool mActive = true;
+    bool mActiveChanged = false;
 
-        /** Get total light power (needed for light picking)
-        */
-        float getPower() const override { return 0.f; }
+    // These two variables track mData values for consistent UI operation.
+    float3 mUiLightIntensityColor = float3(0.5f, 0.5f, 0.5f);
+    float mUiLightIntensityScale = 1.0f;
+    LightData mData;
+    LightData mPrevData;
+    Changes mChanges = Changes::None;
 
-        void updateFromAnimation(const float4x4& transform) override;
-    };
+    friend class SceneCache;
+};
 
-    /** Distant light source.
-        Same as directional light source but subtending a non-zero solid angle.
-    */
-    class HD_RUZINO_API DistantLight : public Light
+/** Point light source.
+    Simple infinitely-small point light with quadratic attenuation.
+*/
+class HD_RUZINO_API PointLight : public Light {
+   public:
+    static ref<PointLight> create(const std::string& name = "")
     {
-    public:
-        static ref<DistantLight> create(const std::string& name = "") { return make_ref<DistantLight>(name); }
+        return make_ref<PointLight>(name);
+    }
 
-        DistantLight(const std::string& name);
-        ~DistantLight() = default;
+    PointLight(const std::string& name);
+    ~PointLight() = default;
 
-        /** Set the half-angle subtended by the light
-            \param[in] theta Light angle
-        */
-        void setAngle(float theta);
+    /** Get total light power (needed for light picking)
+     */
+    float getPower() const override;
 
-        /** Get the half-angle subtended by the light
-        */
-        float getAngle() const { return mAngle; }
+    /** Set the light's world-space position
+     */
+    void setWorldPosition(const float3& pos);
 
-        /** Set the light's world-space direction.
-            \param[in] dir Light direction. Does not have to be normalized.
-        */
-        void setWorldDirection(const float3& dir);
-
-        /** Get the light's world-space direction.
-        */
-        const float3& getWorldDirection() const { return mData.dirW; }
-
-        /** Get total light power
-        */
-        float getPower() const override { return 0.f; }
-
-        void updateFromAnimation(const float4x4& transform) override;
-
-    private:
-        void update();
-        float mAngle;       ///<< Half-angle subtended by the source.
-
-        friend class SceneCache;
-    };
-
-    /** Analytic area light source.
+    /** Set the light's world-space direction.
+        \param[in] dir Light direction. Does not have to be normalized.
     */
-    class HD_RUZINO_API AnalyticAreaLight : public Light
-    {
-    public:
-        ~AnalyticAreaLight() = default;
+    void setWorldDirection(const float3& dir);
 
-        /** Set light source scaling
-            \param[in] scale x,y,z scaling factors
-        */
-        void setScaling(float3 scale) { mScaling = scale; update(); }
-
-        /** Set light source scale
-          */
-        float3 getScaling() const { return mScaling; }
-
-        /** Get total light power (needed for light picking)
-        */
-        float getPower() const override;
-
-        /** Set transform matrix
-            \param[in] mtx object to world space transform matrix
-        */
-        void setTransformMatrix(const float4x4& mtx) { mTransformMatrix = mtx; update();  }
-
-        /** Get transform matrix
-        */
-        float4x4 getTransformMatrix() const { return mTransformMatrix; }
-
-        void updateFromAnimation(const float4x4& transform) override { setTransformMatrix(transform); }
-
-    protected:
-        AnalyticAreaLight(const std::string& name, LightType type);
-
-        virtual void update();
-
-        float3 mScaling;                ///< Scaling, controls the size of the light
-        float4x4 mTransformMatrix = float4x4::identity(); ///< Transform matrix minus scaling component
-
-        friend class SceneCache;
-    };
-
-    /** Rectangular area light source.
+    /** Set the cone opening half-angle for use as a spot light
+        \param[in] openingAngle Angle in radians.
     */
-    class HD_RUZINO_API RectLight : public AnalyticAreaLight
+    void setOpeningAngle(float openingAngle);
+
+    /** Get the light's world-space position
+     */
+    const float3& getWorldPosition() const
     {
-    public:
-        static ref<RectLight> create(const std::string& name = "") { return make_ref<RectLight>(name); }
+        return mData.posW;
+    }
 
-        RectLight(const std::string& name) : AnalyticAreaLight(name, LightType::Rect) {}
-        ~RectLight() = default;
+    /** Get the light's world-space direction
+     */
+    const float3& getWorldDirection() const
+    {
+        return mData.dirW;
+    }
 
-    private:
-        virtual void update() override;
-    };
+    /** Get the penumbra half-angle
+     */
+    float getPenumbraAngle() const
+    {
+        return mData.penumbraAngle;
+    }
 
-    /** Disc area light source.
+    /** Set the penumbra half-angle
+        \param[in] angle Angle in radians
     */
-    class HD_RUZINO_API DiscLight : public AnalyticAreaLight
+    void setPenumbraAngle(float angle);
+
+    /** Get the cone opening half-angle
+     */
+    float getOpeningAngle() const
     {
-    public:
-        static ref<DiscLight> create(const std::string& name = "") { return make_ref<DiscLight>(name); }
+        return mData.openingAngle;
+    }
 
-        DiscLight(const std::string& name) : AnalyticAreaLight(name, LightType::Disc) {}
-        ~DiscLight() = default;
+    void updateFromAnimation(const float4x4& transform) override;
+};
 
-    private:
-        virtual void update() override;
-    };
+/** Directional light source.
+ */
+class HD_RUZINO_API DirectionalLight : public Light {
+   public:
+    static ref<DirectionalLight> create(const std::string& name = "")
+    {
+        return make_ref<DirectionalLight>(name);
+    }
 
-    /** Sphere area light source.
+    DirectionalLight(const std::string& name);
+    ~DirectionalLight() = default;
+
+    /** Set the light's world-space direction.
+        \param[in] dir Light direction. Does not have to be normalized.
     */
-    class HD_RUZINO_API SphereLight : public AnalyticAreaLight
+    void setWorldDirection(const float3& dir);
+
+    /** Set the scene parameters
+     */
+    void setWorldParams(const float3& center, float radius);
+
+    /** Get the light's world-space direction.
+     */
+    const float3& getWorldDirection() const
     {
-    public:
-        static ref<SphereLight> create(const std::string& name = "") { return make_ref<SphereLight>(name); }
+        return mData.dirW;
+    }
 
-        SphereLight(const std::string& name) : AnalyticAreaLight(name, LightType::Sphere) {}
-        ~SphereLight() = default;
+    /** Get total light power (needed for light picking)
+     */
+    float getPower() const override
+    {
+        return 0.f;
+    }
 
-    private:
-        virtual void update() override;
-    };
+    void updateFromAnimation(const float4x4& transform) override;
+};
 
-    FALCOR_ENUM_CLASS_OPERATORS(Light::Changes);
-}
+/** Distant light source.
+    Same as directional light source but subtending a non-zero solid angle.
+*/
+class HD_RUZINO_API DistantLight : public Light {
+   public:
+    static ref<DistantLight> create(const std::string& name = "")
+    {
+        return make_ref<DistantLight>(name);
+    }
+
+    DistantLight(const std::string& name);
+    ~DistantLight() = default;
+
+    /** Set the half-angle subtended by the light
+        \param[in] theta Light angle
+    */
+    void setAngle(float theta);
+
+    /** Get the half-angle subtended by the light
+     */
+    float getAngle() const
+    {
+        return mAngle;
+    }
+
+    /** Set the light's world-space direction.
+        \param[in] dir Light direction. Does not have to be normalized.
+    */
+    void setWorldDirection(const float3& dir);
+
+    /** Get the light's world-space direction.
+     */
+    const float3& getWorldDirection() const
+    {
+        return mData.dirW;
+    }
+
+    /** Get total light power
+     */
+    float getPower() const override
+    {
+        return 0.f;
+    }
+
+    void updateFromAnimation(const float4x4& transform) override;
+
+   private:
+    void update();
+    float mAngle;  ///<< Half-angle subtended by the source.
+
+    friend class SceneCache;
+};
+
+/** Analytic area light source.
+ */
+class HD_RUZINO_API AnalyticAreaLight : public Light {
+   public:
+    ~AnalyticAreaLight() = default;
+
+    /** Set light source scaling
+        \param[in] scale x,y,z scaling factors
+    */
+    void setScaling(float3 scale)
+    {
+        mScaling = scale;
+        update();
+    }
+
+    /** Set light source scale
+     */
+    float3 getScaling() const
+    {
+        return mScaling;
+    }
+
+    /** Get total light power (needed for light picking)
+     */
+    float getPower() const override;
+
+    /** Set transform matrix
+        \param[in] mtx object to world space transform matrix
+    */
+    void setTransformMatrix(const float4x4& mtx)
+    {
+        mTransformMatrix = mtx;
+        update();
+    }
+
+    /** Get transform matrix
+     */
+    float4x4 getTransformMatrix() const
+    {
+        return mTransformMatrix;
+    }
+
+    void updateFromAnimation(const float4x4& transform) override
+    {
+        setTransformMatrix(transform);
+    }
+
+   protected:
+    AnalyticAreaLight(const std::string& name, LightType type);
+
+    virtual void update();
+
+    float3 mScaling;  ///< Scaling, controls the size of the light
+    float4x4 mTransformMatrix =
+        float4x4::identity();  ///< Transform matrix minus scaling component
+
+    friend class SceneCache;
+};
+
+/** Rectangular area light source.
+ */
+class HD_RUZINO_API RectLight : public AnalyticAreaLight {
+   public:
+    static ref<RectLight> create(const std::string& name = "")
+    {
+        return make_ref<RectLight>(name);
+    }
+
+    RectLight(const std::string& name)
+        : AnalyticAreaLight(name, LightType::Rect)
+    {
+    }
+    ~RectLight() = default;
+
+   private:
+    virtual void update() override;
+};
+
+/** Disc area light source.
+ */
+class HD_RUZINO_API DiscLight : public AnalyticAreaLight {
+   public:
+    static ref<DiscLight> create(const std::string& name = "")
+    {
+        return make_ref<DiscLight>(name);
+    }
+
+    DiscLight(const std::string& name)
+        : AnalyticAreaLight(name, LightType::Disc)
+    {
+    }
+    ~DiscLight() = default;
+
+   private:
+    virtual void update() override;
+};
+
+/** Sphere area light source.
+ */
+class HD_RUZINO_API SphereLight : public AnalyticAreaLight {
+   public:
+    static ref<SphereLight> create(const std::string& name = "")
+    {
+        return make_ref<SphereLight>(name);
+    }
+
+    SphereLight(const std::string& name)
+        : AnalyticAreaLight(name, LightType::Sphere)
+    {
+    }
+    ~SphereLight() = default;
+
+   private:
+    virtual void update() override;
+};
+
+FALCOR_ENUM_CLASS_OPERATORS(Light::Changes);
+}  // namespace Ruzino

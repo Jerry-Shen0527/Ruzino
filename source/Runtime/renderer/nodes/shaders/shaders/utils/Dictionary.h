@@ -26,22 +26,20 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Core/Error.h"
-#include <unordered_map>
 #include <any>
 #include <memory>
 #include <string>
+#include <unordered_map>
 
-namespace Ruzino
-{
-class Dictionary
-{
-public:
-    class Value
-    {
-    public:
+#include "Core/Error.h"
+
+namespace Ruzino {
+class Dictionary {
+   public:
+    class Value {
+       public:
         Value() = default;
-        Value(std::any& value) : mValue(value){};
+        Value(std::any& value) : mValue(value) { };
 
         template<typename T>
         void operator=(const T& t)
@@ -55,28 +53,54 @@ public:
             return std::any_cast<T>(mValue);
         }
 
-    private:
+       private:
         std::any mValue;
     };
 
     using Container = std::unordered_map<std::string, Value>;
 
     Dictionary() = default;
-    Dictionary(const Dictionary& d) : mContainer(d.mContainer) {}
+    Dictionary(const Dictionary& d) : mContainer(d.mContainer)
+    {
+    }
 
-    Value& operator[](const std::string& key) { return mContainer[key]; }
-    const Value& operator[](const std::string& key) const { return mContainer.at(key); }
+    Value& operator[](const std::string& key)
+    {
+        return mContainer[key];
+    }
+    const Value& operator[](const std::string& key) const
+    {
+        return mContainer.at(key);
+    }
 
-    Container::const_iterator begin() const { return mContainer.begin(); }
-    Container::const_iterator end() const { return mContainer.end(); }
+    Container::const_iterator begin() const
+    {
+        return mContainer.begin();
+    }
+    Container::const_iterator end() const
+    {
+        return mContainer.end();
+    }
 
-    Container::iterator begin() { return mContainer.begin(); }
-    Container::iterator end() { return mContainer.end(); }
+    Container::iterator begin()
+    {
+        return mContainer.begin();
+    }
+    Container::iterator end()
+    {
+        return mContainer.end();
+    }
 
-    size_t size() const { return mContainer.size(); }
+    size_t size() const
+    {
+        return mContainer.size();
+    }
 
     /// Check if a key exists.
-    bool keyExists(const std::string& key) const { return mContainer.find(key) != mContainer.end(); }
+    bool keyExists(const std::string& key) const
+    {
+        return mContainer.find(key) != mContainer.end();
+    }
 
     /// Get value by key. Throws an exception if key does not exist.
     template<typename T>
@@ -87,7 +111,8 @@ public:
         return it->second;
     }
 
-    /// Get value by key. Returns the specified default value if key does not exist.
+    /// Get value by key. Returns the specified default value if key does not
+    /// exist.
     template<typename T>
     T getValue(const std::string& key, const T& defaultValue)
     {
@@ -95,7 +120,7 @@ public:
         return it != mContainer.end() ? it->second : defaultValue;
     }
 
-private:
+   private:
     Container mContainer;
 };
-} // namespace Ruzino
+}  // namespace Ruzino

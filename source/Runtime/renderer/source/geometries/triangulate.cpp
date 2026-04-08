@@ -17,8 +17,8 @@
 RUZINO_NAMESPACE_OPEN_SCOPE
 
 HdSt_TriangleIndexBuilderComputation::HdSt_TriangleIndexBuilderComputation(
-    HdSt_MeshTopology *topology,
-    pxr::SdfPath const &id)
+    HdSt_MeshTopology* topology,
+    pxr::SdfPath const& id)
     : _id(id),
       _topology(topology)
 {
@@ -26,7 +26,7 @@ HdSt_TriangleIndexBuilderComputation::HdSt_TriangleIndexBuilderComputation(
 using namespace pxr;
 
 void HdSt_TriangleIndexBuilderComputation::GetBufferSpecs(
-    HdBufferSpecVector *specs) const
+    HdBufferSpecVector* specs) const
 {
     specs->emplace_back(HdTokens->indices, HdTupleType{ HdTypeInt32Vec3, 1 });
     // triangles don't support ptex indexing (at least for now).
@@ -51,8 +51,9 @@ bool HdSt_TriangleIndexBuilderComputation::Resolve()
     meshUtil.ComputeTriangleIndices(
         &trianglesFaceVertexIndices, &primitiveParam, &trianglesEdgeIndices);
 
-    _SetResult(std::make_shared<HdVtBufferSource>(
-        HdTokens->indices, VtValue(trianglesFaceVertexIndices)));
+    _SetResult(
+        std::make_shared<HdVtBufferSource>(
+            HdTokens->indices, VtValue(trianglesFaceVertexIndices)));
 
     _primitiveParam.reset(new HdVtBufferSource(
         HdTokens->primitiveParam, VtValue(primitiveParam)));
@@ -83,9 +84,9 @@ bool HdSt_TriangleIndexBuilderComputation::_CheckValid() const
 // ---------------------------------------------------------------------------
 
 HdSt_TriangulateFaceVaryingComputation::HdSt_TriangulateFaceVaryingComputation(
-    HdSt_MeshTopology *topology,
-    pxr::HdBufferSourceSharedPtr const &source,
-    pxr::SdfPath const &id)
+    HdSt_MeshTopology* topology,
+    pxr::HdBufferSourceSharedPtr const& source,
+    pxr::SdfPath const& id)
     : _id(id),
       _topology(topology),
       _source(source)
@@ -124,7 +125,7 @@ bool HdSt_TriangulateFaceVaryingComputation::Resolve()
 }
 
 void HdSt_TriangulateFaceVaryingComputation::GetBufferSpecs(
-    HdBufferSpecVector *specs) const
+    HdBufferSpecVector* specs) const
 {
     // produces same spec buffer as source
     _source->GetBufferSpecs(specs);

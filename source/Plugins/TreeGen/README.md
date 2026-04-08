@@ -219,12 +219,12 @@ function grow_one_cycle(tree):
     for each bud in tree.all_buds:
         if random() < death_probability:
             bud.state = Dead
-    
+
     // 2. 光照计算（简化：基于高度）
     max_height = max(bud.position.y for all buds)
     for each bud:
         bud.illumination = 0.3 + 0.7 * (bud.height / max_height)
-    
+
     // 3. 激素计算
     for each lateral_bud:
         auxin = 0
@@ -232,17 +232,17 @@ function grow_one_cycle(tree):
             distance = ||bud_above.pos - lateral_bud.pos||
             auxin += exp(-distance * α_distance) * α_base
         lateral_bud.auxin = auxin
-    
+
     // 4. 判断萌发
     for each bud:
         if bud.type == Apical:
             P_flush = bud.illumination^α_light
         else:  // Lateral
             P_flush = bud.illumination^α_light * exp(-bud.auxin)
-        
+
         if random() > P_flush:
             bud.state = Dormant
-    
+
     // 5. 生长新枝
     for each active_bud:
         n_internodes = round(growth_rate / apical_control^level)
@@ -275,8 +275,8 @@ float roll_angle = 137.5° * bud_index + random_variance
 
 ## 参考文献
 
-O. Stava, S. Pirk, J. Kratt, B. Chen, R. Měch, O. Deussen, and B. Benes, 
-"Inverse Procedural Modelling of Trees," 
+O. Stava, S. Pirk, J. Kratt, B. Chen, R. Měch, O. Deussen, and B. Benes,
+"Inverse Procedural Modelling of Trees,"
 Computer Graphics Forum, vol. 33, no. 6, pp. 118-131, 2014.
 
 ## 技术细节

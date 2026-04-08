@@ -24,23 +24,25 @@
 #ifndef PXR_IMAGING_PLUGIN_HD_EMBREE_RENDER_BUFFER_H
 #define PXR_IMAGING_PLUGIN_HD_EMBREE_RENDER_BUFFER_H
 #include "api.h"
-
 #include "pxr/imaging/hd/renderBuffer.h"
 #include "pxr/pxr.h"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
 class Hd_RUZINO_RenderBuffer : public HdRenderBuffer {
-public:
+   public:
     Hd_RUZINO_RenderBuffer(const SdfPath& id);
     ~Hd_RUZINO_RenderBuffer() override;
 
-    void Sync(HdSceneDelegate* sceneDelegate, HdRenderParam* renderParam, HdDirtyBits* dirtyBits)
-    override;
+    void Sync(
+        HdSceneDelegate* sceneDelegate,
+        HdRenderParam* renderParam,
+        HdDirtyBits* dirtyBits) override;
 
     void Finalize(HdRenderParam* renderParam) override;
 
-    bool Allocate(const GfVec3i& dimensions, HdFormat format, bool multiSampled) override;
+    bool Allocate(const GfVec3i& dimensions, HdFormat format, bool multiSampled)
+        override;
 
     unsigned int GetWidth() const override
     {
@@ -102,7 +104,7 @@ public:
     void Clear(size_t numComponents, const float* value);
     void Clear(size_t numComponents, const int* value);
 
-private:
+   private:
     // Calculate the needed buffer size, given the allocation parameters.
     static size_t _GetBufferSize(const GfVec2i& dims, HdFormat format);
 

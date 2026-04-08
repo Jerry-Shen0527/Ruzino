@@ -1,5 +1,4 @@
 #pragma once
-#include <complex.h>
 
 #include "api.h"
 #include "color.h"
@@ -19,8 +18,10 @@ class Hd_RUZINO_Light : public HdLight {
     {
     }
 
-    void Sync(HdSceneDelegate* sceneDelegate, HdRenderParam* renderParam, HdDirtyBits* dirtyBits)
-        override;
+    void Sync(
+        HdSceneDelegate* sceneDelegate,
+        HdRenderParam* renderParam,
+        HdDirtyBits* dirtyBits) override;
     HdDirtyBits GetInitialDirtyBitsMask() const override;
     virtual Color Sample(
         const GfVec3f& pos,
@@ -34,10 +35,10 @@ class Hd_RUZINO_Light : public HdLight {
 
     void Finalize(HdRenderParam* renderParam) override;
 
-protected:
+   protected:
     VtValue Get(TfToken const& token) const;
-    // Stores the internal light type of this light. Of course, we can use polymorphism to do this.
-    // But let's just keep it simple here.
+    // Stores the internal light type of this light. Of course, we can use
+    // polymorphism to do this. But let's just keep it simple here.
     TfToken _lightType;
     // Cached states.
     TfHashMap<TfToken, VtValue, TfToken::HashFunctor> _params;
@@ -57,8 +58,10 @@ class Hd_RUZINO_Sphere_Light : public Hd_RUZINO_Light {
         float& sample_light_pdf,
         const std::function<float()>& uniform_float) override;
     Color Intersect(const GfRay& ray, float& depth) override;
-    void Sync(HdSceneDelegate* sceneDelegate, HdRenderParam* renderParam, HdDirtyBits* dirtyBits)
-        override;
+    void Sync(
+        HdSceneDelegate* sceneDelegate,
+        HdRenderParam* renderParam,
+        HdDirtyBits* dirtyBits) override;
     float radius;
     GfVec3f power;
     GfVec3f position;
@@ -81,8 +84,10 @@ class Hd_RUZINO_Dome_Light : public Hd_RUZINO_Light {
         const std::function<float()>& uniform_float) override;
     Color Intersect(const GfRay& ray, float& depth) override;
     void _PrepareDomeLight(SdfPath const& id, HdSceneDelegate* scene_delegate);
-    void Sync(HdSceneDelegate* sceneDelegate, HdRenderParam* renderParam, HdDirtyBits* dirtyBits)
-        override;
+    void Sync(
+        HdSceneDelegate* sceneDelegate,
+        HdRenderParam* renderParam,
+        HdDirtyBits* dirtyBits) override;
 
     Color Le(const GfVec3f& dir);
     void Finalize(HdRenderParam* renderParam) override;
@@ -100,8 +105,10 @@ class Hd_RUZINO_Distant_Light : public Hd_RUZINO_Light {
     {
     }
 
-    void Sync(HdSceneDelegate* sceneDelegate, HdRenderParam* renderParam, HdDirtyBits* dirtyBits)
-        override;
+    void Sync(
+        HdSceneDelegate* sceneDelegate,
+        HdRenderParam* renderParam,
+        HdDirtyBits* dirtyBits) override;
     Color Sample(
         const GfVec3f& pos,
         GfVec3f& dir,
@@ -130,8 +137,10 @@ class Hd_RUZINO_Rect_Light : public Hd_RUZINO_Light {
         float& sample_light_pdf,
         const std::function<float()>& uniform_float) override;
     Color Intersect(const GfRay& ray, float& depth) override;
-    void Sync(HdSceneDelegate* sceneDelegate, HdRenderParam* renderParam, HdDirtyBits* dirtyBits)
-        override;
+    void Sync(
+        HdSceneDelegate* sceneDelegate,
+        HdRenderParam* renderParam,
+        HdDirtyBits* dirtyBits) override;
 
    private:
     GfVec3f corner0;

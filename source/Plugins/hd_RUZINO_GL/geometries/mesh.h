@@ -24,6 +24,8 @@
 #ifndef EXTRAS_IMAGING_EXAMPLES_HD_TINY_MESH_H
 #define EXTRAS_IMAGING_EXAMPLES_HD_TINY_MESH_H
 
+#include <unordered_map>
+
 #include "../api.h"
 #include "pxr/base/gf/matrix4f.h"
 #include "pxr/imaging/garch/glApi.h"
@@ -108,7 +110,7 @@ class HD_RUZINO_GL_API Hd_RUZINO_Mesh final : public HdMesh {
         HdInterpolation interpolation;
     };
 
-    TfHashMap<std::string, PrimvarSource> _primvarSourceMap;
+    std::unordered_map<std::string, PrimvarSource> _primvarSourceMap;
 };
 
 RUZINO_NAMESPACE_CLOSE_SCOPE

@@ -24,11 +24,11 @@
 #ifndef EXTRAS_IMAGING_EXAMPLES_HD_TINY_RENDER_PASS_H
 #define EXTRAS_IMAGING_EXAMPLES_HD_TINY_RENDER_PASS_H
 
-#include "renderBuffer.h"
-#include "renderer.h"
-#include "pxr/pxr.h"
 #include "pxr/imaging/hd/renderPass.h"
 #include "pxr/imaging/hd/renderThread.h"
+#include "pxr/pxr.h"
+#include "renderBuffer.h"
+#include "renderer.h"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
@@ -38,9 +38,8 @@ using namespace pxr;
 /// scene (the HdRprimCollection) for a specific viewer (the camera/viewport
 /// parameters in HdRenderPassState) to the current draw target.
 ///
-class Hd_RUZINO_RenderPass final : public HdRenderPass
-{
-public:
+class Hd_RUZINO_RenderPass final : public HdRenderPass {
+   public:
     /// Renderpass constructor.
     ///   \param index The render index containing scene data to render.
     ///   \param collection The initial rprim collection for this renderpass.
@@ -55,7 +54,7 @@ public:
     /// Renderpass destructor.
     ~Hd_RUZINO_RenderPass() override;
 
-protected:
+   protected:
     /// Draw the scene with the bound renderpass state.
     ///   \param renderPassState Input parameters (including viewer parameters)
     ///                          for this renderpass.
@@ -64,10 +63,10 @@ protected:
         const HdRenderPassStateSharedPtr& renderPassState,
         const TfTokenVector& renderTags) override;
 
-public:
+   public:
     bool IsConverged() const override;
 
-protected:
+   protected:
     // The list of aov buffers this renderpass should write to.
     HdRenderPassAovBindingVector _aovBindings;
     // A handle to the render thread.
@@ -86,4 +85,4 @@ protected:
 
 RUZINO_NAMESPACE_CLOSE_SCOPE
 
-#endif // EXTRAS_IMAGING_EXAMPLES_HD_TINY_RENDER_PASS_H
+#endif  // EXTRAS_IMAGING_EXAMPLES_HD_TINY_RENDER_PASS_H

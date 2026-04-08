@@ -28,8 +28,8 @@ enum {
 };
 
 HdSt_QuadInfoBuilderComputation::HdSt_QuadInfoBuilderComputation(
-    HdSt_MeshTopology *topology,
-    pxr::SdfPath const &id)
+    HdSt_MeshTopology* topology,
+    pxr::SdfPath const& id)
     : _id(id),
       _topology(topology)
 {
@@ -40,7 +40,7 @@ bool HdSt_QuadInfoBuilderComputation::Resolve()
     if (!_TryLock())
         return false;
 
-    pxr::HdQuadInfo *quadInfo = new pxr::HdQuadInfo();
+    pxr::HdQuadInfo* quadInfo = new pxr::HdQuadInfo();
     HdMeshUtil meshUtil(_topology, _id);
     meshUtil.ComputeQuadInfo(quadInfo);
 
@@ -60,9 +60,9 @@ bool HdSt_QuadInfoBuilderComputation::_CheckValid() const
 // ---------------------------------------------------------------------------
 
 HdSt_QuadIndexBuilderComputation::HdSt_QuadIndexBuilderComputation(
-    HdSt_MeshTopology *topology,
-    HdSt_QuadInfoBuilderComputationSharedPtr const &quadInfoBuilder,
-    pxr::SdfPath const &id)
+    HdSt_MeshTopology* topology,
+    HdSt_QuadInfoBuilderComputationSharedPtr const& quadInfoBuilder,
+    pxr::SdfPath const& id)
     : _id(id),
       _topology(topology),
       _quadInfoBuilder(quadInfoBuilder)
@@ -70,7 +70,7 @@ HdSt_QuadIndexBuilderComputation::HdSt_QuadIndexBuilderComputation(
 }
 
 void HdSt_QuadIndexBuilderComputation::GetBufferSpecs(
-    pxr::HdBufferSpecVector *specs) const
+    pxr::HdBufferSpecVector* specs) const
 {
     if (_topology->TriangulateQuads()) {
         specs->emplace_back(HdTokens->indices, HdTupleType{ HdTypeInt32, 6 });
@@ -113,12 +113,14 @@ bool HdSt_QuadIndexBuilderComputation::Resolve()
     }
 
     if (_topology->TriangulateQuads()) {
-        _SetResult(std::make_shared<HdVtBufferSource>(
-            HdTokens->indices, VtValue(quadsFaceVertexIndices), 6));
+        _SetResult(
+            std::make_shared<HdVtBufferSource>(
+                HdTokens->indices, VtValue(quadsFaceVertexIndices), 6));
     }
     else {
-        _SetResult(std::make_shared<HdVtBufferSource>(
-            HdTokens->indices, VtValue(quadsFaceVertexIndices), 4));
+        _SetResult(
+            std::make_shared<HdVtBufferSource>(
+                HdTokens->indices, VtValue(quadsFaceVertexIndices), 4));
     }
 
     _primitiveParam.reset(new HdVtBufferSource(
@@ -150,10 +152,10 @@ bool HdSt_QuadIndexBuilderComputation::_CheckValid() const
 // ---------------------------------------------------------------------------
 
 HdSt_QuadrangulateComputation::HdSt_QuadrangulateComputation(
-    HdSt_MeshTopology *topology,
-    pxr::HdBufferSourceSharedPtr const &source,
-    pxr::HdBufferSourceSharedPtr const &quadInfoBuilder,
-    pxr::SdfPath const &id)
+    HdSt_MeshTopology* topology,
+    pxr::HdBufferSourceSharedPtr const& source,
+    pxr::HdBufferSourceSharedPtr const& quadInfoBuilder,
+    pxr::SdfPath const& id)
     : _id(id),
       _topology(topology),
       _source(source),
@@ -177,7 +179,7 @@ bool HdSt_QuadrangulateComputation::Resolve()
 
     HD_PERF_COUNTER_INCR(HdPerfTokens->quadrangulateCPU);
 
-    HdQuadInfo const *quadInfo = _topology->GetQuadInfo();
+    HdQuadInfo const* quadInfo = _topology->GetQuadInfo();
     if (!TF_VERIFY(quadInfo))
         return true;
 
@@ -217,7 +219,7 @@ bool HdSt_QuadrangulateComputation::Resolve()
 }
 
 void HdSt_QuadrangulateComputation::GetBufferSpecs(
-    pxr::HdBufferSpecVector *specs) const
+    pxr::HdBufferSpecVector* specs) const
 {
     // produces same spec buffer as source
     _source->GetBufferSpecs(specs);
@@ -248,9 +250,9 @@ HdBufferSourceSharedPtr HdSt_QuadrangulateComputation::GetPreChainedBuffer()
 
 HdSt_QuadrangulateFaceVaryingComputation::
     HdSt_QuadrangulateFaceVaryingComputation(
-        HdSt_MeshTopology *topology,
-        HdBufferSourceSharedPtr const &source,
-        SdfPath const &id)
+        HdSt_MeshTopology* topology,
+        HdBufferSourceSharedPtr const& source,
+        SdfPath const& id)
     : _id(id),
       _topology(topology),
       _source(source)
@@ -292,7 +294,7 @@ bool HdSt_QuadrangulateFaceVaryingComputation::Resolve()
 }
 
 void HdSt_QuadrangulateFaceVaryingComputation::GetBufferSpecs(
-    pxr::HdBufferSpecVector *specs) const
+    pxr::HdBufferSpecVector* specs) const
 {
     // produces same spec buffer as source
     _source->GetBufferSpecs(specs);

@@ -53,7 +53,8 @@ Hd_RUZINO_RenderPass::~Hd_RUZINO_RenderPass()
     std::cout << "Destroying renderPass" << std::endl;
 }
 
-static GfRect2i _GetDataWindow(const HdRenderPassStateSharedPtr& renderPassState)
+static GfRect2i _GetDataWindow(
+    const HdRenderPassStateSharedPtr& renderPassState)
 {
     const CameraUtilFraming& framing = renderPassState->GetFraming();
     if (framing.IsValid()) {
@@ -91,7 +92,8 @@ void Hd_RUZINO_RenderPass::_Execute(
     const GfMatrix4d proj = renderPassState->GetProjectionMatrix();
     const GfRect2i dataWindow = _GetDataWindow(renderPassState);
 
-    if (_viewMatrix != view || _projMatrix != proj || _dataWindow != dataWindow) {
+    if (_viewMatrix != view || _projMatrix != proj ||
+        _dataWindow != dataWindow) {
         _viewMatrix = view;
         _projMatrix = proj;
         _dataWindow = dataWindow;
@@ -104,7 +106,8 @@ void Hd_RUZINO_RenderPass::_Execute(
 
     // Determine whether we need to update the renderer AOV bindings.
 
-    HdRenderPassAovBindingVector aovBindings = renderPassState->GetAovBindings();
+    HdRenderPassAovBindingVector aovBindings =
+        renderPassState->GetAovBindings();
     if (_aovBindings != aovBindings) {
         _aovBindings = aovBindings;
         _renderThread->StopRender();
@@ -127,17 +130,17 @@ void Hd_RUZINO_RenderPass::_Execute(
         _renderer->MarkAovBuffersUnconverged();
         _renderer->Clear();
         _renderer->Render(nullptr);
-        //needStartRender = false;
+        // needStartRender = false;
         //_renderThread->StartRender();
     }
-    
 }
 
 bool Hd_RUZINO_RenderPass::IsConverged() const
 {
     // Otherwise, check the convergence of all attachments.
     for (size_t i = 0; i < _aovBindings.size(); ++i) {
-        if (_aovBindings[i].renderBuffer && !_aovBindings[i].renderBuffer->IsConverged()) {
+        if (_aovBindings[i].renderBuffer &&
+            !_aovBindings[i].renderBuffer->IsConverged()) {
             return false;
         }
     }

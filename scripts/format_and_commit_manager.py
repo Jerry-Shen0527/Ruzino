@@ -10,48 +10,30 @@ This script:
 5. Handles remote branch selection for repositories without default remote
 
 Usage:
-    # Interactive mode (default)
     python format_and_commit_manager.py
-
-    # Non-interactive mode with commit message
-    python format_and_commit_manager.py --non-interactive --message "Your commit message"
-    python format_and_commit_manager.py -n -m "Your commit message"
-
-    # Auto-checkout main branches
-    python format_and_commit_manager.py -n -m "message" --auto-checkout-main
 """
 
 import os
 import sys
 import subprocess
-import argparse
 from pathlib import Path
 from typing import List, Set, Optional, Tuple
 
 
 # C/C++ file extensions to format
-CPP_EXTENSIONS = {
-    ".cpp",
-    ".h",
-    ".hpp",
-    ".cc",
-    ".cxx",
-    ".c",
-    ".hxx",
-    ".inl",
-    ".cu",
-    ".cuh",
-}
+CPP_EXTENSIONS = {'.cpp', '.h', '.hpp', '.cc', '.cxx', '.c', '.hxx', '.inl', '.cu', '.cuh'}
 
 
-def run_git_command(
-    cwd: Path, *args, capture_output=True, check=False
-) -> subprocess.CompletedProcess:
+def run_git_command(cwd: Path, *args, capture_output=True, check=False) -> subprocess.CompletedProcess:
     """Run a git command in the specified directory."""
-    cmd = ["git"] + list(args)
+    cmd = ['git'] + list(args)
     try:
         result = subprocess.run(
-            cmd, cwd=cwd, capture_output=capture_output, text=True, check=check
+            cmd,
+            cwd=cwd,
+            capture_output=capture_output,
+            text=True,
+            check=check
         )
         return result
     except subprocess.CalledProcessError as e:
@@ -62,7 +44,7 @@ def run_git_command(
 
 def is_git_repo(path: Path) -> bool:
     """Check if the path is a git repository."""
-    return (path / ".git").exists() or (path / ".git").is_file()
+    return (path / '.git').exists() or (path / '.git').is_file()
 
 
 def find_all_git_repos(root_dir: Path) -> List[Path]:
@@ -81,7 +63,7 @@ def find_all_git_repos(root_dir: Path) -> List[Path]:
     # Walk through all subdirectories
     for dirpath, dirnames, _ in os.walk(root_dir):
         # Skip .git directories and nvrhi directories
-        dirnames[:] = [d for d in dirnames if d != ".git" and d != "nvrhi"]
+        dirnames[:] = [d for d in dirnames if d != '.git' and d != 'nvrhi']
 
         current_path = Path(dirpath)
         for dirname in dirnames:
@@ -106,16 +88,21 @@ def run_clang_format(file_path: Path, dry_run: bool = False) -> bool:
     Returns:
         True if successful, False otherwise
     """
-    args = ["clang-format"]
+    args = ['clang-format']
     if not dry_run:
-        args.append("-i")  # In-place edit
+        args.append('-i')  # In-place edit
     else:
-        args.extend(["--dry-run", "--Werror"])  # Check mode
+        args.extend(['--dry-run', '--Werror'])  # Check mode
 
     args.append(str(file_path))
 
     try:
-        result = subprocess.run(args, capture_output=True, text=True, check=False)
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            check=False
+        )
         return result.returncode == 0
     except FileNotFoundError:
         print("ERROR: clang-format not found in PATH")
@@ -130,7 +117,7 @@ def has_changes(repo_path: Path) -> bool:
     Returns:
         True if there are any changes
     """
-    result = run_git_command(repo_path, "status", "--porcelain")
+    result = run_git_command(repo_path, 'status', '--porcelain')
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
@@ -145,12 +132,12 @@ def get_modified_files(repo_path: Path) -> Set[Path]:
     modified_files = set()
 
     # Get all modified files (staged and unstaged)
-    result = run_git_command(repo_path, "status", "--porcelain")
+    result = run_git_command(repo_path, 'status', '--porcelain')
 
     if result.returncode != 0:
         return modified_files
 
-    for line in result.stdout.strip().split("\n"):
+    for line in result.stdout.strip().split('\n'):
         if not line:
             continue
 
@@ -166,15 +153,15 @@ def get_modified_files(repo_path: Path) -> Set[Path]:
         filename = line[2:].lstrip()
 
         # Skip deleted files
-        if "D" in status:
+        if 'D' in status:
             continue
 
         # Handle renamed files (format: "R  old -> new")
-        if "R" in status and " -> " in filename:
-            filename = filename.split(" -> ")[1]
+        if 'R' in status and ' -> ' in filename:
+            filename = filename.split(' -> ')[1]
 
         # Normalize path separators for Windows
-        filename = filename.replace("/", os.sep)
+        filename = filename.replace('/', os.sep)
 
         file_path = repo_path / filename
 
@@ -197,9 +184,9 @@ def get_user_confirmation(prompt: str) -> bool:
     """Get yes/no confirmation from user."""
     while True:
         response = input(f"{prompt} (y/n): ").lower().strip()
-        if response in ["y", "yes"]:
+        if response in ['y', 'yes']:
             return True
-        elif response in ["n", "no"]:
+        elif response in ['n', 'no']:
             return False
         else:
             print("Please enter 'y' or 'n'")
@@ -220,11 +207,11 @@ def select_files_to_format(files: List[Path], repo_path: Path) -> Optional[List[
     while True:
         choice = input("\nEnter option: ").strip()
 
-        if choice == "0":
+        if choice == '0':
             return None
-        elif choice == "1":
+        elif choice == '1':
             return files
-        elif choice == "2":
+        elif choice == '2':
             selected = []
             print("\nSelect files to format:")
 
@@ -235,14 +222,12 @@ def select_files_to_format(files: List[Path], repo_path: Path) -> Optional[List[
                     rel_path = file_path
 
                 while True:
-                    response = (
-                        input(f"  {i}. {rel_path} - Format? (y/n): ").lower().strip()
-                    )
+                    response = input(f"  {i}. {rel_path} - Format? (y/n): ").lower().strip()
 
-                    if response in ["y", "yes"]:
+                    if response in ['y', 'yes']:
                         selected.append(file_path)
                         break
-                    elif response in ["n", "no"]:
+                    elif response in ['n', 'no']:
                         break
                     else:
                         print("    Please enter 'y' or 'n'")
@@ -254,24 +239,24 @@ def select_files_to_format(files: List[Path], repo_path: Path) -> Optional[List[
 
 def get_current_branch(repo_path: Path) -> Optional[str]:
     """Get the current branch name."""
-    result = run_git_command(repo_path, "rev-parse", "--abbrev-ref", "HEAD")
+    result = run_git_command(repo_path, 'rev-parse', '--abbrev-ref', 'HEAD')
     if result.returncode == 0:
         branch = result.stdout.strip()
-        return branch if branch != "HEAD" else None
+        return branch if branch != 'HEAD' else None
     return None
 
 
 def get_remote_branches(repo_path: Path) -> List[str]:
     """Get list of remote branches."""
     # First, fetch from all remotes
-    run_git_command(repo_path, "fetch", "--all", capture_output=False)
+    run_git_command(repo_path, 'fetch', '--all', capture_output=False)
 
-    result = run_git_command(repo_path, "branch", "-r")
+    result = run_git_command(repo_path, 'branch', '-r')
     if result.returncode == 0:
         branches = []
-        for line in result.stdout.strip().split("\n"):
+        for line in result.stdout.strip().split('\n'):
             branch = line.strip()
-            if branch and "->" not in branch:  # Skip HEAD references
+            if branch and '->' not in branch:  # Skip HEAD references
                 branches.append(branch)
         return branches
     return []
@@ -279,7 +264,7 @@ def get_remote_branches(repo_path: Path) -> List[str]:
 
 def has_remote_tracking(repo_path: Path) -> bool:
     """Check if current branch has a remote tracking branch."""
-    result = run_git_command(repo_path, "rev-parse", "--abbrev-ref", "@{upstream}")
+    result = run_git_command(repo_path, 'rev-parse', '--abbrev-ref', '@{upstream}')
     return result.returncode == 0
 
 
@@ -308,37 +293,6 @@ def select_from_list(items: List[str], prompt: str) -> Optional[str]:
             print("Please enter a valid number")
 
 
-def ensure_on_main_branch(repo_path: Path, auto_checkout: bool = True) -> bool:
-    """
-    Ensure repository is on main branch (or master if main doesn't exist).
-
-    Args:
-        repo_path: Path to the repository
-        auto_checkout: If True, automatically checkout main/master branch
-
-    Returns:
-        True if on main/master branch, False otherwise
-    """
-    current_branch = get_current_branch(repo_path)
-
-    # Already on main or master
-    if current_branch in ["main", "master"]:
-        return True
-
-    if not auto_checkout:
-        return False
-
-    # Try to checkout main first, then master
-    for branch in ["main", "master"]:
-        result = run_git_command(repo_path, "checkout", branch, capture_output=True)
-        if result.returncode == 0:
-            print(f"✓ Switched to {branch} branch")
-            return True
-
-    print(f"✗ Could not checkout main or master branch")
-    return False
-
-
 def quick_commit_and_push(repo_path: Path, commit_msg: str) -> bool:
     """
     Quickly commit and push all changes without confirmations.
@@ -357,13 +311,13 @@ def quick_commit_and_push(repo_path: Path, commit_msg: str) -> bool:
         return False
 
     # Stage all changes
-    result = run_git_command(repo_path, "add", "-A", capture_output=True)
+    result = run_git_command(repo_path, 'add', '-A', capture_output=True)
     if result.returncode != 0:
         print("Failed to stage changes.")
         return False
 
     # Commit
-    result = run_git_command(repo_path, "commit", "-m", commit_msg, capture_output=True)
+    result = run_git_command(repo_path, 'commit', '-m', commit_msg, capture_output=True)
     if result.returncode != 0:
         print("Failed to commit changes.")
         return False
@@ -376,7 +330,7 @@ def quick_commit_and_push(repo_path: Path, commit_msg: str) -> bool:
         return False
 
     # Push
-    result = run_git_command(repo_path, "push", capture_output=True)
+    result = run_git_command(repo_path, 'push', capture_output=True)
     if result.returncode == 0:
         print("✓ Pushed to remote")
         return True
@@ -401,15 +355,13 @@ def commit_and_push_all_changes(repo_path: Path) -> bool:
     print(f"\nCurrent branch: {current_branch}")
 
     # Ask if user wants to commit
-    if not get_user_confirmation(
-        "\nDo you want to commit all changes in this repository?"
-    ):
+    if not get_user_confirmation("\nDo you want to commit all changes in this repository?"):
         print("Skipping this repository.")
         return False
 
     # Stage all changes
     print("\nStaging all changes...")
-    result = run_git_command(repo_path, "add", "-A", capture_output=False)
+    result = run_git_command(repo_path, 'add', '-A', capture_output=False)
     if result.returncode != 0:
         print("Failed to stage changes.")
         return False
@@ -422,9 +374,7 @@ def commit_and_push_all_changes(repo_path: Path) -> bool:
 
     # Commit
     print(f"\nCommitting with message: '{commit_msg}'")
-    result = run_git_command(
-        repo_path, "commit", "-m", commit_msg, capture_output=False
-    )
+    result = run_git_command(repo_path, 'commit', '-m', commit_msg, capture_output=False)
     if result.returncode != 0:
         print("Failed to commit changes.")
         return False
@@ -447,29 +397,19 @@ def commit_and_push_all_changes(repo_path: Path) -> bool:
                 remote_url = input("Enter remote URL: ").strip()
 
                 if remote_name and remote_url:
-                    result = run_git_command(
-                        repo_path, "remote", "add", remote_name, remote_url
-                    )
+                    result = run_git_command(repo_path, 'remote', 'add', remote_name, remote_url)
                     if result.returncode == 0:
                         print(f"✓ Remote '{remote_name}' added")
 
                         # Ask for push with upstream
-                        branch_name = input(
-                            f"Enter branch name to push to (default: {current_branch}): "
-                        ).strip()
+                        branch_name = input(f"Enter branch name to push to (default: {current_branch}): ").strip()
                         if not branch_name:
                             branch_name = current_branch
 
-                        if get_user_confirmation(
-                            f"Push to {remote_name}/{branch_name}?"
-                        ):
+                        if get_user_confirmation(f"Push to {remote_name}/{branch_name}?"):
                             result = run_git_command(
-                                repo_path,
-                                "push",
-                                "-u",
-                                remote_name,
-                                f"{current_branch}:{branch_name}",
-                                capture_output=False,
+                                repo_path, 'push', '-u', remote_name, f"{current_branch}:{branch_name}",
+                                capture_output=False
                             )
                             if result.returncode == 0:
                                 print("✓ Changes pushed successfully")
@@ -483,7 +423,7 @@ def commit_and_push_all_changes(repo_path: Path) -> bool:
             return False
 
         # Parse remote and branch from selection (e.g., "origin/main" -> "origin", "main")
-        parts = selected.split("/", 1)
+        parts = selected.split('/', 1)
         if len(parts) != 2:
             print("Invalid remote branch format.")
             return False
@@ -498,12 +438,8 @@ def commit_and_push_all_changes(repo_path: Path) -> bool:
         # Push with upstream
         print(f"\nPushing to {selected}...")
         result = run_git_command(
-            repo_path,
-            "push",
-            "-u",
-            remote_name,
-            f"{current_branch}:{remote_branch}",
-            capture_output=False,
+            repo_path, 'push', '-u', remote_name, f"{current_branch}:{remote_branch}",
+            capture_output=False
         )
 
         if result.returncode == 0:
@@ -516,7 +452,7 @@ def commit_and_push_all_changes(repo_path: Path) -> bool:
         # We have a tracking branch, just push
         if get_user_confirmation("Do you want to push to the remote?"):
             print("\nPushing changes...")
-            result = run_git_command(repo_path, "push", capture_output=False)
+            result = run_git_command(repo_path, 'push', capture_output=False)
 
             if result.returncode == 0:
                 print("✓ Changes pushed successfully")
@@ -529,9 +465,7 @@ def commit_and_push_all_changes(repo_path: Path) -> bool:
             return False
 
 
-def process_repository_quick(
-    repo_path: Path, project_root: Path
-) -> Tuple[int, int, bool]:
+def process_repository_quick(repo_path: Path, project_root: Path) -> Tuple[int, int, bool]:
     """
     Process a single repository in quick mode - format all C/C++ files and commit.
 
@@ -541,13 +475,13 @@ def process_repository_quick(
     # Get relative path for display
     try:
         rel_path = repo_path.relative_to(project_root)
-        display_path = str(rel_path) if str(rel_path) != "." else "(root)"
+        display_path = str(rel_path) if str(rel_path) != '.' else '(root)'
     except ValueError:
         display_path = str(repo_path)
 
-    print("\n" + "=" * 80)
+    print("\n" + "="*80)
     print(f"Repository: {display_path}")
-    print("=" * 80)
+    print("="*80)
 
     # Get modified files
     modified_files = get_modified_files(repo_path)
@@ -594,14 +528,14 @@ def process_repository(repo_path: Path, project_root: Path) -> Tuple[int, int, b
     # Get relative path for display
     try:
         rel_path = repo_path.relative_to(project_root)
-        display_path = str(rel_path) if str(rel_path) != "." else "(root)"
+        display_path = str(rel_path) if str(rel_path) != '.' else '(root)'
     except ValueError:
         display_path = str(repo_path)
 
-    print("\n" + "=" * 80)
+    print("\n" + "="*80)
     print(f"Repository: {display_path}")
     print(f"Path: {repo_path}")
-    print("=" * 80)
+    print("="*80)
 
     # Check if repository has any changes
     if not has_changes(repo_path):
@@ -655,7 +589,7 @@ def process_repository(repo_path: Path, project_root: Path) -> Tuple[int, int, b
                 except ValueError:
                     rel_path = file_path
 
-                print(f"  {rel_path}... ", end="", flush=True)
+                print(f"  {rel_path}... ", end='', flush=True)
 
                 if run_clang_format(file_path, dry_run=False):
                     print("✓")
@@ -672,6 +606,8 @@ def process_repository(repo_path: Path, project_root: Path) -> Tuple[int, int, b
                 print(f"✗ Failed to format {error_count} files")
         else:
             print("\nSkipping format step.")
+    else:
+        print("\nNo C/C++ files found. Skipping format step.")
 
     # Ask about committing ALL changes (not just formatted files)
     pushed = commit_and_push_all_changes(repo_path)
@@ -679,213 +615,8 @@ def process_repository(repo_path: Path, project_root: Path) -> Tuple[int, int, b
     return success_count, error_count, pushed
 
 
-def process_repository_non_interactive(
-    repo_path: Path,
-    project_root: Path,
-    commit_msg: str,
-    auto_checkout_main: bool = False,
-) -> Tuple[int, int, bool]:
-    """
-    Process a repository in non-interactive mode.
-
-    Args:
-        repo_path: Path to the repository
-        project_root: Root of the project
-        commit_msg: Commit message to use
-        auto_checkout_main: If True, automatically checkout main branch before committing
-
-    Returns:
-        Tuple of (files_formatted, files_failed, committed_and_pushed)
-    """
-    # Get relative path for display
-    try:
-        rel_path = repo_path.relative_to(project_root)
-        display_path = str(rel_path) if str(rel_path) != "." else "(root)"
-    except ValueError:
-        display_path = str(repo_path)
-
-    print(f"\n{'=' * 80}")
-    print(f"Repository: {display_path}")
-    print(f"Path: {repo_path}")
-    print("=" * 80)
-
-    # Check if repository has any changes
-    if not has_changes(repo_path):
-        print("No changes detected.")
-        return 0, 0, False
-
-    # Auto-checkout main branch if requested (only for submodules, not root repo)
-    is_root_repo = repo_path == project_root
-    if auto_checkout_main and not is_root_repo:
-        if not ensure_on_main_branch(repo_path):
-            print("✗ Could not checkout main branch. Skipping")
-            return 0, 0, False
-
-    # Get modified files (actual files, not submodules)
-    modified_files = get_modified_files(repo_path)
-
-    # Show all modified files
-    if modified_files:
-        print(f"\nFound {len(modified_files)} modified files:")
-        for file_path in list(modified_files)[:10]:  # Show first 10
-            try:
-                rel_path = file_path.relative_to(repo_path)
-            except ValueError:
-                rel_path = file_path
-            print(f"  • {rel_path}")
-        if len(modified_files) > 10:
-            print(f"  ... and {len(modified_files) - 10} more")
-    else:
-        print("\nNo modified files detected (may have submodule changes only).")
-
-    # Filter C/C++ files
-    cpp_files = filter_cpp_files(modified_files)
-
-    success_count = 0
-    error_count = 0
-
-    # Format all C/C++ files automatically
-    if cpp_files:
-        print(f"Formatting {len(cpp_files)} C/C++ files...")
-        for file_path in cpp_files:
-            if run_clang_format(file_path, dry_run=False):
-                success_count += 1
-            else:
-                error_count += 1
-
-        if success_count > 0:
-            print(f"✓ Formatted {success_count} files")
-        if error_count > 0:
-            print(f"✗ Failed to format {error_count} files")
-
-    # Commit and push
-    pushed = quick_commit_and_push(repo_path, commit_msg)
-
-    return success_count, error_count, pushed
-
-
-def parse_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Format and Commit Manager - Manage C/C++ formatting and git commits"
-    )
-
-    parser.add_argument(
-        "-n",
-        "--non-interactive",
-        action="store_true",
-        help="Run in non-interactive mode (no prompts, commit with single message)",
-    )
-
-    parser.add_argument(
-        "-m",
-        "--message",
-        type=str,
-        help="Commit message to use for all repositories (required in non-interactive mode)",
-    )
-
-    parser.add_argument(
-        "--auto-checkout-main",
-        action="store_true",
-        help="Automatically checkout main/master branch before committing",
-    )
-
-    return parser.parse_args()
-
-
-def main_non_interactive(commit_msg: str, auto_checkout_main: bool = False):
-    """
-    Non-interactive mode: format and commit all repositories with a single commit message.
-
-    Args:
-        commit_msg: Commit message to use for all repositories
-        auto_checkout_main: If True, automatically checkout main branch before committing
-    """
-    script_dir = Path(__file__).parent
-    project_root = script_dir.parent
-
-    print("=" * 80)
-    print("Non-Interactive Mode")
-    print("=" * 80)
-    print(f"Commit message: {commit_msg}")
-    if auto_checkout_main:
-        print("Auto-checkout main: ENABLED")
-    print()
-
-    # Check clang-format
-    print("Checking for clang-format...")
-    try:
-        result = subprocess.run(
-            ["clang-format", "--version"], capture_output=True, text=True
-        )
-        if result.returncode == 0:
-            print(f"✓ Found: {result.stdout.strip().split(chr(10))[0]}")
-        else:
-            print("✗ ERROR: clang-format not found")
-            sys.exit(1)
-    except FileNotFoundError:
-        print("✗ ERROR: clang-format not found in PATH")
-        sys.exit(1)
-
-    # Find all repositories
-    print(f"\nScanning for repositories...")
-    repos = find_all_git_repos(project_root)
-
-    # Find repos with changes
-    repos_to_process = []
-    for repo in repos:
-        if has_changes(repo):
-            repos_to_process.append(repo)
-
-    if not repos_to_process:
-        print("No repositories with changes found.")
-        return
-
-    print(f"Found {len(repos_to_process)} repositories with changes\n")
-
-    # Process each repository
-    total_success = 0
-    total_error = 0
-    repos_committed = 0
-
-    for repo in repos_to_process:
-        files_formatted, files_failed, pushed = process_repository_non_interactive(
-            repo, project_root, commit_msg, auto_checkout_main
-        )
-        total_success += files_formatted
-        total_error += files_failed
-        if pushed:
-            repos_committed += 1
-
-    # Summary
-    print("\n" + "=" * 80)
-    print("SUMMARY")
-    print("=" * 80)
-    print(f"Repositories processed: {len(repos_to_process)}")
-    print(f"Files formatted: {total_success}")
-    print(f"Files with errors: {total_error}")
-    print(f"Repositories committed: {repos_committed}")
-    print("=" * 80)
-    print("\n✓ Done!")
-
-
 def main():
     """Main function."""
-    args = parse_args()
-
-    # Non-interactive mode
-    if args.non_interactive:
-        if not args.message:
-            print("ERROR: --message (-m) is required in non-interactive mode")
-            print(
-                'Usage: python format_and_commit_manager.py -n -m "Your commit message"'
-            )
-            sys.exit(1)
-
-        main_non_interactive(args.message, args.auto_checkout_main)
-        return
-
-    # Interactive mode
     print("Format and Commit Manager")
     print("=" * 80)
 
@@ -902,8 +633,8 @@ def main():
 
     while True:
         mode_choice = input("\nEnter mode (1 or 2): ").strip()
-        if mode_choice in ["1", "2"]:
-            quick_mode = mode_choice == "1"
+        if mode_choice in ['1', '2']:
+            quick_mode = (mode_choice == '1')
             break
         print("Please enter 1 or 2")
 
@@ -916,10 +647,13 @@ def main():
     print("\nChecking for clang-format...")
     try:
         result = subprocess.run(
-            ["clang-format", "--version"], capture_output=True, text=True, check=False
+            ['clang-format', '--version'],
+            capture_output=True,
+            text=True,
+            check=False
         )
         if result.returncode == 0:
-            version_line = result.stdout.strip().split("\n")[0]
+            version_line = result.stdout.strip().split('\n')[0]
             print(f"✓ Found: {version_line}")
         else:
             raise FileNotFoundError()
@@ -932,7 +666,7 @@ def main():
         return
 
     # Check for .clang-format config
-    clang_format_config = project_root / ".clang-format"
+    clang_format_config = project_root / '.clang-format'
     if clang_format_config.exists():
         print(f"✓ Found .clang-format config")
     else:
@@ -958,14 +692,12 @@ def main():
 
         try:
             rel_path = repo.relative_to(project_root)
-            display_path = str(rel_path) if str(rel_path) != "." else "(root)"
+            display_path = str(rel_path) if str(rel_path) != '.' else '(root)'
         except ValueError:
             display_path = str(repo)
 
         cpp_files = filter_cpp_files(modified_files)
-        repos_with_changes.append(
-            (repo, display_path, len(modified_files), len(cpp_files))
-        )
+        repos_with_changes.append((repo, display_path, len(modified_files), len(cpp_files)))
 
     if not repos_with_changes:
         print("No repositories with changes found.")
@@ -979,9 +711,7 @@ def main():
             print(f"  • {display_path} ({total_files} files)")
 
     if not quick_mode:
-        if not get_user_confirmation(
-            f"\nProcess these {len(repos_with_changes)} repositories?"
-        ):
+        if not get_user_confirmation(f"\nProcess these {len(repos_with_changes)} repositories?"):
             print("Operation cancelled.")
             return
     else:
@@ -1006,19 +736,19 @@ def main():
         total_error += error
 
     # Print summary
-    print("\n" + "=" * 80)
+    print("\n" + "="*80)
     print("SUMMARY")
-    print("=" * 80)
+    print("="*80)
     print(f"Repositories with changes: {len(repos_with_changes)}")
     print(f"Total files formatted successfully: {total_success}")
     print(f"Total files with format errors: {total_error}")
     print(f"Repositories committed and pushed: {repos_committed}")
-    print("=" * 80)
+    print("="*80)
 
     print("\n✓ Operation complete!")
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     try:
         main()
     except KeyboardInterrupt:
@@ -1027,6 +757,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\nUnexpected error: {e}")
         import traceback
-
         traceback.print_exc()
         sys.exit(1)

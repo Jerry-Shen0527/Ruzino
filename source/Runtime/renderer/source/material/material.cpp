@@ -93,9 +93,9 @@ unsigned Hd_RUZINO_Material::GetMaterialLocation() const
 std::string Hd_RUZINO_Material::eval_source_code_fallback = R"(
 void fetch_shader_data(
     out float4 out1,
-    in uint material_params_index, 
-    inout uint shader_type_id, 
-    in MaterialDataBlob data, 
+    in uint material_params_index,
+    inout uint shader_type_id,
+    in MaterialDataBlob data,
     in VertexInfo vertexInfo
     )
 {
@@ -132,7 +132,7 @@ struct FetchCallableData {
 [shader("callable")]
 void $getColor(inout FetchCallableData data)
 {
-    float4 placeholder_color = float4(1.0); 
+    float4 placeholder_color = float4(1.0);
     MaterialDataBlob blob_data = materialBlobBuffer[data.materialBlobID];
     fetch_shader_data(placeholder_color, data.material_params_index, data.shader_type_id, blob_data, data.vertexInfo);
 }
@@ -173,7 +173,7 @@ void Hd_RUZINO_Material::ensure_shader_ready(const ShaderFactory& factory)
         slang_source_code_main.replace(
             pos, strlen(FUNC_PLACEHOLDER), material_name);
     }
-    
+
     // Replace $getOpacity with material_name_opacity
     pos = slang_source_code_main.find(OPACITY_PLACEHOLDER);
     if (pos != std::string::npos) {

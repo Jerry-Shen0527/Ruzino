@@ -70,14 +70,11 @@ void Hd_RUZINO_RenderPass::_Execute(
     const HdRenderPassStateSharedPtr& renderPassState,
     const TfTokenVector& renderTags)
 {
-    
-
     int currentSceneVersion = _sceneVersion->load();
     if (_lastSceneVersion != currentSceneVersion) {
         needStartRender = true;
         _lastSceneVersion = currentSceneVersion;
     }
-    
 
     // Likewise the render settings.
     HdRenderDelegate* renderDelegate = GetRenderIndex()->GetRenderDelegate();
@@ -90,12 +87,10 @@ void Hd_RUZINO_RenderPass::_Execute(
     }
 
     // Determine whether we need to update the renderer camera.
-    
 
     const GfMatrix4d view = renderPassState->GetWorldToViewMatrix();
     const GfMatrix4d proj = renderPassState->GetProjectionMatrix();
     const GfRect2i dataWindow = _GetDataWindow(renderPassState);
-    
 
     if (_viewMatrix != view || _projMatrix != proj ||
         _dataWindow != dataWindow) {
@@ -110,7 +105,6 @@ void Hd_RUZINO_RenderPass::_Execute(
     }
 
     // Determine whether we need to update the renderer AOV bindings.
-    
 
     HdRenderPassAovBindingVector aovBindings =
         renderPassState->GetAovBindings();
@@ -123,14 +117,12 @@ void Hd_RUZINO_RenderPass::_Execute(
         _renderer->Clear();
         needStartRender = true;
     }
-    
 
     if (_renderer->nodetree_modified(false)) {
         _renderer->Clear();
 
         needStartRender = true;
     }
-    
 
     TF_VERIFY(!_aovBindings.empty(), "No aov bindings to render into");
     // Only start a new render if something in the scene has changed.

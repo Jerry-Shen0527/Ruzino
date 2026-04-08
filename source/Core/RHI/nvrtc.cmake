@@ -29,6 +29,6 @@ set(CUDA_NVRTC_OPTIONS "${CUDA_NVRTC_OPTIONS}")
 message( "list dir: ${CMAKE_CURRENT_LIST_DIR}")
 message( "source dir: ${CMAKE_CURRENT_SOURCE_DIR}")
 
-configure_file(${CMAKE_CURRENT_LIST_DIR}/source/nvrtc_config.h.in 
+configure_file(${CMAKE_CURRENT_LIST_DIR}/source/nvrtc_config.h.in
     ${CMAKE_CURRENT_SOURCE_DIR}/source/nvrtc_config.h @ONLY)
 

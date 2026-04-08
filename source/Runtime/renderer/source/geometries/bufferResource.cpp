@@ -10,7 +10,7 @@
 RUZINO_NAMESPACE_OPEN_SCOPE
 
 HdStBufferResource::HdStBufferResource(
-    pxr::TfToken const &role,
+    pxr::TfToken const& role,
     pxr::HdTupleType tupleType,
     int offset,
     int stride)
@@ -25,7 +25,7 @@ HdStBufferResource::HdStBufferResource(
 HdStBufferResource::~HdStBufferResource() = default;
 
 void HdStBufferResource::SetAllocation(
-    pxr::HgiBufferHandle const &handle,
+    pxr::HgiBufferHandle const& handle,
     size_t size)
 {
     _handle = handle;

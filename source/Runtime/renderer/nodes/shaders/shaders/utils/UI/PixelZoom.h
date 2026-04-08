@@ -27,11 +27,11 @@
  **************************************************************************/
 #pragma once
 
-#include "utils/Math/Vector.h"
 #include <memory>
 
-namespace Ruzino
-{
+#include "utils/Math/Vector.h"
+
+namespace Ruzino {
 class RenderContext;
 struct MouseEvent;
 struct KeyboardEvent;
@@ -39,14 +39,14 @@ struct KeyboardEvent;
 /**
  * Magnifies a region of the screen to assist with inspecting details
  */
-class PixelZoom
-{
-public:
+class PixelZoom {
+   public:
     /// Constructor. Throws an exception if creation failed.
     PixelZoom(ref<Device> pDevice, const Fbo* pBackbuffer);
 
     /**
-     * Does zoom operation if mShouldZoom is true (if ctrl+alt pressed this frame)
+     * Does zoom operation if mShouldZoom is true (if ctrl+alt pressed this
+     * frame)
      * @param pCtx Pointer to the render context
      * @param backbuffer Pointer to the swap chain FBO
      */
@@ -69,7 +69,7 @@ public:
      */
     void onResize(const Fbo* pBackbuffer);
 
-private:
+   private:
     ref<Device> mpDevice;
 
     int32_t mSrcZoomSize = 5;
@@ -81,4 +81,4 @@ private:
     float2 mMousePos = {};
     bool mShouldZoom = false;
 };
-} // namespace Ruzino
+}  // namespace Ruzino

@@ -9,7 +9,7 @@ import utils.Spectrum;
 void eval_dome_light_default(inout DomeLightCallableData data)
 {
     float3 envColor = float3(0, 0, 0);
-    
+
     if (data.textureIndex >= 0) {
         // Sample environment texture using spherical coordinates
         // Convert direction to spherical coordinates (latitude-longitude mapping)
@@ -31,6 +31,6 @@ void eval_dome_light_default(inout DomeLightCallableData data)
         // No texture, use solid color intensity
         envColor = data.intensity;
     }
-    
+
     data.envColor = Spectrum(envColor);
 }

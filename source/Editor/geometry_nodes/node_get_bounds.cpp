@@ -10,7 +10,6 @@
 #include "nodes/core/def/node_def.hpp"
 #include "spdlog/spdlog.h"
 
-
 using namespace Ruzino;
 
 NODE_DEF_OPEN_SCOPE

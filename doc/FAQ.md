@@ -19,7 +19,7 @@
 2.  检查CMake是否正确识别SDK中的OpenUSD
 
     若正确识别，在CMake的输出中可以找到
-    
+
     ```
     ...
     CMAKE_BUILD_TYPE is Debug. Selecting SDK from Debug
@@ -27,11 +27,11 @@
     Found OpenUSD version
     ...
     ```
-        
+
     若未正确识别，在CMake的输出中可以找到
-    
+
     ```
-    CMake Warning at CMakeLists.txt:99 (find_package): 
+    CMake Warning at CMakeLists.txt:99 (find_package):
     By not providing "Findpxr.cmake" in CMAKE_MODULE_PATH this project has asked CMake to find a package configuration file provided by "pxr", but CMake did not find one.
 
     Could not find a package configuration file provided by "pxr" with any of the following names:

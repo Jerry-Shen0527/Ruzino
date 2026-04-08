@@ -155,14 +155,14 @@ def compute_hemisphere_mask(resolution):
 def save_texture_exr(array, filename):
     """Save texture as EXR format with HDR values, removing inf/nan"""
     rgb = array[:, :, :3].copy().astype(np.float32)
-    
+
     # Replace inf and nan with 0 - check each condition separately
     rgb[np.isnan(rgb)] = 0.0
     rgb[np.isinf(rgb)] = 0.0
-    
+
     # Additional safety: clamp extremely large values
     rgb = np.clip(rgb, -1e10, 1e10)
-    
+
     rgb_exr = np.flipud(rgb)
     try:
         import imageio
@@ -176,7 +176,7 @@ def save_texture_exr(array, filename):
 def analyze_brdf_test(eval_array, sample_array, importance_array, valid_mask):
     """
     Analyze BRDF test results
-    
+
     Returns:
         dict with keys:
         - eval_sample_similarity: normalized L2 distance between normalized eval and sample
@@ -189,30 +189,30 @@ def analyze_brdf_test(eval_array, sample_array, importance_array, valid_mask):
     eval_values = eval_array[:, :, 0][valid_mask]
     sample_values = sample_array[:, :, 0][valid_mask]
     importance_values = importance_array[:, :, 0][valid_mask]
-    
+
     # 1. Normalize eval and sample distributions to sum to 1
     eval_sum = eval_values.sum()
     sample_sum = sample_values.sum()
-    
+
     if eval_sum > 0:
         eval_normalized = eval_values / eval_sum
     else:
         eval_normalized = eval_values
-    
+
     if sample_sum > 0:
         sample_normalized = sample_values / sample_sum
     else:
         sample_normalized = sample_values
-    
+
     # Compute L2 distance between normalized distributions
     eval_sample_l2 = np.sqrt(np.mean((eval_normalized - sample_normalized) ** 2))
-    
+
     # Compute correlation
     if eval_values.std() > 0 and sample_values.std() > 0:
         eval_sample_corr = np.corrcoef(eval_values, sample_values)[0, 1]
     else:
         eval_sample_corr = 0.0
-    
+
     # 2. Importance test variance (non-zero pixels, mean-normalized)
     importance_nonzero = importance_values[importance_values > 1e-8]
     if len(importance_nonzero) > 0:
@@ -224,7 +224,7 @@ def analyze_brdf_test(eval_array, sample_array, importance_array, valid_mask):
     else:
         importance_variance = 0.0
         importance_cv = 0.0
-    
+
     return {
         "eval_sample_l2_distance": float(eval_sample_l2),
         "eval_sample_correlation": float(eval_sample_corr),
@@ -238,11 +238,11 @@ def analyze_brdf_test(eval_array, sample_array, importance_array, valid_mask):
     }
 
 
-def test_material_at_config(hydra, tree, executor, analyzer, present_eval, present_pdf, present_sample, present_importance, 
+def test_material_at_config(hydra, tree, executor, analyzer, present_eval, present_pdf, present_sample, present_importance,
                             incident_angle, uv_x, uv_y, valid_mask, material_name, output_dir):
     """
     Test material at specific configuration (angle, UV position)
-    
+
     Returns:
         dict with analysis results or None on failure
     """
@@ -251,14 +251,14 @@ def test_material_at_config(hydra, tree, executor, analyzer, present_eval, prese
     incident_dir_x = math.sin(angle_rad)
     incident_dir_y = 0.0
     incident_dir_z = math.cos(angle_rad)
-    
+
     # Normalize
     length = math.sqrt(incident_dir_x**2 + incident_dir_y**2 + incident_dir_z**2)
     if length > 0:
         incident_dir_x /= length
         incident_dir_y /= length
         incident_dir_z /= length
-    
+
     # Set inputs
     inputs = {
         (analyzer, "Incident Direction X"): incident_dir_x,
@@ -270,37 +270,37 @@ def test_material_at_config(hydra, tree, executor, analyzer, present_eval, prese
         (analyzer, "Resolution"): RESOLUTION,
         (analyzer, "Num Samples"): NUM_SAMPLES,
     }
-    
+
     try:
         executor.reset_allocator()
         executor.prepare_tree(tree, present_eval)
         set_node_inputs(executor, inputs)
         hydra.render()
-        
+
         # Retrieve outputs
         eval_data = hydra.get_output_texture("PresentEval")
         eval_array = np.array(eval_data, dtype=np.float32).reshape(RESOLUTION, RESOLUTION, 4)
-        
+
         pdf_data = hydra.get_output_texture("PresentPDF")
         pdf_array = np.array(pdf_data, dtype=np.float32).reshape(RESOLUTION, RESOLUTION, 4)
-        
+
         sample_data = hydra.get_output_texture("PresentSample")
         sample_array_raw = np.array(sample_data, dtype=np.float32).reshape(RESOLUTION, RESOLUTION, 4)
         sample_array = sample_array_raw.copy()
         sample_array[:, :, :3] = sample_array_raw[:, :, :3] / NUM_SAMPLES
-        
+
         importance_data = hydra.get_output_texture("PresentImportance")
         importance_array = np.array(importance_data, dtype=np.float32).reshape(RESOLUTION, RESOLUTION, 4)
-        
+
         # Save images with descriptive filenames
         # Format: materialname_angle30_uv0.5-0.5_eval.exr
         uv_str = f"{uv_x:.1f}-{uv_y:.1f}".replace(".", "p")
         base_filename = f"{material_name}_angle{incident_angle}_uv{uv_str}"
-        
+
         eval_path = output_dir / f"{base_filename}_eval.exr"
         sample_path = output_dir / f"{base_filename}_sample.exr"
         importance_path = output_dir / f"{base_filename}_importance.exr"
-        
+
         saved_images = {}
         if save_texture_exr(eval_array, str(eval_path)):
             saved_images["eval"] = str(eval_path.name)
@@ -308,15 +308,15 @@ def test_material_at_config(hydra, tree, executor, analyzer, present_eval, prese
             saved_images["sample"] = str(sample_path.name)
         if save_texture_exr(importance_array, str(importance_path)):
             saved_images["importance"] = str(importance_path.name)
-        
+
         # Analyze
         results = analyze_brdf_test(eval_array, sample_array, importance_array, valid_mask)
         results["incident_angle"] = incident_angle
         results["uv_position"] = [uv_x, uv_y]
         results["saved_images"] = saved_images
-        
+
         return results
-        
+
     except Exception as e:
         print(f"    ERROR during test: {e}")
         return None
@@ -325,21 +325,21 @@ def test_material_at_config(hydra, tree, executor, analyzer, present_eval, prese
 def test_material(material_path, output_dir):
     """
     Test a single material across all configurations
-    
+
     Returns:
         dict with test results
     """
     material_name = material_path.stem
     print(f"\nTesting: {material_name}")
-    
+
     # Create material-specific output directory
     material_output_dir = output_dir / material_name
     material_output_dir.mkdir(exist_ok=True)
-    
+
     # Check if material has textures
     material_dir = material_path.parent
     has_textures = has_texture_maps(material_dir)
-    
+
     # Determine UV positions to test
     if has_textures:
         uv_positions = TEST_UV_POSITIONS
@@ -347,11 +347,11 @@ def test_material(material_path, output_dir):
     else:
         uv_positions = [(0.5, 0.5)]  # Single position for uniform materials
         print(f"  No textures - testing single UV position")
-    
+
     # Bind material
     shader_ball_path = assets_dir / "shader_ball.usdc"
     output_usd = material_output_dir / f"shader_ball_{material_name}.usdc"
-    
+
     if not bind_material_to_shader_ball(shader_ball_path, material_path, output_usd):
         print(f"  FAILED to bind material")
         return {
@@ -359,7 +359,7 @@ def test_material(material_path, output_dir):
             "status": "failed",
             "error": "Failed to bind material to shader_ball"
         }
-    
+
     # Create HydraRenderer
     try:
         hydra = renderer.HydraRenderer(str(output_usd), width=RESOLUTION, height=RESOLUTION)
@@ -370,7 +370,7 @@ def test_material(material_path, output_dir):
             "status": "failed",
             "error": f"Failed to create HydraRenderer: {str(e)}"
         }
-    
+
     # Setup node system
     node_system = hydra.get_node_system()
     config_path = binary_dir / "render_nodes.json"
@@ -384,21 +384,21 @@ def test_material(material_path, output_dir):
                 "status": "failed",
                 "error": f"Failed to load configuration: {str(e)}"
             }
-    
+
     tree = node_system.get_node_tree()
     executor = node_system.get_node_tree_executor()
-    
+
     # Initialize with render
     try:
         hydra.render()
     except Exception as e:
         print(f"  WARNING: Initial render failed: {e}")
-    
+
     # Create analyzer node
     try:
         analyzer = tree.add_node("material_brdf_analyzer")
         analyzer.ui_name = "BRDFAnalyzer"
-        
+
         present_eval = tree.add_node("present_color")
         present_eval.ui_name = "PresentEval"
         present_pdf = tree.add_node("present_color")
@@ -407,7 +407,7 @@ def test_material(material_path, output_dir):
         present_sample.ui_name = "PresentSample"
         present_importance = tree.add_node("present_color")
         present_importance.ui_name = "PresentImportance"
-        
+
         tree.add_link(analyzer.get_output_socket("BRDF Eval"), present_eval.get_input_socket("Color"))
         tree.add_link(analyzer.get_output_socket("PDF"), present_pdf.get_input_socket("Color"))
         tree.add_link(analyzer.get_output_socket("Sample Distribution"), present_sample.get_input_socket("Color"))
@@ -419,39 +419,39 @@ def test_material(material_path, output_dir):
             "status": "failed",
             "error": f"Failed to create analyzer nodes: {str(e)}"
         }
-    
+
     # Compute hemisphere mask once
     valid_mask = compute_hemisphere_mask(RESOLUTION)
-    
+
     # Run tests for all configurations
     test_results = []
     total_tests = len(uv_positions) * len(TEST_ANGLES)
     current_test = 0
-    
+
     for uv_x, uv_y in uv_positions:
         for angle in TEST_ANGLES:
             current_test += 1
             print(f"  [{current_test}/{total_tests}] UV=({uv_x:.1f},{uv_y:.1f}), Angle={angle}°...", end=" ")
-            
+
             result = test_material_at_config(
                 hydra, tree, executor, analyzer,
                 present_eval, present_pdf, present_sample, present_importance,
                 angle, uv_x, uv_y, valid_mask, material_name, material_output_dir
             )
-            
+
             if result:
                 test_results.append(result)
                 print(f"OK (L2={result['eval_sample_l2_distance']:.6f}, Var={result['importance_variance']:.6f})")
             else:
                 print("FAILED")
-    
+
     # Compute aggregate statistics
     if test_results:
         avg_l2 = np.mean([r['eval_sample_l2_distance'] for r in test_results])
         avg_corr = np.mean([r['eval_sample_correlation'] for r in test_results])
         avg_variance = np.mean([r['importance_variance'] for r in test_results])
         avg_cv = np.mean([r['importance_cv'] for r in test_results])
-        
+
         aggregate = {
             "avg_eval_sample_l2": float(avg_l2),
             "avg_eval_sample_correlation": float(avg_corr),
@@ -460,7 +460,7 @@ def test_material(material_path, output_dir):
         }
     else:
         aggregate = {}
-    
+
     return {
         "material_name": material_name,
         "material_path": str(material_path.relative_to(assets_dir)),
@@ -479,12 +479,12 @@ def main():
         print("Usage: python test_brdf_comprehensive.py <material_folder_path>")
         print("Example: python test_brdf_comprehensive.py C:/path/to/matx_library/Aluminum_1k_8b_tAdaTTp")
         return 1
-    
+
     material_folder = Path(sys.argv[1])
     if not material_folder.exists():
         print(f"Error: Material folder does not exist: {material_folder}")
         return 1
-    
+
     print("="*80)
     print("BRDF Testing - Single Material")
     print("="*80)
@@ -494,26 +494,26 @@ def main():
     print(f"UV positions: {TEST_UV_POSITIONS}")
     print(f"Incident angles: {TEST_ANGLES}")
     print("="*80)
-    
+
     # Find material file
     material_path = find_material_in_folder(material_folder)
     if not material_path:
         print(f"Error: No .mtlx file found in {material_folder}")
         return 1
-    
+
     print(f"Found material: {material_path.name}\n")
-    
+
     # Create output directory
     output_dir = binary_dir / "brdf_tests"
     output_dir.mkdir(exist_ok=True)
-    
+
     # Test the material
     result = test_material(material_path, output_dir)
-    
+
     # Save results to JSON
     material_name = material_path.stem
     output_json = output_dir / material_name / f"result_{material_name}.json"
-    
+
     summary = {
         "test_config": {
             "resolution": RESOLUTION,
@@ -524,10 +524,10 @@ def main():
         },
         "result": result
     }
-    
+
     with open(output_json, 'w') as f:
         json.dump(summary, f, indent=2)
-    
+
     print("\n" + "="*80)
     print("RESULT")
     print("="*80)
@@ -539,7 +539,7 @@ def main():
             print(f"Avg Variance:     {result['aggregate_stats']['avg_importance_variance']:.6f}")
     print(f"\nResults saved to: {output_json}")
     print("="*80)
-    
+
     return 0 if result["status"] == "success" else 1
 
 

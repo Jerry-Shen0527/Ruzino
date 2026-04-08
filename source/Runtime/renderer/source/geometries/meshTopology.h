@@ -55,7 +55,7 @@ class HdSt_MeshTopology final : public pxr::HdMeshTopology {
 
     HD_RUZINO_API
     static HdSt_MeshTopologySharedPtr New(
-        const HdMeshTopology &src,
+        const HdMeshTopology& src,
         int refineLevel,
         RefineMode refineMode = RefineModeUniform,
         QuadsMode quadsMode = QuadsUntriangulated);
@@ -65,7 +65,7 @@ class HdSt_MeshTopology final : public pxr::HdMeshTopology {
 
     /// Equality check between two mesh topologies.
     HD_RUZINO_API
-    bool operator==(HdSt_MeshTopology const &other) const;
+    bool operator==(HdSt_MeshTopology const& other) const;
 
     /// \name Triangulation
     /// @{
@@ -73,13 +73,13 @@ class HdSt_MeshTopology final : public pxr::HdMeshTopology {
     /// Returns the triangle indices (for drawing) buffer source computation.
     HD_RUZINO_API
     pxr::HdBufferSourceSharedPtr GetTriangleIndexBuilderComputation(
-        pxr::SdfPath const &id);
+        pxr::SdfPath const& id);
 
     /// Returns the CPU face-varying triangulate computation
     HD_RUZINO_API
     pxr::HdBufferSourceSharedPtr GetTriangulateFaceVaryingComputation(
-        pxr::HdBufferSourceSharedPtr const &source,
-        pxr::SdfPath const &id);
+        pxr::HdBufferSourceSharedPtr const& source,
+        pxr::SdfPath const& id);
 
     /// @}
 
@@ -105,32 +105,32 @@ class HdSt_MeshTopology final : public pxr::HdMeshTopology {
     /// via the resource registry.
     HD_RUZINO_API
     HdSt_QuadInfoBuilderComputationSharedPtr GetQuadInfoBuilderComputation(
-        pxr::SdfPath const &id);
+        pxr::SdfPath const& id);
 
     /// Returns the quad indices (for drawing) buffer source computation.
     HD_RUZINO_API
     pxr::HdBufferSourceSharedPtr GetQuadIndexBuilderComputation(
-        pxr::SdfPath const &id);
+        pxr::SdfPath const& id);
 
     /// Returns the CPU quadrangulated buffer source.
     HD_RUZINO_API
     pxr::HdBufferSourceSharedPtr GetQuadrangulateComputation(
-        pxr::HdBufferSourceSharedPtr const &source,
-        pxr::SdfPath const &id);
+        pxr::HdBufferSourceSharedPtr const& source,
+        pxr::SdfPath const& id);
 
     /// Returns the CPU face-varying quadrangulate computation
     HD_RUZINO_API
     pxr::HdBufferSourceSharedPtr GetQuadrangulateFaceVaryingComputation(
-        pxr::HdBufferSourceSharedPtr const &source,
-        pxr::SdfPath const &id);
+        pxr::HdBufferSourceSharedPtr const& source,
+        pxr::SdfPath const& id);
 
     /// Sets the quadrangulation struct. HdMeshTopology takes an
     /// ownership of quadInfo (caller shouldn't free)
     HD_RUZINO_API
-    void SetQuadInfo(pxr::HdQuadInfo const *quadInfo);
+    void SetQuadInfo(pxr::HdQuadInfo const* quadInfo);
 
     /// Returns the quadrangulation struct.
-    pxr::HdQuadInfo const *GetQuadInfo() const
+    pxr::HdQuadInfo const* GetQuadInfo() const
     {
         return _quadInfo.get();
     }
@@ -152,13 +152,13 @@ class HdSt_MeshTopology final : public pxr::HdMeshTopology {
     /// @{
 
     /// Returns the subdivision struct.
-    HdSt_Subdivision const *GetSubdivision() const
+    HdSt_Subdivision const* GetSubdivision() const
     {
         return _subdivision.get();
     }
 
     /// Returns the subdivision struct (non-const).
-    HdSt_Subdivision *GetSubdivision()
+    HdSt_Subdivision* GetSubdivision()
     {
         return _subdivision.get();
     }
@@ -181,7 +181,7 @@ class HdSt_MeshTopology final : public pxr::HdMeshTopology {
     /// far mesh and produces refined quad-indices buffer.
     HD_RUZINO_API
     pxr::HdBufferSourceSharedPtr GetOsdTopologyComputation(
-        pxr::SdfPath const &debugId);
+        pxr::SdfPath const& debugId);
 
     /// Returns the refined indices builder computation.
     /// This just returns index and primitive buffer, and should be preceded by
@@ -198,7 +198,7 @@ class HdSt_MeshTopology final : public pxr::HdMeshTopology {
     /// Returns the subdivision primvar refine computation on CPU.
     HD_RUZINO_API
     pxr::HdBufferSourceSharedPtr GetOsdRefineComputation(
-        pxr::HdBufferSourceSharedPtr const &source,
+        pxr::HdBufferSourceSharedPtr const& source,
         Interpolation interpolation,
         int fvarChannel = 0);
 
@@ -229,7 +229,7 @@ class HdSt_MeshTopology final : public pxr::HdMeshTopology {
     HD_RUZINO_API
     pxr::HdBufferSourceSharedPtr GetGeomSubsetFaceIndexBuilderComputation(
         pxr::HdBufferSourceSharedPtr geomSubsetFaceIndexHelperSource,
-        pxr::VtIntArray const &faceIndices);
+        pxr::VtIntArray const& faceIndices);
 
     /// Returns computation creating buffer sources used in mapping authored
     /// face indices to triangulated/quadrangulated face indices.
@@ -244,19 +244,19 @@ class HdSt_MeshTopology final : public pxr::HdMeshTopology {
     /// \name Face-varying Topologies
     /// @{
     /// Returns the face indices of faces not used in any geom subsets.
-    std::vector<int> const *GetNonSubsetFaces() const
+    std::vector<int> const* GetNonSubsetFaces() const
     {
         return _nonSubsetFaces.get();
     }
 
     /// Sets the face-varying topologies.
-    void SetFvarTopologies(std::vector<pxr::VtIntArray> const &fvarTopologies)
+    void SetFvarTopologies(std::vector<pxr::VtIntArray> const& fvarTopologies)
     {
         _fvarTopologies = fvarTopologies;
     }
 
     /// Returns the face-varying topologies.
-    std::vector<pxr::VtIntArray> const &GetFvarTopologies()
+    std::vector<pxr::VtIntArray> const& GetFvarTopologies()
     {
         return _fvarTopologies;
     }
@@ -285,15 +285,15 @@ class HdSt_MeshTopology final : public pxr::HdMeshTopology {
 
     // Must be created through factory
     explicit HdSt_MeshTopology(
-        const HdMeshTopology &src,
+        const HdMeshTopology& src,
         int refineLevel,
         RefineMode refineMode,
         QuadsMode quadsMode);
 
     // No default construction or copying.
     HdSt_MeshTopology() = delete;
-    HdSt_MeshTopology(const HdSt_MeshTopology &) = delete;
-    HdSt_MeshTopology &operator=(const HdSt_MeshTopology &) = delete;
+    HdSt_MeshTopology(const HdSt_MeshTopology&) = delete;
+    HdSt_MeshTopology& operator=(const HdSt_MeshTopology&) = delete;
 };
 
 RUZINO_NAMESPACE_CLOSE_SCOPE

@@ -25,11 +25,11 @@ void main(int2 i_globalIdx: SV_DispatchThreadID)
     float3 r = positions[u1] - positions[u2];
     float rho_i = max(float(rho.Load(u1 * 4)) / INT_SCALE, rho_0);
     float rho_j = max(float(rho.Load(u2 * 4)) / INT_SCALE, rho_0);
-    
+
     // Tait equation: p = k * ((ρ/ρ₀)^γ - 1), using γ=2 for simplification
     float p_i = press_k * (pow(max(rho_i / rho_0, 1.0), 2.0) - 1.0);
     float p_j = press_k * (pow(max(rho_j / rho_0, 1.0), 2.0) - 1.0);
-    
+
     // Pressure force: F = -m * (pᵢ/ρᵢ² + pⱼ/ρⱼ²) * ∇W
     float3 Dp = mass * (p_i / (rho_i * rho_i) + p_j / (rho_j * rho_j)) *
                 cubic_kernel_derivative(r, h);

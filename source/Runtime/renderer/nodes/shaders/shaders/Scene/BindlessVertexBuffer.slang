@@ -49,7 +49,7 @@ StaticVertexData load_vertex(MeshDesc mesh_data, uint vertex_id, ByteAddressBuff
         // Generate a tangent perpendicular to the normal
         float3 normalized_normal = normalize(normal);
         float3 tangent_dir;
-        
+
         // Choose a reference vector that is not parallel to the normal
         if (abs(normalized_normal.z) < 0.999) {
             // Normal is not primarily along Z-axis, use Z as reference
@@ -59,7 +59,7 @@ StaticVertexData load_vertex(MeshDesc mesh_data, uint vertex_id, ByteAddressBuff
             // Normal is primarily along Z-axis, use Y as reference
             tangent_dir = cross(normalized_normal, float3(0, 1, 0));
         }
-        
+
         tangent = float4(normalize(tangent_dir), 1.0);
     }
 
@@ -94,7 +94,7 @@ VertexInfo get_interpolated_vertex(
 
     // Single barrier before accessing non-uniform buffer resource
     DeviceMemoryBarrier();
-    
+
     ByteAddressBuffer vertex_buffer =
         t_BindlessBuffers[NonUniformResourceIndex(mesh.bindlessIndex)];
 
@@ -168,7 +168,7 @@ VertexInfo get_interpolated_vertex_simple(
 
     // Single barrier before accessing non-uniform buffer resource
     DeviceMemoryBarrier();
-    
+
     ByteAddressBuffer vertex_buffer =
         t_BindlessBuffers[NonUniformResourceIndex(mesh.bindlessIndex)];
 

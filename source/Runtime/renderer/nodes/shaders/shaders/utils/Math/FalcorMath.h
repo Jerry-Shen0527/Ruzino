@@ -26,23 +26,28 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Vector.h"
-#include "Matrix.h"
-#include "Quaternion.h"
-#include "Core/Error.h"
 #include <algorithm>
 #include <cmath>
 
-namespace Ruzino
-{
+#include "Core/Error.h"
+#include "Matrix.h"
+#include "Quaternion.h"
+#include "Vector.h"
+
+namespace Ruzino {
 /**
  * Calculates a world-space ray direction from a screen-space mouse pos.
- * @param[in] mousePos Normalized coordinates in the range [0, 1] with (0, 0) being the top-left of the screen.
+ * @param[in] mousePos Normalized coordinates in the range [0, 1] with (0, 0)
+ * being the top-left of the screen.
  * @param[in] viewMat View matrix from the camera.
  * @param[in] projMat Projection matrix from the camera.
- * @return World space ray direction coming from the camera position in the direction of the mouse position
+ * @return World space ray direction coming from the camera position in the
+ * direction of the mouse position
  */
-inline float3 mousePosToWorldRay(const float2& mousePos, const float4x4& viewMat, const float4x4& projMat)
+inline float3 mousePosToWorldRay(
+    const float2& mousePos,
+    const float4x4& viewMat,
+    const float4x4& projMat)
 {
     // Convert from [0, 1] to [-1, 1] range
     const float x = mousePos.x * 2.0f - 1.0f;
@@ -89,27 +94,28 @@ inline float3x3 createMatrixFromBasis(const float3& forward, const float3& up)
  * @param[in] up Object's up vector.
  * @return 3x3 rotation matrix.
  */
-inline float3x3 createMatrixFromLookAt(const float3& position, const float3& target, const float3& up)
+inline float3x3 createMatrixFromLookAt(
+    const float3& position,
+    const float3& target,
+    const float3& up)
 {
     return createMatrixFromBasis(target - position, up);
 }
 
 /**
  * Projects a 2D coordinate onto a unit sphere
- * @param xy The 2D coordinate. if x and y are in the [0,1) range, then a z value can be calculate. Otherwise, xy is normalized and z is
- * zero.
+ * @param xy The 2D coordinate. if x and y are in the [0,1) range, then a z
+ * value can be calculate. Otherwise, xy is normalized and z is zero.
  */
 inline float3 project2DCrdToUnitSphere(float2 xy)
 {
     float xyLengthSquared = dot(xy, xy);
 
     float z = 0;
-    if (xyLengthSquared < 1)
-    {
+    if (xyLengthSquared < 1) {
         z = std::sqrt(1 - xyLengthSquared);
     }
-    else
-    {
+    else {
         xy = normalize(xy);
     }
     return float3(xy.x, xy.y, z);
@@ -141,10 +147,11 @@ inline float fovYToFocalLength(float fovY, float frameHeight)
  * @param[in] focalLength Focal length in mm.
  * @param[in] sceneUnit Scene unit in meters.
  */
-inline float apertureFNumberToRadius(float fNumber, float focalLength, float sceneUnit)
+inline float
+apertureFNumberToRadius(float fNumber, float focalLength, float sceneUnit)
 {
     FALCOR_ASSERT(fNumber > 0.0f && focalLength > 0.f && sceneUnit > 0.f);
-    float radius = 0.5f * focalLength / fNumber; // in mm
+    float radius = 0.5f * focalLength / fNumber;  // in mm
     return radius * 0.001f / sceneUnit;
 }
 
@@ -154,10 +161,13 @@ inline float apertureFNumberToRadius(float fNumber, float focalLength, float sce
  * @param[in] focalLength Focal length in mm.
  * @param[in] sceneUnit Scene unit in meters.
  */
-inline float apertureRadiusToFNumber(float apertureRadius, float focalLength, float sceneUnit)
+inline float apertureRadiusToFNumber(
+    float apertureRadius,
+    float focalLength,
+    float sceneUnit)
 {
     FALCOR_ASSERT(focalLength > 0.f && sceneUnit > 0.f);
-    float radius = apertureRadius * sceneUnit * 1000.f; // in mm
+    float radius = apertureRadius * sceneUnit * 1000.f;  // in mm
     return 0.5f * focalLength / radius;
 }
 
@@ -206,4 +216,4 @@ inline float smoothstep(const float start, const float end, const float t)
     return smoothstep(s);
 }
 
-} // namespace Ruzino
+}  // namespace Ruzino

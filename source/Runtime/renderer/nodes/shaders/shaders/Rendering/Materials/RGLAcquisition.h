@@ -26,53 +26,64 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #pragma once
-#include "Core/Macros.h"
-
-#include "Core/Pass/ComputePass.h"
-#include "Scene/Scene.h"
-#include "Scene/Material/RGLFile.h"
 #include <memory>
 
-namespace Ruzino
-{
-    /** This class allows taking a virtual measurement of a BRDF
-        and converting it into the parametrization proposed by
-        Dupuy & Jakob,  "An Adaptive Parameterization for Efficient
-        Material Acquisition and Rendering".
-    */
-    class HD_RUZINO_API RGLAcquisition
-    {
-    public:
-        /// Constructor.
-        RGLAcquisition(ref<Device> pDevice, const ref<Scene>& pScene);
+#include "Core/Macros.h"
+#include "Core/Pass/ComputePass.h"
+#include "Scene/Material/RGLFile.h"
+#include "Scene/Scene.h"
 
-        void acquireIsotropic(RenderContext* pRenderContext, const MaterialID materialID);
-        RGLFile toRGLFile();
+namespace Ruzino {
+/** This class allows taking a virtual measurement of a BRDF
+    and converting it into the parametrization proposed by
+    Dupuy & Jakob,  "An Adaptive Parameterization for Efficient
+    Material Acquisition and Rendering".
+*/
+class HD_RUZINO_API RGLAcquisition {
+   public:
+    /// Constructor.
+    RGLAcquisition(ref<Device> pDevice, const ref<Scene>& pScene);
 
-    private:
-        ref<Device> mpDevice;
-        ref<Scene> mpScene;
-        ref<ComputePass> mpRetroReflectionPass;
-        ref<ComputePass> mpBuildKernelPass;
-        ref<ComputePass> mpPowerIterationPass;
-        ref<ComputePass> mpIntegrateSigmaPass;
-        ref<ComputePass> mpSumSigmaPass;
-        ref<ComputePass> mpComputeThetaPass;
-        ref<ComputePass> mpComputeVNDFPass;
-        ref<ComputePass> mpAcquireBRDFPass;
+    void acquireIsotropic(
+        RenderContext* pRenderContext,
+        const MaterialID materialID);
+    RGLFile toRGLFile();
 
-        nvrhi::BufferHandle mpNDFDirectionsBuffer;      ///< Stores hemispherical directions of entries in the NDF table.
-        nvrhi::BufferHandle mpRetroBuffer;              ///< 2D table storing measured retroreflecton of BRDF.
-        nvrhi::BufferHandle mpNDFKernelBuffer;          ///< Stores kernel matrix of Fredholm problem for retrieving NDF.
-        nvrhi::BufferHandle mpNDFBuffer;                ///< 2D table storing the retrieved NDF.
-        nvrhi::BufferHandle mpNDFBufferTmp;
-        nvrhi::BufferHandle mpSigmaBuffer;              ///< 2D table of projected microfacet area, integrated numerically.
-        nvrhi::BufferHandle mpThetaBuffer;              ///< 1D tables storing angles at which measurements are taken.
-        nvrhi::BufferHandle mpPhiBuffer;
-        nvrhi::BufferHandle mpVNDFBuffer;               ///< 4D table (over wi x wo domains) containing the visible distribution of normals.
-        nvrhi::BufferHandle mpVNDFMargBuffer;           ///< Auxiliary buffers for sampling the VNDF.
-        nvrhi::BufferHandle mpVNDFCondBuffer;
-        nvrhi::BufferHandle mpLumiBuffer;               ///< 4D table of measured luminance and RGB reflectance of RGB.
-        nvrhi::BufferHandle mpRGBBuffer;
-    };
-}
+   private:
+    ref<Device> mpDevice;
+    ref<Scene> mpScene;
+    ref<ComputePass> mpRetroReflectionPass;
+    ref<ComputePass> mpBuildKernelPass;
+    ref<ComputePass> mpPowerIterationPass;
+    ref<ComputePass> mpIntegrateSigmaPass;
+    ref<ComputePass> mpSumSigmaPass;
+    ref<ComputePass> mpComputeThetaPass;
+    ref<ComputePass> mpComputeVNDFPass;
+    ref<ComputePass> mpAcquireBRDFPass;
+
+    nvrhi::BufferHandle
+        mpNDFDirectionsBuffer;  ///< Stores hemispherical directions of entries
+                                ///< in the NDF table.
+    nvrhi::BufferHandle
+        mpRetroBuffer;  ///< 2D table storing measured retroreflecton of BRDF.
+    nvrhi::BufferHandle
+        mpNDFKernelBuffer;  ///< Stores kernel matrix of Fredholm problem for
+                            ///< retrieving NDF.
+    nvrhi::BufferHandle mpNDFBuffer;  ///< 2D table storing the retrieved NDF.
+    nvrhi::BufferHandle mpNDFBufferTmp;
+    nvrhi::BufferHandle mpSigmaBuffer;  ///< 2D table of projected microfacet
+                                        ///< area, integrated numerically.
+    nvrhi::BufferHandle mpThetaBuffer;  ///< 1D tables storing angles at which
+                                        ///< measurements are taken.
+    nvrhi::BufferHandle mpPhiBuffer;
+    nvrhi::BufferHandle
+        mpVNDFBuffer;  ///< 4D table (over wi x wo domains) containing the
+                       ///< visible distribution of normals.
+    nvrhi::BufferHandle
+        mpVNDFMargBuffer;  ///< Auxiliary buffers for sampling the VNDF.
+    nvrhi::BufferHandle mpVNDFCondBuffer;
+    nvrhi::BufferHandle mpLumiBuffer;  ///< 4D table of measured luminance and
+                                       ///< RGB reflectance of RGB.
+    nvrhi::BufferHandle mpRGBBuffer;
+};
+}  // namespace Ruzino

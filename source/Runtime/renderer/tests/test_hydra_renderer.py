@@ -15,22 +15,22 @@ def _prepare_env():
     script_dir = Path(__file__).parent.resolve()
     workspace_root = script_dir.parent.parent.parent.parent
     binary_dir = workspace_root / "Binaries" / "Release"
-    
+
     os.environ.setdefault('PXR_USD_WINDOWS_DLL_PATH', str(binary_dir))
     mtlx_stdlib = binary_dir / "libraries"
     if mtlx_stdlib.exists():
         os.environ.setdefault('PXR_MTLX_STDLIB_SEARCH_PATHS', str(mtlx_stdlib))
-    
+
     os.environ['PATH'] = str(binary_dir) + os.pathsep + os.environ.get('PATH', '')
     if hasattr(os, 'add_dll_directory'):
         try:
             os.add_dll_directory(str(binary_dir))
         except Exception:
             pass
-    
+
     if str(binary_dir) not in sys.path:
         sys.path.insert(0, str(binary_dir))
-    
+
     return workspace_root, binary_dir
 
 
@@ -89,7 +89,7 @@ def _build_render_graph(hydra, binary_dir: Path, samples: int = 4):
 def test_hydra_renderer_basic():
     """Test basic render graph construction and rendering."""
     workspace_root, binary_dir = _prepare_env()
-    
+
     try:
         import hd_RUZINO_py as renderer  # type: ignore
     except ImportError as e:
@@ -115,7 +115,7 @@ def test_hydra_renderer_basic():
     img = np.array(texture_data, dtype=np.float32).reshape(height, width, 4)
     mean_val = float(img[:, :, :3].mean())
     assert mean_val >= 0.0, "Negative mean (invalid)"
-    
+
     if mean_val < 1e-6:
         pytest.xfail(f"Rendered image appears blank (mean={mean_val:.6f})")
 
@@ -132,7 +132,7 @@ def test_hydra_renderer_basic():
 def test_render_to_tensor():
     """Test rendering with higher sample count and optional tensor conversion."""
     workspace_root, binary_dir = _prepare_env()
-    
+
     try:
         import hd_RUZINO_py as renderer  # type: ignore
     except ImportError as e:
@@ -159,7 +159,7 @@ def test_render_to_tensor():
     rgb = img[:, :, :3]
     mean_val = float(rgb.mean())
     assert mean_val >= 0.0, "Negative mean (invalid)"
-    
+
     if mean_val < 1e-6:
         pytest.xfail(f"Rendered image appears blank (mean={mean_val:.6f})")
 

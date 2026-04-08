@@ -66,7 +66,7 @@ print(f"  Fresnel ≈ {F:.4f} (rough estimate)")
 
 print("\nCompute lobe weights (before normalization):")
 print("  diffuse_weight ∝ (1-F) * base_color_lum * (1-transmission)")
-print("  reflection_weight ∝ F * specular")  
+print("  reflection_weight ∝ F * specular")
 print("  transmission_weight ∝ (1-F) * transmission * transmission_color_lum")
 
 print("\nFor transmission=0.75, reflection should dominate over diffuse.")

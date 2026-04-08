@@ -37,20 +37,20 @@ class GUI_API TextEditorWidget : public IWidget {
     // Read-only mode
     void SetReadOnly(bool readonly);
     bool IsReadOnly() const;
-    
+
     // Update text without triggering callbacks
     void UpdateText(const std::string& text);
 
     // Text binding - bind to an external string for editing
     void BindText(std::string* text_ptr);
     void UnbindText();
-    
+
     // Get current text
     std::string GetText() const;
-    
+
     // Save callback - called when user wants to save changes
     void SetSaveCallback(std::function<void(const std::string&)> callback);
-    
+
     // Apply current changes to bound text (if any)
     void ApplyChanges();
 
@@ -60,13 +60,13 @@ class GUI_API TextEditorWidget : public IWidget {
    private:
     std::string title_;
     std::unique_ptr<TextEditor> editor_;
-    
+
     // Font size
     float font_size_ = 14.0f;
-    
+
     // Text binding
     std::string* bound_text_ = nullptr;
-    
+
     // Save callback
     std::function<void(const std::string&)> save_callback_;
 };

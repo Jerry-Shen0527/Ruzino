@@ -225,7 +225,7 @@ def main():
         base_path = Path.cwd()
     else:
         base_path = Path(args.base_path)
-    
+
     package_name = args.package_name
 
     # 确定是否创建 nodes, renderer_nodes 和 geometry_nodes

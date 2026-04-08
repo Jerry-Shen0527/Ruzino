@@ -27,5 +27,5 @@
  **************************************************************************/
 #pragma once
 
-#include "MatrixTypes.h"
 #include "MatrixMath.h"
+#include "MatrixTypes.h"

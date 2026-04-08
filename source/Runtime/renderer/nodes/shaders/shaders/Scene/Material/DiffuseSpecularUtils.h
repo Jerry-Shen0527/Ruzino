@@ -30,14 +30,14 @@
 #include <Utils/json.hpp>
 #include <filesystem>
 
-namespace Ruzino
-{
-    struct DiffuseSpecularData;
+namespace Ruzino {
+struct DiffuseSpecularData;
 
-    class DiffuseSpecularUtils
-    {
-    public:
-        static bool loadJSONData(const std::filesystem::path& path, DiffuseSpecularData& data);
-        static bool renderUI(Gui::Widgets& widget, DiffuseSpecularData& data);
-    };
-}
+class DiffuseSpecularUtils {
+   public:
+    static bool loadJSONData(
+        const std::filesystem::path& path,
+        DiffuseSpecularData& data);
+    static bool renderUI(Gui::Widgets& widget, DiffuseSpecularData& data);
+};
+}  // namespace Ruzino

@@ -6,7 +6,6 @@
 
 #include "polyscope_widget/polyscope_renderer.h"
 
-
 struct PolyscopeWidgetPayload {
     pxr::UsdStageRefPtr stage;
     pxr::SdfPath prim_path;

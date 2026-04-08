@@ -29,40 +29,45 @@
 #include <filesystem>
 #include <fstream>
 
-namespace Ruzino
-{
+namespace Ruzino {
 /**
  * Helper class to manage file I/O with binary files
  */
-class BinaryFileStream
-{
-public:
+class BinaryFileStream {
+   public:
     /**
      * Mode to open file as
      */
-    enum class Mode
-    {
-        Read = 0x1,     ///< Open file for reading
-        Write = 0x2,    ///< Open file for writing
-        ReadWrite = 0x3 ///< Open file for both reading and writing
+    enum class Mode {
+        Read = 0x1,      ///< Open file for reading
+        Write = 0x2,     ///< Open file for writing
+        ReadWrite = 0x3  ///< Open file for both reading and writing
     };
 
     /**
      * Default constructor.
      */
-    BinaryFileStream(){};
+    BinaryFileStream() { };
 
     /**
      * Constructor that opens a file
      * @param[in] path Path of file to open or create
      * @param[in] mode Mode to open file as
      */
-    BinaryFileStream(const std::filesystem::path& path, Mode mode = Mode::ReadWrite) { open(path, mode); }
+    BinaryFileStream(
+        const std::filesystem::path& path,
+        Mode mode = Mode::ReadWrite)
+    {
+        open(path, mode);
+    }
 
     /**
      * Destructor
      */
-    ~BinaryFileStream() { close(); }
+    ~BinaryFileStream()
+    {
+        close();
+    }
 
     /**
      * Opens a file stream. Fails if a file is already open.
@@ -72,8 +77,12 @@ public:
     void open(const std::filesystem::path& path, Mode mode = Mode::ReadWrite)
     {
         std::ios::openmode iosMode = std::ios::binary;
-        iosMode |= ((mode == Mode::Read) || (mode == Mode::ReadWrite)) ? std::ios::in : (std::ios::openmode)0;
-        iosMode |= ((mode == Mode::Write) || (mode == Mode::ReadWrite)) ? std::ios::out : (std::ios::openmode)0;
+        iosMode |= ((mode == Mode::Read) || (mode == Mode::ReadWrite))
+                       ? std::ios::in
+                       : (std::ios::openmode)0;
+        iosMode |= ((mode == Mode::Write) || (mode == Mode::ReadWrite))
+                       ? std::ios::out
+                       : (std::ios::openmode)0;
         mStream.open(path, iosMode);
         mPath = path;
     }
@@ -81,21 +90,26 @@ public:
     /**
      * Close the file stream.
      */
-    void close() { mStream.close(); }
+    void close()
+    {
+        mStream.close();
+    }
 
     /**
      * Skip data in an input stream. Advances file stream without reading.
      * @param[in] count Bytes to skip
      */
-    void skip(uint32_t count) { mStream.ignore(count); }
+    void skip(uint32_t count)
+    {
+        mStream.ignore(count);
+    }
 
     /**
      * Deletes the managed file.
      */
     void remove()
     {
-        if (mStream.is_open())
-        {
+        if (mStream.is_open()) {
             close();
         }
         std::filesystem::remove(mPath);
@@ -116,27 +130,41 @@ public:
 
     /**
      * Checks for validity of the stream
-     * @return Returns true if no errors have been encountered and the end of the stream has not been reached
+     * @return Returns true if no errors have been encountered and the end of
+     * the stream has not been reached
      */
-    bool isGood() { return mStream.good(); }
+    bool isGood()
+    {
+        return mStream.good();
+    }
 
     /**
      * Checks for stream errors.
-     * @return Returns true if an error has occurred while reading or writing data.
+     * @return Returns true if an error has occurred while reading or writing
+     * data.
      */
-    bool isBad() { return mStream.bad(); }
+    bool isBad()
+    {
+        return mStream.bad();
+    }
 
     /**
      * Checks for stream errors.
      * @return Returns true if any error has occurred while reading the file.
      */
-    bool isFail() { return mStream.fail(); }
+    bool isFail()
+    {
+        return mStream.fail();
+    }
 
     /**
      * Checks if the end of file has been reached.
      * @return Returns true if stream has reached the end of the file
      */
-    bool isEof() { return mStream.eof(); }
+    bool isEof()
+    {
+        return mStream.eof();
+    }
 
     /**
      * Reads data from the file stream
@@ -182,8 +210,8 @@ public:
         return write(&val, sizeof(T));
     }
 
-private:
+   private:
     std::fstream mStream;
     std::filesystem::path mPath;
 };
-} // namespace Ruzino
+}  // namespace Ruzino

@@ -31,129 +31,193 @@
 #include "Scene/SDFs/SDFGrid.h"
 #include "utils/Algorithm/PrefixSum.h"
 
-namespace Ruzino
-{
-    /** A single SDF Sparse Brick Set. Can only be utilized on the GPU.
-    */
-    class HD_RUZINO_API SDFSBS : public SDFGrid
+namespace Ruzino {
+/** A single SDF Sparse Brick Set. Can only be utilized on the GPU.
+ */
+class HD_RUZINO_API SDFSBS : public SDFGrid {
+   public:
+    struct SharedData;
+
+    static ref<SDFSBS> create(
+        ref<Device> pDevice,
+        uint32_t brickWidth = 7,
+        bool compressed = false,
+        uint32_t defaultGridWidth = 256)
     {
-    public:
-        struct SharedData;
+        return make_ref<SDFSBS>(
+            pDevice, brickWidth, compressed, defaultGridWidth);
+    }
 
-        static ref<SDFSBS> create(ref<Device> pDevice, uint32_t brickWidth = 7, bool compressed = false, uint32_t defaultGridWidth = 256) { return make_ref<SDFSBS>(pDevice, brickWidth, compressed, defaultGridWidth); }
+    /** Create an empty SDF sparse brick set.
+        \param[in] brickWidth The width of a brick in voxels.
+        \param[in] compressed Selects if bricks should be compressed using lossy
+       BC4 compression. brickWidth + 1 must be a multiple of 4 to enable
+       compression.
+        \param[in] defaultGridWidth The grid width used if the data was not
+       loaded from a file (it is empty).
+    */
+    SDFSBS(
+        ref<Device> pDevice,
+        uint32_t brickWidth,
+        bool compressed,
+        uint32_t defaultGridWidth);
 
-        /** Create an empty SDF sparse brick set.
-            \param[in] brickWidth The width of a brick in voxels.
-            \param[in] compressed Selects if bricks should be compressed using lossy BC4 compression. brickWidth + 1 must be a multiple of 4 to enable compression.
-            \param[in] defaultGridWidth The grid width used if the data was not loaded from a file (it is empty).
-        */
-        SDFSBS(ref<Device> pDevice, uint32_t brickWidth, bool compressed, uint32_t defaultGridWidth);
+    virtual UpdateFlags update(RenderContext* pRenderContext) override;
 
-        virtual UpdateFlags update(RenderContext* pRenderContext) override;
+    uint32_t getVirtualBrickCoordsBitCount() const
+    {
+        return mVirtualBrickCoordsBitCount;
+    }
+    uint32_t getBrickLocalVoxelCoordsBrickCount() const
+    {
+        return mBrickLocalVoxelCoordsBitCount;
+    }
+    bool isCompressed() const
+    {
+        return mCompressed;
+    }
 
-        uint32_t getVirtualBrickCoordsBitCount() const { return mVirtualBrickCoordsBitCount; }
-        uint32_t getBrickLocalVoxelCoordsBrickCount() const { return mBrickLocalVoxelCoordsBitCount; }
-        bool isCompressed() const { return mCompressed; }
+    virtual size_t getSize() const override;
+    virtual uint32_t getMaxPrimitiveIDBits() const override;
+    virtual Type getType() const override
+    {
+        return Type::SparseBrickSet;
+    }
 
-        virtual size_t getSize() const override;
-        virtual uint32_t getMaxPrimitiveIDBits() const override;
-        virtual Type getType() const override { return Type::SparseBrickSet; }
+    virtual void createResources(
+        RenderContext* pRenderContext,
+        bool deleteScratchData = true) override;
 
-        virtual void createResources(RenderContext* pRenderContext, bool deleteScratchData = true) override;
+    virtual const nvrhi::BufferHandle& getAABBBuffer() const override
+    {
+        return mpBrickAABBsBuffer;
+    }
+    virtual uint32_t getAABBCount() const override
+    {
+        return mBrickCount;
+    }
 
-        virtual const nvrhi::BufferHandle& getAABBBuffer() const override { return mpBrickAABBsBuffer; }
-        virtual uint32_t getAABBCount() const override { return mBrickCount; }
+    virtual void bindShaderData(const ShaderVar& var) const override;
 
-        virtual void bindShaderData(const ShaderVar& var) const override;
-
-        virtual float getResolutionScalingFactor() const override { return mResolutionScalingFactor; };
-        virtual void resetResolutionScalingFactor() override { mResolutionScalingFactor = 1.0f; };
-
-    protected:
-        void createResourcesFromSDField(RenderContext* pRenderContext, bool deleteScratchData);
-        SDFGrid::UpdateFlags createResourcesFromPrimitivesAndSDField(RenderContext* pRenderContext, bool deleteScratchData);
-
-        void expandSDFGridTexture(RenderContext* pRenderContext, bool deleteScratchData, uint32_t oldGridWidthInSDField, uint32_t gridWidthInSDField);
-        void createIntervalSDFieldTextures(RenderContext* pRenderContext, bool deleteScratchData, uint32_t chunkWidth, uint32_t subdivisionCount);
-
-        void allocatePrimitiveBits();
-
-        virtual void setValuesInternal(const std::vector<float>& cornerValues) override;
-
-        void createSDFGridTexture(RenderContext* pRenderContext, const std::vector<int8_t>& sdField);
-
-        uint32_t fetchCount(RenderContext* pRenderContext, const nvrhi::BufferHandle& pBuffer);
-
-        void compactifyChunks(RenderContext* pRenderContext, uint32_t chunkCount);
-
-    private:
-        // CPU data.
-        std::vector<int8_t> mSDField;
-
-        // Specs.
-        uint32_t mDefaultGridWidth = 0;                 ///< The grid width used if the grid was not loaded from a file (it is empty).
-        uint32_t mVirtualBricksPerAxis = 0;
-        uint32_t mVoxelCount = 0;
-        uint32_t mBrickCount = 0;
-        uint2 mBricksPerAxis = uint2(0);
-        uint2 mBrickTextureDimensions = uint2(0);
-        uint32_t mVirtualBrickCoordsBitCount = 0;
-        uint32_t mBrickLocalVoxelCoordsBitCount = 0;
-        uint32_t mBrickWidth = 0;
-        bool mCompressed = false;
-        bool mSDFieldUpdated = false;
-        float mResolutionScalingFactor = 1.0f;
-        uint32_t mCurrentBakedPrimitiveCount = 0;
-        bool mWasEmpty = false;
-        bool mBuildEmptyGrid = false;
-
-        // GPU data.
-        nvrhi::BufferHandle mpBrickAABBsBuffer;                 ///< A compact buffer containing AABBs for each brick.
-        nvrhi::TextureHandle mpIndirectionTexture;              ///< An indirection texture to map from virtual brick coords to actual brick ID.
-        nvrhi::TextureHandle mpBrickTexture;                    ///< A texture of SDF bricks with data at corners.
-        std::shared_ptr<SharedData> mpSharedData;       ///< Shared data among all instances.
-
-        // Compute passes used to build the SBS from signed distance field.
-        ref<ComputePass> mpAssignBrickValidityPass;
-        ref<ComputePass> mpResetBrickValidityPass;
-        ref<ComputePass> mpCopyIndirectionBufferPass;
-        ref<ComputePass> mpCreateBricksFromSDFieldPass;
-
-        // Compute passes used to build the SBS from primitives.
-        ref<ComputePass> mpCreateRootChunksFromPrimitives;
-        ref<ComputePass> mpSubdivideChunksUsingPrimitives;
-        ref<ComputePass> mpCompactifyChunks;
-        ref<ComputePass> mpCoarselyPruneEmptyBricks;
-        ref<ComputePass> mpFinelyPruneEmptyBricks;
-        ref<ComputePass> mpCreateBricksFromChunks;
-
-        // Compute passes used to build the SBS from signed distance field and primitives.
-        ref<ComputePass> mpComputeRootIntervalSDFieldFromGridPass;
-        ref<ComputePass> mpComputeIntervalSDFieldFromGridPass;
-        ref<ComputePass> mpExpandSDFieldPass;
-
-        // Compute passes used to build the SBS from both the SD Field and primitives.
-        std::unique_ptr<PrefixSum> mpPrefixSumPass;
-
-        // Scratch data used for building from signed distance field.
-        nvrhi::TextureHandle mpBrickScratchTexture;
-        nvrhi::BufferHandle mpIndirectionBuffer;
-        nvrhi::BufferHandle mpValidityBuffer;
-
-        nvrhi::BufferHandle mpCountBuffer;
-
-        // Scratch data used for building from primitives.
-        nvrhi::BufferHandle mpChunkIndirectionBuffer;
-        nvrhi::BufferHandle mpChunkCoordsBuffer;
-        nvrhi::BufferHandle mpSubChunkValidityBuffer;
-        nvrhi::BufferHandle mpSubChunkCoordsBuffer;
-        nvrhi::BufferHandle mpSubdivisionArgBuffer;
-        nvrhi::EventQueryHandle mpReadbackFence;
-
-        // Scratch data used for building from the SD Field and primitives.
-        nvrhi::TextureHandle mpOldSDFGridTexture;
-        nvrhi::TextureHandle mpSDFGridTextureModified;
-        std::vector<nvrhi::TextureHandle> mIntervalSDFieldMaps;
-        nvrhi::BufferHandle mpCountStagingBuffer;
+    virtual float getResolutionScalingFactor() const override
+    {
+        return mResolutionScalingFactor;
     };
-}
+    virtual void resetResolutionScalingFactor() override
+    {
+        mResolutionScalingFactor = 1.0f;
+    };
+
+   protected:
+    void createResourcesFromSDField(
+        RenderContext* pRenderContext,
+        bool deleteScratchData);
+    SDFGrid::UpdateFlags createResourcesFromPrimitivesAndSDField(
+        RenderContext* pRenderContext,
+        bool deleteScratchData);
+
+    void expandSDFGridTexture(
+        RenderContext* pRenderContext,
+        bool deleteScratchData,
+        uint32_t oldGridWidthInSDField,
+        uint32_t gridWidthInSDField);
+    void createIntervalSDFieldTextures(
+        RenderContext* pRenderContext,
+        bool deleteScratchData,
+        uint32_t chunkWidth,
+        uint32_t subdivisionCount);
+
+    void allocatePrimitiveBits();
+
+    virtual void setValuesInternal(
+        const std::vector<float>& cornerValues) override;
+
+    void createSDFGridTexture(
+        RenderContext* pRenderContext,
+        const std::vector<int8_t>& sdField);
+
+    uint32_t fetchCount(
+        RenderContext* pRenderContext,
+        const nvrhi::BufferHandle& pBuffer);
+
+    void compactifyChunks(RenderContext* pRenderContext, uint32_t chunkCount);
+
+   private:
+    // CPU data.
+    std::vector<int8_t> mSDField;
+
+    // Specs.
+    uint32_t mDefaultGridWidth = 0;  ///< The grid width used if the grid was
+                                     ///< not loaded from a file (it is empty).
+    uint32_t mVirtualBricksPerAxis = 0;
+    uint32_t mVoxelCount = 0;
+    uint32_t mBrickCount = 0;
+    uint2 mBricksPerAxis = uint2(0);
+    uint2 mBrickTextureDimensions = uint2(0);
+    uint32_t mVirtualBrickCoordsBitCount = 0;
+    uint32_t mBrickLocalVoxelCoordsBitCount = 0;
+    uint32_t mBrickWidth = 0;
+    bool mCompressed = false;
+    bool mSDFieldUpdated = false;
+    float mResolutionScalingFactor = 1.0f;
+    uint32_t mCurrentBakedPrimitiveCount = 0;
+    bool mWasEmpty = false;
+    bool mBuildEmptyGrid = false;
+
+    // GPU data.
+    nvrhi::BufferHandle mpBrickAABBsBuffer;  ///< A compact buffer containing
+                                             ///< AABBs for each brick.
+    nvrhi::TextureHandle
+        mpIndirectionTexture;  ///< An indirection texture to map from virtual
+                               ///< brick coords to actual brick ID.
+    nvrhi::TextureHandle
+        mpBrickTexture;  ///< A texture of SDF bricks with data at corners.
+    std::shared_ptr<SharedData>
+        mpSharedData;  ///< Shared data among all instances.
+
+    // Compute passes used to build the SBS from signed distance field.
+    ref<ComputePass> mpAssignBrickValidityPass;
+    ref<ComputePass> mpResetBrickValidityPass;
+    ref<ComputePass> mpCopyIndirectionBufferPass;
+    ref<ComputePass> mpCreateBricksFromSDFieldPass;
+
+    // Compute passes used to build the SBS from primitives.
+    ref<ComputePass> mpCreateRootChunksFromPrimitives;
+    ref<ComputePass> mpSubdivideChunksUsingPrimitives;
+    ref<ComputePass> mpCompactifyChunks;
+    ref<ComputePass> mpCoarselyPruneEmptyBricks;
+    ref<ComputePass> mpFinelyPruneEmptyBricks;
+    ref<ComputePass> mpCreateBricksFromChunks;
+
+    // Compute passes used to build the SBS from signed distance field and
+    // primitives.
+    ref<ComputePass> mpComputeRootIntervalSDFieldFromGridPass;
+    ref<ComputePass> mpComputeIntervalSDFieldFromGridPass;
+    ref<ComputePass> mpExpandSDFieldPass;
+
+    // Compute passes used to build the SBS from both the SD Field and
+    // primitives.
+    std::unique_ptr<PrefixSum> mpPrefixSumPass;
+
+    // Scratch data used for building from signed distance field.
+    nvrhi::TextureHandle mpBrickScratchTexture;
+    nvrhi::BufferHandle mpIndirectionBuffer;
+    nvrhi::BufferHandle mpValidityBuffer;
+
+    nvrhi::BufferHandle mpCountBuffer;
+
+    // Scratch data used for building from primitives.
+    nvrhi::BufferHandle mpChunkIndirectionBuffer;
+    nvrhi::BufferHandle mpChunkCoordsBuffer;
+    nvrhi::BufferHandle mpSubChunkValidityBuffer;
+    nvrhi::BufferHandle mpSubChunkCoordsBuffer;
+    nvrhi::BufferHandle mpSubdivisionArgBuffer;
+    nvrhi::EventQueryHandle mpReadbackFence;
+
+    // Scratch data used for building from the SD Field and primitives.
+    nvrhi::TextureHandle mpOldSDFGridTexture;
+    nvrhi::TextureHandle mpSDFGridTextureModified;
+    std::vector<nvrhi::TextureHandle> mIntervalSDFieldMaps;
+    nvrhi::BufferHandle mpCountStagingBuffer;
+};
+}  // namespace Ruzino

@@ -24,6 +24,7 @@
 #ifndef PXR_IMAGING_PLUGIN_HD_EMBREE_CONTEXT_H
 #define PXR_IMAGING_PLUGIN_HD_EMBREE_CONTEXT_H
 #include <embree4/rtcore.h>
+
 #include <unordered_map>
 
 #include "api.h"
@@ -46,9 +47,9 @@ using namespace pxr;
 ///
 struct Hd_RUZINO_PrototypeContext {
     /// A pointer back to the owning Hd_RUZINO_ rprim.
-    HdRprim *rprim;
+    HdRprim* rprim;
     /// A name-indexed map of primvar samplers.
-    std::unordered_map<std::string, Hd_RUZINO_PrimvarSampler *> primvarMap;
+    std::unordered_map<std::string, Hd_RUZINO_PrimvarSampler*> primvarMap;
     /// A copy of the primitive params for this rprim.
     VtIntArray primitiveParams;
 };
