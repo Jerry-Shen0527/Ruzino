@@ -3,6 +3,11 @@
 #endif
 #include "widgets/usdview/usdview_widget.hpp"
 
+#ifndef _WIN32
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#endif
+
 #include <pxr/imaging/hd/driver.h>
 #include <spdlog/spdlog.h>
 
@@ -832,6 +837,47 @@ void UsdviewEngine::CreateGLContext()
 
     HGLRC hglrc = wglCreateContext(hdc);
     wglMakeCurrent(hdc, hglrc);
+#else
+    EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    eglInitialize(display, nullptr, nullptr);
+    EGLint configAttrs[] = { EGL_SURFACE_TYPE,
+                             EGL_PBUFFER_BIT,
+                             EGL_RENDERABLE_TYPE,
+                             EGL_OPENGL_BIT,
+
+                             EGL_RED_SIZE,
+                             8,
+                             EGL_BLUE_SIZE,
+                             8,
+                             EGL_GREEN_SIZE,
+                             8,
+                             EGL_ALPHA_SIZE,
+                             8,
+
+                             EGL_DEPTH_SIZE,
+                             24,
+                             EGL_STENCIL_SIZE,
+                             8,
+                             EGL_NONE };
+    EGLConfig config;
+    EGLint numConfigs;
+    eglChooseConfig(display, configAttrs, &config, 1, &numConfigs);
+    eglBindAPI(EGL_OPENGL_API);
+    EGLint ctxAttribs[] = { EGL_CONTEXT_MAJOR_VERSION,
+                            4,
+                            EGL_CONTEXT_MINOR_VERSION,
+                            5,
+                            EGL_CONTEXT_OPENGL_PROFILE_MASK,
+                            EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT,
+                            EGL_CONTEXT_FLAGS_KHR,
+                            EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR,
+                            EGL_NONE };
+    EGLContext context =
+        eglCreateContext(display, config, EGL_NO_CONTEXT, ctxAttribs);
+    EGLint surfaceAttribs[] = { EGL_WIDTH, 800, EGL_HEIGHT, 600, EGL_NONE };
+    EGLSurface surface =
+        eglCreatePbufferSurface(display, config, surfaceAttribs);
+    eglMakeCurrent(display, surface, surface, context);
 #endif
 }
 
