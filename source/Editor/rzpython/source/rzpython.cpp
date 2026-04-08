@@ -1,8 +1,12 @@
 #include <GUI/window.h>
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
+#include <object.h>
+#include <pytypedefs.h>
 #include <spdlog/spdlog.h>
+#include <unicodeobject.h>
 
+#include <filesystem>
 #include <rzpython/rzpython.hpp>
 #include <stdexcept>
 #include <unordered_map>
@@ -21,6 +25,23 @@ std::unordered_map<std::string, nb::object> bound_objects;
 
 void initialize()
 {
+    std::filesystem::path executable_path;
+#ifdef _WIN32
+    char p[MAX_PATH];
+    GetModuleFileNameA(NULL, p, MAX_PATH);
+    executable_path = std::filesystem::path(p).parent_path();
+#else
+    char p[PATH_MAX];
+    ssize_t count = readlink("/proc/self/exe", p, PATH_MAX);
+    if (count != -1) {
+        p[count] = '\0';
+        executable_path = std::filesystem::path(p).parent_path();
+    }
+    else {
+        throw std::runtime_error("Failed to get executable path.");
+    }
+#endif
+
     if (initialized) {
         return;
     }
@@ -43,28 +64,15 @@ void initialize()
 
     // Setup USD DLL path for Windows to resolve Boost.Python import issues
     try {
-        PyRun_SimpleString(
-            "import os\n"
-            "import sys\n"
-            "# Setup PXR_USD_WINDOWS_DLL_PATH for USD imports\n"
-            "current_dir = os.getcwd()\n"
-            "pxr_dll_path = os.environ.get('PXR_USD_WINDOWS_DLL_PATH', '')\n"
-            "if current_dir not in pxr_dll_path:\n"
-            "    if pxr_dll_path:\n"
-            "        os.environ['PXR_USD_WINDOWS_DLL_PATH'] = current_dir + "
-            "os.pathsep + pxr_dll_path\n"
-            "    else:\n"
-            "        os.environ['PXR_USD_WINDOWS_DLL_PATH'] = current_dir\n"
-            "# Also add to system PATH as backup\n"
-            "system_path = os.environ.get('PATH', '')\n"
-            "if current_dir not in system_path:\n"
-            "    os.environ['PATH'] = current_dir + os.pathsep + system_path\n"
-            "# Add ./python to sys.path for module imports\n"
-            "python_path = os.path.join(current_dir, 'python')\n"
-            "if python_path not in sys.path:\n"
-            "    sys.path.append(python_path)\n"
-            "print(f'USD DLL Path setup: "
-            "{os.environ.get(\"PXR_USD_WINDOWS_DLL_PATH\", \"Not set\")}')\n");
+        PyObject* os = PyImport_ImportModule("os");
+        PyObject* sys = PyImport_ImportModule("sys");
+        PyObject* sys_path = PyObject_GetAttrString(sys, "path");
+        PyObject* curDir = PyUnicode_FromString(executable_path.c_str());
+        PyList_Append(sys_path, curDir);
+        Py_DECREF(os);
+        Py_DECREF(sys);
+        Py_DECREF(sys_path);
+        Py_DECREF(curDir);
     }
     catch (...) {
         // Ignore USD setup errors - USD might not be available
