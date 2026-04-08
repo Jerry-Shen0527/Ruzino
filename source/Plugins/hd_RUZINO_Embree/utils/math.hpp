@@ -1,5 +1,5 @@
 #pragma once
-#include "api.h"
+#include "../api.h"
 #include "pxr/base/gf/matrix3f.h"
 #include "pxr/base/gf/vec3f.h"
 

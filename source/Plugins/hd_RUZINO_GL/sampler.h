@@ -26,6 +26,7 @@
 
 #include <cstddef>
 
+#include "api.h"
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/matrix4f.h"
 #include "pxr/base/gf/vec2d.h"
