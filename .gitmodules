@@ -24,10 +24,10 @@
 	url = https://gitlab.com/libeigen/eigen.git
 [submodule "source/Core/rznode"]
 	path = source/Core/rznode
-	url = https://github.com/2403772980ygy/rznode.git
+	url = https://github.com/Jerry-Shen0527/rznode.git
 [submodule "source/Editor/geometry"]
 	path = source/Editor/geometry
-	url = https://github.com/2403772980ygy/GCore.git
+	url = https://github.com/USTC-CG-NEXT/GCore.git
 [submodule "external/spectra"]
 	path = external/spectra
 	url = https://github.com/yixuan/spectra.git
