@@ -20,6 +20,20 @@ if(SLANG_FOUND)
 
     target_compile_definitions(RHI PRIVATE RELATIVE_TO_PROJROOT="${RELATIVE_TO_PROJROOT}")
 
+    get_target_property(_slang_includes SLANG::slang INTERFACE_INCLUDE_DIRECTORIES)
+    add_custom_command(TARGET RHI POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "${OUT_BINARY_DIR}/rti/"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${_slang_includes} "${OUT_BINARY_DIR}/rti/slang"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${RUZINO_ROOT_DIR}/source/Runtime/renderer/resources/nvapi"
+            "${OUT_BINARY_DIR}/rti/nvapi"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${RUZINO_ROOT_DIR}/source/Core/RHI/include/RHI/internal/optix"
+            "${OUT_BINARY_DIR}/rti/optix"
+    )
+
     if(WIN32)
         target_compile_definitions(RHI PUBLIC RUZINO_WITH_DX12=1)
         target_compile_definitions(RHI PUBLIC RUZINO_WITH_VULKAN=0)

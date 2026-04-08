@@ -8,6 +8,9 @@
 #include <codecvt>
 #endif
 
+#include <limits.h>
+#include <unistd.h>
+
 #include <filesystem>
 #include <fstream>
 
@@ -16,26 +19,25 @@
 RUZINO_NAMESPACE_OPEN_SCOPE
 
 std::filesystem::path SlangShaderCompiler::find_root(
-    const std::filesystem::path& p)
+    const std::filesystem::path& ul)
 {
-    auto mark_prelude_name =
-        RELATIVE_TO_PROJROOT "/SDK/slang/include/slang-cuda-prelude.h";
-    if (std::string(RELATIVE_TO_PROJROOT).empty())
-        mark_prelude_name = "SDK/slang/include/slang-cuda-prelude.h";
-    auto current = absolute(p);
-
-    while (!exists(current / mark_prelude_name)) {
-        if (current.has_parent_path()) {
-            current = current.parent_path();
-        }
-        else {
-            throw std::runtime_error("CUDA Prelude not found.");
-            return "";
-        }
+    std::filesystem::path executable_path;
+#ifdef _WIN32
+    char p[MAX_PATH];
+    GetModuleFileNameA(NULL, p, MAX_PATH);
+    executable_path = std::filesystem::path(p).parent_path();
+#else
+    char p[PATH_MAX];
+    ssize_t count = readlink("/proc/self/exe", p, PATH_MAX);
+    if (count != -1) {
+        p[count] = '\0';
+        executable_path = std::filesystem::path(p).parent_path();
     }
-    // std::cerr << current.generic_string() << std::endl;
-
-    return current;
+    else {
+        throw std::runtime_error("Failed to get executable path.");
+    }
+#endif
+    return executable_path / "rti";
 }
 
 SlangResult SlangShaderCompiler::addHLSLPrelude(slang::IGlobalSession* session)
@@ -44,11 +46,8 @@ SlangResult SlangShaderCompiler::addHLSLPrelude(slang::IGlobalSession* session)
 
     auto root = find_root(includePath);
 
-    auto prelude_name =
-        "/" RELATIVE_TO_PROJROOT "/SDK/slang/include/slang-hlsl-prelude.h";
+    auto prelude_name = "/slang/slang-hlsl-prelude.h";
 
-    if (std::string(RELATIVE_TO_PROJROOT).empty())
-        prelude_name = "/SDK/slang/include/slang-hlsl-prelude.h";
     std::ostringstream prelude;
     prelude << "#include \"" << root.generic_string() + prelude_name
             << "\"\n\n";
@@ -65,32 +64,27 @@ SlangResult SlangShaderCompiler::addCPPPrelude(slang::IGlobalSession* session)
 
     auto root = find_root(includePath);
 
-    auto prelude_name = "/SDK/slang/include/slang-cpp-prelude.h";
+    auto prelude_name = "/slang/slang-cpp-prelude.h";
+
     std::ostringstream prelude;
     prelude << "#include \"" << root.generic_string() + prelude_name
             << "\"\n\n";
 
     // std::cerr << prelude.str() << std::endl;
     session->setLanguagePrelude(
-        SLANG_SOURCE_LANGUAGE_CPP, prelude.str().c_str());
+        SLANG_SOURCE_LANGUAGE_HLSL, prelude.str().c_str());
     return SLANG_OK;
 }
 
 SlangResult SlangShaderCompiler::addCPPHeaderInclude(
     SlangCompileRequest* slangRequest)
 {
-    auto unordered_dense = find_root(".") / "SDK\\unordered_dense\\include";
-    auto unordered_dense_command = "-I" + unordered_dense.generic_string();
-
-    auto prelude_path = find_root(".") / "SDK\\slang\\include";
+    auto prelude_path = find_root(".") / "slang";
 
     auto prelude_command = "-I" + prelude_path.generic_string();
 
     // Inclusion in prelude should be passed to down stream compilers.....
-    const char* args[] = { "-Xgenericcpp...",
-                           unordered_dense_command.c_str(),
-                           prelude_command.c_str(),
-                           "-X." };
+    const char* args[] = { "-Xgenericcpp...", prelude_command.c_str(), "-X." };
     return slangRequest->processCommandLineArguments(
         args, sizeof(args) / sizeof(const char*));
 }
@@ -98,8 +92,7 @@ SlangResult SlangShaderCompiler::addCPPHeaderInclude(
 SlangResult SlangShaderCompiler::addHLSLHeaderInclude(
     SlangCompileRequest* slangRequest)
 {
-    auto hlsl_path =
-        find_root(".") / "source/Runtime/renderer/resources/nvapi/";
+    auto hlsl_path = find_root(".") / "nvapi";
 
     auto hlsl_path_name = "-I" + hlsl_path.generic_string();
 
@@ -127,21 +120,22 @@ SlangResult SlangShaderCompiler::addCUDAPrelude(slang::IGlobalSession* session)
 
     auto root = find_root(includePath);
 
-    auto prelude_name = "/SDK/slang/include/slang-cuda-prelude.h";
+    auto prelude_name = "/slang/slang-cuda-prelude.h";
+
     std::ostringstream prelude;
     prelude << "#include \"" << root.generic_string() + prelude_name
             << "\"\n\n";
 
     // std::cerr << prelude.str() << std::endl;
     session->setLanguagePrelude(
-        SLANG_SOURCE_LANGUAGE_CUDA, prelude.str().c_str());
+        SLANG_SOURCE_LANGUAGE_HLSL, prelude.str().c_str());
     return SLANG_OK;
 }
 
 SlangResult SlangShaderCompiler::addOptiXHeaderInclude(
     SlangCompileRequest* slangRequest)
 {
-    auto optix_path = find_root(".") / "usd/hd_RUZINO_GL/resources/optix/";
+    auto optix_path = find_root(".") / "optix";
     auto optix_path_name = "-I" + optix_path.generic_string();
 
     // Inclusion in prelude should be passed to down stream compilers.....
