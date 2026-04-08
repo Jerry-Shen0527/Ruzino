@@ -750,4 +750,8 @@ void Stage::on_prim_changed(const pxr::SdfPath& path)
     }
 }
 
+template pxr::UsdLuxSphereLight Stage::create_prim<pxr::UsdLuxSphereLight>(
+    const pxr::SdfPath& path,
+    const std::string& baseName) const;
+
 RUZINO_NAMESPACE_CLOSE_SCOPE
