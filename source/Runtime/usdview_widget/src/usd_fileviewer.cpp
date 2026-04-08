@@ -1,6 +1,8 @@
 #include <pxr/usd/usdGeom/pointInstancer.h>
 #include <pxr/usd/usdGeom/points.h>
 
+#include <cinttypes>
+
 #include "../../../Core/RHI/source/shaderCompiler.h"
 #define IMGUI_DEFINE_MATH_OPERATORS
 
@@ -1088,9 +1090,9 @@ void UsdFileViewer::EditValue()
                                 PREVIEW_SCALAR_ARRAY(
                                     VtArray<unsigned int>, "[%zu]: %u")
                                 PREVIEW_SCALAR_ARRAY(
-                                    VtArray<int64_t>, "[%zu]: %lld")
+                                    VtArray<int64_t>, "[%zu]: %" PRId64)
                                 PREVIEW_SCALAR_ARRAY(
-                                    VtArray<uint64_t>, "[%zu]: %llu")
+                                    VtArray<uint64_t>, "[%zu]: %" PRIu64)
                                 PREVIEW_VEC2_ARRAY(VtArray<GfVec2f>)
                                 PREVIEW_VEC2_ARRAY(VtArray<GfVec2d>)
                                 PREVIEW_VEC2_ARRAY(VtArray<GfVec2i>)

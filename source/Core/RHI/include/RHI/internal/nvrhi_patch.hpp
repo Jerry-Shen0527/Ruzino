@@ -16,7 +16,7 @@ struct RHI_API CPUBuffer {
 
     ~CPUBuffer()
     {
-        delete[] data;
+        delete[] static_cast<unsigned char*>(data);
     }
 };
 

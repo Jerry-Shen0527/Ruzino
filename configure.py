@@ -313,11 +313,9 @@ def fix_slang_symlinks(dry_run=False):
     stored as text files containing the target filename instead of proper
     symlinks. This function detects and fixes them.
 
-    Affected files:
-    - libslang.so → should link to libslang-compiler.so.0.2025.22.1
-    - libslang-compiler.so → should link to libslang-compiler.so.0.2025.22.1
-    - libslang-rt.so → should link to libslang-rt.so.0.2025.22.1
-    - libgfx.so → should link to libgfx.so.0.2025.22.1
+    Only processes files smaller than 256 bytes (symlink stubs are tiny,
+    real library binaries are MB). Also validates that symlink targets
+    are real files, not other symlinks or missing files.
     """
     slang_lib_dir = os.path.join(os.path.dirname(__file__), "SDK", "slang", "lib")
 
@@ -334,7 +332,10 @@ def fix_slang_symlinks(dry_run=False):
             continue
 
         # Check if it's a small file that might be a broken symlink stub
+        # Real library binaries are large (MB), symlink stubs are tiny (< 256 bytes)
         if not os.path.isfile(filepath):
+            continue
+        if os.path.getsize(filepath) > 256:
             continue
 
         # Read the file content
@@ -345,7 +346,8 @@ def fix_slang_symlinks(dry_run=False):
             # Check if content looks like a library filename
             if content.endswith('.so') or '.so.' in content:
                 target_path = os.path.join(slang_lib_dir, content)
-                if os.path.exists(target_path):
+                # Only create symlink if target is a real file (not a symlink or directory)
+                if os.path.isfile(target_path) and not os.path.islink(target_path):
                     if dry_run:
                         print(f"  [DRY RUN] Would fix symlink: {filename} -> {content}")
                     else:
@@ -353,12 +355,101 @@ def fix_slang_symlinks(dry_run=False):
                         os.symlink(content, filepath)
                         print(f"  ✓ Fixed symlink: {filename} -> {content}")
                         fixed_count += 1
+                else:
+                    print(f"  ⚠ Skipping {filename}: target '{content}' is not a real file")
         except Exception as e:
             # Not a text file or other error, skip
             pass
 
     if fixed_count > 0:
         print(f"  Fixed {fixed_count} broken symlinks in SDK/slang/lib/")
+
+
+def validate_slang_sdk():
+    """
+    Validate that the Slang SDK is complete and usable.
+    Returns True if valid, False otherwise.
+    """
+    slang_lib_dir = os.path.join(os.path.dirname(__file__), "SDK", "slang", "lib")
+    slang_include_dir = os.path.join(os.path.dirname(__file__), "SDK", "slang", "include")
+
+    # Check required files exist and resolve to real content
+    required_libs = ["libslang.so", "libslang-rt.so"]
+    if is_linux():
+        required_libs.append("libgfx.so")
+
+    valid = True
+    for lib in required_libs:
+        lib_path = os.path.join(slang_lib_dir, lib)
+        if not os.path.exists(lib_path):
+            print(f"  ✗ Missing: {lib}")
+            valid = False
+        else:
+            # Resolve the real file (follow symlinks)
+            real_path = os.path.realpath(lib_path)
+            if not os.path.isfile(real_path):
+                print(f"  ✗ Broken symlink: {lib} -> {real_path}")
+                valid = False
+            elif os.path.getsize(real_path) < 1024:
+                print(f"  ✗ Suspiciously small: {lib} ({os.path.getsize(real_path)} bytes)")
+                valid = False
+            else:
+                size_mb = os.path.getsize(real_path) / (1024 * 1024)
+                print(f"  ✓ {lib} -> {os.path.basename(real_path)} ({size_mb:.1f} MB)")
+
+    # Check include directory
+    slang_h = os.path.join(slang_include_dir, "slang.h")
+    if not os.path.exists(slang_h):
+        print(f"  ✗ Missing: slang.h in include directory")
+        valid = False
+
+    return valid
+
+
+def setup_slang_libs_for_binaries(targets, dry_run=False):
+    """
+    Copy Slang libraries to Binaries/{target}/ for each build target.
+    On Linux, resolves symlinks and copies the actual library files
+    to ensure Binaries has self-contained real files (no broken symlinks).
+    """
+    slang_lib_dir = os.path.join(os.path.dirname(__file__), "SDK", "slang", "lib")
+
+    if not os.path.exists(slang_lib_dir):
+        print(f"  ⚠ Slang lib directory not found: {slang_lib_dir}")
+        return
+
+    for target in targets:
+        target_dir = os.path.join(os.getcwd(), "Binaries", target)
+        if dry_run:
+            print(f"  [DRY RUN] Would copy Slang libraries to Binaries/{target}/")
+            continue
+
+        os.makedirs(target_dir, exist_ok=True)
+
+        for filename in os.listdir(slang_lib_dir):
+            # Skip subdirectories (cmake/, slang-standard-module/)
+            src = os.path.join(slang_lib_dir, filename)
+            if not os.path.isfile(src) and not os.path.islink(src):
+                continue
+
+            dst = os.path.join(target_dir, filename)
+
+            # Remove existing file/symlink first so we always get a real file
+            if os.path.exists(dst) or os.path.islink(dst):
+                os.remove(dst)
+
+            if os.path.islink(src):
+                # Resolve symlink and copy the real file content
+                real_src = os.path.realpath(src)
+                if os.path.isfile(real_src):
+                    shutil.copy2(real_src, dst)
+                    print(f"  ✓ Copied {filename} (resolved from {os.path.basename(real_src)})")
+                else:
+                    print(f"  ⚠ Skipping broken symlink: {filename}")
+            else:
+                shutil.copy2(src, dst)
+
+        print(f"  ✓ Slang libraries copied to Binaries/{target}/")
 
 
 
@@ -1219,6 +1310,62 @@ def main():
                 copytree_common_to_binaries(
                     folders[lib], target=target, dry_run=dry_run
                 )
+        elif lib == "slang":
+            # Slang needs special handling on Linux for symlink issues
+            extract_path = os.path.join(os.path.dirname(__file__), "SDK", "slang")
+
+            if not copy_only:
+                # Download
+                archive_path = os.path.join(os.path.dirname(__file__), "SDK", "cache", urls[lib].split("/")[-1])
+                if os.path.exists(archive_path):
+                    print(f"Using cached file {archive_path}")
+                else:
+                    if not dry_run:
+                        print(f"Downloading from {urls[lib]}...")
+                    download_with_progress(urls[lib], archive_path, dry_run)
+
+                if dry_run:
+                    print(f"[DRY RUN] Would extract {archive_path} to {extract_path}")
+                else:
+                    # On Linux, clean lib/ directory before extraction to avoid
+                    # stale broken symlinks from previous runs
+                    if is_linux() or is_macos():
+                        slang_lib_dir = os.path.join(extract_path, "lib")
+                        if os.path.exists(slang_lib_dir):
+                            print(f"  Cleaning previous {slang_lib_dir}...")
+                            shutil.rmtree(slang_lib_dir, ignore_errors=True)
+
+                    # Extract
+                    print(f"Extracting Slang to {extract_path}...")
+                    try:
+                        with zipfile.ZipFile(archive_path, "r") as zip_ref:
+                            zip_ref.extractall(extract_path)
+                        print(f"✓ Slang extracted successfully")
+                    except Exception as e:
+                        print(f"Error extracting Slang: {e}")
+                        return
+
+                    # On Linux/macOS: fix text-file symlinks and validate
+                    if is_linux() or is_macos():
+                        print("Fixing Slang symlinks...")
+                        fix_slang_symlinks(dry_run=dry_run)
+
+                        print("Validating Slang SDK...")
+                        if not validate_slang_sdk():
+                            print("  ✗ Slang SDK validation failed!")
+                            print("  Try deleting SDK/slang/ and re-running configure.py")
+                        else:
+                            print("  ✓ Slang SDK is valid")
+
+            # Copy slang runtime binaries to Binaries
+            for target in targets:
+                copytree_common_to_binaries(
+                    folders[lib], target=target, dry_run=dry_run
+                )
+
+            # On Linux/macOS: copy resolved library files to Binaries
+            if is_linux() or is_macos():
+                setup_slang_libs_for_binaries(targets, dry_run=dry_run)
         else:
             if not copy_only:
                 download_and_extract(
@@ -1245,10 +1392,6 @@ def main():
 
     # Always copy nvHLSLExtns.h to SDK/slang/include/
     copy_nvapi_header_to_slang(dry_run=dry_run)
-
-    # Fix broken symlinks in Slang SDK (official releases have this bug)
-    if "slang" in args.library or not copy_only:
-        fix_slang_symlinks(dry_run=dry_run)
 
 
 if __name__ == "__main__":
