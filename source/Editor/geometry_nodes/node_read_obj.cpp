@@ -38,7 +38,7 @@ NODE_EXECUTION_FUNCTION(read_obj_std)
     ssize_t count = readlink("/proc/self/exe", p, PATH_MAX);
     if (count != -1) {
         p[count] = '\0';
-        executable_path = std::filesystem::path(path).parent_path();
+        executable_path = std::filesystem::path(p).parent_path();
     }
     else {
         throw std::runtime_error("Failed to get executable path.");
@@ -108,7 +108,7 @@ NODE_EXECUTION_FUNCTION(read_obj_eigen)
     ssize_t count = readlink("/proc/self/exe", p, PATH_MAX);
     if (count != -1) {
         p[count] = '\0';
-        executable_path = std::filesystem::path(path).parent_path();
+        executable_path = std::filesystem::path(p).parent_path();
     }
     else {
         throw std::runtime_error("Failed to get executable path.");

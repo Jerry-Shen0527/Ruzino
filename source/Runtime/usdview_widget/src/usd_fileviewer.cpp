@@ -1028,7 +1028,7 @@ void UsdFileViewer::EditValue()
                             else {
                                 // Normal string input
                                 char buffer[512];
-                                strncpy_s(
+                                strncpy(
                                     buffer, value.c_str(), sizeof(buffer) - 1);
                                 buffer[sizeof(buffer) - 1] = '\0';
                                 if (ImGui::InputText(
@@ -1042,7 +1042,7 @@ void UsdFileViewer::EditValue()
                             SdfAssetPath assetPath = v.Get<SdfAssetPath>();
                             std::string pathStr = assetPath.GetAssetPath();
                             char buffer[512];
-                            strncpy_s(
+                            strncpy(
                                 buffer, pathStr.c_str(), sizeof(buffer) - 1);
                             buffer[sizeof(buffer) - 1] = '\0';
                             if (ImGui::InputText(
@@ -1055,7 +1055,7 @@ void UsdFileViewer::EditValue()
                             TfToken token = v.Get<TfToken>();
                             std::string tokenStr = token.GetString();
                             char buffer[512];
-                            strncpy_s(
+                            strncpy(
                                 buffer, tokenStr.c_str(), sizeof(buffer) - 1);
                             buffer[sizeof(buffer) - 1] = '\0';
                             if (ImGui::InputText(
