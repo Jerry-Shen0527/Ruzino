@@ -5,7 +5,7 @@ RUZINO_ADD_LIB(
 	PUBLIC_LIBS
 		nodes_system
 		nodes_ui_imgui
-		usd_wrapped
+		usd_ms
 		MaterialXGenShader
 	PRIVATE_LIBS
 		blueprints

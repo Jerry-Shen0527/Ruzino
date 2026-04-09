@@ -11,7 +11,7 @@ if (ENABLE_EMBREE_BASED_RENDERER AND embree_FOUND)
 		hd_RUZINO_Embree
 		SHARED
 		PUBLIC_LIBS spdlog::spdlog
-		PRIVATE_LIBS usd_wrapped RHI nodes_system embree
+		PRIVATE_LIBS usd_ms RHI nodes_system embree
 		COMPILE_DEFS
 			NOMINMAX
 		USD_RESOURCE_DIRS resources

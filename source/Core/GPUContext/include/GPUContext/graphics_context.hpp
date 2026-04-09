@@ -70,9 +70,8 @@ class GPUCONTEXT_API GraphicsContext : public GPUContext {
     GraphicsContext& finish_setting_frame_buffer();
 #if RUZINO_WITH_OPENUSD
     GraphicsContext& set_viewport(pxr::GfVec2f size);
-#else
-    GraphicsContext& set_viewport(float x, float y);
 #endif
+    GraphicsContext& set_viewport(float x, float y);
 
     GraphicsContext& add_vertex_buffer_desc(
         std::string name,

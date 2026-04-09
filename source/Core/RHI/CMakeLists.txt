@@ -43,8 +43,8 @@ if(SLANG_FOUND)
         target_compile_definitions(RHI PUBLIC RUZINO_WITH_VULKAN=1)
     endif()
 
-    if(TARGET usd_wrapped)
-        target_link_libraries(RHI PUBLIC usd_wrapped)
+    if(TARGET usd_ms)
+        target_link_libraries(RHI PUBLIC usd_ms)
     endif()
 
     if(RUZINO_WITH_OPENUSD)

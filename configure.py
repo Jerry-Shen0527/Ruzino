@@ -590,7 +590,8 @@ def process_usd(targets, dry_run=False, keep_original_files=True, copy_only=Fals
             )
             no_tbb_linkage = "-DCMAKE_CXX_FLAGS=-D__TBB_NO_IMPLICIT_LINKAGE=1"
             openimageio_args = f"OpenImageIO,{no_tbb_linkage} "
-            build_command = f'python3 {build_script} --build-args USD,"-DPXR_ENABLE_GL_SUPPORT=ON" {openvdb_args}{openimageio_args}--openvdb {use_debug_python}--ptex --openimageio --opencolorio --no-examples --no-tutorials --no-usdview {generator_ninja}--build-variant {build_variant} {os.path.dirname(__file__)}/SDK/OpenUSD/{target} -v'
+            cmake_rpath_args = "--cmake-build-args=\"-DCMAKE_INSTALL_RPATH=\\$ORIGIN\" " if is_linux() else ''
+            build_command = f'python3 {build_script} --build-monolithic {cmake_rpath_args}--build-args USD,"-DPXR_ENABLE_GL_SUPPORT=ON" {openvdb_args}{openimageio_args}--openvdb {use_debug_python}--ptex --openimageio --opencolorio --no-examples --no-tutorials --no-usdview {generator_ninja}--build-variant {build_variant} {os.path.dirname(__file__)}/SDK/OpenUSD/{target} -v'
 
             if dry_run:
                 print(f"[DRY RUN] Would run: {build_command}")

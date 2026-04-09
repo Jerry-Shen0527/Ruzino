@@ -42,6 +42,11 @@ find_package(Python 3.8
   OPTIONAL_COMPONENTS Development.SABIModule)
 
 set(OUT_BINARY_DIR ${CMAKE_SOURCE_DIR}/Binaries/${CMAKE_BUILD_TYPE})
+
+# Set RPATH so built binaries find shared libs in their own directory (like Windows DLL search)
+set(CMAKE_BUILD_RPATH "$ORIGIN")
+set(CMAKE_INSTALL_RPATH "$ORIGIN")
+
 set(OUTPUT_DIR
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${OUT_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${OUT_BINARY_DIR}"
@@ -146,13 +151,8 @@ if(pxr_FOUND)
   message("Found OpenUSD version ${pxr_VERSION}")
   find_package(OpenGL REQUIRED)
   set(RUZINO_WITH_OPENUSD ON)
-  add_library(usd_wrapped INTERFACE)
-  if(TARGET usd_ms)
-    target_link_libraries(usd_wrapped INTERFACE usd_ms)
-  else()
-    target_link_libraries(usd_wrapped INTERFACE usd tf hioOpenVDB usdShade usdMtlx usdImaging hdx usdVolImaging glf usdGeom usdImagingGL hdSt garch hgi python boost)
-  endif()
-  target_compile_definitions(usd_wrapped INTERFACE
+  include_directories(${pxr_DIR}/include)
+  add_compile_definitions(
     TBB_SUPPRESS_DEPRECATED_MESSAGES=1
     $<$<CONFIG:Debug>:TBB_USE_DEBUG=1>
     $<$<CONFIG:Debug>:BOOST_DEBUG_PYTHON>)
@@ -172,7 +172,7 @@ endif()
 
 if(UNIX AND NOT APPLE)
   find_package(X11 REQUIRED)
-  find_package(Boost REQUIRED)
+  find_package(Boost QUIET)
   if(RUZINO_WITH_OPENUSD)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(EGL REQUIRED IMPORTED_TARGET egl)

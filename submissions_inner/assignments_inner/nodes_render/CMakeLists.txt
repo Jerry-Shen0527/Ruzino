@@ -1,5 +1,5 @@
 set(deps
-		stage nodes_system usd_wrapped geometry Eigen3::Eigen autodiff igl::core igl_restricted::triangle RHI hd_RUZINO_GL
+		stage nodes_system usd_ms geometry Eigen3::Eigen autodiff igl::core igl_restricted::triangle RHI hd_RUZINO_GL
 )
 # If the student add a custom utility lib
 message(STATUS "[Utils status: ${student_name}_${util_lib_target_name}_AVAILABLE] " ${${student_name}_${util_lib_target_name}_AVAILABLE})
