@@ -48,14 +48,15 @@ def cpp_to_exe_name(cpp_file: Path) -> str:
     """Convert cpp filename to expected exe name.
 
     For example:
-    - some_file.cpp -> some_file_test.exe
-    - renderer.cpp -> renderer_test.exe
+    - some_file.cpp -> some_file_test (or some_file_test.exe on Windows)
+    - renderer.cpp -> renderer_test
     """
     base_name = cpp_file.stem
+    exe_suffix = ".exe" if sys.platform == "win32" else ""
     if base_name.endswith('_test'):
-        return f"{base_name}.exe"
+        return f"{base_name}{exe_suffix}"
     else:
-        return f"{base_name}_test.exe"
+        return f"{base_name}_test{exe_suffix}"
 
 
 def should_run_test(exe_name: str, test_filter: Optional[str]) -> bool:
@@ -63,8 +64,8 @@ def should_run_test(exe_name: str, test_filter: Optional[str]) -> bool:
     if test_filter is None:
         return True
 
-    # Match test name (with or without _test.exe suffix)
-    test_base = exe_name.replace('_test.exe', '').replace('.exe', '')
+    # Match test name (with or without _test / _test.exe suffix)
+    test_base = exe_name.replace('_test.exe', '').replace('.exe', '').replace('_test', '')
     filter_base = test_filter.replace('_test', '').replace('.exe', '')
 
     return filter_base.lower() in test_base.lower()
