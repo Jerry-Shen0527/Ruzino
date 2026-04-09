@@ -93,21 +93,20 @@ def test_full_tree_generation():
     # Save the stage
     stage.save()
 
-    # Check file size
-    if os.path.exists(output_file):
-        file_size = os.path.getsize(output_file)
-        print(f"✓ USD file created: {file_size} bytes")
+    # Check file size (geometry is in the _modifiers.usdc file)
+    assert os.path.exists(output_file), f"File not created: {output_file}"
+    modifier_file = output_file.replace(".usdc", "_modifiers.usdc")
+    main_size = os.path.getsize(output_file)
+    mod_size = os.path.getsize(modifier_file) if os.path.exists(modifier_file) else 0
+    total_size = main_size + mod_size
+    print(f"✓ USD file created: {total_size} bytes (main={main_size}, modifiers={mod_size})")
 
-        if file_size > 1000:
-            print("\n" + "="*70)
-            print(f"✅ TEST PASSED: Plastic Tree USD file generated ({file_size} bytes)!")
-            print(f"Output: {output_file}")
-            print("   Trees adapt to environment with leaf cluster illumination!")
-            print("="*70)
-            assert file_size > 1000, f"File too small: {file_size} bytes"
-        else:
-            print(f"\n✗ TEST FAILED: USD file too small: {file_size} bytes")
-            assert False, f"File too small: {file_size} bytes"
+    if total_size > 1000:
+        print("\n" + "="*70)
+        print(f"✅ TEST PASSED: Plastic Tree USD file generated ({total_size} bytes)!")
+        print(f"Output: {output_file}")
+        print("   Trees adapt to environment with leaf cluster illumination!")
+        print("="*70)
     else:
-        print(f"✗ USD file not found: {output_file}")
-        assert False, f"File not created: {output_file}"
+        print(f"\n✗ TEST FAILED: USD file too small: {total_size} bytes")
+        assert False, f"File too small: {total_size} bytes"

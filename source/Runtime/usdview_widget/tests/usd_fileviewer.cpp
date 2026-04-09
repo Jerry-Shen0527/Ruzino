@@ -9,10 +9,21 @@
 #include "pxr/usd/usdGeom/sphere.h"
 #include "stage/stage.hpp"
 #include "widgets/usdview/usdview_widget.hpp"
+
+#ifdef __linux__
+#include <cstdlib>
+#endif
+
 using namespace Ruzino;
 
 TEST(USDWIDGET, create_widget)
 {
+#ifdef __linux__
+    const char* display = std::getenv("DISPLAY");
+    if (!display || std::string(display).empty()) {
+        GTEST_SKIP() << "Skipping: no DISPLAY available (headless environment)";
+    }
+#endif
     auto stage = create_global_stage();
 
     stage->create_sphere(pxr::SdfPath("/sphere"));

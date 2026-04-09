@@ -203,9 +203,10 @@ def test_tree_with_leaves_to_mesh():
 
     binary_dir = get_binary_dir()
     g = RuzinoGraph("PlasticTreeLeavesTest")
-    config_path = os.path.join(binary_dir, "Plugins", "TreeGen_geometry_nodes.json")
 
-    g.loadConfiguration(config_path)
+    # Load base geometry nodes first, then TreeGen plugin
+    g.loadConfiguration(os.path.join(binary_dir, "geometry_nodes.json"))
+    g.loadConfiguration(os.path.join(binary_dir, "Plugins", "TreeGen_geometry_nodes.json"))
 
     # Create tree with leaves and plasticity
     tree = g.createNode("tree_generate", name="tree")
@@ -216,7 +217,7 @@ def test_tree_with_leaves_to_mesh():
     g.addEdge(tree, "Leaves", to_mesh, "Leaves")
 
     inputs = {
-        (tree, "Growth Years"): 3,
+        (tree, "Growth Years"): 5,
         (tree, "Random Seed"): 42,
         (tree, "Generate Leaves"): True,
         (tree, "Terminal Leaves Only"): True,

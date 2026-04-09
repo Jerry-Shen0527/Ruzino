@@ -78,10 +78,14 @@ def test_terminal_leaves_only():
         print(f"✓ Generated {num_leaves} leaves on terminal branches")
         assert num_leaves > 0, "Should have leaves on terminal branches"
 
-    if os.path.exists(output_file):
-        file_size = os.path.getsize(output_file)
-        print(f"✓ Exported to USD: {file_size} bytes")
-        assert file_size > 1000
+    # The USD geometry data is written to the session layer, exported as a
+    # separate _modifiers.usdc file.  Check the combined size of both files.
+    modifier_file = output_file.replace(".usdc", "_modifiers.usdc")
+    main_size = os.path.getsize(output_file) if os.path.exists(output_file) else 0
+    mod_size = os.path.getsize(modifier_file) if os.path.exists(modifier_file) else 0
+    total_size = main_size + mod_size
+    print(f"✓ Exported to USD: {total_size} bytes (main={main_size}, modifiers={mod_size})")
+    assert total_size > 1000, f"Total file size too small: {total_size} bytes"
 
     print("✅ Terminal leaves test passed!")
 
@@ -165,10 +169,12 @@ def test_leaf_parameters():
 
         stage.save()
 
-        if os.path.exists(output_file):
-            file_size = os.path.getsize(output_file)
-            print(f"  ✓ Created {test_case['name']}: {file_size} bytes")
-            assert file_size > 1000
+        modifier_file = output_file.replace(".usdc", "_modifiers.usdc")
+        main_size = os.path.getsize(output_file) if os.path.exists(output_file) else 0
+        mod_size = os.path.getsize(modifier_file) if os.path.exists(modifier_file) else 0
+        total_size = main_size + mod_size
+        print(f"  ✓ Created {test_case['name']}: {total_size} bytes")
+        assert total_size > 1000, f"Total file size too small: {total_size} bytes"
 
     print("\n✅ All leaf parameter tests passed!")
 
@@ -228,10 +234,14 @@ def test_leaf_density_comparison():
     g.prepare_and_execute(inputs, required_node=write)
     stage.save()
 
-    if os.path.exists(output_file):
-        file_size = os.path.getsize(output_file)
-        print(f"\n✓ Created comparison file: {file_size} bytes")
-        assert file_size > 1000
+    # The USD geometry data is written to the session layer, exported as a
+    # separate _modifiers.usdc file.  Check the combined size of both files.
+    modifier_file = output_file.replace(".usdc", "_modifiers.usdc")
+    main_size = os.path.getsize(output_file) if os.path.exists(output_file) else 0
+    mod_size = os.path.getsize(modifier_file) if os.path.exists(modifier_file) else 0
+    total_size = main_size + mod_size
+    print(f"\n✓ Created comparison file: {total_size} bytes")
+    assert total_size > 1000, f"Total file size too small: {total_size} bytes"
 
     print("✅ Leaf density comparison test passed!")
 

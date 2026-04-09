@@ -3,8 +3,15 @@
 #include <fstream>
 
 #include "RHI/ShaderFactory/shader.hpp"
+#include "RHI/rhi.hpp"
 
 using namespace Ruzino;
+
+class CpuSlangTest : public ::testing::Test {
+   protected:
+    void SetUp() override { RHI::init(); }
+    void TearDown() override { RHI::shutdown(); }
+};
 
 const char* str = R"(
 
@@ -25,7 +32,7 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID)
 
 )";
 
-TEST(cpu_call, gen_shader)
+TEST_F(CpuSlangTest, gen_shader)
 {
     std::string shader_str = str;
 
@@ -68,7 +75,7 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID)
 
 )";
 
-TEST(cpu_call, gen_shader2)
+TEST_F(CpuSlangTest, gen_shader2)
 {
     std::string shader_str = str2;
     ShaderFactory shader_factory;

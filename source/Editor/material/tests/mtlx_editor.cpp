@@ -11,6 +11,11 @@
 #include "nodes/system/node_system.hpp"
 #include "nodes/ui/imgui.hpp"
 
+#ifdef __linux__
+#include <cstdlib>
+#include <iostream>
+#endif
+
 using namespace Ruzino;
 
 class MaterialXNodeSystem : public NodeSystem {
@@ -47,6 +52,13 @@ class MaterialXNodeSystem : public NodeSystem {
 };
 int main()
 {
+#ifdef __linux__
+    const char* display = std::getenv("DISPLAY");
+    if (!display || std::string(display).empty()) {
+        std::cout << "Skipping: no DISPLAY available (headless environment)" << std::endl;
+        return 0;
+    }
+#endif
     std::shared_ptr<NodeSystem> system_;
     spdlog::set_level(spdlog::level::info);
     spdlog::set_pattern("%^[%T] %n: %v%$");

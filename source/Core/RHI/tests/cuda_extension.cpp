@@ -7,6 +7,15 @@
 
 using namespace Ruzino::cuda;
 
+// Tests 1-5 (cuda_init through create_optix_traversable) don't need RHI.
+// Tests 6-8 (buffer↔texture conversions) need Vulkan initialized.
+
+class CudaRhiTest : public ::testing::Test {
+   protected:
+    void SetUp() override { Ruzino::RHI::init(); }
+    void TearDown() override { Ruzino::RHI::shutdown(); }
+};
+
 TEST(cuda_extension, cuda_init)
 {
     auto ret = cuda_init();
@@ -105,7 +114,7 @@ TEST(cuda_extension, create_optix_traversable)
     EXPECT_NE(mesh_handle, nullptr);
 }
 
-TEST(cuda_extension, cuda_linear_buffer_to_nvrhi_texture)
+TEST_F(CudaRhiTest, cuda_linear_buffer_to_nvrhi_texture)
 {
     cuda_init();
 
@@ -130,7 +139,7 @@ TEST(cuda_extension, cuda_linear_buffer_to_nvrhi_texture)
     CUDA_SYNC_CHECK();  // Ensure all operations complete
 }
 
-TEST(cuda_extension, nvrhi_texture_to_cuda_linear_buffer)
+TEST_F(CudaRhiTest, nvrhi_texture_to_cuda_linear_buffer)
 {
     cuda_init();
 
@@ -160,7 +169,7 @@ TEST(cuda_extension, nvrhi_texture_to_cuda_linear_buffer)
     EXPECT_EQ(buffer->getDesc().element_size, element_size);
 }
 
-TEST(cuda_extension, texture_buffer_roundtrip)
+TEST_F(CudaRhiTest, texture_buffer_roundtrip)
 {
     cuda_init();
 

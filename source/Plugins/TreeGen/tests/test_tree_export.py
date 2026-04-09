@@ -106,9 +106,15 @@ def test_export_tree_to_usd():
         print(f"   - usdview (usdview {output_file})")
         print(f"   - Blender with USD plugin")
 
-        print("\n✅ Successfully exported tree to USD!")
+        # The USD geometry data is written to the session layer, exported as a
+        # separate _modifiers.usdc file.  Check the combined size of both files.
+        modifier_file = os.path.join(output_dir, "procedural_tree_modifiers.usdc")
+        mod_size = os.path.getsize(modifier_file) if os.path.exists(modifier_file) else 0
+        total_size = file_size + mod_size
+        print(f"\n📊 Total size: {total_size:,} bytes (main={file_size:,}, modifiers={mod_size:,})")
 
-        assert file_size > 1000, f"File too small: {file_size} bytes"
+        assert total_size > 1000, f"Total file size too small: {total_size} bytes"
+        print("\n✅ Successfully exported tree to USD!")
     else:
         print(f"✗ USD file not found: {output_file}")
         assert False, f"File not created: {output_file}"

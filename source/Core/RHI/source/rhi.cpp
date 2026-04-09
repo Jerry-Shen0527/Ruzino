@@ -113,6 +113,9 @@ nvrhi::IDevice* get_device()
 {
     if (!device_manager) {
         init();
+        // Compensate for the init()'s reference_count++ so that
+        // the auto-init doesn't leak a reference that shutdown() won't clean up.
+        reference_count--;
     }
     return device_manager->GetDevice();
 }

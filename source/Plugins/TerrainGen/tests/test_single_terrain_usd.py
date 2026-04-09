@@ -73,25 +73,24 @@ def test_single_terrain():
     # Save the stage
     stage.save()
 
-    # Check file size
-    if os.path.exists(output_file):
-        file_size = os.path.getsize(output_file)
-        file_size_mb = file_size / (1024 * 1024)
-        print(f"\n{'='*70}")
-        print(f"✅ SUCCESS: Single Terrain Generated!")
-        print(f"{'='*70}")
-        print(f"Resolution: 128×128 vertices")
-        print(f"File size: {file_size:,} bytes ({file_size_mb:.2f} MB)")
-        print(f"Output: {output_file}")
-        print(f"{'='*70}")
+    # Check file size (geometry is in the _modifiers.usdc file)
+    assert os.path.exists(output_file), f"File not created: {output_file}"
+    modifier_file = output_file.replace(".usdc", "_modifiers.usdc")
+    main_size = os.path.getsize(output_file)
+    mod_size = os.path.getsize(modifier_file) if os.path.exists(modifier_file) else 0
+    total_size = main_size + mod_size
+    total_size_mb = total_size / (1024 * 1024)
+    print(f"\n{'='*70}")
+    print(f"✅ SUCCESS: Single Terrain Generated!")
+    print(f"{'='*70}")
+    print(f"Resolution: 128×128 vertices")
+    print(f"File size: {total_size:,} bytes ({total_size_mb:.2f} MB)")
+    print(f"Output: {output_file}")
+    print(f"{'='*70}")
 
-        # Verify reasonable file size
-        assert file_size > 10000, f"File unexpectedly small: {file_size} bytes"
-        print(f"\n✓ File size validation passed")
-
-    else:
-        print(f"✗ USD file not found: {output_file}")
-        assert False, f"File not created: {output_file}"
+    # Verify reasonable file size
+    assert total_size > 10000, f"File unexpectedly small: {total_size} bytes"
+    print(f"\n✓ File size validation passed")
 
 
 if __name__ == "__main__":

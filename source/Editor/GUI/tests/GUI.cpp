@@ -12,10 +12,26 @@
 #include "RHI/internal/cuda_extension.hpp"
 #endif
 
+#ifdef __linux__
+#include <cstdlib>
+#endif
+
 using namespace Ruzino;
+
+// Helper to skip tests that require a display in headless environments.
+static bool is_headless()
+{
+#ifdef __linux__
+    const char* display = std::getenv("DISPLAY");
+    return !display || std::string(display).empty();
+#else
+    return false;
+#endif
+}
 
 TEST(CreateRHI, window)
 {
+    if (is_headless()) GTEST_SKIP() << "Skipping: headless environment";
     Window window;
     window.register_function_after_frame([](Window* window) {
         static int frame_count = 0;
@@ -54,6 +70,7 @@ class WidgetFactory : public IWidgetFactory {
 
 TEST(CreateRHI, widget_factory)
 {
+    if (is_headless()) GTEST_SKIP() << "Skipping: headless environment";
     Window window;
     window.register_function_after_frame([](Window* window) {
         static int frame_count = 0;
@@ -69,6 +86,7 @@ TEST(CreateRHI, widget_factory)
 
 TEST(CreateRHI, widget)
 {
+    if (is_headless()) GTEST_SKIP() << "Skipping: headless environment";
     Window window;
     window.register_function_after_frame([](Window* window) {
         static int frame_count = 0;
@@ -84,6 +102,7 @@ TEST(CreateRHI, widget)
 
 TEST(CreateRHI, multiple_widgets)
 {
+    if (is_headless()) GTEST_SKIP() << "Skipping: headless environment";
     Window window;
     window.register_function_after_frame([](Window* window) {
         static int frame_count = 0;
@@ -126,6 +145,7 @@ class FileWidget : public IWidget {
 
 TEST(FileDialog, create_dialog)
 {
+    if (is_headless()) GTEST_SKIP() << "Skipping: headless environment";
     Window window;
     window.register_function_after_frame([](Window* window) {
         static int frame_count = 0;
@@ -140,6 +160,7 @@ TEST(FileDialog, create_dialog)
 
 TEST(ImageWidget, red_texture)
 {
+    if (is_headless()) GTEST_SKIP() << "Skipping: headless environment";
 #if RUZINO_WITH_CUDA
     // Initialize RHI and CUDA
     RHI::init(true);
@@ -261,6 +282,7 @@ TEST(ImageWidget, red_texture)
 
 TEST(TextEditor, basic_editor)
 {
+    if (is_headless()) GTEST_SKIP() << "Skipping: headless environment";
     Window window;
     window.register_function_after_frame([](Window* window) {
         static int frame_count = 0;
@@ -275,6 +297,7 @@ TEST(TextEditor, basic_editor)
 
 TEST(TextEditor, advanced_features)
 {
+    if (is_headless()) GTEST_SKIP() << "Skipping: headless environment";
     Window window;
     window.register_function_after_frame([](Window* window) {
         static int frame_count = 0;
@@ -318,6 +341,7 @@ int main() {
 
 TEST(TextEditor, xml_support)
 {
+    if (is_headless()) GTEST_SKIP() << "Skipping: headless environment";
     Window window;
     window.register_function_after_frame([](Window* window) {
         static int frame_count = 0;

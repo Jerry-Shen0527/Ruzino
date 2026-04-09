@@ -9,6 +9,11 @@
 
 #include <memory>
 
+#ifdef __linux__
+#include <cstdlib>
+#include <iostream>
+#endif
+
 using namespace Ruzino;
 
 class ConsoleWidgetFactory : public IWidgetFactory {
@@ -61,6 +66,13 @@ class ConsoleWidgetFactory : public IWidgetFactory {
 
 int main()
 {
+#ifdef __linux__
+    const char* display = std::getenv("DISPLAY");
+    if (!display || std::string(display).empty()) {
+        std::cout << "Skipping: no DISPLAY available (headless environment)" << std::endl;
+        return 0;
+    }
+#endif
     // Create console with capture disabled to demonstrate the difference
     auto interpreter = std::make_shared<console::Interpreter>();
 
