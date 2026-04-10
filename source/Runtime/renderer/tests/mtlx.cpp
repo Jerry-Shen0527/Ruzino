@@ -9,6 +9,12 @@
 
 #include <fstream>
 
+#ifdef __linux__
+#include <cstdlib>
+#include <iostream>
+#include <string>
+#endif
+
 #include "../source/material/MaterialX/SlangResourceBindingContext.h"
 #include "../source/material/MaterialX/SlangShaderGenerator.h"
 #include "../source/material/MaterialX/SlangSyntax.h"
@@ -222,6 +228,13 @@ static void generateSlangCode()
 // TEST(GenShader, SLANG_ShaderGeneration)
 int main()
 {
+#ifdef __linux__
+    const char* display = std::getenv("DISPLAY");
+    if (!display || std::string(display).empty()) {
+        std::cout << "Skipping: no DISPLAY available (headless environment)" << std::endl;
+        return 0;
+    }
+#endif
     // Generate with standard SLANG i.e version 400
     generateSlangCode();
 }

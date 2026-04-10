@@ -1535,13 +1535,31 @@ ExternalMemoryResourcesHandle create_external_memory_surface(
     resources->externalMemory =
         FetchExternalTextureMemory(texture, device, actualSize, sharedHandle);
 
-    // Create a mipmapped array from the external memory
+    // Create a mipmapped array from the SAME external memory (don't re-import)
+    cudaExternalMemoryMipmappedArrayDesc mipDesc;
+    memset(&mipDesc, 0, sizeof(mipDesc));
+
+    nvrhi::Format format = texture->getDesc().format;
+    auto formatInfo = nvrhi::getFormatInfo(format);
+
+    mipDesc.formatDesc.x = 8;
+    mipDesc.formatDesc.y = 8;
+    mipDesc.formatDesc.z = 8;
+    mipDesc.formatDesc.w = 8;
+    mipDesc.formatDesc.f = (formatInfo.kind == nvrhi::FormatKind::Float)
+                               ? cudaChannelFormatKindFloat
+                               : cudaChannelFormatKindUnsigned;
+
+    mipDesc.extent.depth = 0;
+    mipDesc.extent.width = texture->getDesc().width;
+    mipDesc.extent.height = texture->getDesc().height;
+    mipDesc.flags = cudaUsageFlags;
+    mipDesc.numLevels = 1;
+    mipDesc.offset = 0;
+
     cudaMipmappedArray_t mipmap;
-    if (!importTextureToMipmappedArray(
-            texture, mipmap, cudaUsageFlags, device)) {
-        throw std::runtime_error(
-            "Failed to import texture into a mipmapped array");
-    }
+    CUDA_CHECK(cudaExternalMemoryGetMappedMipmappedArray(
+        &mipmap, resources->externalMemory, &mipDesc));
 
     // Grab level 0
     cudaArray_t cudaArray;

@@ -92,11 +92,13 @@ nvrhi::ShaderDesc Program::get_shader_desc() const
 
 void const* Program::getBufferPointer() const
 {
+    if (!blob) return nullptr;
     return blob->getBufferPointer();
 }
 
 size_t Program::getBufferSize() const
 {
+    if (!blob) return 0;
     return blob->getBufferSize();
 }
 

@@ -1,5 +1,7 @@
 #include "GPUContext/raytracing_context.hpp"
 
+#include <iostream>
+
 RUZINO_NAMESPACE_OPEN_SCOPE
 RaytracingContext::RaytracingContext(ResourceAllocator& r, ProgramVars& vars)
     : GPUContext(r, vars)
@@ -150,6 +152,12 @@ void RaytracingContext::finish_announcing_shader_names()
 
     if (ray_generation_program)
         local_program = ray_generation_program->get_programs()[0];
+
+    if (!local_program || !local_program->getBufferPointer()) {
+        std::cerr << "[RaytracingContext] shader program has no valid buffer, "
+                  << "skipping shader creation" << std::endl;
+        return;
+    }
 
     nvrhi::ShaderDesc raygen_shader_desc;
     raygen_shader_desc.entryName = raygeneration_name.c_str();
