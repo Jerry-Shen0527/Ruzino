@@ -29,7 +29,7 @@
 #include "rtxdi/RtxdiMath.hlsli"
 
 import Scene.Scene;
-import Utils.Color.ColorHelpers;
+import utils.Color.ColorHelpers;
 import PolymorphicLight;
 
 /** Update the light info data used by RTXDI by reading from the scene data.

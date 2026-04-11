@@ -26,8 +26,8 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 import Scene.Material.MaterialData;
-import Utils.Geometry.GeometryHelpers;
-import Utils.Math.ShadingFrame;
+import utils.Geometry.GeometryHelpers;
+import utils.Math.ShadingFrame;
 
 /** This struct holds information needed for shading a hit point.
 

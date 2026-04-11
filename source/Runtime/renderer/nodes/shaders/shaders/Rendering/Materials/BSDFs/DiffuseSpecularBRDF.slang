@@ -27,8 +27,8 @@
  **************************************************************************/
 #include "utils/Math/MathConstants.slangh"
 
-import Utils.Math.MathHelpers;
-import Utils.Color.ColorHelpers;
+import utils.Math.MathHelpers;
+import utils.Color.ColorHelpers;
 import Rendering.Materials.IsotropicGGX;
 import Rendering.Materials.Fresnel;
 __exported import Rendering.Materials.IBSDF;

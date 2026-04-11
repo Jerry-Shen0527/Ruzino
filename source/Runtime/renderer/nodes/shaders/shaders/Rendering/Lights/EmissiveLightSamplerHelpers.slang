@@ -39,7 +39,7 @@
 
 import Scene.Scene;
 __exported import Scene.Lights.LightCollection;
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 import Rendering.Lights.EmissiveLightSamplerInterface;
 
 /** Samples an emissive triangle uniformly by area and evaluates the probability density function.

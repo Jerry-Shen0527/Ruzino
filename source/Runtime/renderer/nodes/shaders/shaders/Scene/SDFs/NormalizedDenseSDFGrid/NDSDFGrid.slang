@@ -30,7 +30,7 @@
 import Scene.SDFs.SDFGridBase;
 import Scene.SDFs.SDFVoxelCommon;
 import Scene.SDFs.SDFVoxelHitUtils;
-import Utils.Geometry.IntersectionHelpers;
+import utils.Geometry.IntersectionHelpers;
 
 struct NDSDFGrid : SDFGridBase, ISDFGrid
 {

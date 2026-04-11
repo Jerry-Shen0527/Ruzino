@@ -35,7 +35,7 @@
 
 #include "utils/Math/MathConstants.slangh"
 import Scene.Scene;
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 
 /** Struct returned from the sampling functions.
 */

@@ -30,7 +30,7 @@
 __exported import Rendering.Materials.IMaterialInstance;
 import Rendering.Materials.BSDFs.DiffuseSpecularBRDF;
 import Rendering.Materials.MERLCommon;
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 import Scene.Scene;
 
 // Enable to use fitted BRDF approximation for sampling.

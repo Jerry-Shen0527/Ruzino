@@ -30,7 +30,7 @@
 
 __exported import Rendering.Materials.IMaterialInstance;
 __exported import Rendering.Materials.HairChiang16;
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 
 /** Implementation of Falcor's standard hair/fur BSDF.
 

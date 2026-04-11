@@ -26,7 +26,7 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 import Scene.SDFs.SDFVoxelCommon;
-import Utils.Math.FormatConversion;
+import utils.Math.FormatConversion;
 
 __exported import Scene.SDFs.SDFGridHitData;
 

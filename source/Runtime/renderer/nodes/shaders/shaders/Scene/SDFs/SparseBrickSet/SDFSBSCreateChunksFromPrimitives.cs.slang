@@ -28,9 +28,9 @@
 #include "utils/Math/MathConstants.slangh"
 
 import Scene.SDFs.SDF3DPrimitive;
-import Utils.Math.IntervalArithmetic;
-import Utils.Math.PackedFormats;
-import Utils.SDF.SDFOperations;
+import utils.Math.IntervalArithmetic;
+import utils.Math.PackedFormats;
+import utils.SDF.SDFOperations;
 
 static const uint kGroupWidth = CHUNK_WIDTH;
 static const uint kChunkSize = CHUNK_WIDTH * CHUNK_WIDTH * CHUNK_WIDTH;

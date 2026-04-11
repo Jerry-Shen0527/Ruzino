@@ -26,7 +26,7 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 __exported import Scene.HitInfo;
-__exported import Utils.Math.Ray;
+__exported import utils.Math.Ray;
 
 // TODO: Use default arguments when slang supports them:
 // bool traceRay(const RayDesc ray, out HitInfo hit, out float hitT, uint rayFlags = RAY_FLAG_NONE, uint instanceInclusionMask = 0xff);

@@ -38,8 +38,8 @@
 #include "utils/Math/MathConstants.slangh"
 
 import Scene.Lights.LightData;
-import Utils.Math.MathHelpers;
-import Utils.Sampling.SampleGeneratorInterface;
+import utils.Math.MathHelpers;
+import utils.Sampling.SampleGeneratorInterface;
 
 static const float kMinLightDistSqr = 1e-9f;
 static const float kMaxLightDistance = FLT_MAX;

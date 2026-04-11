@@ -27,12 +27,12 @@
  **************************************************************************/
 #include "utils/Math/MathConstants.slangh"
 import Scene.Scene;
-import Utils.Debug.PixelDebug;
-import Utils.Math.Ray;
-import Utils.Math.MathHelpers;
-import Utils.Math.HashUtils;
-import Utils.Geometry.IntersectionHelpers;
-import Utils.Sampling.TinyUniformSampleGenerator;
+import utils.Debug.PixelDebug;
+import utils.Math.Ray;
+import utils.Math.MathHelpers;
+import utils.Math.HashUtils;
+import utils.Geometry.IntersectionHelpers;
+import utils.Sampling.TinyUniformSampleGenerator;
 import Rendering.Utils.PixelStats;
 import GridVolumeSamplerParams;
 

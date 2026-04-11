@@ -25,7 +25,7 @@
  # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
-import Utils.Attributes;
+import utils.Attributes;
 import Scene.SceneTypes;
 __exported import Scene.Lights.LightCollectionShared;
 __exported import Scene.Lights.MeshLightData;

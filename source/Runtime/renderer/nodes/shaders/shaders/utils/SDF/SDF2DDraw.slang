@@ -27,8 +27,8 @@
  **************************************************************************/
 #include "utils/Math/MathConstants.slangh"
 
-import Utils.SDF.SDF2DPrimitives;
-import Utils.Math.MathHelpers;
+import utils.SDF.SDF2DPrimitives;
+import utils.Math.MathHelpers;
 
 /**
  * Compute a 2x3 matrix to be used for scaling, rotating, and translating an SDF primitive. The scale is applied first, then rotation, and

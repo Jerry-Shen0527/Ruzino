@@ -28,7 +28,7 @@
 #include "utils/Math/MathConstants.slangh"
 
 import Scene.Scene;
-import Utils.Color.ColorHelpers;
+import utils.Color.ColorHelpers;
 
 cbuffer CB
 {

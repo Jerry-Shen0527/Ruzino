@@ -27,7 +27,7 @@
  **************************************************************************/
 #include "utils/Sampling/SampleGeneratorType.slangh"
 
-__exported import Utils.Sampling.SampleGeneratorInterface;
+__exported import utils.Sampling.SampleGeneratorInterface;
 
 /**
  * The host sets the SAMPLE_GENERATOR_TYPE define to select sample generator.
@@ -43,10 +43,10 @@ __exported import Utils.Sampling.SampleGeneratorInterface;
  */
 
 #if defined(SAMPLE_GENERATOR_TYPE) && SAMPLE_GENERATOR_TYPE == SAMPLE_GENERATOR_TINY_UNIFORM
-import Utils.Sampling.TinyUniformSampleGenerator;
+import utils.Sampling.TinyUniformSampleGenerator;
 typedef TinyUniformSampleGenerator SampleGenerator;
 #elif defined(SAMPLE_GENERATOR_TYPE) && SAMPLE_GENERATOR_TYPE == SAMPLE_GENERATOR_UNIFORM
-import Utils.Sampling.UniformSampleGenerator;
+import utils.Sampling.UniformSampleGenerator;
 typedef UniformSampleGenerator SampleGenerator;
 #endif
 

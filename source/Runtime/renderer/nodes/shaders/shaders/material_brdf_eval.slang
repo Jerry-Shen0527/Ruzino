@@ -8,7 +8,7 @@ import Scene.SceneTypes;
 import Scene.BindlessMaterial;
 import Scene.BindlessVertexBuffer;
 import utils.Math.ShadingFrame;
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 
 RWTexture2D<float4> eval_output;
 RWTexture2D<float4> pdf_output;

@@ -8,7 +8,7 @@ import Scene.SceneTypes;
 import Scene.BindlessMaterial;
 import Scene.BindlessVertexBuffer;
 import utils.Math.ShadingFrame;
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 
 RWStructuredBuffer<uint> sample_buffer;  // Uint buffer for atomic operations
                                          // (float data stored as uint)

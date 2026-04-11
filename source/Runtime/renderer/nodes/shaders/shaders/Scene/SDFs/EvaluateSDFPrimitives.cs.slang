@@ -28,7 +28,7 @@
 #include "utils/Math/MathConstants.slangh"
 
 import Scene.SDFs.SDF3DPrimitive;
-import Utils.Math.PackedFormats;
+import utils.Math.PackedFormats;
 
 #define GROUP_WIDTH 4
 

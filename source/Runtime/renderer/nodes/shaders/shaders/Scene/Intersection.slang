@@ -28,10 +28,10 @@
 import Scene.Scene;
 import Scene.Displacement.DisplacementMapping;
 import Scene.SDFs.SDFGrid;
-import Utils.Geometry.IntersectionHelpers;
-import Utils.Geometry.GeometryHelpers;
-__exported import Utils.Math.Ray;
-import Utils.Math.MatrixUtils;
+import utils.Geometry.IntersectionHelpers;
+import utils.Geometry.GeometryHelpers;
+__exported import utils.Math.Ray;
+import utils.Math.MatrixUtils;
 
 /** Helper for intersecting rays against displaced triangle meshes.
 */

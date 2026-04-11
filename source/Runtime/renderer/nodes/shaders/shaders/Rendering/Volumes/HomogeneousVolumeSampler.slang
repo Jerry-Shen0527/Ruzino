@@ -26,7 +26,7 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 __exported import Scene.Material.VolumeProperties;
-__exported import Utils.Sampling.SampleGeneratorInterface;
+__exported import utils.Sampling.SampleGeneratorInterface;
 
 /** Helper class for sampling homogeneous volumes.
 */

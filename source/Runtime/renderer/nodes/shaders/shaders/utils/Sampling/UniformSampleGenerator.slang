@@ -25,10 +25,10 @@
  # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
-__exported import Utils.Sampling.SampleGeneratorInterface;
-import Utils.Sampling.Pseudorandom.Xoshiro;
-import Utils.Sampling.Pseudorandom.SplitMix64;
-import Utils.Math.BitTricks;
+__exported import utils.Sampling.SampleGeneratorInterface;
+import utils.Sampling.Pseudorandom.Xoshiro;
+import utils.Sampling.Pseudorandom.SplitMix64;
+import utils.Math.BitTricks;
 
 /**
  * Default uniform pseudorandom number generator.

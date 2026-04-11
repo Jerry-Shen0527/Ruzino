@@ -31,7 +31,7 @@
 #ifdef HOST_CODE
 #include "utils/Math/PackedFormats.h"
 #else
-import Utils.Math.PackedFormats;
+import utils.Math.PackedFormats;
 #endif
 
 RUZINO_NAMESPACE_OPEN_SCOPE

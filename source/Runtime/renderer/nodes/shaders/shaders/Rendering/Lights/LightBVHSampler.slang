@@ -28,9 +28,9 @@
 #include "utils/Math/MathConstants.slangh"
 
 import Scene.Scene;
-import Utils.Math.MathHelpers;
-import Utils.Geometry.GeometryHelpers;
-import Utils.Sampling.SampleGeneratorInterface;
+import utils.Math.MathHelpers;
+import utils.Geometry.GeometryHelpers;
+import utils.Sampling.SampleGeneratorInterface;
 import Rendering.Lights.LightBVH;
 import Rendering.Lights.LightBVHSamplerSharedDefinitions;
 import Rendering.Lights.EmissiveLightSamplerHelpers;

@@ -29,8 +29,8 @@
 
 import Scene.SDFs.SDF3DPrimitive;
 import Scene.SDFs.SparseBrickSet.BC4Encode;
-import Utils.Math.AABB;
-import Utils.Math.PackedFormats;
+import utils.Math.AABB;
+import utils.Math.PackedFormats;
 
 static const uint kGroupWidth = BRICK_WIDTH + 1;
 static const uint kChunkWidth = CHUNK_WIDTH;

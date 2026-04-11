@@ -28,7 +28,7 @@
 #include "utils/Math/MathConstants.slangh"
 
 import Scene.ShadingData;
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 __exported import Rendering.Materials.IBSDF;
 
 // Uncomment to enable subsurface scattering approximation.

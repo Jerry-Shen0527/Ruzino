@@ -27,7 +27,7 @@
  **************************************************************************/
 #include "utils/Math/MathConstants.slangh"
 
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 
 // Some of the code below is based on the JCGT article "Antialiased 2D Grid, Marker, and Arrow Shaders" by Rougier.
 // However, the code has been bug fixed in several places and extended in some ways + addition of new primitives.

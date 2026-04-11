@@ -29,7 +29,7 @@
 
 import Scene.SDFs.SDF3DPrimitive;
 import Scene.SDFs.SDFVoxelCommon;
-import Utils.Math.PackedFormats;
+import utils.Math.PackedFormats;
 
 static const uint kBrickWidthInVoxels = BRICK_WIDTH;
 static const uint kBrickWidthInValues = BRICK_WIDTH + 1;

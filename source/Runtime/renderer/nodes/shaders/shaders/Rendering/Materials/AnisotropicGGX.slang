@@ -27,8 +27,8 @@
  **************************************************************************/
 #include "utils/Math/MathConstants.slangh"
 
-import Utils.Math.MathHelpers;
-import Utils.Sampling.SampleGeneratorInterface;
+import utils.Math.MathHelpers;
+import utils.Sampling.SampleGeneratorInterface;
 
 /** This class implements sampling and evaluation of an anisotropic GGX.
     The class uses the visible distribution of normals for sampling.

@@ -28,8 +28,8 @@
 #include "utils/Math/MathConstants.slangh"
 
 import Scene.Shading;
-import Utils.Math.MathHelpers;
-import Utils.Sampling.UniformSampleGenerator;
+import utils.Math.MathHelpers;
+import utils.Sampling.UniformSampleGenerator;
 
 /** Utility for integrating an isotropic BSDF over the hemisphere.
 

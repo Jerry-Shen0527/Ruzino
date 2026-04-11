@@ -28,8 +28,8 @@
 #include "utils/Math/MathConstants.slangh"
 
 import Scene.ShadingData;
-import Utils.Math.MathHelpers;
-import Utils.Color.ColorHelpers;
+import utils.Math.MathHelpers;
+import utils.Color.ColorHelpers;
 import Rendering.Materials.Fresnel;
 __exported import Rendering.Materials.IBSDF;
 

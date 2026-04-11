@@ -25,7 +25,7 @@
  # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
-import Utils.Math.IntervalArithmetic;
+import utils.Math.IntervalArithmetic;
 
 /* Functions for computing the signed distance function (SDF) for several different primitives,
  * including sphere, ellipsoid, box, torus, cone, capsule, and bounding box.

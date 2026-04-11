@@ -27,8 +27,8 @@
  **************************************************************************/
 import Scene.SceneTypes;
 import Scene.Material.BasicMaterialData;
-import Utils.Math.Ray;
-import Utils.Geometry.IntersectionHelpers;
+import utils.Math.Ray;
+import utils.Geometry.IntersectionHelpers;
 import Scene.Displacement.DisplacementData;
 
 #define DISPLACEMENT_DISABLED                               0           // Debug: Used to disable displacement mapping and intersect base triangles in sw instead.

@@ -27,7 +27,7 @@
  **************************************************************************/
 #include "utils/Math/MathConstants.slangh"
 
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 import Scene.Scene;
 
 // More stable way of computing inclination of vector.

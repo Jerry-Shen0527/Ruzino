@@ -31,8 +31,8 @@ __exported import Scene.Material.DiffuseSpecularData;
 __exported import Rendering.Materials.IMaterialInstance;
 import Rendering.Materials.BSDFs.DiffuseSpecularBRDF;
 import Rendering.Materials.MERLCommon;
-import Utils.Color.ColorHelpers;
-import Utils.Math.MathHelpers;
+import utils.Color.ColorHelpers;
+import utils.Math.MathHelpers;
 import Scene.Scene;
 
 // Enable to use fitted BRDF approximation for sampling.

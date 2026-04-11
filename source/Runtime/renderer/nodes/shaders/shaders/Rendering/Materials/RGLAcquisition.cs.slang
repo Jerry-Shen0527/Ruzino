@@ -28,10 +28,10 @@
 #include "utils/Math/MathConstants.slangh"
 
 import Scene.Shading;
-import Utils.Math.MathHelpers;
-import Utils.Color.ColorHelpers;
+import utils.Math.MathHelpers;
+import utils.Color.ColorHelpers;
 import Rendering.Materials.RGLCommon;
-import Utils.Sampling.UniformSampleGenerator;
+import utils.Sampling.UniformSampleGenerator;
 
 struct RGLAcquisition
 {

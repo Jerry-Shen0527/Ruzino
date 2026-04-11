@@ -28,7 +28,7 @@
 #include "utils/NVAPI.slangh" // We need this to get interlocked compare exchange for uint64.
 
 import Scene.SDFs.SDFVoxelCommon;
-import Utils.Math.HashUtils;
+import utils.Math.HashUtils;
 
 /** SDF voxel hash table for writing and reading.
     Voxels are stored as:

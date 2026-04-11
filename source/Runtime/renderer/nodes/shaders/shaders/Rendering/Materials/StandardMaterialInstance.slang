@@ -31,7 +31,7 @@ __exported import Rendering.Materials.IMaterialInstance;
 __exported import Rendering.Materials.BSDFs.StandardBSDF;
 __exported import DiffRendering.SceneGradients;
 __exported import DiffRendering.GradientIOWrapper;
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 import Rendering.Volumes.PhaseFunction;
 import Scene.Material.VolumeProperties;
 

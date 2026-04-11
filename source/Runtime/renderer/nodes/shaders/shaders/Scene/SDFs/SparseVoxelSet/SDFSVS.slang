@@ -31,9 +31,9 @@ import Scene.SDFs.SDFGridBase;
 import Scene.SDFs.SDFVoxelCommon;
 import Scene.SDFs.SDFVoxelTypes;
 import Scene.SDFs.SDFVoxelHitUtils;
-import Utils.Math.AABB;
-import Utils.Math.FormatConversion;
-import Utils.Geometry.IntersectionHelpers;
+import utils.Math.AABB;
+import utils.Math.FormatConversion;
+import utils.Geometry.IntersectionHelpers;
 
 struct SDFSVS : SDFGridBase, ISDFGrid
 {

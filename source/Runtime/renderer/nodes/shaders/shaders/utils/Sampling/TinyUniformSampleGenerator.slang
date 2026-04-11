@@ -25,10 +25,10 @@
  # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
-__exported import Utils.Sampling.SampleGeneratorInterface;
-import Utils.Sampling.Pseudorandom.LCG;
-import Utils.Math.HashUtils;
-import Utils.Math.BitTricks;
+__exported import utils.Sampling.SampleGeneratorInterface;
+import utils.Sampling.Pseudorandom.LCG;
+import utils.Math.HashUtils;
+import utils.Math.BitTricks;
 
 /**
  * Tiny uniform random sample generator.

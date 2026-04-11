@@ -27,7 +27,7 @@
  **************************************************************************/
 #include "utils/Math/MathConstants.slangh"
 
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 __exported import Rendering.Materials.IBSDF;
 
 /**

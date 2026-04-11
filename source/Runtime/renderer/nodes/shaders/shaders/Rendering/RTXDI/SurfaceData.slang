@@ -25,8 +25,8 @@
  # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
-import Utils.Math.PackedFormats;
-import Utils.Math.FormatConversion;
+import utils.Math.PackedFormats;
+import utils.Math.FormatConversion;
 
 __exported import PackedTypes;
 

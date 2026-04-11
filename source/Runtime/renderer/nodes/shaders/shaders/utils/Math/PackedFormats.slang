@@ -25,9 +25,9 @@
  # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
-import Utils.Math.MathHelpers;
-import Utils.Math.FormatConversion;
-import Utils.Color.ColorHelpers;
+import utils.Math.MathHelpers;
+import utils.Math.FormatConversion;
+import utils.Color.ColorHelpers;
 
 /**
  * Encode a normal packed as 2x 8-bit snorms in the octahedral mapping. The high 16 bits are unused.

@@ -27,7 +27,7 @@
  **************************************************************************/
 #include "EmissiveLightSamplerType.slangh"
 __exported import Rendering.Lights.EmissiveLightSamplerInterface;
-__exported import Utils.Sampling.SampleGeneratorInterface;
+__exported import utils.Sampling.SampleGeneratorInterface;
 
 /** The host sets the _EMISSIVE_LIGHT_SAMPLER_TYPE define to select sampler.
 

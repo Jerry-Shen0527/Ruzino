@@ -38,11 +38,11 @@ import Scene.SceneTypes;
 // __exported import Scene.Volume.GridVolume;
 // __exported import Scene.SDFs.SDFGrid;
 
-// import Utils.Attributes;
-__exported import Utils.Math.MathHelpers;
-// import Utils.Math.MatrixUtils;
-// import Utils.Geometry.GeometryHelpers;
-// import Utils.SlangUtils;
+// import utils.Attributes;
+__exported import utils.Math.MathHelpers;
+// import utils.Math.MatrixUtils;
+// import utils.Geometry.GeometryHelpers;
+// import utils.SlangUtils;
 // import Scene.SDFs.SDFVoxelCommon;
 // import Scene.Displacement.DisplacementMapping;
 // import Rendering.Materials.TexLODHelpers;

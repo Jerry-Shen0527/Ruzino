@@ -27,7 +27,7 @@
  **************************************************************************/
 __exported import Rendering.Materials.IMaterial;
 import Scene.Material.ShadingUtils;
-import Utils.Math.ShadingFrame;
+import utils.Math.ShadingFrame;
 
 /** Extension to add shading and material factory to MaterialSystem.
     Making this an extension avoids a circular dependency on MaterialSystem.

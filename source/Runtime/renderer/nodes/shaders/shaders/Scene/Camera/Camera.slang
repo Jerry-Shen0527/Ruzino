@@ -26,8 +26,8 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 import Scene.Camera.CameraData;
-__exported import Utils.Math.Ray;
-import Utils.Math.MathHelpers;
+__exported import utils.Math.Ray;
+import utils.Math.MathHelpers;
 
 struct Camera
 {

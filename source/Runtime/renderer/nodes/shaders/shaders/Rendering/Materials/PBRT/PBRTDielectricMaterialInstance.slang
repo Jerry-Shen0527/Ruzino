@@ -27,9 +27,9 @@
  **************************************************************************/
 __exported import Rendering.Materials.IMaterialInstance;
 __exported import Rendering.Materials.AnisotropicGGX;
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 import Rendering.Materials.Fresnel;
-import Utils.Debug.PixelDebug;
+import utils.Debug.PixelDebug;
 
 struct PBRTDielectricBSDF : IBSDF
 {

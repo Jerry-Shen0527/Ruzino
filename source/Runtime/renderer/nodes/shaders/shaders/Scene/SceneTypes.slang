@@ -33,9 +33,9 @@
 #include "utils/Math/PackedFormats.h"
 #include "VertexInfo.slang"
 #else
-import Utils.Math.PackedFormats;
-import Utils.SlangUtils;
-import Utils.Attributes;
+import utils.Math.PackedFormats;
+import utils.SlangUtils;
+import utils.Attributes;
 __exported import Scene.VertexInfo;
 #endif
 

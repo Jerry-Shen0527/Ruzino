@@ -27,8 +27,8 @@
  **************************************************************************/
 #include "utils/Math/MathConstants.slangh"
 
-import Utils.Math.AABB;
-import Utils.Math.FormatConversion;
+import utils.Math.AABB;
+import utils.Math.FormatConversion;
 import Scene.SDFs.SDFVoxelCommon;
 import Scene.SDFs.SparseBrickSet.BC4Encode;
 

@@ -30,9 +30,9 @@
 #include "utils/Math/MathConstants.slangh"
 
 __exported import Scene.SDFs.SDF3DPrimitiveCommon;
-import Utils.SDF.SDF3DShapes;
-import Utils.SDF.SDFOperations;
-import Utils.Math.IntervalArithmetic;
+import utils.SDF.SDF3DShapes;
+import utils.SDF.SDFOperations;
+import utils.Math.IntervalArithmetic;
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 

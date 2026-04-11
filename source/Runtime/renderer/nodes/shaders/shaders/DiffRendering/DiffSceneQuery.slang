@@ -28,10 +28,10 @@
 #include "utils/Math/MathConstants.slangh"
 
 import Scene.RaytracingInline;
-import Utils.Math.MathHelpers;
-import Utils.Geometry.GeometryHelpers;
-import Utils.Sampling.SampleGenerator;
-import Utils.Debug.PixelDebug;
+import utils.Math.MathHelpers;
+import utils.Geometry.GeometryHelpers;
+import utils.Sampling.SampleGenerator;
+import utils.Debug.PixelDebug;
 import Rendering.Lights.LightHelpers;
 import DiffRendering.DiffSceneIO;
 

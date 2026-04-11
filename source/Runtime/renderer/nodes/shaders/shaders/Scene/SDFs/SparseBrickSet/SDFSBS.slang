@@ -30,10 +30,10 @@
 import Scene.SDFs.SDFGridBase;
 import Scene.SDFs.SDFVoxelCommon;
 import Scene.SDFs.SDFVoxelHitUtils;
-import Utils.Math.AABB;
-import Utils.Math.FormatConversion;
-import Utils.Math.PackedFormats;
-import Utils.Geometry.IntersectionHelpers;
+import utils.Math.AABB;
+import utils.Math.FormatConversion;
+import utils.Math.PackedFormats;
+import utils.Geometry.IntersectionHelpers;
 
 #define USE_GATHER 1
 

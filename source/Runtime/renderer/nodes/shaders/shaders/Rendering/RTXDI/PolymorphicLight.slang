@@ -29,8 +29,8 @@
 
 import Scene.Scene;
 import Rendering.Lights.LightHelpers;
-import Utils.Math.MathHelpers;
-import Utils.Color.ColorHelpers;
+import utils.Math.MathHelpers;
+import utils.Color.ColorHelpers;
 __exported import PackedTypes;
 
 /** Polymorphic light type.

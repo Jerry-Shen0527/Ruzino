@@ -28,7 +28,7 @@
 #include "utils/Math/MathConstants.slangh"
 
 import Scene.Scene;
-import Utils.Color.ColorHelpers;
+import utils.Color.ColorHelpers;
 
 /** Update the env light luminance and PDF textures by sampling the scene's env map.
 */

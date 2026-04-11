@@ -30,7 +30,7 @@ import Scene.Material.TextureSampler;
 import Scene.Material.AlphaTest;
 import Scene.Lights.LightProfile;
 import Rendering.Volumes.PhaseFunction;
-import Utils.SlangUtils;
+import utils.SlangUtils;
 __exported import Scene.SceneTypes;
 __exported import Scene.Displacement.DisplacementData;
 __exported import Scene.Material.BasicMaterialData;

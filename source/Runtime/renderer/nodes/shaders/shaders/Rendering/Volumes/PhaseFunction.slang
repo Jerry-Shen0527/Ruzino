@@ -28,7 +28,7 @@
 #include "utils/Math/MathConstants.slangh"
 
 __exported import IPhaseFunction;
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 
 /** Null collision phase function
 */

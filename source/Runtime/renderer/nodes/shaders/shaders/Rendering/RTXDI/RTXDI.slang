@@ -27,8 +27,8 @@
  **************************************************************************/
 #include "utils/Math/MathConstants.slangh"
 import Scene.Scene;
-import Utils.Color.ColorHelpers;
-import Utils.Debug.PixelDebug;
+import utils.Color.ColorHelpers;
+import utils.Debug.PixelDebug;
 import PackedTypes;
 import Scene.RaytracingInline;
 

@@ -6,7 +6,7 @@
 #include "utils/view_cb.h"
 
 import Scene.SceneTypes;
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 import callable_data;
 RaytracingAccelerationStructure SceneBVH;
 

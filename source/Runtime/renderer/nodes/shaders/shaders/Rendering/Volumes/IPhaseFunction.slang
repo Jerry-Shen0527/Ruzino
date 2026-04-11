@@ -25,7 +25,7 @@
  # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
-__exported import Utils.Sampling.SampleGeneratorInterface;
+__exported import utils.Sampling.SampleGeneratorInterface;
 
 /** Low-level interface for phase functions.
 

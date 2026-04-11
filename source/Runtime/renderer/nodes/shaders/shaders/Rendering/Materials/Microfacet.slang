@@ -28,7 +28,7 @@
 #include "utils/Math/MathConstants.slangh"
 #include "BSDFConfig.slangh"
 
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 __exported import Rendering.Materials.NDF;
 
 /** General microfacet normal distribution function, including support for

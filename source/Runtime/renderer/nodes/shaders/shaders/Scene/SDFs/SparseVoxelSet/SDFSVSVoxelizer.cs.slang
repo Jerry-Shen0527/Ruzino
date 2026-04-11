@@ -27,8 +27,8 @@
  **************************************************************************/
 import Scene.SDFs.SDFVoxelTypes;
 import Scene.SDFs.SDFVoxelCommon;
-import Utils.Math.AABB;
-import Utils.Math.FormatConversion;
+import utils.Math.AABB;
+import utils.Math.FormatConversion;
 
 #define GROUP_WIDTH 4
 #define GROUP_SIZE GROUP_WIDTH * GROUP_WIDTH * GROUP_WIDTH

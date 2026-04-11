@@ -28,8 +28,8 @@
 #include "utils/Math/MathConstants.slangh"
 
 __exported import Rendering.Materials.IMaterialInstance;
-import Utils.Color.ColorHelpers;
-import Utils.Math.MathHelpers;
+import utils.Color.ColorHelpers;
+import utils.Math.MathHelpers;
 
 /** PBRT diffuse transmisson material instance.
     Note that the BSDF is implemented to handle wi/wo over the full sphere.

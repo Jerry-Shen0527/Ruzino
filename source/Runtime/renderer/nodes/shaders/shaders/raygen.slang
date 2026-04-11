@@ -29,7 +29,7 @@ import utils.ray;
 import utils.Spectrum;
 #include "utils/view_cb.h"
 
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 
 RWStructuredBuffer<RayInfo> rays : register(u0);
 RWTexture2D<uint> random_seeds : register(u1);

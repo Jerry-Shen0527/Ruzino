@@ -30,7 +30,7 @@
 __exported import Rendering.Materials.IMaterialInstance;
 import Scene.Material.RGLMaterialData;
 import Rendering.Materials.RGLCommon;
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 import Scene.Scene;
 
 /** Implementation of the BSDF for the measured RGL material.

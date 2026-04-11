@@ -31,7 +31,7 @@
 #ifdef HOST_CODE
 #include "utils/Math/AABB.h"
 #else
-import Utils.Math.AABB;
+import utils.Math.AABB;
 #endif
 
 RUZINO_NAMESPACE_OPEN_SCOPE

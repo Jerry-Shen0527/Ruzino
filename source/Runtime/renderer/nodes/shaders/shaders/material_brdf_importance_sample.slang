@@ -10,7 +10,7 @@ import Scene.SceneTypes;
 import Scene.BindlessMaterial;
 import Scene.BindlessVertexBuffer;
 import utils.Math.ShadingFrame;
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 
 RWStructuredBuffer<uint>
     importance_buffer;  // Uint buffer for atomic operations (float data stored

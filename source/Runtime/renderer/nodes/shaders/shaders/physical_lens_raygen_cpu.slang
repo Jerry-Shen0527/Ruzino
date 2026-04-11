@@ -2,7 +2,7 @@
 import lens_shader_cpu;
 import utils.ray;
 #include "utils/CameraParameters.h"
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 #include "utils/random.slangh"
 #include "utils/view_cb.h"
 

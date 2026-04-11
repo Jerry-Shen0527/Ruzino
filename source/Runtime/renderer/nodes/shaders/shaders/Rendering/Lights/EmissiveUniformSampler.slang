@@ -28,7 +28,7 @@
 #include "utils/Math/MathConstants.slangh"
 
 import Scene.Scene;
-import Utils.Sampling.SampleGeneratorInterface;
+import utils.Sampling.SampleGeneratorInterface;
 import Rendering.Lights.EmissiveLightSamplerHelpers;
 import Rendering.Lights.EmissiveLightSamplerInterface;
 

@@ -31,7 +31,7 @@ __exported import Scene.ShadingData;
 __exported import Scene.Material.ShadingUtils;
 __exported import Rendering.Materials.IBSDF; // For kMinCosTheta
 __exported import Rendering.Materials.LobeType;
-__exported import Utils.Sampling.SampleGeneratorInterface;
+__exported import utils.Sampling.SampleGeneratorInterface;
 __exported import DiffRendering.DiffMaterialData;
 __exported import MaterialInstanceHints;
 import Rendering.Volumes.PhaseFunction;

@@ -10,7 +10,7 @@ import Scene.BindlessVertexBuffer;
 import Scene.StandardSurface;
 import Scene.UsdPreviewSurface;
 import utils.Math.ShadingFrame;
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 
 import pt_constants;
 import pt_sample_lights;

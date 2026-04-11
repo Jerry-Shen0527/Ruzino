@@ -32,7 +32,7 @@
     on the host to bind the necessary resources.
 */
 #include "Scene/SceneDefines.slangh"
-import Utils.Attributes;
+import utils.Attributes;
 import Scene.Intersection;
 import Scene.SDFs.SDFGridHitData;
 __exported import Scene.Shading;

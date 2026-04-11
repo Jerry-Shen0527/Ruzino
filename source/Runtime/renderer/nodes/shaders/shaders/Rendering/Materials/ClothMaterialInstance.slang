@@ -29,7 +29,7 @@
 
 __exported import Rendering.Materials.IMaterialInstance;
 __exported import Rendering.Materials.ClothBRDF;
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 
 /** Implementation of a simple cloth BSDF.
 */

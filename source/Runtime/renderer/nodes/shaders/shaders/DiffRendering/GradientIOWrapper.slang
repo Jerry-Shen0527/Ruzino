@@ -28,7 +28,7 @@
 import DiffRendering.SceneGradients;
 import DiffRendering.DiffDebugParams;
 import Scene.Material.MaterialParamLayout;
-import Utils.Math.HashUtils;
+import utils.Math.HashUtils;
 
 // Avoid compilation warnings if not running in a differentiable mode.
 #ifndef DIFF_MODE

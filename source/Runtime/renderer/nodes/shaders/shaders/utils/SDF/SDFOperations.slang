@@ -25,7 +25,7 @@
  # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
-import Utils.Math.IntervalArithmetic;
+import utils.Math.IntervalArithmetic;
 
 /**
  * Blending of two "objects" based on a radius. Equation 17.57 in RTR4, and also in the Graphics Codex by Morgan McGuire.

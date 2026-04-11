@@ -30,7 +30,7 @@
 __exported import Rendering.Materials.IMaterialInstance;
 __exported import DiffRendering.SceneGradients;
 __exported import DiffRendering.GradientIOWrapper;
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 
 struct PBRTDiffuseBSDF : IBSDF, IDifferentiable
 {

@@ -28,8 +28,8 @@
 import Rendering.Materials.IBSDF;
 import Scene.ShadingData;
 import Scene.Material.MaterialTypes;
-import Utils.Color.ColorHelpers;
-__exported import Utils.Math.ShadingFrame;
+import utils.Color.ColorHelpers;
+__exported import utils.Math.ShadingFrame;
 
 // If set, the backfacing side in the hemisphere checks is forced to black.
 #define FALCOR_BACKFACE_BLACK 1

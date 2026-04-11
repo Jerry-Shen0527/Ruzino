@@ -27,8 +27,8 @@
  **************************************************************************/
 #include "utils/Math/MathConstants.slangh"
 
-import Utils.Math.FormatConversion;
-import Utils.Math.AABB;
+import utils.Math.FormatConversion;
+import utils.Math.AABB;
 
 
 struct SDFVoxelCommon

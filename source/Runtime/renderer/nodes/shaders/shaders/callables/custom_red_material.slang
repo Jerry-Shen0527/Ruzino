@@ -1,7 +1,7 @@
 import callable_data;
 #include "utils/random.slangh"
 import utils.Math.ShadingFrame;
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 import utils.Spectrum;
 
 // Custom red material shader - EVAL callable

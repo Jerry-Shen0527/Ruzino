@@ -26,7 +26,7 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 __exported import Rendering.Materials.LobeType;
-__exported import Utils.Sampling.SampleGeneratorInterface;
+__exported import utils.Sampling.SampleGeneratorInterface;
 
 /// Minimum cos(theta) for the incident and outgoing vectors.
 /// Some BSDF functions are not robust for cos(theta) == 0.0,

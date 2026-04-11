@@ -28,7 +28,7 @@
 #include "Rendering/Materials/BSDFConfig.slangh"
 
 import Scene.Material.MaterialData;
-import Utils.Color.ColorHelpers;
+import utils.Color.ColorHelpers;
 import Rendering.Materials.Fresnel;
 import Rendering.Materials.IMaterialInstance;
 #if DiffuseBrdf == DiffuseBrdfLambert

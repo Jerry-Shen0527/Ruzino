@@ -44,7 +44,7 @@
     For such triangles, we approximate the average radiance as the average
     of the emission sampled at the three vertices.
 */
-import Utils.Geometry.GeometryHelpers;
+import utils.Geometry.GeometryHelpers;
 import Scene.Scene;
 
 // Check that defines are set.

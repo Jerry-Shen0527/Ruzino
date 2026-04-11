@@ -27,7 +27,7 @@
  **************************************************************************/
 import Scene.Scene;
 import Scene.Displacement.DisplacementMapping;
-import Utils.Math.AABB;
+import utils.Math.AABB;
 import DisplacementUpdateTask;
 
 static const bool kUsePreciseShellBounds = true;

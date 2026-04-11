@@ -30,8 +30,8 @@
     environment map. The result is used by EnvMapSampler.slang for sampling.
 */
 
-import Utils.Math.MathHelpers;
-import Utils.Color.ColorHelpers;
+import utils.Math.MathHelpers;
+import utils.Color.ColorHelpers;
 
 cbuffer CB
 {

@@ -1,7 +1,7 @@
 #pragma once
 import Scene.VertexInfo;
 import utils.Math.ShadingFrame;
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 
 #include "utils/Math/MathConstants.slangh"
 #include "utils/random.slangh"

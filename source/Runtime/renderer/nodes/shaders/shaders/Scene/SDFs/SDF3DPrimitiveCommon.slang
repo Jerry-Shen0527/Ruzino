@@ -32,7 +32,7 @@
 #ifdef HOST_CODE
 #include "utils/SDF/SDFOperationType.slang"
 #else
-__exported import Utils.SDF.SDFOperationType;
+__exported import utils.SDF.SDFOperationType;
 #endif
 
 RUZINO_NAMESPACE_OPEN_SCOPE

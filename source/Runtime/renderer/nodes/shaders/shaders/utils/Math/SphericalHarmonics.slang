@@ -27,7 +27,7 @@
  **************************************************************************/
 #include "utils/Math/MathConstants.slangh"
 
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 
 /**
  * Get sequential index of SH basis function of degree l>=0 and order m in [-l,l].

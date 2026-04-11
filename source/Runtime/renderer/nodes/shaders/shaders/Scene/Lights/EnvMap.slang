@@ -26,7 +26,7 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 import Scene.Lights.EnvMapData;
-import Utils.Math.MathHelpers;
+import utils.Math.MathHelpers;
 
 /** Struct for accessing an environment map.
 */

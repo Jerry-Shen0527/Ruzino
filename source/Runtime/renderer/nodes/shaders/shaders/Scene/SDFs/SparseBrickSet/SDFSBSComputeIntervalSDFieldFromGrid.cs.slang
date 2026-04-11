@@ -27,8 +27,8 @@
  **************************************************************************/
 #include "utils/Math/MathConstants.slangh"
 import Scene.SDFs.SDFVoxelCommon;
-import Utils.Math.PackedFormats;
-import Utils.Math.IntervalArithmetic;
+import utils.Math.PackedFormats;
+import utils.Math.IntervalArithmetic;
 
 static const uint kGroupWidth = GROUP_WIDTH;
 static const uint kBrickWidth = BRICK_WIDTH;

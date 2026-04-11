@@ -29,8 +29,8 @@ import Scene.SDFs.SDFVoxelCommon;
 import Scene.SDFs.SDFVoxelHitUtils;
 import Scene.SDFs.SDFVoxelTypes;
 import Scene.SDFs.SDFGridBase;
-import Utils.Geometry.IntersectionHelpers;
-import Utils.Math.FormatConversion;
+import utils.Geometry.IntersectionHelpers;
+import utils.Math.FormatConversion;
 
 struct StackData
 {

@@ -31,8 +31,8 @@ __exported import Rendering.Materials.IMaterialInstance;
 __exported import Rendering.Materials.IBSDF;
 import Rendering.Materials.Fresnel;
 import Rendering.Volumes.PhaseFunction;
-import Utils.Color.ColorHelpers;
-import Utils.Debug.PixelDebug;
+import utils.Color.ColorHelpers;
+import utils.Debug.PixelDebug;
 
 /** This class implements a layered material based on
     "Position-Free Monte Carlo Simulation for Arbitrary Layered BSDFs" by Guo et al.

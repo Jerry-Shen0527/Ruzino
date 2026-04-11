@@ -26,7 +26,7 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #include "Scene/SceneDefines.slangh"
-import Utils.Math.FormatConversion;
+import utils.Math.FormatConversion;
 __exported import Scene.HitInfoType;
 __exported import Scene.SceneTypes;
 __exported import Scene.SDFs.SDFGridHitData;
