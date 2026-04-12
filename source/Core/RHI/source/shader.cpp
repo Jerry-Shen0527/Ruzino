@@ -835,8 +835,11 @@ void ShaderFactory::SlangCompile(
     desc.format = target;
     desc.profile = profile_id;
     if (target == SLANG_SPIRV)
+    {
         desc.flags = SLANG_TARGET_FLAG_GENERATE_WHOLE_PROGRAM |
                      SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY;
+        desc.forceGLSLScalarBufferLayout = true;
+    }
     else if (target == SLANG_DXIL) {
         // Pass through to DXC for better optimization and compatibility
         desc.flags = SLANG_TARGET_FLAG_GENERATE_WHOLE_PROGRAM;
