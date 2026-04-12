@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <iostream>
 
+#include "nodes/core/logging.hpp"
 #include "stage/animation.h"
 #include "stage/stage.hpp"
 
@@ -12,9 +13,7 @@ using namespace Ruzino;
 
 int main(int argc, char* argv[])
 {
-    // Set up logging
-    spdlog::set_pattern("%^[%T] %n: %v%$");
-    spdlog::set_level(spdlog::level::info);
+    initialize_framework_logging("clear_time_samples", spdlog::level::info);
 
     // Check command line arguments
     if (argc < 2) {

@@ -17,6 +17,7 @@
 
 #include "RHI/rhi.hpp"
 #include "cmdparser.hpp"
+#include "nodes/core/logging.hpp"
 #include "nodes/system/node_system.hpp"
 #include "stage/stage.hpp"
 #include "usd_nodejson.hpp"
@@ -365,7 +366,7 @@ bool ReadTextureCPU(
 
     auto hgi_texture = renderer->GetAovTexture(HdAovTokens->color);
     if (!hgi_texture) {
-        std::cerr << "Error: Failed to get rendered texture" << std::endl;
+        spdlog::error("Failed to get rendered texture from renderer AOV");
         return false;
     }
 
@@ -436,6 +437,10 @@ int main(int argc, char* argv[])
     parser.add("no-save", 'n', "Skip saving images (for profiling)");
 
     parser.parse_check(argc, argv);
+    const bool verbose = parser.exist("verbose");
+
+    initialize_framework_logging(
+        "rz_render", verbose ? spdlog::level::info : spdlog::level::warn);
 
     // Set MaterialX standard library path using USD's TfSetenv (preferred
     // method)
@@ -456,7 +461,6 @@ int main(int argc, char* argv[])
     int height = parser.get<int>("height");
     int spp = parser.get<int>("spp");
     std::string camera_path = parser.get<std::string>("camera");
-    bool verbose = parser.exist("verbose");
     bool skip_save = parser.exist("no-save");
     int num_frames = parser.get<int>("frames");
     float fps = parser.get<float>("fps");
@@ -464,18 +468,13 @@ int main(int argc, char* argv[])
 
     // Validate input files
     if (!std::filesystem::exists(usd_file)) {
-        std::cerr << "Error: USD file not found: " << usd_file << std::endl;
+        spdlog::error("USD file not found: {}", usd_file);
         return 1;
     }
     if (!std::filesystem::exists(json_script)) {
-        std::cerr << "Error: JSON script not found: " << json_script
-                  << std::endl;
+        spdlog::error("JSON script not found: {}", json_script);
         return 1;
     }
-
-    // Initialize logging
-    spdlog::set_level(verbose ? spdlog::level::info : spdlog::level::warn);
-    spdlog::set_pattern("%^[%T] %n: %v%$");
 
     spdlog::info("Starting render (pre-simulated scene)...");
     spdlog::info("USD file: {}", usd_file);
@@ -782,7 +781,7 @@ int main(int argc, char* argv[])
         return 0;
     }
     catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
+        log_exception_with_context("rz_render failed", e);
         return 1;
     }
 }

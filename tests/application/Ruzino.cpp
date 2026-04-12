@@ -20,6 +20,7 @@
 #include "GUI/window.h"
 #include "MCore/MaterialXNodeTree.hpp"
 #include "MCore/MaterialXNodeTreeWidget.h"
+#include "nodes/core/logging.hpp"
 #include "nodes/system/node_system.hpp"
 #include "nodes/ui/imgui.hpp"
 #include "pxr/base/tf/setenv.h"
@@ -150,11 +151,11 @@ class PythonConsoleWidgetFactory : public IWidgetFactory {
 int main(int argc, char* argv[])
 {
 #ifdef _DEBUG
-    spdlog::set_level(spdlog::level::debug);
+    const auto log_level = spdlog::level::debug;
 #else
-    spdlog::set_level(spdlog::level::warn);
+    const auto log_level = spdlog::level::warn;
 #endif
-    spdlog::set_pattern("%^[%T] %n: %v%$");
+    initialize_framework_logging("Ruzino", log_level);
     auto window = std::make_unique<Window>();
 
     // Set MaterialX standard library path using USD's TfSetenv (preferred

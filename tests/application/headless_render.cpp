@@ -15,6 +15,7 @@
 #include "GCore/algorithms/intersection.h"
 #include "RHI/rhi.hpp"
 #include "cmdparser.hpp"
+#include "nodes/core/logging.hpp"
 #include "nodes/system/node_system.hpp"
 #include "render_util.hpp"
 #include "stage/stage.hpp"
@@ -57,6 +58,7 @@ using namespace RenderUtil;
 
 int main(int argc, char* argv[])
 {
+    initialize_framework_logging("headless_render", spdlog::level::info);
     python::initialize();
 
     // 禁止 abort 弹窗，改为直接退出
@@ -107,6 +109,11 @@ int main(int argc, char* argv[])
     parser.add("no-progress", 'p', "Disable progress bar display");
 
     parser.parse_check(argc, argv);
+    const bool verbose = parser.exist("verbose");
+
+    initialize_framework_logging(
+        "headless_render",
+        verbose ? spdlog::level::info : spdlog::level::warn);
 
     // Set MaterialX standard library path using USD's TfSetenv (preferred
     // method)
@@ -128,7 +135,6 @@ int main(int argc, char* argv[])
     int spp = parser.get<int>("spp");
     std::string camera_path = parser.get<std::string>("camera");
     int renderer_index = parser.get<int>("renderer");
-    bool verbose = parser.exist("verbose");
     bool skip_save = parser.exist("no-save");
     bool show_progress = !parser.exist("no-progress");
     int num_frames = parser.get<int>("frames");
@@ -137,14 +143,10 @@ int main(int argc, char* argv[])
 
     // Validate input files
     if (!std::filesystem::exists(usd_file)) {
-        std::cerr << "Error: USD file not found: " << usd_file << std::endl;
+        spdlog::error("USD file not found: {}", usd_file);
         return 1;
     }
     // JSON validation will be done later based on selected renderer
-
-    // Initialize logging
-    spdlog::set_level(verbose ? spdlog::level::info : spdlog::level::warn);
-    spdlog::set_pattern("%^[%T] %n: %v%$");
 
     spdlog::info("Starting headless render...");
     spdlog::info("USD file: {}", usd_file);
@@ -210,8 +212,10 @@ int main(int argc, char* argv[])
         }
 
         if (selected_renderer >= static_cast<int>(available_renderers.size())) {
-            std::cerr << "Error: Renderer index " << selected_renderer
-                      << " out of range" << std::endl;
+            spdlog::error(
+                "Renderer index {} is out of range. available_renderers={}",
+                selected_renderer,
+                available_renderers.size());
             return 1;
         }
 
@@ -255,9 +259,9 @@ int main(int argc, char* argv[])
         // Load and apply JSON script (only for Ruzino renderer)
         if (is_ruzino_renderer) {
             if (json_script.empty() || !std::filesystem::exists(json_script)) {
-                std::cerr << "Error: JSON script required for Ruzino renderer "
-                             "but not found: "
-                          << json_script << std::endl;
+                spdlog::error(
+                    "JSON script required for Ruzino renderer but not found: {}",
+                    json_script);
                 return 1;
             }
 
@@ -585,7 +589,7 @@ int main(int argc, char* argv[])
         return 0;
     }
     catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
+        log_exception_with_context("headless_render failed", e);
         return 1;
     }
 

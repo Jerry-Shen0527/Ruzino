@@ -13,6 +13,7 @@
 #include "GCore/GOP.h"
 #include "RHI/rhi.hpp"
 #include "cmdparser.hpp"
+#include "nodes/core/logging.hpp"
 #include "nodes/system/node_system.hpp"
 #include "stage/stage.hpp"
 #include "usd_nodejson.hpp"
@@ -32,6 +33,7 @@ using namespace pxr;
 
 int main(int argc, char* argv[])
 {
+    initialize_framework_logging("rz_simulate", spdlog::level::info);
     python::initialize();
     // 禁止 abort 弹窗，改为直接退出
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
@@ -67,15 +69,14 @@ int main(int argc, char* argv[])
     float fps = parser.get<float>("fps");
     float delta_time = 1.0f / fps;
 
+    initialize_framework_logging(
+        "rz_simulate", verbose ? spdlog::level::info : spdlog::level::warn);
+
     // Validate input files
     if (!std::filesystem::exists(usd_file)) {
-        std::cerr << "Error: USD file not found: " << usd_file << std::endl;
+        spdlog::error("USD file not found: {}", usd_file);
         return 1;
     }
-
-    // Initialize logging
-    spdlog::set_level(verbose ? spdlog::level::info : spdlog::level::warn);
-    spdlog::set_pattern("%^[%T] %n: %v%$");
 
     spdlog::info("Starting simulation...");
     spdlog::info("USD file: {}", usd_file);
@@ -154,7 +155,7 @@ int main(int argc, char* argv[])
         return 0;
     }
     catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
+        log_exception_with_context("rz_simulate failed", e);
         return 1;
     }
 
