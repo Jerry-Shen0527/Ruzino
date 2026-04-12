@@ -2,6 +2,9 @@
 #include <rzconsole/imgui_console.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <chrono>
+
 RUZINO_NAMESPACE_OPEN_SCOPE
 
 template<typename Mutex>
@@ -47,13 +50,24 @@ std::shared_ptr<console_sink_mt>& get_global_console_sink() {
 void setup_console_logging(ImGui_Console* console) {
     auto sink = get_global_console_sink();
     sink->set_console(console);
-    
-    // Create logger with console sink only
+
+    if (auto logger = spdlog::default_logger()) {
+        auto& sinks = logger->sinks();
+        auto existing = std::find(sinks.begin(), sinks.end(), sink);
+        if (existing == sinks.end()) {
+            sinks.push_back(sink);
+        }
+        logger->set_pattern(
+            "[%Y-%m-%d %H:%M:%S.%e] [%P:%t] [%l] [%n] %v");
+        return;
+    }
+
+    // Fallback when no framework logger exists yet.
     auto logger = std::make_shared<spdlog::logger>("console", sink);
     logger->set_level(spdlog::level::trace);
-    logger->flush_on(spdlog::level::trace);
-    
-    // Set as default logger
+    logger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%P:%t] [%l] [%n] %v");
+    logger->flush_on(spdlog::level::err);
+
     spdlog::set_default_logger(logger);
     spdlog::flush_every(std::chrono::seconds(1));
 }

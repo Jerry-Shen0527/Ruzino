@@ -9,6 +9,7 @@
 #include "GCore/algorithms/intersection.h"
 #include "GCore/geom_payload.hpp"
 #include "nodes/core/api.hpp"
+#include "nodes/core/logging.hpp"
 #include "nodes/system/node_system.hpp"
 #include "stage/stage.hpp"
 using namespace Ruzino;
@@ -26,6 +27,9 @@ void print_usage(const char* program_name)
 
 int main(int argc, char* argv[])
 {
+    initialize_framework_logging(
+        "headless_geom_node_executor", spdlog::level::info);
+
     // Parse command line arguments
     std::string input_json = "scratch_design.json";
     std::string output_usd = "scratch.usdc";
@@ -72,8 +76,7 @@ int main(int argc, char* argv[])
         file.close();
     }
     else {
-        std::cerr << "Error: Could not open input file: " << input_json
-                  << std::endl;
+        spdlog::error("Could not open input file: {}", input_json);
         return 1;
     }
 

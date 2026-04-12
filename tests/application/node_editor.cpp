@@ -6,6 +6,7 @@
 
 #include "GUI/ImGuiFileDialog.h"
 #include "GUI/window.h"
+#include "nodes/core/logging.hpp"
 #include "nodes/core/node_tree.hpp"
 #include "nodes/system/node_system.hpp"
 #include "nodes/ui/imgui.hpp"
@@ -253,11 +254,11 @@ int main(int argc, char** argv)
 {
     // Setup logging
 #ifdef _DEBUG
-    spdlog::set_level(spdlog::level::debug);
+    const auto log_level = spdlog::level::debug;
 #else
-    spdlog::set_level(spdlog::level::info);
+    const auto log_level = spdlog::level::info;
 #endif
-    spdlog::set_pattern("%^[%T] %n: %v%$");
+    initialize_framework_logging("node_editor", log_level);
 
     // Default configuration
     std::string json_path = "node_editor_config.json";
@@ -308,8 +309,8 @@ int main(int argc, char** argv)
             config_files.clear();
         }
         else if (arg.empty() || arg[0] == '-') {
-            std::cerr << "Unknown option: " << arg << std::endl;
-            std::cerr << "Use --help for usage information." << std::endl;
+            spdlog::error("Unknown option: {}", arg);
+            spdlog::error("Use --help for usage information.");
             return 1;
         }
         else {
@@ -319,8 +320,8 @@ int main(int argc, char** argv)
                 json_path = arg;
             }
             else {
-                std::cerr << "Unexpected argument: " << arg << std::endl;
-                std::cerr << "Use --help for usage information." << std::endl;
+                spdlog::error("Unexpected argument: {}", arg);
+                spdlog::error("Use --help for usage information.");
                 return 1;
             }
         }

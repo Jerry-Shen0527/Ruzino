@@ -492,10 +492,13 @@ def pack_sdk(dry_run=False):
     dst_dir = os.path.join(os.path.dirname(__file__), "SDK\\SDK_pack_temp")
 
     # Path that need to be replaced
+    import sys
     where_python = (
         subprocess.check_output(["where", "python"]).decode("utf-8").split("\n")[0]
     )
-    python_dir_backward_slash = os.path.dirname(where_python).replace("/", "\\")
+    where_python_dir = sys.base_prefix  # This should give us the root directory of the Python installation
+    
+    python_dir_backward_slash = where_python_dir.replace("/", "\\")
     python_dir_forward_slash = python_dir_backward_slash.replace("\\", "/")
     framework3d_dir_backward_slash = os.getcwd().replace("/", "\\")
     framework3d_dir_forward_slash = framework3d_dir_backward_slash.replace("\\", "/")

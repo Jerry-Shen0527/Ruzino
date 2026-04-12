@@ -49,9 +49,9 @@ int init(bool with_window, bool use_dx12)
 
     DeviceCreationParameters params;
 
-    params.enableRayTracingExtensions = true;
-    params.enableComputeQueue = true;
-    params.enableCopyQueue = true;
+    params.enableRayTracingExtensions = false;
+    params.enableComputeQueue = false;
+    params.enableCopyQueue = false;
 // params.adapterIndex = 0;
 #if RUZINO_WITH_VULKAN
     params.optionalVulkanInstanceExtensions = {
@@ -76,10 +76,10 @@ int init(bool with_window, bool use_dx12)
 #endif
 
     params.swapChainFormat = nvrhi::Format::RGBA8_UNORM;
-    params.featureLevel = D3D_FEATURE_LEVEL_12_2;
+    params.featureLevel = D3D_FEATURE_LEVEL_12_0;
 #ifdef _DEBUG
     // params.enableNvrhiValidationLayer = true;
-    params.enableDebugRuntime = true;
+    // params.enableDebugRuntime = true;
 #endif
     //    params.enableDebugRuntime = true;
 
