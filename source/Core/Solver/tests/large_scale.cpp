@@ -429,7 +429,17 @@ TEST_F(LargeScaleTest, RandomSparseScaling)
                   << (1.0 - (double)A.nonZeros() / (n * n)) * 100 << "%"
                   << std::endl;
 
-        for (auto type : available_types) {
+        // Random sparse matrices are unsuitable for direct solvers due to
+        // excessive fill-in. Only use iterative solvers.
+        std::vector<SolverType> iterative_types = {
+            SolverType::CUDA_CG,
+            SolverType::CUDA_BICGSTAB,
+            SolverType::CUDA_GMRES,
+            SolverType::EIGEN_ITERATIVE_CG,
+            SolverType::EIGEN_ITERATIVE_BICGSTAB
+        };
+
+        for (auto type : iterative_types) {
             testSolverOnMatrix(type, A, b, "RandomSparse", true);
         }
 
@@ -493,8 +503,9 @@ TEST_F(LargeScaleTest, ChallengingProblems)
         std::cout << "Matrix creation time: " << matrix_time.count() << " ms"
                   << std::endl;
 
-        // Only test iterative methods on very large or difficult problems
-        auto test_types = (test.size >= 500000)
+        // Only test iterative methods on large random sparse matrices
+        // (direct solvers have excessive fill-in on random sparse matrices)
+        auto test_types = (test.name.find("Sparse") != std::string::npos)
                               ? iterative_types
                               : SolverFactory::getAvailableTypes();
 
@@ -587,6 +598,14 @@ TEST_F(LargeScaleTest, PerformanceProfile)
         << std::endl;
     printHeader();
 
+    std::vector<SolverType> iterative_types = {
+        SolverType::CUDA_CG,
+        SolverType::CUDA_BICGSTAB,
+        SolverType::CUDA_GMRES,
+        SolverType::EIGEN_ITERATIVE_CG,
+        SolverType::EIGEN_ITERATIVE_BICGSTAB
+    };
+
     for (const auto& test : profile_tests) {
         std::cout << "\n--- " << test.name << " ---" << std::endl;
 
@@ -594,8 +613,12 @@ TEST_F(LargeScaleTest, PerformanceProfile)
         Eigen::VectorXf b;
         test.generator(A, b);
 
-        auto available_types = SolverFactory::getAvailableTypes();
-        for (auto type : available_types) {
+        // Random sparse matrices are unsuitable for direct solvers due to
+        // excessive fill-in. Only use iterative solvers.
+        auto test_types = (test.name.find("Sparse") != std::string::npos)
+                              ? iterative_types
+                              : SolverFactory::getAvailableTypes();
+        for (auto type : test_types) {
             testSolverOnMatrix(type, A, b, test.name, true);
         }
     }

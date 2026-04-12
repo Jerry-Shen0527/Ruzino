@@ -1,6 +1,5 @@
 #include <cuda_runtime.h>
-#include <cusolverSp.h>
-#include <cusparse.h>
+#include <cudss.h>
 
 #include <RHI/cuda.hpp>
 #include <RHI/internal/cuda_extension.hpp>
@@ -11,34 +10,12 @@ RUZINO_NAMESPACE_OPEN_SCOPE
 
 namespace Solver {
 
-namespace {
-    // Helper to create or resize buffer
-    void ensureBufferSize(Ruzino::cuda::CUDALinearBufferHandle& buffer, size_t size, size_t& current_size) {
-        if (!buffer || current_size < size) {
-            // Buffer doesn't exist or is too small
-            // For now, simple recreation. In a more advanced system, we might resize.
-            // But CUDALinearBuffer doesn't support resize, so we recreate.
-            // We allocate slightly more to avoid frequent reallocations if size grows slowly
-            size_t alloc_size = (size_t)(size * 1.2);
-
-            // Create a temporary buffer with the right size effectively
-            // Since we can't easily create a raw buffer without type, we use char/byte buffer
-            // But here we rely on the specific create_cuda_linear_buffer overloads
-            // This is a bit tricky with the current API being type-safe wrapping
-            // So we will just use the exact size for now to be safe with the API
-            // The caller is responsible for creating the right type of buffer
-        }
-    }
-}  // namespace
-
 class CuSolverQRSolver : public LinearSolver {
    private:
-    cusolverSpHandle_t cusolverHandle;
-    cusparseHandle_t cusparseHandle;
+    cudssHandle_t cudssHandle = nullptr;
     bool initialized = false;
 
     // Cached buffers for solve() method (Eigen input)
-    // We cache these to avoid reallocation when solve() is called repeatedly with same size matrix
     int cached_nnz = 0;
     int cached_n = 0;
     Ruzino::cuda::CUDALinearBufferHandle d_csrVal_cached;
@@ -50,9 +27,8 @@ class CuSolverQRSolver : public LinearSolver {
    public:
     CuSolverQRSolver()
     {
-        if (cusolverSpCreate(&cusolverHandle) != CUSOLVER_STATUS_SUCCESS ||
-            cusparseCreate(&cusparseHandle) != CUSPARSE_STATUS_SUCCESS) {
-            throw std::runtime_error("Failed to create cuSOLVER/cuSPARSE handles");
+        if (cudssCreate(&cudssHandle) != CUDSS_STATUS_SUCCESS) {
+            throw std::runtime_error("Failed to create cuDSS handle");
         }
         initialized = true;
     }
@@ -60,8 +36,7 @@ class CuSolverQRSolver : public LinearSolver {
     ~CuSolverQRSolver()
     {
         if (initialized) {
-            cusolverSpDestroy(cusolverHandle);
-            cusparseDestroy(cusparseHandle);
+            cudssDestroy(cudssHandle);
         }
     }
 
@@ -72,7 +47,7 @@ class CuSolverQRSolver : public LinearSolver {
 
     bool isIterative() const override
     {
-        return false;  // 直接法!
+        return false;
     }
 
     bool requiresGPU() const override
@@ -80,7 +55,7 @@ class CuSolverQRSolver : public LinearSolver {
         return true;
     }
 
-    // Direct GPU interface implementation
+    // Direct GPU interface implementation using cuDSS
     SolverResult solveGPU(
         int n,
         int nnz,
@@ -95,56 +70,102 @@ class CuSolverQRSolver : public LinearSolver {
         auto start_time = std::chrono::high_resolution_clock::now();
 
         try {
-            // Create cuSOLVER matrix descriptor
-            cusparseMatDescr_t descrA;
-            cusparseCreateMatDescr(&descrA);
-            cusparseSetMatType(descrA, CUSPARSE_MATRIX_TYPE_GENERAL);
-            cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ZERO);
+            cudssMatrix_t matA = nullptr, matX = nullptr, matB = nullptr;
+            cudssConfig_t solverConfig = nullptr;
+            cudssData_t solverData = nullptr;
 
-            int singularity = 0;
+            auto cleanup = [&]() {
+                if (matA) cudssMatrixDestroy(matA);
+                if (matX) cudssMatrixDestroy(matX);
+                if (matB) cudssMatrixDestroy(matB);
+                if (solverConfig) cudssConfigDestroy(solverConfig);
+                if (solverData) cudssDataDestroy(cudssHandle, solverData);
+            };
 
-            // Call cuSOLVER QR solver
-            // Note: cusolverSpScsrlsvqr solves A*x = b
-            cusolverStatus_t status = cusolverSpScsrlsvqr(
-                cusolverHandle,
-                n,
-                nnz,
-                descrA,
-                d_values,
-                d_row_offsets,
-                d_col_indices,
-                d_b,
-                config.tolerance,
-                0,  // no reordering
-                d_x,
-                &singularity);
+            // Create CSR matrix (GENERAL type for QR/LU factorization)
+            cudssStatus_t status = cudssMatrixCreateCsr(
+                &matA, n, n, nnz,
+                const_cast<int*>(d_row_offsets),
+                nullptr,
+                const_cast<int*>(d_col_indices),
+                const_cast<float*>(d_values),
+                CUDA_R_32I, CUDA_R_32F,
+                CUDSS_MTYPE_GENERAL, CUDSS_MVIEW_FULL, CUDSS_BASE_ZERO);
 
-            cusparseDestroyMatDescr(descrA);
-
-            if (status != CUSOLVER_STATUS_SUCCESS) {
+            if (status != CUDSS_STATUS_SUCCESS) {
                 result.converged = false;
-                result.error_message = "cuSOLVER QR failed with status " + std::to_string(status);
-            } else if (singularity >= 0) {
-                result.converged = false;
-                result.error_message = "Matrix is singular at column " + std::to_string(singularity);
-                if (config.verbose) {
-                    std::cout << result.error_message << std::endl;
-                }
-            } else {
-                result.converged = true;
-                result.iterations = 1;  // Direct solver, single "iteration"
-                result.final_residual = 0.0f;  // Direct solver
-
-                if (config.verbose) {
-                    std::cout << "cuSOLVER QR direct solve completed successfully" << std::endl;
-                }
+                result.error_message = "cuDSS matrix create failed: " + std::to_string(status);
+                cleanup();
+                goto done;
             }
+
+            // Create solution and RHS dense vectors
+            status = cudssMatrixCreateDn(&matX, n, 1, n, d_x, CUDA_R_32F, CUDSS_LAYOUT_COL_MAJOR);
+            if (status != CUDSS_STATUS_SUCCESS) {
+                result.converged = false;
+                result.error_message = "cuDSS solution matrix create failed";
+                cleanup();
+                goto done;
+            }
+
+            status = cudssMatrixCreateDn(&matB, n, 1, n, const_cast<float*>(d_b), CUDA_R_32F, CUDSS_LAYOUT_COL_MAJOR);
+            if (status != CUDSS_STATUS_SUCCESS) {
+                result.converged = false;
+                result.error_message = "cuDSS RHS matrix create failed";
+                cleanup();
+                goto done;
+            }
+
+            // Create config and data
+            cudssConfigCreate(&solverConfig);
+            cudssDataCreate(cudssHandle, &solverData);
+
+            // Phase 1: Analysis (reordering + symbolic factorization)
+            status = cudssExecute(cudssHandle,
+                CUDSS_PHASE_ANALYSIS, solverConfig, solverData, matA, matX, matB);
+            if (status != CUDSS_STATUS_SUCCESS) {
+                result.converged = false;
+                result.error_message = "cuDSS analysis failed: " + std::to_string(status);
+                cleanup();
+                goto done;
+            }
+
+            // Phase 2: Factorization
+            status = cudssExecute(cudssHandle,
+                CUDSS_PHASE_FACTORIZATION, solverConfig, solverData, matA, matX, matB);
+            if (status != CUDSS_STATUS_SUCCESS) {
+                result.converged = false;
+                result.error_message = "cuDSS factorization failed: " + std::to_string(status);
+                cleanup();
+                goto done;
+            }
+
+            // Phase 3: Solve
+            status = cudssExecute(cudssHandle,
+                CUDSS_PHASE_SOLVE, solverConfig, solverData, matA, matX, matB);
+            if (status != CUDSS_STATUS_SUCCESS) {
+                result.converged = false;
+                result.error_message = "cuDSS solve failed: " + std::to_string(status);
+                cleanup();
+                goto done;
+            }
+
+            result.converged = true;
+            result.iterations = 1;
+            result.final_residual = 0.0f;
+
+            if (config.verbose) {
+                std::cout << "cuDSS QR direct solve completed successfully" << std::endl;
+            }
+
+            cleanup();
 
         } catch (const std::exception& e) {
             result.converged = false;
-            result.error_message = std::string("cuSOLVER QR error: ") + e.what();
+            result.error_message = std::string("cuDSS QR error: ") + e.what();
         }
 
+done:
         auto end_time = std::chrono::high_resolution_clock::now();
         result.solve_time =
             std::chrono::duration_cast<std::chrono::microseconds>(
@@ -189,16 +210,12 @@ class CuSolverQRSolver : public LinearSolver {
             }
 
             // Convert to CSR format on host
-            // (Note: For max performance, this conversion should happen on GPU or use Cached direct interface)
             Eigen::SparseMatrix<float, Eigen::RowMajor> A_csr = A;
 
-            // We still use host vectors for the transfer, but we could optimize this further
-            // if we had access to Eigen internal buffers or if we did the conversion on GPU
             std::vector<float> csrVal(nnz);
             std::vector<int> csrRowPtr(n + 1);
             std::vector<int> csrColInd(nnz);
 
-            // Copy CSR data
             int idx = 0;
             csrRowPtr[0] = 0;
             for (int i = 0; i < n; ++i) {
@@ -210,43 +227,20 @@ class CuSolverQRSolver : public LinearSolver {
                 csrRowPtr[i + 1] = idx;
             }
 
-            // Debug output
             if (config.verbose) {
                 std::cout << "Matrix size: " << n << "x" << n << std::endl;
                 std::cout << "Total nnz: " << nnz << std::endl;
             }
 
-            // Copy to device (using cached buffers)
-            cudaMemcpy(
-                (void*)d_csrVal_cached->get_device_ptr(),
-                csrVal.data(),
-                nnz * sizeof(float),
-                cudaMemcpyHostToDevice);
-            cudaMemcpy(
-                (void*)d_csrRowPtr_cached->get_device_ptr(),
-                csrRowPtr.data(),
-                (n + 1) * sizeof(int),
-                cudaMemcpyHostToDevice);
-            cudaMemcpy(
-                (void*)d_csrColInd_cached->get_device_ptr(),
-                csrColInd.data(),
-                nnz * sizeof(int),
-                cudaMemcpyHostToDevice);
-            cudaMemcpy(
-                (void*)d_b_cached->get_device_ptr(),
-                b.data(),
-                n * sizeof(float),
-                cudaMemcpyHostToDevice);
-            cudaMemcpy(
-                (void*)d_x_cached->get_device_ptr(),
-                x.data(),
-                n * sizeof(float),
-                cudaMemcpyHostToDevice);
+            // Copy to device
+            cudaMemcpy((void*)d_csrVal_cached->get_device_ptr(), csrVal.data(), nnz * sizeof(float), cudaMemcpyHostToDevice);
+            cudaMemcpy((void*)d_csrRowPtr_cached->get_device_ptr(), csrRowPtr.data(), (n + 1) * sizeof(int), cudaMemcpyHostToDevice);
+            cudaMemcpy((void*)d_csrColInd_cached->get_device_ptr(), csrColInd.data(), nnz * sizeof(int), cudaMemcpyHostToDevice);
+            cudaMemcpy((void*)d_b_cached->get_device_ptr(), b.data(), n * sizeof(float), cudaMemcpyHostToDevice);
+            cudaMemcpy((void*)d_x_cached->get_device_ptr(), x.data(), n * sizeof(float), cudaMemcpyHostToDevice);
 
-            // Call GPU implementation
             result = solveGPU(
-                n,
-                nnz,
+                n, nnz,
                 reinterpret_cast<const int*>(d_csrRowPtr_cached->get_device_ptr()),
                 reinterpret_cast<const int*>(d_csrColInd_cached->get_device_ptr()),
                 reinterpret_cast<const float*>(d_csrVal_cached->get_device_ptr()),
@@ -255,18 +249,12 @@ class CuSolverQRSolver : public LinearSolver {
                 config);
 
             // Copy result back
-            cudaMemcpy(
-                x.data(),
-                (void*)d_x_cached->get_device_ptr(),
-                n * sizeof(float),
-                cudaMemcpyDeviceToHost);
+            cudaMemcpy(x.data(), (void*)d_x_cached->get_device_ptr(), n * sizeof(float), cudaMemcpyDeviceToHost);
 
         } catch (const std::exception& e) {
             result.converged = false;
-            result.error_message = std::string("cuSOLVER QR error: ") + e.what();
+            result.error_message = std::string("cuDSS QR error: ") + e.what();
         }
-
-        // Add host overhead to timing if needed, but result.solve_time currently reflects GPU time
 
         return result;
     }
