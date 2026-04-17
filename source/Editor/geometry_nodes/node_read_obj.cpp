@@ -6,6 +6,10 @@
 #include <filesystem>
 #include <iostream>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include "GCore/Components/MeshComponent.h"
 #include "GCore/read_geom.h"
 #include "igl/readOBJ.h"

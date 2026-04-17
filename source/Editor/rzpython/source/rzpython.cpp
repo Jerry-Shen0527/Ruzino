@@ -11,6 +11,10 @@
 #include <stdexcept>
 #include <unordered_map>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 namespace nb = nanobind;
 
 RUZINO_NAMESPACE_OPEN_SCOPE
@@ -67,7 +71,7 @@ void initialize()
         PyObject* os = PyImport_ImportModule("os");
         PyObject* sys = PyImport_ImportModule("sys");
         PyObject* sys_path = PyObject_GetAttrString(sys, "path");
-        PyObject* curDir = PyUnicode_FromString(executable_path.c_str());
+        PyObject* curDir = PyUnicode_FromString(executable_path.string().c_str());
         PyList_Append(sys_path, curDir);
         Py_DECREF(os);
         Py_DECREF(sys);

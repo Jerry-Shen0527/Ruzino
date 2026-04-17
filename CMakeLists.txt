@@ -145,6 +145,8 @@ set(FRAMEWORK3D_DIR ${RUZINO_ROOT_DIR})
 message("Looking for OpenUSD in ${pxr_DIR}")
 set(PYTHON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/SDK/python")
 set(OpenSubdiv_DIR ${CMAKE_CURRENT_SOURCE_DIR}/SDK/OpenUSD/${SDK_FOLDER}/lib/cmake/OpenSubdiv)
+set(TBB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/SDK/OpenUSD/${SDK_FOLDER}/lib/cmake/TBB)
+list(APPEND CMAKE_PREFIX_PATH ${CMAKE_CURRENT_SOURCE_DIR}/SDK/OpenUSD/${SDK_FOLDER}/lib/cmake)
 find_package(pxr)
 
 if(pxr_FOUND)
@@ -152,8 +154,17 @@ if(pxr_FOUND)
   find_package(OpenGL REQUIRED)
   set(RUZINO_WITH_OPENUSD ON)
   include_directories(${pxr_DIR}/include)
+  file(GLOB _boost_inc "${pxr_DIR}/include/boost-*")
+  if(_boost_inc)
+    list(GET _boost_inc 0 _boost_inc_dir)
+    include_directories(${_boost_inc_dir})
+  endif()
+  include_directories(${Python3_ROOT_DIR}/include)
+  link_directories(${pxr_DIR}/lib)
+  link_directories(${Python3_LIBRARY_DIRS})
   add_compile_definitions(
     TBB_SUPPRESS_DEPRECATED_MESSAGES=1
+    NANOVDB_USE_OPENVDB
     $<$<CONFIG:Debug>:TBB_USE_DEBUG=1>
     $<$<CONFIG:Debug>:BOOST_DEBUG_PYTHON>)
 else()

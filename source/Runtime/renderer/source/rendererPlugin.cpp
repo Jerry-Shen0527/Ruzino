@@ -52,7 +52,9 @@ void Hd_RUZINO_RendererPlugin::DeleteRenderDelegate(
     delete renderDelegate;
 }
 
-bool Hd_RUZINO_RendererPlugin::IsSupported(bool /* gpuEnabled */) const
+bool Hd_RUZINO_RendererPlugin::IsSupported(
+    HdRendererCreateArgs const& /* rendererCreateArgs */,
+    std::string* /* reasonWhyNot */) const
 {
     // Nothing more to check for now, we assume if the plugin loads correctly
     // it is supported.

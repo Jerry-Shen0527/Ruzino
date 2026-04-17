@@ -82,7 +82,7 @@ NODE_EXECUTION_FUNCTION(rasterize)
         .finish_setting_frame_buffer();
 
     auto size = get_size(params);
-    context.set_viewport(size[0], size[1]).finish_setting_pso();
+    context.set_viewport(pxr::GfVec2f(size[0], size[1])).finish_setting_pso();
 
     instance_collection->draw_indirect_pool.compress();
 

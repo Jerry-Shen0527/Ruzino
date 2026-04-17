@@ -3,7 +3,7 @@ file(GLOB test_sources ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp)
 foreach(source ${test_sources})
     UCG_ADD_APP(
         SRC ${source}
-        LIBS usdview_widget nodes_system GUI usd_ms nodes_ui_imgui geometry MCore stb_image
+        LIBS usdview_widget nodes_system GUI usd_ms nodes_ui_imgui geometry MCore stb_image OpenGL32
     )
 endforeach()
 

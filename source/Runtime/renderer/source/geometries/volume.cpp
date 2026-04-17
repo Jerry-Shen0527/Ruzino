@@ -384,7 +384,7 @@ bool Hd_RUZINO_Volume::_LoadOpenVDB(
             worldBBox.max().x(), worldBBox.max().y(), worldBBox.max().z());
         fieldData.boundingBox =
             GfBBox3d(GfRange3d(minPt, maxPt));  // Convert OpenVDB to NanoVDB
-        auto handle = nanovdb::openToNanoVDB(*grid);
+        auto handle = nanovdb::tools::openToNanoVDB(baseGrid);
         if (!handle) {
             spdlog::error("Failed to convert OpenVDB grid to NanoVDB");
             return false;

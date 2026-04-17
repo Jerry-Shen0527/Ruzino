@@ -3,6 +3,9 @@ import shutil
 import os
 import sys
 import platform
+import stat
+import subprocess
+import tarfile
 import requests
 from tqdm import tqdm
 import argparse
@@ -144,6 +147,94 @@ def copy_nvapi_header_to_slang(dry_run=False):
             print(f"  ✓ Copied {header} to SDK/slang/include/")
         except Exception as e:
             print(f"  ✗ Failed to copy {header} to SDK/slang/include/: {e}")
+
+
+def _copy_python_installation(python_dir, dst_python_dir, dry_run=False):
+    """Copy essential Python installation files from system Python to SDK/python."""
+    if dry_run:
+        print(
+            f"[DRY RUN] Would copy Python installation from {python_dir} to {dst_python_dir}"
+        )
+        return
+
+    print(f"Copying Python installation from {python_dir} to {dst_python_dir}")
+    os.makedirs(dst_python_dir, exist_ok=True)
+
+    # Copy Python executables (platform-specific names)
+    if is_windows():
+        exe_names = ["python.exe", "python_d.exe", "pythonw.exe"]
+    else:
+        exe_names = ["python3", "python", "python3.d"]
+
+    for exe_name in exe_names:
+        exe_path = os.path.join(python_dir, exe_name)
+        if os.path.exists(exe_path):
+            shutil.copy2(exe_path, dst_python_dir)
+
+    # Copy shared libraries in python directory (platform-specific extensions)
+    lib_extension = get_binary_extension()
+
+    for file in os.listdir(python_dir):
+        if file.endswith(lib_extension) or (is_linux() and ".so" in file):
+            shutil.copy2(os.path.join(python_dir, file), dst_python_dir)
+
+    # Copy DLLs/lib directory if exists (Windows: DLLs, Linux: lib-dynload)
+    dynload_dirs = ["DLLs", "lib-dynload", "lib/python*/lib-dynload"]
+    for dynload_name in dynload_dirs:
+        dynload_dir = os.path.join(python_dir, dynload_name)
+        if os.path.exists(dynload_dir):
+            dst_dynload_dir = os.path.join(dst_python_dir, dynload_name)
+            shutil.copytree(dynload_dir, dst_dynload_dir, dirs_exist_ok=True)
+
+    # Copy libs directory (contains python3.lib/python3.a and other static libraries)
+    libs_dir = os.path.join(python_dir, "libs")
+    if os.path.exists(libs_dir):
+        dst_libs_dir = os.path.join(dst_python_dir, "libs")
+        shutil.copytree(libs_dir, dst_libs_dir, dirs_exist_ok=True)
+        print(f"Copied libs directory")
+
+    # Copy Scripts/bin directory (contains pip and other tools)
+    scripts_names = ["Scripts", "bin"]
+    for scripts_name in scripts_names:
+        scripts_dir = os.path.join(python_dir, scripts_name)
+        if os.path.exists(scripts_dir):
+            dst_scripts_dir = os.path.join(dst_python_dir, scripts_name)
+            shutil.copytree(scripts_dir, dst_scripts_dir, dirs_exist_ok=True)
+            print(f"Copied {scripts_name} directory (including pip)")
+
+    # Copy Lib directory but exclude site-packages and other third-party packages
+    lib_dir = os.path.join(python_dir, "Lib")
+    if os.path.exists(lib_dir):
+        dst_lib_dir = os.path.join(dst_python_dir, "Lib")
+        os.makedirs(dst_lib_dir, exist_ok=True)
+
+        standard_lib_items = []
+        exclude_dirs = {"site-packages", "dist-packages", "__pycache__"}
+
+        for item in os.listdir(lib_dir):
+            item_path = os.path.join(lib_dir, item)
+            if os.path.isdir(item_path):
+                if item not in exclude_dirs:
+                    standard_lib_items.append(item)
+            else:
+                if item.endswith(".py"):
+                    standard_lib_items.append(item)
+
+        for item in standard_lib_items:
+            src_item = os.path.join(lib_dir, item)
+            dst_item = os.path.join(dst_lib_dir, item)
+            if os.path.isdir(src_item):
+                shutil.copytree(src_item, dst_item, dirs_exist_ok=True)
+            else:
+                shutil.copy2(src_item, dst_item)
+
+    # Copy Include directory if exists
+    include_dir = os.path.join(python_dir, "include")
+    if os.path.exists(include_dir):
+        dst_include_dir = os.path.join(dst_python_dir, "include")
+        shutil.copytree(include_dir, dst_include_dir, dirs_exist_ok=True)
+
+    print(f"Python installation copied successfully")
 
 
 def copy_python_dlls_to_binaries(targets, dry_run=False):
@@ -309,7 +400,7 @@ def download_and_extract(url, extract_path, folder, targets, dry_run=False):
         print(f"Error extracting {archive_path}: {e}")
 
 
-openusd_version = "25.05.01"
+openusd_version = "26.03"
 
 
 def fix_slang_symlinks(dry_run=False):
@@ -460,66 +551,613 @@ def setup_slang_libs_for_binaries(targets, dry_run=False):
 
 
 
-# Source patches to apply before building (for GCC 13+ compatibility, etc.)
-SOURCE_PATCHES = {
-    # OpenColorIO 2.1.3 - missing #include <cstring> in FileRules.cpp (GCC 13+ compatibility)
-    "OpenColorIO-2.1.3/src/OpenColorIO/FileRules.cpp": {
-        "find": '#include <algorithm>\n#include <cctype>',
-        "replace": '#include <algorithm>\n#include <cctype>\n#include <cstring>',
-        "description": "Add missing #include <cstring> for GCC 13+ compatibility"
-    },
-}
+# ============================================================
+# Dependency build infrastructure
+# ============================================================
 
 
-def apply_source_patches(base_path, dry_run=False):
+def _rmtree_readonly(top):
+    """shutil.rmtree that handles read-only files on Windows."""
+    def on_ro(func, path, _exc):
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    shutil.rmtree(top, onerror=on_ro)
+
+
+def dep_is_installed(install_prefix, marker_file):
+    """Check if a dependency is already installed by checking marker file."""
+    marker_path = os.path.join(install_prefix, marker_file)
+    if os.path.exists(marker_path):
+        print(f"  SKIP {marker_file} (already installed)")
+        return True
+    return False
+
+
+def download_dep(url, src_base_dir, folder_name=None, dry_run=False):
+    """Download and extract a dependency source. Skips if source already extracted."""
+    if folder_name is None:
+        folder_name = (
+            url.split("/")[-1]
+            .replace(".zip", "")
+            .replace(".tar.gz", "")
+            .replace(".tgz", "")
+        )
+
+    src_dir = os.path.join(src_base_dir, folder_name)
+    if os.path.exists(src_dir):
+        print(f"  Source already extracted: {src_dir}")
+        return src_dir
+
+    archive_name = url.split("/")[-1]
+    cache_path = os.path.join(
+        os.path.dirname(__file__), "SDK", "cache", archive_name
+    )
+    if not os.path.exists(cache_path):
+        if dry_run:
+            print(f"[DRY RUN] Would download {url}")
+            return src_dir
+        print(f"  Downloading {url}...")
+        download_with_progress(url, cache_path, dry_run)
+
+    if dry_run:
+        print(f"[DRY RUN] Would extract {cache_path} to {src_base_dir}")
+        return src_dir
+
+    print(f"  Extracting {cache_path} to {src_base_dir}...")
+    if cache_path.endswith(".tar.gz") or cache_path.endswith(".tgz"):
+        with tarfile.open(cache_path, "r:gz") as tar_ref:
+            tar_ref.extractall(src_base_dir)
+    else:
+        with zipfile.ZipFile(cache_path, "r") as zip_ref:
+            zip_ref.extractall(src_base_dir)
+
+    print(f"  Extracted to {src_dir}")
+    return src_dir
+
+
+def run_cmake_build(src_dir, install_prefix, build_type, extra_args=None, dry_run=False):
+    """Generic CMake configure + build + install using Ninja."""
+    parent = os.path.dirname(src_dir)
+    dep_name = os.path.basename(src_dir)
+    build_dir = os.path.join(parent, f"{dep_name}-build-{build_type.lower()}")
+    os.makedirs(build_dir, exist_ok=True)
+
+    cmake_args = [
+        "cmake",
+        "-G",
+        "Ninja",
+        f"-DCMAKE_BUILD_TYPE={build_type}",
+        f"-DCMAKE_INSTALL_PREFIX={install_prefix}",
+        f"-DCMAKE_PREFIX_PATH={install_prefix}",
+    ]
+
+    if is_linux():
+        cmake_args.append("-DCMAKE_INSTALL_RPATH=$ORIGIN")
+
+    if extra_args:
+        cmake_args.extend(extra_args)
+
+    cmake_args.append(src_dir)
+
+    if dry_run:
+        print(f"[DRY RUN] CMake configure: {' '.join(cmake_args)}")
+        print(f"[DRY RUN] CMake build & install in {build_dir}")
+        return
+
+    print(f"  Configuring: {dep_name} ({build_type})...")
+    subprocess.run(cmake_args, cwd=build_dir, check=True)
+
+    print(f"  Building & installing: {dep_name}...")
+    subprocess.run(
+        ["cmake", "--build", ".", "--target", "install"],
+        cwd=build_dir,
+        check=True,
+    )
+    print(f"  Installed: {dep_name}")
+
+
+# ============================================================
+# Individual dependency build functions
+# ============================================================
+
+
+def build_zlib(install_prefix, src_base, build_type, dry_run=False):
+    """Build zlib 1.2.13"""
+    if dep_is_installed(install_prefix, "include/zlib.h"):
+        return
+    url = "https://github.com/madler/zlib/archive/refs/tags/v1.2.13.zip"
+    src_dir = download_dep(url, src_base, folder_name="zlib-1.2.13", dry_run=dry_run)
+    if dry_run:
+        return
+    run_cmake_build(src_dir, install_prefix, build_type, dry_run=dry_run)
+
+
+def build_tbb(install_prefix, src_base, build_type, dry_run=False):
+    """Build TBB 2021.12.0"""
+    if dep_is_installed(install_prefix, "include/oneapi/tbb.h"):
+        return
+    url = "https://github.com/oneapi-src/oneTBB/archive/refs/tags/v2021.12.0.zip"
+    src_dir = download_dep(url, src_base, folder_name="oneTBB-2021.12.0", dry_run=dry_run)
+    if dry_run:
+        return
+    run_cmake_build(
+        src_dir, install_prefix, build_type,
+        extra_args=["-DTBB_TEST=OFF"],
+        dry_run=dry_run,
+    )
+
+
+def build_blosc(install_prefix, src_base, build_type, dry_run=False):
+    """Build c-blosc 1.20.1"""
+    if dep_is_installed(install_prefix, "include/blosc.h"):
+        return
+    url = "https://github.com/Blosc/c-blosc/archive/refs/tags/v1.20.1.zip"
+    src_dir = download_dep(url, src_base, folder_name="c-blosc-1.20.1", dry_run=dry_run)
+    if dry_run:
+        return
+    run_cmake_build(
+        src_dir, install_prefix, build_type,
+        extra_args=["-DDEACTIVATE_SNAPPY=ON"],
+        dry_run=dry_run,
+    )
+
+
+def _patch_boost_config_toolset(engine_dir):
+    """Patch config_toolset.bat to route vcunk (VS 2026 / v145) to Config_VCUNK."""
+    config_toolset = os.path.join(engine_dir, "config_toolset.bat")
+    if not os.path.isfile(config_toolset):
+        return
+    with open(config_toolset, "r") as f:
+        content = f.read()
+    vcunk_route = 'if "_%B2_TOOLSET%_" == "_vcunk_" call :Config_VCUNK'
+    if vcunk_route in content:
+        return
+    insert_after = 'if "_%B2_TOOLSET%_" == "_vc143_" call :Config_VC143'
+    if insert_after in content:
+        content = content.replace(insert_after, insert_after + "\n" + vcunk_route)
+        with open(config_toolset, "w") as f:
+            f.write(content)
+        print("  Patched config_toolset.bat: added vcunk routing for VS 2026")
+
+
+def _patch_boost_msvc_jam(tools_dir):
+    """Patch msvc.jam to add MSVC 14.5 (VS 2026 / v145) support.
+
+    Without this b2 falls back to msvc-6.0 and ARM architecture, causing
+    broken compile commands that open .cpp files in the system editor.
     """
-    Apply source code patches to fix compilation issues with newer compilers.
-    This ensures the build works across different machines and compiler versions.
+    msvc_jam = os.path.join(tools_dir, "msvc.jam")
+    if not os.path.isfile(msvc_jam):
+        return
+    with open(msvc_jam, "r", encoding="utf-8") as f:
+        content = f.read()
+    if ".version-14.5-env" in content:
+        return  # already patched
+
+    # 1. Add 14.5 to known-versions (first = highest priority)
+    content = content.replace(
+        ".known-versions = 14.3 ",
+        ".known-versions = 14.5 14.3 ",
+        1,
+    )
+    # 2. Match 14.5 in generate-setup-cmd parent-path resolution
+    content = content.replace(
+        '[ MATCH "(14.[34])" : $(version) ]',
+        '[ MATCH "(14.[345])" : $(version) ]',
+        1,
+    )
+    # 3. Add 14.5 to vswhere version check
+    content = content.replace(
+        "if $(version) in 14.1 14.2 14.3 default && $(root)",
+        "if $(version) in 14.1 14.2 14.3 14.5 default && $(root)",
+        1,
+    )
+    # 4. Add vswhere version range for 14.5 (VS 18.x)
+    content = content.replace(
+        'if $(version) = 14.3\n'
+        '            {\n'
+        '                limit = "-version \\"[17.0,18.0)\\" -prerelease" ;',
+        'if $(version) = 14.5\n'
+        '            {\n'
+        '                limit = "-version \\"[18.0,19.0)\\" -prerelease" ;\n'
+        '            }\n'
+        '            else if $(version) = 14.3\n'
+        '            {\n'
+        '                limit = "-version \\"[17.0,18.0)\\" -prerelease" ;',
+        1,
+    )
+    # 5. Add version-14.5 path and env variables
+    content = content.replace(
+        ".version-14.3-env = VS170COMNTOOLS ProgramFiles ProgramFiles(x86) ;",
+        ".version-14.3-env = VS170COMNTOOLS ProgramFiles ProgramFiles(x86) ;\n"
+        ".version-14.5-path =\n"
+        '    "../../VC/Tools/MSVC/*/bin/Host*/*"\n'
+        '    "Microsoft Visual Studio/18/*/VC/Tools/MSVC/*/bin/Host*/*"\n'
+        "    ;\n"
+        ".version-14.5-env = VS180COMNTOOLS ProgramFiles ProgramFiles(x86) ;",
+        1,
+    )
+
+    with open(msvc_jam, "w", encoding="utf-8") as f:
+        f.write(content)
+    print("  Patched msvc.jam: added MSVC 14.5 (VS 2026) support")
+
+
+def build_boost(install_prefix, src_base, build_type, dry_run=False):
+    """Build Boost 1.90.0 via b2.
+
+    On Windows, calls bootstrap.bat and b2.exe directly (no wrapper bat).
+    Passes 'msvc' as the first bootstrap argument so build.bat uses it
+    directly instead of trying to auto-detect (which fails for VS 2026 / v145).
+    Also patches config_toolset.bat to handle the vcunk toolset.
     """
-    applied_count = 0
-    for relative_path, patch in SOURCE_PATCHES.items():
-        file_path = os.path.join(base_path, relative_path)
+    marker = os.path.join("include", "boost-1_90", "boost", "version.hpp")
+    if dep_is_installed(install_prefix, marker):
+        return
+    url = "https://archives.boost.io/release/1.90.0/source/boost_1_90_0.zip"
+    src_dir = download_dep(url, src_base, folder_name="boost_1_90_0", dry_run=dry_run)
+    if dry_run:
+        return
 
-        if not os.path.exists(file_path):
-            print(f"  ⚠ Patch target not found: {relative_path}")
-            continue
+    variant = "release" if build_type.lower() == "release" else "debug"
 
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                content = f.read()
+    if is_windows():
+        src_dir_win = os.path.normpath(os.path.abspath(src_dir))
+        install_win = os.path.normpath(os.path.abspath(install_prefix))
+        build_dir = os.path.join(
+            os.path.dirname(src_dir_win), f"boost-build-{build_type.lower()}"
+        )
+        engine_dir = os.path.join(src_dir_win, "tools", "build", "src", "engine")
+        tools_dir = os.path.join(src_dir_win, "tools", "build", "src", "tools")
 
-            if patch["find"] in content:
-                if dry_run:
-                    print(f"  [DRY RUN] Would patch: {relative_path}")
-                    print(f"    {patch['description']}")
-                else:
-                    new_content = content.replace(patch["find"], patch["replace"])
-                    with open(file_path, "w", encoding="utf-8") as f:
-                        f.write(new_content)
-                    print(f"  ✓ Patched: {relative_path}")
-                    print(f"    {patch['description']}")
-                applied_count += 1
-            else:
-                # Check if already patched
-                if patch["replace"] in content:
-                    print(f"  ✓ Already patched: {relative_path}")
-                else:
-                    print(f"  ⚠ Patch pattern not found (may need update): {relative_path}")
-        except Exception as e:
-            print(f"  ✗ Failed to patch {relative_path}: {e}")
+        # Patch config_toolset.bat so vcunk is routed to Config_VCUNK.
+        _patch_boost_config_toolset(engine_dir)
+        # Patch msvc.jam so b2 detects MSVC 14.5 (VS 2026).
+        _patch_boost_msvc_jam(tools_dir)
 
-    if applied_count > 0:
-        print(f"Applied {applied_count} source patch(es)")
-    return applied_count
+        # Put engine dir in PATH so nested batch calls (guess_toolset.bat,
+        # vswhere_usability_wrapper.cmd) can be found.
+        env = os.environ.copy()
+        env["PATH"] = os.path.normpath(engine_dir) + ";" + env.get("PATH", "")
+
+        # Step 1: bootstrap (compiles b2.exe from source).
+        # "msvc" as FIRST arg → build.bat sets B2_TOOLSET=msvc directly,
+        # bypassing Guess_Toolset which would fail for VS 2026.
+        bootstrap_path = os.path.join(src_dir_win, "bootstrap.bat")
+        print("  Bootstrapping Boost (toolset=msvc)...")
+        subprocess.run(
+            ["cmd.exe", "/d", "/c", bootstrap_path, "msvc"],
+            cwd=src_dir_win, env=env, check=True,
+        )
+
+        # Step 2: b2 install
+        b2_path = os.path.join(src_dir_win, "b2.exe")
+        b2_args = [
+            b2_path, "install",
+            f"--prefix={install_win}",
+            f"--build-dir={build_dir}",
+            "toolset=msvc",
+            "address-model=64",
+            "link=shared",
+            "runtime-link=shared",
+            "threading=multi",
+            f"variant={variant}",
+            "--with-atomic", "--with-regex",
+            "--with-date_time", "--with-chrono",
+            "--with-system", "--with-thread",
+            "--with-iostreams", "--with-filesystem",
+            "-sNO_BZIP2=1",
+            f"-j{os.cpu_count() or 4}",
+        ]
+        print(f"  Building Boost (variant={variant}, toolset=msvc)...")
+        subprocess.run(b2_args, cwd=src_dir_win, env=env, check=True)
+    else:
+        subprocess.run(
+            ["./bootstrap.sh", f"--prefix={install_prefix}"],
+            cwd=src_dir, check=True,
+        )
+        b2_args = [
+            "./b2", "install",
+            f"--prefix={install_prefix}",
+            f"--build-dir={os.path.join(src_base, 'boost-build')}",
+            "address-model=64", "link=shared",
+            "runtime-link=shared", "threading=multi",
+            f"variant={variant}",
+            "--with-atomic", "--with-regex",
+            "--with-date_time", "--with-chrono",
+            "--with-system", "--with-thread",
+            "--with-iostreams", "--with-filesystem",
+        ]
+        if is_macos():
+            b2_args.append("toolset=clang")
+        subprocess.run(b2_args, cwd=src_dir, check=True)
+
+    print("  Installed: Boost")
+
+
+def build_openexr(install_prefix, src_base, build_type, dry_run=False):
+    """Build OpenEXR 3.1.13"""
+    if dep_is_installed(install_prefix, "include/OpenEXR/ImfVersion.h"):
+        return
+    url = (
+        "https://github.com/AcademySoftwareFoundation/"
+        "openexr/archive/refs/tags/v3.1.13.zip"
+    )
+    src_dir = download_dep(url, src_base, folder_name="openexr-3.1.13", dry_run=dry_run)
+    if dry_run:
+        return
+    run_cmake_build(
+        src_dir, install_prefix, build_type,
+        extra_args=["-DBUILD_TESTING=OFF", "-DOPENEXR_INSTALL_TOOLS=OFF"],
+        dry_run=dry_run,
+    )
+
+
+def build_opensubdiv(install_prefix, src_base, build_type, dry_run=False):
+    """Build OpenSubdiv 3.6.1"""
+    if dep_is_installed(install_prefix, "include/opensubdiv/version.h"):
+        return
+    url = (
+        "https://github.com/PixarAnimationStudios/"
+        "OpenSubdiv/archive/refs/tags/v3_6_1.zip"
+    )
+    src_dir = download_dep(url, src_base, folder_name="OpenSubdiv-3_6_1", dry_run=dry_run)
+    if dry_run:
+        return
+    run_cmake_build(
+        src_dir, install_prefix, build_type,
+        extra_args=[
+            "-DBUILD_SHARED_LIBS=ON",
+            "-DNO_CUDA=ON", "-DNO_OPENCL=ON",
+            "-DNO_DX=ON", "-DNO_METAL=ON",
+            "-DNO_TESTS=ON", "-DNO_REGRESSION=ON",
+            "-DNO_EXAMPLES=ON", "-DNO_TUTORIALS=ON",
+            "-DNO_GLFW=ON", "-DNO_GLUT=ON",
+        ],
+        dry_run=dry_run,
+    )
+
+
+def build_ptex(install_prefix, src_base, build_type, dry_run=False):
+    """Build Ptex 2.4.2"""
+    if dep_is_installed(install_prefix, "include/PtexVersion.h"):
+        return
+    url = "https://github.com/wdas/ptex/archive/refs/tags/v2.4.2.zip"
+    src_dir = download_dep(url, src_base, folder_name="ptex-2.4.2", dry_run=dry_run)
+    if dry_run:
+        return
+    run_cmake_build(
+        src_dir, install_prefix, build_type,
+        extra_args=["-DPTEX_BUILD_STATIC_LIBS=OFF"],
+        dry_run=dry_run,
+    )
+
+
+def build_materialx(install_prefix, src_base, build_type, dry_run=False):
+    """Build MaterialX 1.39.3"""
+    if dep_is_installed(install_prefix, "include/MaterialXCore/Library.h"):
+        return
+    url = (
+        "https://github.com/AcademySoftwareFoundation/"
+        "MaterialX/archive/refs/tags/v1.39.3.zip"
+    )
+    src_dir = download_dep(url, src_base, folder_name="MaterialX-1.39.3", dry_run=dry_run)
+    if dry_run:
+        return
+    run_cmake_build(
+        src_dir, install_prefix, build_type,
+        extra_args=[
+            "-DMATERIALX_BUILD_SHARED_LIBS=ON",
+            "-DMATERIALX_BUILD_TESTS=OFF",
+        ],
+        dry_run=dry_run,
+    )
+
+
+def build_opencolorio(install_prefix, src_base, build_type, dry_run=False):
+    """Build OpenColorIO 2.2.1"""
+    if dep_is_installed(install_prefix, "include/OpenColorIO/OpenColorABI.h"):
+        return
+    url = (
+        "https://github.com/AcademySoftwareFoundation/"
+        "OpenColorIO/archive/refs/tags/v2.2.1.zip"
+    )
+    src_dir = download_dep(url, src_base, folder_name="OpenColorIO-2.2.1", dry_run=dry_run)
+    if dry_run:
+        return
+
+    # Patch missing #include <cstring> for GCC 13+ compatibility
+    filerules_path = os.path.join(src_dir, "src", "OpenColorIO", "FileRules.cpp")
+    if os.path.exists(filerules_path):
+        with open(filerules_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        find_str = '#include <algorithm>\n#include <cctype>'
+        replace_str = '#include <algorithm>\n#include <cctype>\n#include <cstring>'
+        if find_str in content:
+            content = content.replace(find_str, replace_str)
+            with open(filerules_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print("  Patched FileRules.cpp: added #include <cstring>")
+
+    run_cmake_build(
+        src_dir, install_prefix, build_type,
+        extra_args=[
+            "-DOCIO_BUILD_APPS=OFF",
+            "-DOCIO_BUILD_GPU_TESTS=OFF",
+            "-DOCIO_BUILD_TESTS=OFF",
+            "-DOCIO_BUILD_DOCS=OFF",
+            "-DOCIO_BUILD_PYTHON=OFF",
+        ],
+        dry_run=dry_run,
+    )
+
+
+def build_openvdb(install_prefix, src_base, build_type, cuda=False, dry_run=False):
+    """Build OpenVDB 12.0.1 with optional NanoVDB/CUDA"""
+    if dep_is_installed(install_prefix, "include/openvdb/openvdb.h"):
+        return
+    url = (
+        "https://github.com/AcademySoftwareFoundation/"
+        "openvdb/archive/refs/tags/v12.0.1.zip"
+    )
+    src_dir = download_dep(url, src_base, folder_name="openvdb-12.0.1", dry_run=dry_run)
+    if dry_run:
+        return
+
+    extra_args = ["-DUSE_EXPLICIT_INSTANTIATION=OFF", "-DNANOVDB_USE_OPENVDB=ON"]
+    if cuda:
+        extra_args.extend([
+            "-DUSE_NANOVDB=ON",
+            "-DNANOVDB_USE_CUDA=ON",
+            "-DCMAKE_CUDA_FLAGS=-allow-unsupported-compiler",
+        ])
+
+    run_cmake_build(
+        src_dir, install_prefix, build_type,
+        extra_args=extra_args,
+        dry_run=dry_run,
+    )
+
+
+def build_libjpeg(install_prefix, src_base, build_type, dry_run=False):
+    """Build libjpeg-turbo 2.0.1"""
+    if dep_is_installed(install_prefix, "include/turbojpeg.h"):
+        return
+    url = (
+        "https://github.com/libjpeg-turbo/libjpeg-turbo/"
+        "archive/refs/tags/2.0.1.zip"
+    )
+    src_dir = download_dep(
+        url, src_base, folder_name="libjpeg-turbo-2.0.1", dry_run=dry_run
+    )
+    if dry_run:
+        return
+    run_cmake_build(
+        src_dir, install_prefix, build_type,
+        extra_args=["-DWITH_SIMD=OFF"],
+        dry_run=dry_run,
+    )
+
+
+def build_libpng(install_prefix, src_base, build_type, dry_run=False):
+    """Build libpng 1.6.47"""
+    if dep_is_installed(install_prefix, "include/png.h"):
+        return
+    url = (
+        "https://github.com/pnggroup/libpng/"
+        "archive/refs/tags/v1.6.47.zip"
+    )
+    src_dir = download_dep(
+        url, src_base, folder_name="libpng-1.6.47", dry_run=dry_run
+    )
+    if dry_run:
+        return
+    run_cmake_build(
+        src_dir, install_prefix, build_type,
+        extra_args=["-DPNG_FRAMEWORK=OFF", "-DPNG_TESTS=OFF"],
+        dry_run=dry_run,
+    )
+
+
+def build_libtiff(install_prefix, src_base, build_type, dry_run=False):
+    """Build libtiff 4.0.7"""
+    if dep_is_installed(install_prefix, "include/tiff.h"):
+        return
+    url = (
+        "https://gitlab.com/libtiff/libtiff/-/archive/v4.0.7/"
+        "libtiff-v4.0.7.zip"
+    )
+    src_dir = download_dep(
+        url, src_base, folder_name="libtiff-v4.0.7", dry_run=dry_run
+    )
+    if dry_run:
+        return
+    # Patch: skip building tools and tests to avoid extra dependencies
+    cmake_file = os.path.join(src_dir, "CMakeLists.txt")
+    if os.path.isfile(cmake_file):
+        with open(cmake_file, "r") as f:
+            content = f.read()
+        content = content.replace(
+            "add_subdirectory(tools)", "# add_subdirectory(tools)"
+        )
+        content = content.replace(
+            "add_subdirectory(test)", "# add_subdirectory(test)"
+        )
+        with open(cmake_file, "w") as f:
+            f.write(content)
+    run_cmake_build(
+        src_dir, install_prefix, build_type,
+        extra_args=["-Dld-version-script=OFF"],
+        dry_run=dry_run,
+    )
+
+
+def build_openimageio(install_prefix, src_base, build_type, dry_run=False):
+    """Build OpenImageIO 2.5.16.0"""
+    if dep_is_installed(install_prefix, "include/OpenImageIO/oiioversion.h"):
+        return
+    url = (
+        "https://github.com/AcademySoftwareFoundation/"
+        "OpenImageIO/archive/refs/tags/v2.5.16.0.zip"
+    )
+    src_dir = download_dep(url, src_base, folder_name="OpenImageIO-2.5.16.0", dry_run=dry_run)
+    if dry_run:
+        return
+    run_cmake_build(
+        src_dir, install_prefix, build_type,
+        extra_args=[
+            "-DOIIO_BUILD_TESTS=OFF",
+            "-DUSE_PYTHON=OFF",
+            "-DBUILD_DOCS=OFF",
+            "-DSTOP_ON_WARNING=OFF",
+            "-DBoost_NO_SYSTEM_PATHS=ON",
+        ],
+        dry_run=dry_run,
+    )
+
+
+def build_usd(install_prefix, usd_src_dir, build_type, python_executable, dry_run=False):
+    """Build OpenUSD"""
+    if dep_is_installed(install_prefix, "include/pxr/pxr.h"):
+        return
+
+    extra_args = [
+        "-DPXR_BUILD_MONOLITHIC=ON",
+        "-DPXR_ENABLE_GL_SUPPORT=ON",
+        "-DPXR_ENABLE_PYTHON_SUPPORT=ON",
+        "-DPXR_ENABLE_OPENVDB_SUPPORT=ON",
+        "-DPXR_BUILD_OPENIMAGEIO_PLUGIN=ON",
+        "-DPXR_BUILD_OPENCOLORIO_PLUGIN=ON",
+        "-DPXR_ENABLE_PTEX_SUPPORT=ON",
+        "-DPXR_ENABLE_MATERIALX_SUPPORT=ON",
+        "-DPXR_BUILD_IMAGING=ON",
+        "-DPXR_BUILD_USD_IMAGING=ON",
+        "-DPXR_BUILD_USDVIEW=OFF",
+        "-DPXR_BUILD_EXAMPLES=OFF",
+        "-DPXR_BUILD_TUTORIALS=OFF",
+        "-DPXR_BUILD_TESTS=OFF",
+        "-DPXR_BUILD_DOCUMENTATION=OFF",
+        "-DBoost_NO_SYSTEM_PATHS=ON",
+        f"-DPython3_EXECUTABLE={python_executable}",
+    ]
+
+    if is_windows():
+        extra_args.append("-DCMAKE_CXX_FLAGS=/Zm150")
+
+    run_cmake_build(
+        usd_src_dir, install_prefix, build_type,
+        extra_args=extra_args,
+        dry_run=dry_run,
+    )
 
 
 def process_usd(targets, dry_run=False, keep_original_files=True, copy_only=False):
     if not copy_only:
-        # First download and extract the source files
-        url = "https://github.com/PixarAnimationStudios/OpenUSD/archive/refs/tags/v{}.zip".format(
-            openusd_version
+        # Download and extract OpenUSD source
+        url = (
+            "https://github.com/PixarAnimationStudios/"
+            f"OpenUSD/archive/refs/tags/v{openusd_version}.zip"
         )
-
         zip_path = os.path.join(
             os.path.dirname(__file__), "SDK", "cache", url.split("/")[-1]
         )
@@ -530,7 +1168,6 @@ def process_usd(targets, dry_run=False, keep_original_files=True, copy_only=Fals
                 print(f"Downloading from {url}...")
             download_with_progress(url, zip_path, dry_run)
 
-        # Extract the downloaded zip file
         extract_path = os.path.join(
             os.path.dirname(__file__), "SDK", "OpenUSD", "source"
         )
@@ -543,82 +1180,142 @@ def process_usd(targets, dry_run=False, keep_original_files=True, copy_only=Fals
                 try:
                     with zipfile.ZipFile(zip_path, "r") as zip_ref:
                         zip_ref.extractall(extract_path)
-                    print(f"Downloaded and extracted successfully.")
+                    print("Downloaded and extracted successfully.")
                 except Exception as e:
                     print(f"Error extracting {zip_path}: {e}")
                     return
 
-        # Call the build script with the specified options
-        build_script = os.path.join(
-            extract_path,
-            "OpenUSD-{}".format(openusd_version),
-            "build_scripts",
-            "build_usd.py",
-        )
+        usd_src_dir = os.path.join(extract_path, f"OpenUSD-{openusd_version}")
 
-        # Check if the user has a debug python installed
-        import subprocess
-
+        # Detect Python
         try:
-            subprocess.check_output(["python_d", "--version"], stderr=subprocess.STDOUT)
-            has_python_d = True
-        except subprocess.CalledProcessError:
-            has_python_d = False
-        except FileNotFoundError:
-            has_python_d = False
-
-        if has_python_d:
-            use_debug_python = "--debug-python "
-        else:
-            use_debug_python = ""
-
-        for target in targets:
-            build_variant_map = {
-                "Debug": "debug",
-                "Release": "release",
-                "RelWithDebInfo": "relwithdebuginfo",
-            }
-            build_variant = build_variant_map.get(target, target.lower())
-            generator_ninja = "--generator Ninja "
-
-            # if build_variant == "relwithdebuginfo":
-            #     openvdb_args = 'OpenVDB,"-DUSE_EXPLICIT_INSTANTIATION=OFF -DOPENVDB_BUILD_NANOVDB=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_MAP_IMPORTED_CONFIG_RELWITHDEBUGINFO=Release" '
-            # else:
-
-            openvdb_args = (
-                'OpenVDB,"-DUSE_EXPLICIT_INSTANTIATION=OFF -DOPENVDB_BUILD_NANOVDB=ON" '
+            subprocess.check_output(
+                ["python_d", "--version"], stderr=subprocess.STDOUT
             )
-            no_tbb_linkage = "-DCMAKE_CXX_FLAGS=-D__TBB_NO_IMPLICIT_LINKAGE=1"
-            openimageio_args = f"OpenImageIO,{no_tbb_linkage} "
-            cmake_rpath_args = "--cmake-build-args=\"-DCMAKE_INSTALL_RPATH=\\$ORIGIN\" " if is_linux() else ''
-            build_command = f'python3 {build_script} --build-monolithic {cmake_rpath_args}--build-args USD,"-DPXR_ENABLE_GL_SUPPORT=ON" {openvdb_args}{openimageio_args}--openvdb {use_debug_python}--ptex --openimageio --opencolorio --no-examples --no-tutorials --no-usdview {generator_ninja}--build-variant {build_variant} {os.path.dirname(__file__)}/SDK/OpenUSD/{target} -v'
+            has_python_d = True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            has_python_d = False
 
-            if dry_run:
-                print(f"[DRY RUN] Would run: {build_command}")
-            else:
-                # Apply source code patches before building (for GCC 13+ compatibility, etc.)
-                # OpenUSD downloads deps to SDK/OpenUSD/{target}/src/
-                src_path = os.path.join(
-                    os.path.dirname(__file__), "SDK", "OpenUSD", target, "src"
+        # Setup SDK/python if not present
+        sdk_python_dir = os.path.join(os.path.dirname(__file__), "SDK", "python")
+        sdk_python = os.path.join(
+            sdk_python_dir,
+            "python.exe" if is_windows() else "bin/python3",
+        )
+        if not os.path.exists(sdk_python):
+            # Find system Python and copy it to SDK/python
+            python_cmd = "python" if is_windows() else "python3"
+            sys_python = shutil.which(python_cmd)
+            if sys_python is None:
+                print("ERROR: Python not found on system")
+                return
+            python_dir = os.path.dirname(os.path.abspath(sys_python))
+            print(f"Setting up SDK/python from {python_dir}...")
+            _copy_python_installation(python_dir, sdk_python_dir, dry_run)
+
+        # Find Python executable for USD Python bindings
+        python_cmd = "python" if is_windows() else "python3"
+        if os.path.exists(sdk_python):
+            python_executable = sdk_python
+        else:
+            python_executable = python_cmd
+
+        # Shared source directory for all dependency sources
+        src_base = os.path.join(
+            os.path.dirname(__file__), "SDK", "OpenUSD", "src"
+        )
+        if not dry_run:
+            os.makedirs(src_base, exist_ok=True)
+
+        # Enable long path support for Windows before building
+        if is_windows():
+            try:
+                subprocess.run(
+                    ["git", "config", "--global", "core.longpaths", "true"],
+                    check=False,
                 )
-                if os.path.exists(src_path):
-                    print("Applying source patches for compiler compatibility...")
-                    apply_source_patches(src_path, dry_run)
+                print("Enabled Git long path support")
+            except Exception as e:
+                print(f"Warning: Could not enable Git long path support: {e}")
 
-                # Apply FindTBB.cmake patch before building
-                if target == "RelWithDebInfo":  # Only patch once
-                    patch_findtbb_cmake(dry_run)
+        # Build each target
+        for target in targets:
+            print(f"\n{'=' * 60}")
+            print(f"Building OpenUSD dependencies for {target}")
+            print(f"{'=' * 60}")
 
-                # Enable long path support for Windows before building
-                import subprocess
+            install_prefix = os.path.join(
+                os.path.dirname(__file__), "SDK", "OpenUSD", target
+            )
 
-                try:
-                    subprocess.run(["git", "config", "--global", "core.longpaths", "true"], check=False)
-                    print("Enabled Git long path support")
-                except Exception as e:
-                    print(f"Warning: Could not enable Git long path support: {e}")
+            # Clean old install artifacts before monolithic build
+            if os.path.exists(install_prefix):
+                print(f"Cleaning old install artifacts in {install_prefix}...")
+                for item in os.listdir(install_prefix):
+                    item_path = os.path.join(install_prefix, item)
+                    if os.path.isdir(item_path) and item not in ("src", "build"):
+                        _rmtree_readonly(item_path)
+                    elif os.path.isfile(item_path):
+                        os.chmod(item_path, stat.S_IWRITE)
+                        os.remove(item_path)
+            else:
+                os.makedirs(install_prefix, exist_ok=True)
 
-                os.system(build_command)
+            # Select Python executable for this target
+            if has_python_d and target == "Debug":
+                py_exec = "python_d"
+            else:
+                py_exec = python_executable
+
+            # Build dependencies in order
+            print("\n--- Building zlib ---")
+            build_zlib(install_prefix, src_base, target, dry_run)
+
+            print("\n--- Building TBB ---")
+            build_tbb(install_prefix, src_base, target, dry_run)
+
+            print("\n--- Building Blosc ---")
+            build_blosc(install_prefix, src_base, target, dry_run)
+
+            print("\n--- Building Boost ---")
+            build_boost(install_prefix, src_base, target, dry_run)
+
+            print("\n--- Building OpenEXR ---")
+            build_openexr(install_prefix, src_base, target, dry_run)
+
+            print("\n--- Building OpenSubdiv ---")
+            build_opensubdiv(install_prefix, src_base, target, dry_run)
+
+            print("\n--- Building Ptex ---")
+            build_ptex(install_prefix, src_base, target, dry_run)
+
+            print("\n--- Building MaterialX ---")
+            build_materialx(install_prefix, src_base, target, dry_run)
+
+            print("\n--- Building OpenColorIO ---")
+            build_opencolorio(install_prefix, src_base, target, dry_run)
+
+            print("\n--- Building OpenVDB ---")
+            build_openvdb(
+                install_prefix, src_base, target, cuda=True, dry_run=dry_run
+            )
+
+            print("\n--- Building libjpeg ---")
+            build_libjpeg(install_prefix, src_base, target, dry_run)
+            print("\n--- Building libpng ---")
+            build_libpng(install_prefix, src_base, target, dry_run)
+            print("\n--- Building libtiff ---")
+            build_libtiff(install_prefix, src_base, target, dry_run)
+
+            print("\n--- Building OpenImageIO ---")
+            build_openimageio(install_prefix, src_base, target, dry_run)
+
+            print("\n--- Building USD ---")
+            build_usd(install_prefix, usd_src_dir, target, py_exec, dry_run)
+
+            print(f"\n{'=' * 60}")
+            print(f"OpenUSD {target} build complete")
+            print(f"{'=' * 60}")
 
     # Copy the built binaries to the Binaries folder
     for target in targets:
@@ -864,100 +1561,6 @@ def pack_sdk(dry_run=False):
                     file.write(filedata)
                     print(f"Found and replaced path in {dst_file}")
 
-    def copy_python_installation(python_dir, dst_python_dir):
-        """
-        Copy essential Python installation files.
-        Works cross-platform: Windows (.exe, .dll), Linux/macOS (extensionless executables, .so/.dylib)
-        """
-        if dry_run:
-            print(
-                f"[DRY RUN] Would copy Python installation from {python_dir} to {dst_python_dir}"
-            )
-            return
-
-        print(f"Copying Python installation from {python_dir} to {dst_python_dir}")
-        os.makedirs(dst_python_dir, exist_ok=True)
-
-        # Copy Python executables (platform-specific names)
-        if is_windows():
-            exe_names = ["python.exe", "python_d.exe", "pythonw.exe"]
-        else:
-            exe_names = ["python3", "python", "python3.d"]
-
-        for exe_name in exe_names:
-            exe_path = os.path.join(python_dir, exe_name)
-            if os.path.exists(exe_path):
-                shutil.copy2(exe_path, dst_python_dir)
-
-        # Copy shared libraries in python directory (platform-specific extensions)
-        lib_extension = get_binary_extension()
-
-        for file in os.listdir(python_dir):
-            if file.endswith(lib_extension) or (is_linux() and ".so" in file):
-                shutil.copy2(os.path.join(python_dir, file), dst_python_dir)
-
-        # Copy DLLs/lib directory if exists (Windows: DLLs, Linux: lib-dynload)
-        dynload_dirs = ["DLLs", "lib-dynload", "lib/python*/lib-dynload"]
-        for dynload_name in dynload_dirs:
-            dynload_dir = os.path.join(python_dir, dynload_name)
-            if os.path.exists(dynload_dir):
-                dst_dynload_dir = os.path.join(dst_python_dir, dynload_name)
-                shutil.copytree(dynload_dir, dst_dynload_dir, dirs_exist_ok=True)
-
-        # Copy libs directory (contains python3.lib/python3.a and other static libraries)
-        libs_dir = os.path.join(python_dir, "libs")
-        if os.path.exists(libs_dir):
-            dst_libs_dir = os.path.join(dst_python_dir, "libs")
-            shutil.copytree(libs_dir, dst_libs_dir, dirs_exist_ok=True)
-            print(f"Copied libs directory")
-
-        # Copy Scripts/bin directory (contains pip and other tools)
-        scripts_names = ["Scripts", "bin"]
-        for scripts_name in scripts_names:
-            scripts_dir = os.path.join(python_dir, scripts_name)
-            if os.path.exists(scripts_dir):
-                dst_scripts_dir = os.path.join(dst_python_dir, scripts_name)
-                shutil.copytree(scripts_dir, dst_scripts_dir, dirs_exist_ok=True)
-                print(f"Copied {scripts_name} directory (including pip)")
-
-
-        # Copy Lib directory but exclude site-packages and other third-party packages
-        lib_dir = os.path.join(python_dir, "Lib")
-        if os.path.exists(lib_dir):
-            dst_lib_dir = os.path.join(dst_python_dir, "Lib")
-            os.makedirs(dst_lib_dir, exist_ok=True)
-
-            # Standard library directories/files to include
-            standard_lib_items = []
-            exclude_dirs = {"site-packages", "dist-packages", "__pycache__"}
-
-            for item in os.listdir(lib_dir):
-                item_path = os.path.join(lib_dir, item)
-                if os.path.isdir(item_path):
-                    if item not in exclude_dirs:
-                        standard_lib_items.append(item)
-                else:
-                    # Include .py files in root Lib directory
-                    if item.endswith(".py"):
-                        standard_lib_items.append(item)
-
-            # Copy standard library items
-            for item in standard_lib_items:
-                src_item = os.path.join(lib_dir, item)
-                dst_item = os.path.join(dst_lib_dir, item)
-                if os.path.isdir(src_item):
-                    shutil.copytree(src_item, dst_item, dirs_exist_ok=True)
-                else:
-                    shutil.copy2(src_item, dst_item)
-
-        # Copy Include directory if exists
-        include_dir = os.path.join(python_dir, "include")
-        if os.path.exists(include_dir):
-            dst_include_dir = os.path.join(dst_python_dir, "include")
-            shutil.copytree(include_dir, dst_include_dir, dirs_exist_ok=True)
-
-        print(f"Python installation copied successfully")
-
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = []
         # Platform-specific directory separators for skip detection
@@ -993,7 +1596,7 @@ def pack_sdk(dry_run=False):
 
         # Copy Python installation
         python_dst_dir = os.path.join(dst_dir, "python")
-        copy_python_installation(python_dir, python_dst_dir)
+        _copy_python_installation(python_dir, python_dst_dir, dry_run)
 
         # Pack the SDK_temp directory into SDK.zip
         sdk_archive_path = os.path.join(os.path.dirname(__file__), "SDK", "SDK")
@@ -1015,8 +1618,6 @@ def pack_sdk(dry_run=False):
                 try:
                     def on_rm_error(func, path, exc):
                         """Error handler for shutil.rmtree to handle read-only files (cross-platform)"""
-                        import stat
-
                         if not os.access(path, os.W_OK):
                             os.chmod(path, stat.S_IWUSR | stat.S_IREAD | stat.S_IRGRP | stat.S_IROTH)
                             func(path)
@@ -1058,89 +1659,6 @@ def find_and_replace(file_path, replacements):
                 print(f"Found and replaced path in {file_path}")
     except (UnicodeDecodeError, IOError) as e:
         return
-
-
-def patch_findtbb_cmake(dry_run=False):
-    """Patch FindTBB.cmake to work better with single target configuration generators"""
-    findtbb_path = os.path.join(
-        os.path.dirname(__file__),
-        "SDK",
-        "OpenUSD",
-        "RelWithDebInfo",
-        "src",
-        "openvdb-9.1.0",
-        "cmake",
-        "FindTBB.cmake",
-    )
-
-    if not os.path.exists(findtbb_path):
-        print(f"FindTBB.cmake not found at {findtbb_path}, skipping patch")
-        return
-
-    # The original problematic code block
-    old_code = """  if(Tbb_${COMPONENT}_LIBRARY_DEBUG AND Tbb_${COMPONENT}_LIBRARY_RELEASE)
-    # if the generator is multi-config or if CMAKE_BUILD_TYPE is set for
-    # single-config generators, set optimized and debug libraries
-    get_property(_isMultiConfig GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
-    if(_isMultiConfig OR CMAKE_BUILD_TYPE)
-      set(Tbb_${COMPONENT}_LIBRARY optimized ${Tbb_${COMPONENT}_LIBRARY_RELEASE} debug ${Tbb_${COMPONENT}_LIBRARY_DEBUG})
-    else()
-      # For single-config generators where CMAKE_BUILD_TYPE has no value,
-      # just use the release libraries
-      set(Tbb_${COMPONENT}_LIBRARY ${Tbb_${COMPONENT}_LIBRARY_RELEASE})
-    endif()
-    # FIXME: This probably should be set for both cases
-    set(Tbb_${COMPONENT}_LIBRARIES optimized ${Tbb_${COMPONENT}_LIBRARY_RELEASE} debug ${Tbb_${COMPONENT}_LIBRARY_DEBUG})
-  endif()"""
-
-    # New code that works better with single target generators
-    new_code = """  if(Tbb_${COMPONENT}_LIBRARY_DEBUG AND Tbb_${COMPONENT}_LIBRARY_RELEASE)
-    # Check if we're using a multi-config generator or if CMAKE_BUILD_TYPE is set
-    get_property(_isMultiConfig GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
-    if(_isMultiConfig)
-      # Multi-config generator: use optimized/debug keywords
-      set(Tbb_${COMPONENT}_LIBRARY optimized ${Tbb_${COMPONENT}_LIBRARY_RELEASE} debug ${Tbb_${COMPONENT}_LIBRARY_DEBUG})
-      set(Tbb_${COMPONENT}_LIBRARIES optimized ${Tbb_${COMPONENT}_LIBRARY_RELEASE} debug ${Tbb_${COMPONENT}_LIBRARY_DEBUG})
-    elseif(CMAKE_BUILD_TYPE)
-      # Single-config generator with CMAKE_BUILD_TYPE set
-      if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        set(Tbb_${COMPONENT}_LIBRARY ${Tbb_${COMPONENT}_LIBRARY_DEBUG})
-        set(Tbb_${COMPONENT}_LIBRARIES ${Tbb_${COMPONENT}_LIBRARY_DEBUG})
-      else()
-        set(Tbb_${COMPONENT}_LIBRARY ${Tbb_${COMPONENT}_LIBRARY_RELEASE})
-        set(Tbb_${COMPONENT}_LIBRARIES ${Tbb_${COMPONENT}_LIBRARY_RELEASE})
-      endif()
-    else()
-      # Single-config generator without CMAKE_BUILD_TYPE: default to release but provide both options
-      set(Tbb_${COMPONENT}_LIBRARY ${Tbb_${COMPONENT}_LIBRARY_RELEASE})
-      set(Tbb_${COMPONENT}_LIBRARIES optimized ${Tbb_${COMPONENT}_LIBRARY_RELEASE} debug ${Tbb_${COMPONENT}_LIBRARY_DEBUG})
-    endif()
-  endif()"""
-
-    if dry_run:
-        print(f"[DRY RUN] Would patch FindTBB.cmake at {findtbb_path}")
-        return
-
-    try:
-        with open(findtbb_path, "r", encoding="utf-8") as file:
-            content = file.read()
-
-        if old_code in content:
-            content = content.replace(old_code, new_code)
-
-            with open(findtbb_path, "w", encoding="utf-8") as file:
-                file.write(content)
-
-            print(
-                f"Successfully patched FindTBB.cmake for single target configuration generators"
-            )
-        else:
-            print(
-                f"FindTBB.cmake patch target not found - file may already be patched or have different content"
-            )
-
-    except Exception as e:
-        print(f"Error patching FindTBB.cmake: {e}")
 
 
 def main():

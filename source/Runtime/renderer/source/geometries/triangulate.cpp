@@ -108,11 +108,12 @@ bool HdSt_TriangulateFaceVaryingComputation::Resolve()
 
     VtValue result;
     HdMeshUtil meshUtil(_topology, _id);
-    if (meshUtil.ComputeTriangulatedFaceVaryingPrimvar(
+    auto compResult = meshUtil.ComputeTriangulatedFaceVaryingPrimvar(
             _source->GetData(),
             _source->GetNumElements(),
             _source->GetTupleType().type,
-            &result)) {
+            &result);
+    if (compResult == HdMeshComputationResult::Success) {
         _SetResult(
             std::make_shared<HdVtBufferSource>(_source->GetName(), result));
     }

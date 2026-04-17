@@ -59,7 +59,9 @@ class HD_RUZINO_API Hd_RUZINO_RendererPlugin final : public HdRendererPlugin {
         HdRenderDelegate* renderDelegate) override;
 
     /// Checks to see if the plugin is supported on the running system.
-    virtual bool IsSupported(bool gpuEnabled = true) const override;
+    virtual bool IsSupported(
+        HdRendererCreateArgs const& rendererCreateArgs,
+        std::string* reasonWhyNot = nullptr) const override;
 
    private:
     // This class does not support copying.

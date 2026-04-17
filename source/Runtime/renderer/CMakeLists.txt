@@ -11,7 +11,7 @@ RUZINO_ADD_LIB(
 	hd_RUZINO
 	SHARED
 	PUBLIC_LIBS spdlog::spdlog GPUContext usd_ms MCore
-	PRIVATE_LIBS RHI nodes_system shaders_interface
+	PRIVATE_LIBS RHI nodes_system shaders_interface osdCPU openvdb
 	COMPILE_DEFS
 		NOMINMAX RUZINO_DIRECT_VK_DISPLAY
 	USD_RESOURCE_DIRS resources nodes/shaders
@@ -23,7 +23,7 @@ RUZINO_ADD_LIB(
 target_compile_definitions(hd_RUZINO PRIVATE HOST_CODE=1 _USE_MATH_DEFINES)
 target_compile_definitions(hd_RUZINO PUBLIC RUZINO_BACKEND_NVRHI)
 target_compile_definitions(hd_RUZINO_py PRIVATE NOMINMAX)
-target_link_libraries(hd_RUZINO_py PRIVATE shaders_interface)
+target_link_libraries(hd_RUZINO_py PRIVATE shaders_interface OpenGL32)
 target_include_directories(hd_RUZINO PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/nodes/shaders/shaders)
 target_include_directories(hd_RUZINO PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/source)
 
