@@ -163,7 +163,7 @@ SlangResult SlangShaderCompiler::addHLSLPrelude(slang::IGlobalSession* session)
 
     auto root = find_root(includePath);
 
-    auto prelude_name = "/slang/slang-hlsl-prelude.h";
+    auto prelude_name = "/SDK/slang/include/slang-hlsl-prelude.h";
 
     std::ostringstream prelude;
     prelude << "#include \"" << root.generic_string() + prelude_name
@@ -181,7 +181,7 @@ SlangResult SlangShaderCompiler::addCPPPrelude(slang::IGlobalSession* session)
 
     auto root = find_root(includePath);
 
-    auto prelude_name = "/slang/slang-cpp-prelude.h";
+    auto prelude_name = "/SDK/slang/include/slang-cpp-prelude.h";
 
     std::ostringstream prelude;
     prelude << "#include \"" << root.generic_string() + prelude_name
@@ -189,14 +189,14 @@ SlangResult SlangShaderCompiler::addCPPPrelude(slang::IGlobalSession* session)
 
     // std::cerr << prelude.str() << std::endl;
     session->setLanguagePrelude(
-        SLANG_SOURCE_LANGUAGE_HLSL, prelude.str().c_str());
+        SLANG_SOURCE_LANGUAGE_CPP, prelude.str().c_str());
     return SLANG_OK;
 }
 
 SlangResult SlangShaderCompiler::addCPPHeaderInclude(
     SlangCompileRequest* slangRequest)
 {
-    auto prelude_path = find_root(".") / "slang";
+    auto prelude_path = find_root(".") / "SDK" / "slang" / "include";
 
     auto prelude_command = "-I" + prelude_path.generic_string();
 
@@ -209,7 +209,7 @@ SlangResult SlangShaderCompiler::addCPPHeaderInclude(
 SlangResult SlangShaderCompiler::addHLSLHeaderInclude(
     SlangCompileRequest* slangRequest)
 {
-    auto hlsl_path = find_root(".") / "nvapi";
+    auto hlsl_path = find_root(".") / "SDK" / "slang" / "include";
 
     auto hlsl_path_name = "-I" + hlsl_path.generic_string();
 
@@ -237,7 +237,7 @@ SlangResult SlangShaderCompiler::addCUDAPrelude(slang::IGlobalSession* session)
 
     auto root = find_root(includePath);
 
-    auto prelude_name = "/slang/slang-cuda-prelude.h";
+    auto prelude_name = "/SDK/slang/include/slang-cuda-prelude.h";
 
     std::ostringstream prelude;
     prelude << "#include \"" << root.generic_string() + prelude_name
@@ -245,7 +245,7 @@ SlangResult SlangShaderCompiler::addCUDAPrelude(slang::IGlobalSession* session)
 
     // std::cerr << prelude.str() << std::endl;
     session->setLanguagePrelude(
-        SLANG_SOURCE_LANGUAGE_HLSL, prelude.str().c_str());
+        SLANG_SOURCE_LANGUAGE_CUDA, prelude.str().c_str());
     return SLANG_OK;
 }
 

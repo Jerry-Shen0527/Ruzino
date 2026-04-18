@@ -113,7 +113,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(MSVC)
-  add_compile_options(-utf-8)
+  add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:-utf-8>)
 endif()
 
 if(NOT MSVC)
@@ -213,6 +213,18 @@ else()
   set(ENABLE_EMBREE_BASED_RENDERER OFF)
 endif()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/source/Core)
+
+# Prevent MSVC-only flags from spdlog propagating into CUDA compilations
+if(MSVC AND TARGET spdlog_header_only)
+  get_target_property(_spdlog_opts spdlog_header_only INTERFACE_COMPILE_OPTIONS)
+  if(_spdlog_opts)
+    list(TRANSFORM _spdlog_opts REPLACE "/Zc:__cplusplus"
+         "$<$<COMPILE_LANGUAGE:C,CXX>:/Zc:__cplusplus>")
+    set_target_properties(spdlog_header_only PROPERTIES
+      INTERFACE_COMPILE_OPTIONS "${_spdlog_opts}")
+  endif()
+endif()
+
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/source/Editor)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/source/Runtime)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/source/Plugins)

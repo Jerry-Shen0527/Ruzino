@@ -283,6 +283,7 @@ def copy_cuda_runtime_dlls_to_binaries(targets, dry_run=False):
             "nvrtc64_120_0.dll",
             "cudart64_13.dll",
             "nvrtc64_130_0.dll",
+            "nvrtc-builtins64_130.dll",
         ]
         lib_dirs = [
             os.path.join(cuda_path, "bin"),

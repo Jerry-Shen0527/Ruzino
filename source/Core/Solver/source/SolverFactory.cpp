@@ -9,11 +9,11 @@ namespace Solver {
 // Forward declarations of factory functions
 #if RUZINO_WITH_CUDA
 std::unique_ptr<LinearSolver> createCudaCGSolver();
-std::unique_ptr<LinearSolver> createCudaBiCGStabSolver();  // 新增
-std::unique_ptr<LinearSolver> createCudaGMRESSolver();     // 新增
-std::unique_ptr<LinearSolver> createCuSolverQRSolver();    // cuSOLVER QR
-std::unique_ptr<LinearSolver>
-createCuSolverCholeskySolver();  // cuSOLVER Cholesky
+std::unique_ptr<LinearSolver> createCudaBiCGStabSolver();
+std::unique_ptr<LinearSolver> createCudaGMRESSolver();
+// cuDSS-based solvers disabled (cuDSS not available on this system)
+// std::unique_ptr<LinearSolver> createCuSolverQRSolver();
+// std::unique_ptr<LinearSolver> createCuSolverCholeskySolver();
 #endif
 std::unique_ptr<LinearSolver> createEigenCGSolver();
 std::unique_ptr<LinearSolver> createEigenBiCGStabSolver();
@@ -56,11 +56,12 @@ std::unique_ptr<LinearSolver> SolverFactory::create(SolverType type)
             case SolverType::CUDA_BICGSTAB:
                 return createCudaBiCGStabSolver();  // 新增
             case SolverType::CUDA_GMRES:
-                return createCudaGMRESSolver();  // 新增
-            case SolverType::CUSOLVER_QR:
-                return createCuSolverQRSolver();  // cuSOLVER QR
-            case SolverType::CUSOLVER_CHOLESKY:
-                return createCuSolverCholeskySolver();  // cuSOLVER Cholesky
+                return createCudaGMRESSolver();
+            // cuDSS solvers disabled
+            // case SolverType::CUSOLVER_QR:
+            //     return createCuSolverQRSolver();
+            // case SolverType::CUSOLVER_CHOLESKY:
+            //     return createCuSolverCholeskySolver();
 #endif
             case SolverType::EIGEN_ITERATIVE_CG: return createEigenCGSolver();
             case SolverType::EIGEN_ITERATIVE_BICGSTAB:
@@ -86,10 +87,10 @@ std::vector<SolverType> SolverFactory::getAvailableTypes()
     std::vector<SolverType> all_types = {
 #if RUZINO_WITH_CUDA
         SolverType::CUDA_CG,
-        SolverType::CUDA_BICGSTAB,      // 新增
-        SolverType::CUDA_GMRES,         // 新增
-        SolverType::CUSOLVER_QR,        // cuSOLVER QR
-        SolverType::CUSOLVER_CHOLESKY,  // cuSOLVER Cholesky
+        SolverType::CUDA_BICGSTAB,
+        SolverType::CUDA_GMRES,
+        // SolverType::CUSOLVER_QR,        // cuDSS disabled
+        // SolverType::CUSOLVER_CHOLESKY,  // cuDSS disabled
 #endif
         SolverType::EIGEN_ITERATIVE_CG,
         SolverType::EIGEN_ITERATIVE_BICGSTAB /*,
@@ -120,9 +121,9 @@ std::string SolverFactory::getTypeName(SolverType type)
 #if RUZINO_WITH_CUDA
         case SolverType::CUDA_CG: return "CUDA Conjugate Gradient";
         case SolverType::CUDA_BICGSTAB: return "CUDA BiCGSTAB";
-        case SolverType::CUDA_GMRES: return "CUDA GMRES";  // 新增
-        case SolverType::CUSOLVER_QR: return "cuSOLVER QR (Direct)";
-        case SolverType::CUSOLVER_CHOLESKY: return "cuSOLVER Cholesky (Direct)";
+        case SolverType::CUDA_GMRES: return "CUDA GMRES";
+        // case SolverType::CUSOLVER_QR: return "cuSOLVER QR (Direct)";
+        // case SolverType::CUSOLVER_CHOLESKY: return "cuSOLVER Cholesky (Direct)";
 #endif
         case SolverType::EIGEN_ITERATIVE_CG: return "Eigen Conjugate Gradient";
         case SolverType::EIGEN_ITERATIVE_BICGSTAB: return "Eigen BiCGSTAB";

@@ -1510,6 +1510,13 @@ class SlangShaderGeneratorTester : public GenShaderUtil::ShaderGeneratorTester {
         _testStages.push_back(mx::Stage::PIXEL);
     }
 
+    // Skip struct test files — genslang does not yet support MaterialX struct types
+    void addSkipFiles() override
+    {
+        _skipFiles.insert("struct_texcoord.mtlx");
+        _skipFiles.insert("struct_texcoordGroup.mtlx");
+    }
+
     // Ignore trying to create shader code for displacementshaders
     void addSkipNodeDefs() override
     {
@@ -1543,6 +1550,7 @@ class SlangShaderGeneratorTester : public GenShaderUtil::ShaderGeneratorTester {
                       "IM_dot_",
                       "IM_geompropvalue_boolean",
                       "IM_geompropvalue_string",
+                      "IM_geompropvalue_filename",
                       "IM_light_genslang",
                       "IM_point_light_genslang",
                       "IM_spot_light_genslang",

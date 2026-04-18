@@ -27,6 +27,7 @@
 #include "Nodes/ClosureCompoundNodeSlang.h"
 #include "Nodes/ClosureSourceCodeNodeSlang.h"
 #include "Nodes/CompoundNodeSlang.h"
+#include "Nodes/HwNodesSlang.h"
 #include "Nodes/LightCompoundNodeSlang.h"
 #include "Nodes/LightNodeSlang.h"
 #include "Nodes/LightSamplerNodeSlang.h"
@@ -63,15 +64,15 @@ SlangShaderGenerator::SlangShaderGenerator(TypeSystemPtr typeSystem)
     // <!-- <normal> -->
     registerImplementation(
         "IM_normal_vector3_" + SlangShaderGenerator::TARGET,
-        HwNormalNode::create);
+        HwNormalNodeSlang::create);
     // <!-- <tangent> -->
     registerImplementation(
         "IM_tangent_vector3_" + SlangShaderGenerator::TARGET,
-        HwTangentNode::create);
+        HwTangentNodeSlang::create);
     // <!-- <bitangent> -->
     registerImplementation(
         "IM_bitangent_vector3_" + SlangShaderGenerator::TARGET,
-        HwBitangentNode::create);
+        HwBitangentNodeSlang::create);
     // <!-- <texcoord> -->
     registerImplementation(
         "IM_texcoord_vector2_" + SlangShaderGenerator::TARGET,
@@ -116,7 +117,7 @@ SlangShaderGenerator::SlangShaderGenerator(TypeSystemPtr typeSystem)
     // <!-- <viewdirection> -->
     registerImplementation(
         "IM_viewdirection_vector3_" + SlangShaderGenerator::TARGET,
-        HwViewDirectionNode::create);
+        HwViewDirectionNodeSlang::create);
 
     // <!-- <surface> -->
     registerImplementation(
