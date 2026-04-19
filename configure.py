@@ -1,5 +1,6 @@
 import zipfile
 import shutil
+import glob as glob_mod
 import os
 import sys
 import platform
@@ -1005,7 +1006,22 @@ def build_openvdb(install_prefix, src_base, build_type, cuda=False, dry_run=Fals
     if dry_run:
         return
 
-    extra_args = ["-DUSE_EXPLICIT_INSTANTIATION=OFF", "-DNANOVDB_USE_OPENVDB=ON"]
+    extra_args = [
+        "-DUSE_EXPLICIT_INSTANTIATION=OFF",
+        "-DNANOVDB_USE_OPENVDB=ON",
+        "-DOPENVDB_BUILD_PYTHON_MODULE=OFF",
+        "-DOPENVDB_BUILD_BINARIES=OFF",
+        "-DOPENVDB_BUILD_UNITTESTS=OFF",
+    ]
+    # TBB 2021.x headers have #pragma comment(lib, "tbb12_debug.lib") on MSVC.
+    # Disable it since we link via CMake targets, not MSVC auto-linking.
+    if is_windows():
+        # TBB headers have #pragma comment(lib, "tbb12_debug.lib") on MSVC.
+        # Disable it via __TBB_NO_IMPLICIT_LINKAGE.
+        # Must preserve /EHsc (C++ exceptions) since overriding CMAKE_CXX_FLAGS
+        # replaces all defaults including /EHsc. Without /EHsc, Boost detects
+        # BOOST_NO_EXCEPTIONS which changes throw_exception to a non-inline decl.
+        extra_args.append('-DCMAKE_CXX_FLAGS=/EHsc /D__TBB_NO_IMPLICIT_LINKAGE')
     if cuda:
         extra_args.extend([
             "-DUSE_NANOVDB=ON",
@@ -1104,15 +1120,21 @@ def build_openimageio(install_prefix, src_base, build_type, dry_run=False):
     src_dir = download_dep(url, src_base, folder_name="OpenImageIO-2.5.16.0", dry_run=dry_run)
     if dry_run:
         return
+    extra_args = [
+        "-DOIIO_BUILD_TESTS=OFF",
+        "-DUSE_PYTHON=OFF",
+        "-DBUILD_DOCS=OFF",
+        "-DSTOP_ON_WARNING=OFF",
+        "-DBoost_NO_SYSTEM_PATHS=ON",
+    ]
+    # Disable debug postfix so libraries are named OpenImageIO.lib (not _d)
+    # USD's FindOpenImageIO.cmake only expects the _d suffix on macOS
+    if build_type.lower() == "debug":
+        extra_args.append("-DCMAKE_DEBUG_POSTFIX=")
+
     run_cmake_build(
         src_dir, install_prefix, build_type,
-        extra_args=[
-            "-DOIIO_BUILD_TESTS=OFF",
-            "-DUSE_PYTHON=OFF",
-            "-DBUILD_DOCS=OFF",
-            "-DSTOP_ON_WARNING=OFF",
-            "-DBoost_NO_SYSTEM_PATHS=ON",
-        ],
+        extra_args=extra_args,
         dry_run=dry_run,
     )
 
@@ -1215,11 +1237,10 @@ def process_usd(targets, dry_run=False, keep_original_files=True, copy_only=Fals
             _copy_python_installation(python_dir, sdk_python_dir, dry_run)
 
         # Find Python executable for USD Python bindings
+        # Prefer system Python (has jinja2 for USD code generation) over SDK Python
         python_cmd = "python" if is_windows() else "python3"
-        if os.path.exists(sdk_python):
-            python_executable = sdk_python
-        else:
-            python_executable = python_cmd
+        system_python = shutil.which(python_cmd)
+        python_executable = system_python or (sdk_python if os.path.exists(sdk_python) else python_cmd)
 
         # Shared source directory for all dependency sources
         src_base = os.path.join(
@@ -1957,8 +1978,9 @@ def main():
     # Copy Python DLLs from SDK to Binaries for each target in copy-only mode
     if copy_only:
         copy_python_dlls_to_binaries(targets, dry_run=dry_run)
-        # Also copy CUDA runtime DLLs if available
-        copy_cuda_runtime_dlls_to_binaries(targets, dry_run=dry_run)
+
+    # Always copy CUDA runtime DLLs if available
+    copy_cuda_runtime_dlls_to_binaries(targets, dry_run=dry_run)
 
     # Always copy imgui.ini to Binaries
     copy_imgui_ini_to_binaries(targets, dry_run=dry_run)

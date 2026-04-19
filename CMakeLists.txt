@@ -165,8 +165,7 @@ if(pxr_FOUND)
   add_compile_definitions(
     TBB_SUPPRESS_DEPRECATED_MESSAGES=1
     NANOVDB_USE_OPENVDB
-    $<$<CONFIG:Debug>:TBB_USE_DEBUG=1>
-    $<$<CONFIG:Debug>:BOOST_DEBUG_PYTHON>)
+    $<$<CONFIG:Debug>:TBB_USE_DEBUG=1>)
 else()
   message(WARNING "OpenUSD not found")
   set(RUZINO_WITH_OPENUSD OFF)
