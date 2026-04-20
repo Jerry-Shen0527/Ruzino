@@ -53,7 +53,6 @@ void mx_conductor_bsdf(
         float G = mx_ggx_smith_G2(NdotL, NdotV, avgAlpha);
 
         float3 comp = mx_ggx_energy_compensation(NdotV, avgAlpha, F);
-        comp = 1.0f;
 
         bsdf.response = D * F * G * comp * closureData.occlusion * weight /
                         (4.0 * NdotV);

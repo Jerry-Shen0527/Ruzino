@@ -100,7 +100,25 @@ void NG_standard_surface_surfaceshader_100(
     out surfaceshader out1)
 {
     if (is_close(normalize(L), normalize(-V))) {
-        out1 = surfaceshader(float3(1.0f), float3(1.0));
+        // For near-perfect mirror reflection, use Fresnel-weighted response
+        // instead of plain white (which is wrong for colored conductors).
+        if (metalness > 1e-5) {
+            float3 metal_reflectivity_out = base_color * base;
+            float3 metal_edgecolor_out = specular_color * specular;
+            float3 artistic_ior_ior_fast = float3(0.0);
+            float3 artistic_ior_extinction_fast = float3(0.0);
+            mx_artistic_ior(
+                metal_reflectivity_out,
+                metal_edgecolor_out,
+                artistic_ior_ior_fast,
+                artistic_ior_extinction_fast);
+            float3 F = mx_fresnel_conductor(
+                1.0, artistic_ior_ior_fast, artistic_ior_extinction_fast);
+            out1 = surfaceshader(F, float3(0.0));
+        }
+        else {
+            out1 = surfaceshader(float3(1.0f), float3(1.0));
+        }
         return;
     }
     if (opacity.r < 0.25f) {

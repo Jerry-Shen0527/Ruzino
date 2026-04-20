@@ -151,7 +151,7 @@ void RayGen()
                     skyColor +=
                         sunsetColor * sunsetIntensity * (1.0 - skyBlend) * 0.4;
 
-                    envColor = Spectrum(skyColor * 0.0);
+                    envColor = Spectrum(skyColor);
                 }
 
                 accumulated_color =
