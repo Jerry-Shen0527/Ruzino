@@ -916,6 +916,24 @@ void LpmMap(
     FfxFloat32x3 con2G,
     FfxFloat32x3 con2B)
 {
+    // Guard: skip processing for zero color to avoid NaN.
+    FfxFloat32 maxColor = ffxMax3(colorR, colorG, colorB);
+    if (maxColor <= FfxFloat32(0.0)) {
+        colorR = FfxFloat32(0.0);
+        colorG = FfxFloat32(0.0);
+        colorB = FfxFloat32(0.0);
+        return;
+    }
+
+    // Prevent zero-channel artifacts: when one channel is exactly 0,
+    // the crosstalk redistribution injects color at a specific luma threshold,
+    // creating visible ring artifacts on smooth gradients.
+    // Add a tiny epsilon to zero channels so the ratio has no exact zeros.
+    FfxFloat32 eps = maxColor * FfxFloat32(1e-4);
+    colorR = ffxMax(colorR, eps);
+    colorG = ffxMax(colorG, eps);
+    colorB = ffxMax(colorB, eps);
+
     // Secondary RGB conversion matrix.
     // Grab original RGB ratio (RCP, 3x MUL, MAX3).
     FfxFloat32 rcpMax = ffxReciprocal(ffxMax3(colorR, colorG, colorB));
@@ -1033,28 +1051,30 @@ void LpmMap(
 
     // Amount to increase keeping over-exposure ratios constant and possibly
     // exceeding clipping point (4x MAD, 1 RCP).
-    FfxFloat32 t =
-        lumaAdd *
-        ffxReciprocal(
-            capG * FfxFloat32(lumaT.g) +
-            (capR * FfxFloat32(lumaT.r) + (capB * FfxFloat32(lumaT.b))));
+    // Guard against zero denominator: when crosstalk=0 and/or all channels
+    // are saturated, capR/G/B sum to zero, causing t=Inf and Inf*0=NaN.
+    FfxFloat32 capSum = capG * FfxFloat32(lumaT.g) +
+                        (capR * FfxFloat32(lumaT.r) + (capB * FfxFloat32(lumaT.b)));
+    if (capSum > FfxFloat32(0.0)) {
+        FfxFloat32 t = lumaAdd * ffxReciprocal(capSum);
 
-    // Add amounts to base color but clip (3x MAD).
-    colorR = ffxSaturate(t * capR + colorR);
-    colorG = ffxSaturate(t * capG + colorG);
-    colorB = ffxSaturate(t * capB + colorB);
+        // Add amounts to base color but clip (3x MAD).
+        colorR = ffxSaturate(t * capR + colorR);
+        colorG = ffxSaturate(t * capG + colorG);
+        colorB = ffxSaturate(t * capB + colorB);
 
-    // Compute amount of luma needed to add to non-clipped channel to make up
-    // for clipping (3x MAD).
-    lumaAdd = ffxSaturate(
-        (-colorB) * FfxFloat32(lumaT.b) +
-        ((-colorR) * FfxFloat32(lumaT.r) +
-         ((-colorG) * FfxFloat32(lumaT.g) + luma)));
+        // Compute amount of luma needed to add to non-clipped channel to make up
+        // for clipping (3x MAD).
+        lumaAdd = ffxSaturate(
+            (-colorB) * FfxFloat32(lumaT.b) +
+            ((-colorR) * FfxFloat32(lumaT.r) +
+             ((-colorG) * FfxFloat32(lumaT.g) + luma)));
 
-    // Add to last channel (3x MAD).
-    colorR = ffxSaturate(lumaAdd * FfxFloat32(rcpLumaT.r) + colorR);
-    colorG = ffxSaturate(lumaAdd * FfxFloat32(rcpLumaT.g) + colorG);
-    colorB = ffxSaturate(lumaAdd * FfxFloat32(rcpLumaT.b) + colorB);
+        // Add to last channel (3x MAD).
+        colorR = ffxSaturate(lumaAdd * FfxFloat32(rcpLumaT.r) + colorR);
+        colorG = ffxSaturate(lumaAdd * FfxFloat32(rcpLumaT.g) + colorG);
+        colorB = ffxSaturate(lumaAdd * FfxFloat32(rcpLumaT.b) + colorB);
+    }
 
     // The 'con2' should be a compile-time immediate so branch will not exist.
     // Last optional place to convert from smaller to larger gamut (or do
@@ -1129,6 +1149,21 @@ void LpmMapH(
     FfxFloat16x3 con2G,
     FfxFloat16x3 con2B)
 {
+    // Guard: skip processing for zero color to avoid NaN.
+    FfxFloat16x2 maxColor = ffxMax3Half(colorR, colorG, colorB);
+    if (maxColor.x <= FfxFloat16(0.0) && maxColor.y <= FfxFloat16(0.0)) {
+        colorR = FfxFloat16x2(0.0, 0.0);
+        colorG = FfxFloat16x2(0.0, 0.0);
+        colorB = FfxFloat16x2(0.0, 0.0);
+        return;
+    }
+
+    // Prevent zero-channel artifacts (same fix as FP32 path).
+    FfxFloat16x2 eps = maxColor * FfxFloat16(1e-4);
+    colorR = ffxMax(colorR, eps);
+    colorG = ffxMax(colorG, eps);
+    colorB = ffxMax(colorB, eps);
+
     FfxFloat16x2 rcpMax =
         ffxReciprocalHalf(ffxMax3Half(colorR, colorG, colorB));
     FfxFloat16x2 ratioR = colorR * rcpMax;
@@ -1214,23 +1249,26 @@ void LpmMapH(
         (-colorB) * FFX_BROADCAST_FLOAT16X2(lumaT.b) +
         ((-colorR) * FFX_BROADCAST_FLOAT16X2(lumaT.r) +
          ((-colorG) * FFX_BROADCAST_FLOAT16X2(lumaT.g) + luma)));
-    FfxFloat16x2 t = lumaAdd * ffxReciprocalHalf(
-                                   capG * FFX_BROADCAST_FLOAT16X2(lumaT.g) +
-                                   (capR * FFX_BROADCAST_FLOAT16X2(lumaT.r) +
-                                    (capB * FFX_BROADCAST_FLOAT16X2(lumaT.b))));
-    colorR = ffxSaturate(t * capR + colorR);
-    colorG = ffxSaturate(t * capG + colorG);
-    colorB = ffxSaturate(t * capB + colorB);
-    lumaAdd = ffxSaturate(
-        (-colorB) * FFX_BROADCAST_FLOAT16X2(lumaT.b) +
-        ((-colorR) * FFX_BROADCAST_FLOAT16X2(lumaT.r) +
-         ((-colorG) * FFX_BROADCAST_FLOAT16X2(lumaT.g) + luma)));
-    colorR =
-        ffxSaturate(lumaAdd * FFX_BROADCAST_FLOAT16X2(rcpLumaT.r) + colorR);
-    colorG =
-        ffxSaturate(lumaAdd * FFX_BROADCAST_FLOAT16X2(rcpLumaT.g) + colorG);
-    colorB =
-        ffxSaturate(lumaAdd * FFX_BROADCAST_FLOAT16X2(rcpLumaT.b) + colorB);
+    // Guard against zero denominator: when crosstalk=0, capR/G/B sum to zero.
+    FfxFloat16x2 capSum = capG * FFX_BROADCAST_FLOAT16X2(lumaT.g) +
+                          (capR * FFX_BROADCAST_FLOAT16X2(lumaT.r) +
+                           (capB * FFX_BROADCAST_FLOAT16X2(lumaT.b)));
+    if (capSum.x > FfxFloat16(0.0) || capSum.y > FfxFloat16(0.0)) {
+        FfxFloat16x2 t = lumaAdd * ffxReciprocalHalf(capSum);
+        colorR = ffxSaturate(t * capR + colorR);
+        colorG = ffxSaturate(t * capG + colorG);
+        colorB = ffxSaturate(t * capB + colorB);
+        lumaAdd = ffxSaturate(
+            (-colorB) * FFX_BROADCAST_FLOAT16X2(lumaT.b) +
+            ((-colorR) * FFX_BROADCAST_FLOAT16X2(lumaT.r) +
+             ((-colorG) * FFX_BROADCAST_FLOAT16X2(lumaT.g) + luma)));
+        colorR =
+            ffxSaturate(lumaAdd * FFX_BROADCAST_FLOAT16X2(rcpLumaT.r) + colorR);
+        colorG =
+            ffxSaturate(lumaAdd * FFX_BROADCAST_FLOAT16X2(rcpLumaT.g) + colorG);
+        colorB =
+            ffxSaturate(lumaAdd * FFX_BROADCAST_FLOAT16X2(rcpLumaT.b) + colorB);
+    }
 
     if (con2) {
         ratioR = colorR;

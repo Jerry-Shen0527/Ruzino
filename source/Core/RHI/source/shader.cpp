@@ -72,7 +72,11 @@ class CustomBlob : public ISlangBlob {
 };
 
 std::string ShaderFactory::shader_search_path = "";
+#ifdef _DEBUG
+bool ShaderFactory::cache_enabled = false;
+#else
 bool ShaderFactory::cache_enabled = true;
+#endif
 
 ProgramDesc Program::get_desc() const
 {
@@ -92,13 +96,15 @@ nvrhi::ShaderDesc Program::get_shader_desc() const
 
 void const* Program::getBufferPointer() const
 {
-    if (!blob) return nullptr;
+    if (!blob)
+        return nullptr;
     return blob->getBufferPointer();
 }
 
 size_t Program::getBufferSize() const
 {
-    if (!blob) return 0;
+    if (!blob)
+        return 0;
     return blob->getBufferSize();
 }
 
@@ -834,8 +840,7 @@ void ShaderFactory::SlangCompile(
     slang::TargetDesc desc;
     desc.format = target;
     desc.profile = profile_id;
-    if (target == SLANG_SPIRV)
-    {
+    if (target == SLANG_SPIRV) {
         desc.flags = SLANG_TARGET_FLAG_GENERATE_WHOLE_PROGRAM |
                      SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY;
         desc.forceGLSLScalarBufferLayout = true;
