@@ -14,7 +14,7 @@ void main(uint2 DTid: SV_DispatchThreadID)
 
     float4 color = Texture.Load(int3(DTid, 0));
     if (!isfinite(color.x) || !isfinite(color.y) || !isfinite(color.z) ||
-    !isfinite(color.w)) {
+        !isfinite(color.w)) {
         color = float4(0, 0, 1, 1);
     }
     if (isnan(color.x) || isnan(color.y) || isnan(color.z) || isnan(color.w)) {
