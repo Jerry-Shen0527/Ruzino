@@ -20,6 +20,9 @@ RUZINO_ADD_LIB(
 	PYTHON_WRAP_DIR python
 )
 
+if(MSVC)
+	target_compile_options(hd_RUZINO PRIVATE /bigobj)
+endif()
 target_compile_definitions(hd_RUZINO PRIVATE HOST_CODE=1 _USE_MATH_DEFINES)
 target_compile_definitions(hd_RUZINO PUBLIC RUZINO_BACKEND_NVRHI)
 target_compile_definitions(hd_RUZINO_py PRIVATE NOMINMAX)

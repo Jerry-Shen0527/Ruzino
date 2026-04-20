@@ -24,8 +24,7 @@
 
 #include "volume.h"
 
-#include <nanovdb/util/IO.h>
-#include <nanovdb/util/OpenToNanoVDB.h>
+#include <nanovdb/tools/CreateNanoGrid.h>
 #include <openvdb/io/File.h>
 #include <openvdb/openvdb.h>
 #include <spdlog/spdlog.h>
