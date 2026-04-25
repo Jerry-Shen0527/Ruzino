@@ -200,10 +200,14 @@ pxr::UsdShadeMaterial Stage::create_material(const pxr::SdfPath& path)
 {
     auto material = create_prim<pxr::UsdShadeMaterial>(path, "material");
 
-    // Add custom shader_path attribute for material callable shader
-    auto shader_path_attr = material.GetPrim().CreateAttribute(
-        pxr::TfToken("shader_path"), pxr::SdfValueTypeNames->String, false);
-    shader_path_attr.Set(std::string(""));  // Empty by default
+    // Use config: prefix so shader_path is automatically forwarded via
+    // HdMaterialNetworkMap::config in all USD versions (25.05 and 26.x)
+    material.GetPrim()
+        .CreateAttribute(
+            pxr::TfToken("config:shader_path"),
+            pxr::SdfValueTypeNames->String,
+            /*custom=*/false)
+        .Set(std::string(""));
 
     return material;
 }

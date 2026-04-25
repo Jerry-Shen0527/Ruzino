@@ -895,8 +895,10 @@ void UsdFileViewer::EditValue()
 
                             // Special handling for shader_path attribute - show
                             // as dropdown Works for both dome lights and
-                            // materials
-                            if (attrName == "shader_path") {
+                            // materials (config:shader_path for USD 26.x
+                            // material forwarding)
+                            if (attrName == "shader_path" ||
+                                attrName == "config:shader_path") {
                                 // Scan for available shaders based on prim type
                                 std::vector<std::string> shaderFiles;
                                 shaderFiles.push_back("");  // Empty option

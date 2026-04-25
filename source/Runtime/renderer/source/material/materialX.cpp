@@ -76,9 +76,32 @@ void Hd_RUZINO_MaterialX::Sync(
 
     ensure_material_data_handle(param);
 
-    // First check if this material has a custom shader_path
     const SdfPath& id = GetId();
-    VtValue customParamValue = sceneDelegate->Get(id, TfToken("shader_path"));
+
+    HdMaterialNetwork2 hdNetwork;
+    SdfPath materialPath;
+
+    SdfPath surfTerminalPath;
+    HdMaterialNode2 const* surfTerminal;
+    HdMaterialNetwork2Interface netInterface = FetchMaterialNetwork(
+        sceneDelegate, hdNetwork, materialPath, surfTerminalPath, surfTerminal);
+
+    // Read shader_path from config dict (populated by config:shader_path attribute
+    // on the material prim). This uses USD's built-in forwarding mechanism and works
+    // in both USD 25.05 and 26.x.
+    VtValue customParamValue;
+    auto configIt = hdNetwork.config.find("shader_path");
+    if (configIt != hdNetwork.config.end()) {
+        customParamValue = configIt->second;
+    }
+    // Fallback for old materials using raw shader_path attribute (USD 25.05)
+    if (customParamValue.IsEmpty()) {
+        customParamValue = sceneDelegate->Get(id, TfToken("shader_path"));
+    }
+
+    spdlog::info("Material {}: shader_path lookup result: {}",
+                 id.GetText(),
+                 customParamValue.IsEmpty() ? "EMPTY" : "found");
     if (!customParamValue.IsEmpty()) {
         if (customParamValue.IsHolding<std::string>()) {
             shader_path = customParamValue.UncheckedGet<std::string>();
@@ -116,9 +139,6 @@ void Hd_RUZINO_MaterialX::Sync(
                 std::replace(
                     material_name.begin(), material_name.end(), '.', '_');
 
-                // The shader is already a complete eval callable at the file
-                // Just store the path, no need to load source here
-
                 shader_ready = true;
                 shader_generation++;
                 *dirtyBits = HdChangeTracker::Clean;
@@ -126,14 +146,6 @@ void Hd_RUZINO_MaterialX::Sync(
             }
         }
     }
-
-    HdMaterialNetwork2 hdNetwork;
-    SdfPath materialPath;
-
-    SdfPath surfTerminalPath;
-    HdMaterialNode2 const* surfTerminal;
-    HdMaterialNetwork2Interface netInterface = FetchMaterialNetwork(
-        sceneDelegate, hdNetwork, materialPath, surfTerminalPath, surfTerminal);
 
     spdlog::info(
         "MaterialX: MaterialPath = '{}', SurfTerminalPath = '{}'",
@@ -195,6 +207,12 @@ void Hd_RUZINO_MaterialX::Sync(
 
     // Full shader generation with network structure changed
     MtlxGenerateShader(mtlx_element, netInterface, hdMtlxData);
+
+    // Reset shader_ready so ensure_shader_ready() will reprocess the
+    // newly generated eval_shader_source on the next GetShader() call.
+    // This handles the case where GetShader() was called before Sync()
+    // (which can happen when a material is created mid-frame).
+    shader_ready = false;
 
     // Update hash after successful shader generation
     last_network_hash = current_network_hash;
