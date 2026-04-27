@@ -1277,14 +1277,17 @@ void UsdFileViewer::remove_prim_logic()
 {
     if (delete_pass_id == 3) {
         stage->remove_prim(to_delete);
+        materials_cache_dirty = true;
     }
 
     if (delete_pass_id == 2) {
         stage->add_prim(to_delete);
+        materials_cache_dirty = true;
     }
 
     if (delete_pass_id == 1) {
         stage->remove_prim(to_delete);
+        materials_cache_dirty = true;
     }
 
     if (delete_pass_id > 0) {

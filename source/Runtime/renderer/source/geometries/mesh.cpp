@@ -498,6 +498,11 @@ void Hd_RUZINO_Mesh::Sync(
 
     if (*dirtyBits & HdChangeTracker::DirtyMaterialId) {
         _SetMaterialId(sceneDelegate, this);
+        // Notify renderer that material assignments changed so path tracing
+        // rebuilds the shader pipeline.
+        auto render_param =
+            static_cast<Hd_RUZINO_RenderParam*>(renderParam);
+        render_param->InstanceCollection->mark_materials_dirty();
     }
 
     bool requires_rebuild_blas =
@@ -508,7 +513,8 @@ void Hd_RUZINO_Mesh::Sync(
         requires_rebuild_blas ||
         HdChangeTracker::IsInstancerDirty(*dirtyBits, id) ||
         HdChangeTracker::IsTransformDirty(*dirtyBits, id) ||
-        HdChangeTracker::IsVisibilityDirty(*dirtyBits, id);
+        HdChangeTracker::IsVisibilityDirty(*dirtyBits, id) ||
+        (*dirtyBits & HdChangeTracker::DirtyMaterialId);
 
     if (HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->points)) {
         VtValue value = sceneDelegate->Get(id, HdTokens->points);

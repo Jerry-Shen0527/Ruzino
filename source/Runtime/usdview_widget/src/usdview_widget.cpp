@@ -78,7 +78,8 @@ UsdviewEngine::UsdviewEngine(Stage* stage) : stage_(stage)
     hdDriver.driver = pxr::VtValue(hgi.get());
     params.driver = hdDriver;
 
-    renderer_ = std::make_unique<pxr::UsdImagingGLEngine>(params);
+    renderer_ = std::make_unique<RuzinoEngine>(params,
+                                                 stage_->get_usd_stage());
 
     renderer_->SetEnablePresentation(false);
     free_camera_ = std::make_unique<ThirdPersonCamera>();

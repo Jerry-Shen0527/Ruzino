@@ -125,3 +125,31 @@ Pre-built dependencies managed by `configure.py`: OpenUSD v25.05.01, Slang v2025
 - Python bindings use nanobind; Python3 is found from `SDK/python`
 - The framework supports `find_package(Ruzino)` when installed as an SDK
 - Output binaries go to `Binaries/{BuildType}/` during development, `bin/` when installed
+
+## USD Hydra Integration Notes
+
+### SDK is pre-built — source patches have no effect
+`SDK/OpenUSD/source/` contains reference source only. The actual compiled libraries are in `SDK/OpenUSD/Release/lib/`. Editing source files under `SDK/OpenUSD/source/` will NOT affect the build unless you rebuild the entire USD SDK via `configure.py`.
+
+### Dirty notification mechanism (USD 26.x scene index)
+USD 26.x uses a scene index chain. Property changes flow through `Invalidate()` on each data source. Key method: `UsdImagingDataSourceMaterialPrim::Invalidate()` in `dataSourceMaterial.cpp`.
+
+- `inputs:*` attributes trigger dirty via `UsdShadeInput::IsInterfaceInputName()` — **this works out of the box**
+- `config:*` attributes are forwarded to `HdMaterialNetworkMap::config` (data works) but do NOT trigger `Invalidate()` (no dirty notification)
+- Custom attributes without prefix are not forwarded at all in USD 26.x
+- **Lesson**: For custom parameters that need dirty tracking, use `inputs:*` on shader nodes (material interface inputs connected to shader inputs). Do NOT rely on `config:*` for properties the user can change at runtime.
+
+### Custom shader_path architecture
+`shader_path` is stored as `config:shader_path` on the material prim. `config:*` attributes are forwarded to `HdMaterialNetworkMap::config` — data reading works. However, `config:*` changes do NOT trigger `Invalidate()` / `Sync()` automatically. A mechanism to force material resync when `config:shader_path` changes is needed (e.g. subclassing `UsdImagingGLEngine`).
+- **Data**: Read from `hdNetwork.config["shader_path"]` in materialX.cpp Sync()
+- **Dirty**: NOT automatic — needs external trigger mechanism
+- **UI**: The file viewer shows `config:shader_path` on the material prim in a dropdown
+
+### Renderer dirty flags
+- `Hd_RUZINO_Material::Sync()` calls `mark_materials_dirty()` which increments `material_version`
+- `renderer.cpp` compares `material_version` each frame to set `DirtyMaterials` on the global payload
+- Mesh material binding changes must also call `mark_materials_dirty()` in mesh.cpp (not just `_SetMaterialId`)
+- Path tracing node rebuilds when `mat_dirty` is true
+
+### Running USD Python scripts
+The SDK Python (`SDK/python/python.exe`) needs `PXR_USD_WINDOWS_DLL_PATH` set to the Binaries directory, and `PYTHONPATH` must include both `Binaries/Release` and `SDK/OpenUSD/Release/lib/python`. See conftest.py files for the canonical setup.

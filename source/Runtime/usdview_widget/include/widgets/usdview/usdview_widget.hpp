@@ -9,6 +9,7 @@
 #include "pxr/base/tf/token.h"
 #include "pxr/usd/usd/stage.h"
 #include "pxr/usdImaging/usdImagingGL/engine.h"
+#include "widgets/usdview/ruzino_engine.h"
 #include "stage/stage.hpp"
 #include "widgets/api.h"
 
@@ -67,7 +68,7 @@ class USDVIEW_WIDGET_API UsdviewEngine final : public IWidget {
     bool left_mouse_pressed = false;
 
     std::unique_ptr<BaseCamera> free_camera_;
-    std::unique_ptr<pxr::UsdImagingGLEngine> renderer_;
+    std::unique_ptr<RuzinoEngine> renderer_;
     pxr::UsdImagingGLRenderParams _renderParams;
     pxr::GfVec2i render_buffer_size_;
 

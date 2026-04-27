@@ -727,10 +727,8 @@ void Hd_RUZINO_Dome_Light::Sync(
     const SdfPath& id = GetId();
     HdDirtyBits bits = *dirtyBits;
 
-    if (bits & (DirtyParams | DirtyTransform)) {
-        _PrepareDomeLight(id, sceneDelegate);
-
-        // Get shader_path parameter and validate it's a file
+    // Always check shader_path — custom attribute changes don't trigger DirtyParams
+    {
         VtValue shaderPathValue =
             sceneDelegate->GetLightParamValue(id, TfToken("shader_path"));
         this->has_valid_shader = false;
@@ -745,11 +743,8 @@ void Hd_RUZINO_Dome_Light::Sync(
             shader_path.clear();
         }
 
-        // Validate shader path points to an actual file (not directory)
         if (!shader_path.empty()) {
             std::filesystem::path shader_file_path(shader_path);
-            // If not absolute, prepend RENDERER_SHADER_DIR (same logic as
-            // path_tracing.cpp)
             if (!shader_file_path.is_absolute()) {
                 shader_file_path = std::filesystem::path(
                                        SlangShaderCompiler::get_shader_dir(
@@ -781,6 +776,10 @@ void Hd_RUZINO_Dome_Light::Sync(
                     shader_file_path.string());
             }
         }
+    }
+
+    if (bits & (DirtyParams | DirtyTransform)) {
+        _PrepareDomeLight(id, sceneDelegate);
 
         auto* render_param = static_cast<Hd_RUZINO_RenderParam*>(renderParam);
 

@@ -94,14 +94,21 @@ void Hd_RUZINO_MaterialX::Sync(
     if (configIt != hdNetwork.config.end()) {
         customParamValue = configIt->second;
     }
-    // Fallback for old materials using raw shader_path attribute (USD 25.05)
-    if (customParamValue.IsEmpty()) {
-        customParamValue = sceneDelegate->Get(id, TfToken("shader_path"));
+
+    spdlog::debug("Material {}: shader_path lookup result: {}",
+                  id.GetText(),
+                  customParamValue.IsEmpty() ? "EMPTY" : "found");
+
+    // If previously using a custom shader, force a full MaterialX shader
+    // regeneration because the cached state is stale.
+    bool was_custom_shader = has_valid_shader;
+    has_valid_shader = false;
+    shader_path.clear();
+    if (was_custom_shader) {
+        can_use_incremental_update = false;
+        last_network_hash = 0;
     }
 
-    spdlog::info("Material {}: shader_path lookup result: {}",
-                 id.GetText(),
-                 customParamValue.IsEmpty() ? "EMPTY" : "found");
     if (!customParamValue.IsEmpty()) {
         if (customParamValue.IsHolding<std::string>()) {
             shader_path = customParamValue.UncheckedGet<std::string>();
