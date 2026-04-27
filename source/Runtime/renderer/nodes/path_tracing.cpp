@@ -308,11 +308,7 @@ void fetch_)" + material.second->GetMaterialName() +
                     material.second->GetShader(shader_factory);
                 auto mat_name = material.second->GetMaterialName();
 
-                // Skip materials whose shader hasn't been properly generated.
-                // The fallback shader uses "fallback" as its callable name,
-                // but the pipeline would announce the actual material name.
-                if (mat_name.empty() || mat_name == "fallback" ||
-                    shader_source.empty()) {
+                if (mat_name.empty() || shader_source.empty()) {
                     spdlog::warn(
                         "Material '{}': shader not ready (name='{}'), "
                         "skipping",

@@ -168,6 +168,27 @@ void RayGen()
             uint material_id = payload.materialID;
             uint eta_flipped = payload.eta_flipped;
 
+            // No material assigned — use fallback eval (index 2)
+            if (material_id == uint(-1)) {
+                EvalCallableData evalData;
+                evalData.color = Spectrum(0.0);
+                evalData.throughput = Spectrum(1.0);
+                evalData.L = float3(0, 1, 0);
+                evalData.V = -current_ray.Direction;
+                evalData.sampledDir = float3(0, 0, 0);
+                evalData.pdf = 1.0;
+                evalData.seed = payload.seed;
+                evalData.eta_flipped = eta_flipped;
+                evalData.material_params_index = id;
+                evalData.vertexInfo = vertex;
+
+                CallShader(2, evalData);  // eval_fallback
+
+                accumulated_color =
+                    add(accumulated_color, mul(current_throughput, evalData.color));
+                break;
+            }
+
             var material_header = materialHeaderBuffer[material_id];
 
             // Sample a light source for direct lighting
@@ -464,6 +485,12 @@ void ShadowHit(
     var material_id = instanceDescBuffer[instance_id].materialID;
     if (vertex.subsetMaterialID != -1) {
         material_id = vertex.subsetMaterialID;
+    }
+
+    // No material — treat as opaque (shadow ray is blocked)
+    if (material_id == uint(-1)) {
+        payload.isVisible = false;
+        return;
     }
 
     var material_header = materialHeaderBuffer[material_id];
