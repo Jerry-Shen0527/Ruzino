@@ -299,16 +299,15 @@ NB_MODULE(hd_RUZINO_py, m)
 
     // Import NodeSystem type from nodes_system_py module for cross-module
     // compatibility
-    nb::module_ nodes_module = nb::module_::import_("nodes_system_py");
+    nb::module_::import_("nodes_system_py");
 
     // HydraRenderer class - provides USD + Hydra + Node System integration
     nb::class_<HydraRenderer>(m, "HydraRenderer")
-        .def(
-            nb::init<const std::string&, int, int>(),
-            nb::arg("usd_file"),
-            nb::arg("width") = 1920,
-            nb::arg("height") = 1080,
-            "Create a Hydra renderer for a USD stage")
+        .def(nb::init<const char*, int, int>(),
+             nb::arg("usd_file"),
+             nb::arg("width") = 1920,
+             nb::arg("height") = 1080,
+             "Create a Hydra renderer for a USD stage")
         .def(
             "get_node_system",
             &HydraRenderer::get_node_system,
