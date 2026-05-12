@@ -37,6 +37,13 @@ if platform.system() != 'Windows':
         except OSError:
             pass
 
-# Change to binary dir so DLLs can be loaded
+# DLL loading is handled by PATH/add_dll_directory above;
+# do NOT os.chdir() here — the shader cache and config loading
+# depend on the working directory being the project root.
+
+# MaterialX's getDefaultDataSearchPath() uses getModulePath() which returns
+# the Python exe directory, not the MaterialX DLL directory. So the standard
+# library search fails. Setting CWD to binary_dir ensures that
+# std::filesystem::current_path() (added as a MaterialX search path in
+# materialX.cpp init) resolves to Binaries/Release/ where libraries/ exists.
 os.chdir(binary_dir)
-print(f"Changed working directory to: {os.getcwd()}")

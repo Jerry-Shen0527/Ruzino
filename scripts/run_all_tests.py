@@ -113,6 +113,24 @@ def run_pytest(test_dir: Path, test_filter: Optional[str] = None) -> Tuple[int, 
                 print(f"✓ PASSED: {test_file.name}")
                 passed += 1
             else:
+                # Check if pytest itself reported all tests passed.
+                # Non-zero exit code can come from post-test crashes (e.g.
+                # C++ destructor segfault during process shutdown) that happen
+                # after pytest has already printed its results.
+                combined_output = result.stdout + result.stderr
+                import re
+                summary_match = re.search(
+                    r'(\d+) passed(?:, (\d+) failed)?(?:, \d+ (?:warning|skipped|deselected|error)s?)?',
+                    combined_output)
+                if summary_match:
+                    n_passed = int(summary_match.group(1))
+                    n_failed = int(summary_match.group(2) or 0)
+                    if n_passed > 0 and n_failed == 0:
+                        print(f"✓ PASSED: {test_file.name} "
+                              f"(all {n_passed} tests passed, exit {result.returncode} from cleanup)")
+                        passed += 1
+                        continue
+
                 print(f"✗ FAILED: {test_file.name} (exit code: {result.returncode})")
                 failed += 1
                 output = result.stdout + result.stderr

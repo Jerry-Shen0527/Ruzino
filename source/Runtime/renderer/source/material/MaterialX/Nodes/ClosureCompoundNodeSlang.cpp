@@ -402,14 +402,22 @@ void ClosureCompoundNodeSlang::emitFunctionCall(
             };
 
             auto inputs = node.getInputs();
-            size_t minInputs = std::min(inputs.size(), paramNames.size());
 
-            // Loop through and assign parameters
-            for (size_t i = 0; i < minInputs; ++i) {
-                shadergen.emitLineBegin(stage);
-                shadergen.emitString("params." + paramNames[i] + " = ", stage);
-                shadergen.emitInput(inputs[i], context, stage);
-                shadergen.emitLineEnd(stage);
+            // Map inputs by NAME, not by position — getInputs() only
+            // returns authored inputs whose order depends on USD dict
+            // ordering, which may not match paramNames.
+            for (auto& input : inputs) {
+                const string& inputName = input->getName();
+                for (size_t j = 0; j < paramNames.size(); ++j) {
+                    if (paramNames[j] == inputName) {
+                        shadergen.emitLineBegin(stage);
+                        shadergen.emitString(
+                            "params." + inputName + " = ", stage);
+                        shadergen.emitInput(input, context, stage);
+                        shadergen.emitLineEnd(stage);
+                        break;
+                    }
+                }
             }
 
             // Write params to buffer using reinterpret cast

@@ -370,8 +370,11 @@ void Hd_RUZINO_Mesh::updateTLAS(
             has_subset_materials ? " with GeomSubset overrides" : "");
     }
 
-    Hd_RUZINO_Material* material = (*render_param->material_map)[material_id];
-    if (!material && !has_subset_materials) {
+    Hd_RUZINO_Material* material = nullptr;
+    if (!material_id.IsEmpty()) {
+        material = (*render_param->material_map)[material_id];
+    }
+    if (!material && !has_subset_materials && !material_id.IsEmpty()) {
         spdlog::warn(
             "Material {} not found for mesh {}. Using default material.",
             material_id.GetText(),
@@ -400,13 +403,17 @@ void Hd_RUZINO_Mesh::updateTLAS(
 
     if (!rt_instanceBuffer || rt_instanceBuffer->count() != instance_count)
         rt_instanceBuffer = rt_instance_pool.allocate(instance_count);
+
     if (!instanceBuffer || instanceBuffer->count() != instance_count)
         instanceBuffer =
             render_param->InstanceCollection->instance_pool.allocate(
                 instance_count);
 
-    material->ensure_material_data_handle(render_param);
+    if (material) {
+        material->ensure_material_data_handle(render_param);
+    }
 
+    int material_location = material ? material->GetMaterialLocation() : -1;
     if (!GetInstancerId().IsEmpty()) {
         // GPU path: Let instancer compute transforms on GPU
         HdRenderIndex& renderIndex = sceneDelegate->GetRenderIndex();
@@ -417,15 +424,14 @@ void Hd_RUZINO_Mesh::updateTLAS(
             rt_instanceBuffer,
             BLAS->getDeviceAddress(),
             transform,
-            material ? material->GetMaterialLocation() : -1,
+            material_location,
             mesh_desc_buffer->index());
     }
     else {
         // CPU path: Single instance, no instancer
         GeometryInstanceData instance_data;
         instance_data.geometryID = mesh_desc_buffer->index();
-        instance_data.materialID =
-            material ? material->GetMaterialLocation() : -1;
+        instance_data.materialID = material_location;
         memcpy(
             &instance_data.transform,
             transform.data(),
@@ -647,7 +653,7 @@ void Hd_RUZINO_Mesh::Sync(
                 int default_material_loc = -1;
                 if (!mesh_material_id.IsEmpty()) {
                     auto p = material_map->find(mesh_material_id);
-                    if (p != material_map->end()) {
+                    if (p != material_map->end() && (*p).second) {
                         default_material_loc =
                             (*p).second->GetMaterialLocation();
                     }
@@ -657,7 +663,7 @@ void Hd_RUZINO_Mesh::Sync(
                     auto face_ids = subset.indices;
                     auto p = material_map->find(subset.materialId);
 
-                    if (p == material_map->end()) {
+                    if (p == material_map->end() || !(*p).second) {
                         spdlog::error(
                             "Material {} not found for subset in mesh {}. "
                             "Skipping subset.",

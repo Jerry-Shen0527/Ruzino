@@ -38,6 +38,11 @@ static std::filesystem::path get_executable_dir()
 #endif
 }
 
+std::filesystem::path SlangShaderCompiler::get_exe_dir()
+{
+    return get_executable_dir();
+}
+
 static std::filesystem::path find_sdk_root()
 {
     std::filesystem::path marker = "SDK/slang/include/slang-cuda-prelude.h";

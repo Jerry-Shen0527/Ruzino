@@ -12,6 +12,8 @@ class RHI_API SlangShaderCompiler {
    public:
     static std::filesystem::path find_root(const std::filesystem::path& p);
 
+    static std::filesystem::path get_exe_dir();
+
     // Get shader directory based on type (works in both development and
     // installed environments)
     static std::filesystem::path get_shader_dir(ShaderDirType type);

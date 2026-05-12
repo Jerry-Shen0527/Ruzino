@@ -164,11 +164,11 @@ void Hd_RUZINO_RenderDelegate::_Initialize()
     for (const auto& path : search_paths) {
         if (std::filesystem::exists(path)) {
             try {
-                node_system->load_configuration(path);
+                auto abs_path = std::filesystem::absolute(path).string();
+                node_system->load_configuration(abs_path);
                 config_loaded = true;
                 spdlog::info(
-                    "Loaded render_nodes.json from: {}",
-                    std::filesystem::absolute(path).string());
+                    "Loaded render_nodes.json from: {}", abs_path);
                 break;
             }
             catch (const std::exception& e) {
@@ -262,6 +262,8 @@ HdAovDescriptor Hd_RUZINO_RenderDelegate::GetDefaultAovDescriptor(
 
 Hd_RUZINO_RenderDelegate::~Hd_RUZINO_RenderDelegate()
 {
+    _renderThread.StopThread();
+
     // Clean up GPU Scene Assembler before destroying other resources
     GPUSceneAssember::destroy_instance();
     spdlog::info("GPU Scene Assembler destroyed");

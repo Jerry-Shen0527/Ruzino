@@ -1,4 +1,6 @@
 #include <nanobind/nanobind.h>
+#include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
 
 #include <entt/meta/meta.hpp>
 
@@ -29,6 +31,9 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#elif defined(__linux__)
+#include <EGL/egl.h>
+#include <GL/gl.h>
 #endif
 
 #if RUZINO_WITH_CUDA
@@ -41,23 +46,166 @@
 namespace nb = nanobind;
 using namespace Ruzino;
 
-// OpenGL context initialization (Windows)
+// OpenGL 4.5+ context creation
+// Windows: Two-step WGL process (legacy context -> wglCreateContextAttribsARB)
+// Linux: EGL headless context (no X server required)
+
+#ifdef _WIN32
+// WGL_ARB_create_context constants (not in standard Windows headers)
+#ifndef WGL_CONTEXT_MAJOR_VERSION_ARB
+#define WGL_CONTEXT_MAJOR_VERSION_ARB 0x2091
+#endif
+#ifndef WGL_CONTEXT_MINOR_VERSION_ARB
+#define WGL_CONTEXT_MINOR_VERSION_ARB 0x2092
+#endif
+#ifndef WGL_CONTEXT_PROFILE_MASK_ARB
+#define WGL_CONTEXT_PROFILE_MASK_ARB 0x9126
+#endif
+#ifndef WGL_CONTEXT_CORE_PROFILE_BIT_ARB
+#define WGL_CONTEXT_CORE_PROFILE_BIT_ARB 0x00000001
+#endif
+
+typedef HGLRC(WINAPI* PFNWGLCREATECONTEXTATTRIBSARB)(
+    HDC, HGLRC, const int*);
+#endif
+
+// Track GL context resources for cleanup
+#ifdef _WIN32
+static HWND g_glHwnd = nullptr;
+static HDC g_glHdc = nullptr;
+#endif
+
 static void CreateGLContext()
 {
 #ifdef _WIN32
-    HDC hdc = GetDC(GetConsoleWindow());
+    // Create a dedicated window for GL context (console window may not work
+    // well with pixel format selection on some GPU drivers)
+    WNDCLASSA wc = {};
+    wc.lpfnWndProc = DefWindowProcA;
+    wc.hInstance = GetModuleHandle(nullptr);
+    wc.lpszClassName = "RuzinoGLContext";
+    RegisterClassA(&wc);
+
+    g_glHwnd = CreateWindowExA(
+        0, "RuzinoGLContext", "", 0, 0, 0, 1, 1,
+        nullptr, nullptr, GetModuleHandle(nullptr), nullptr);
+    g_glHdc = GetDC(g_glHwnd);
+
     PIXELFORMATDESCRIPTOR pfd = {};
     pfd.nSize = sizeof(pfd);
     pfd.nVersion = 1;
     pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
     pfd.iPixelType = PFD_TYPE_RGBA;
-    pfd.cColorBits = 24;
+    pfd.cColorBits = 32;
+    pfd.cDepthBits = 24;
+    pfd.cStencilBits = 8;
 
-    int pixelFormat = ChoosePixelFormat(hdc, &pfd);
-    SetPixelFormat(hdc, pixelFormat, &pfd);
+    int pixelFormat = ChoosePixelFormat(g_glHdc, &pfd);
+    SetPixelFormat(g_glHdc, pixelFormat, &pfd);
 
-    HGLRC hglrc = wglCreateContext(hdc);
-    wglMakeCurrent(hdc, hglrc);
+    // Step 1: Create legacy context to bootstrap extensions
+    HGLRC legacyCtx = wglCreateContext(g_glHdc);
+    wglMakeCurrent(g_glHdc, legacyCtx);
+
+    // Step 2: Get wglCreateContextAttribsARB
+    auto wglCreateContextAttribsARB =
+        (PFNWGLCREATECONTEXTATTRIBSARB)wglGetProcAddress(
+            "wglCreateContextAttribsARB");
+
+    if (wglCreateContextAttribsARB) {
+        // Step 3: Create OpenGL 4.5 core profile context
+        int attribs[] = {
+            WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
+            WGL_CONTEXT_MINOR_VERSION_ARB, 5,
+            WGL_CONTEXT_PROFILE_MASK_ARB,  WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
+            0};
+        HGLRC modernCtx = wglCreateContextAttribsARB(g_glHdc, nullptr, attribs);
+        if (modernCtx) {
+            wglMakeCurrent(g_glHdc, modernCtx);
+            wglDeleteContext(legacyCtx);
+            return;
+        }
+        // Fallback: try 4.4, 4.3, 4.2, 4.1, 4.0
+        for (int minor = 4; minor >= 0; minor--) {
+            attribs[3] = minor;
+            modernCtx = wglCreateContextAttribsARB(g_glHdc, nullptr, attribs);
+            if (modernCtx) {
+                wglMakeCurrent(g_glHdc, modernCtx);
+                wglDeleteContext(legacyCtx);
+                return;
+            }
+        }
+    }
+
+    // If we get here, we're stuck with the legacy context (may not work with
+    // HgiGL)
+#elif defined(__linux__)
+    EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    if (display == EGL_NO_DISPLAY) {
+        spdlog::error("Failed to get EGL display");
+        return;
+    }
+
+    if (!eglInitialize(display, nullptr, nullptr)) {
+        spdlog::error("Failed to initialize EGL");
+        return;
+    }
+
+    EGLint config_attribs[] = {
+        EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
+        EGL_SURFACE_TYPE,    EGL_PBUFFER_BIT,
+        EGL_RED_SIZE,        8,
+        EGL_GREEN_SIZE,      8,
+        EGL_BLUE_SIZE,       8,
+        EGL_ALPHA_SIZE,      8,
+        EGL_DEPTH_SIZE,      24,
+        EGL_STENCIL_SIZE,    8,
+        EGL_NONE
+    };
+
+    EGLConfig config;
+    EGLint num_config;
+    if (!eglChooseConfig(display, config_attribs, &config, 1, &num_config) ||
+        num_config == 0) {
+        spdlog::error("Failed to choose EGL config");
+        eglTerminate(display);
+        return;
+    }
+
+    eglBindAPI(EGL_OPENGL_API);
+
+    EGLint context_attribs[] = {
+        EGL_CONTEXT_MAJOR_VERSION,       4,
+        EGL_CONTEXT_MINOR_VERSION,       5,
+        EGL_CONTEXT_OPENGL_PROFILE_MASK, EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT,
+        EGL_NONE
+    };
+
+    EGLContext context =
+        eglCreateContext(display, config, EGL_NO_CONTEXT, context_attribs);
+    if (!context) {
+        for (int minor = 4; minor >= 0; minor--) {
+            context_attribs[3] = minor;
+            context =
+                eglCreateContext(display, config, EGL_NO_CONTEXT, context_attribs);
+            if (context) break;
+        }
+    }
+
+    if (!context) {
+        spdlog::error("Failed to create EGL OpenGL context");
+        eglTerminate(display);
+        return;
+    }
+
+    EGLint pbuffer_attribs[] = { EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE };
+    EGLSurface surface =
+        eglCreatePbufferSurface(display, config, pbuffer_attribs);
+    if (surface == EGL_NO_SURFACE) {
+        spdlog::warn("Failed to create EGL pbuffer, trying without surface");
+    }
+
+    eglMakeCurrent(display, surface, surface, context);
 #endif
 }
 
@@ -95,6 +243,9 @@ class HydraRenderer {
         engine_->SetEnablePresentation(false);
         engine_->SetRenderBufferSize(pxr::GfVec2i(width, height));
         engine_->SetRenderViewport(pxr::GfVec4d(0, 0, width, height));
+
+        // Pre-create event query for GPU sync in get_output_texture
+        event_query_ = RHI::get_device()->createEventQuery();
 
         // Find camera
         for (const auto& prim : stage_->Traverse()) {
@@ -135,7 +286,7 @@ class HydraRenderer {
             .get();  // Return raw pointer for cross-module compatibility
     }
 
-    // Render one frame
+    // Render one frame (does not stop renderer between calls)
     void render()
     {
         pxr::UsdImagingGLRenderParams params;
@@ -149,13 +300,17 @@ class HydraRenderer {
 
         pxr::UsdPrim root = stage_->GetPseudoRoot();
         engine_->Render(root, params);
-        engine_->StopRenderer();
     }
+
+    // Stop the render thread and wait for completion
+    void stop() { engine_->StopRenderer(); }
 
     // Get output texture data (legacy CPU copy)
     // name: optional texture name (uses default if empty)
     std::vector<float> get_output_texture(const std::string& name = "")
     {
+        // Ensure render thread has finished before reading
+        engine_->StopRenderer();
         pxr::TfToken token_key;
 
         if (name.empty()) {
@@ -193,12 +348,17 @@ class HydraRenderer {
         auto staging_texture = RHI::get_device()->createStagingTexture(
             staging_desc, nvrhi::CpuAccessMode::Read);
 
+        // Flush all pending GPU work before copying (ensures render commands complete)
+        RHI::get_device()->waitForIdle();
+
         auto cmd_list = RHI::get_device()->createCommandList();
         cmd_list->open();
         cmd_list->copyTexture(staging_texture, {}, texture, {});
         cmd_list->close();
         RHI::get_device()->executeCommandList(cmd_list.Get());
-        RHI::get_device()->waitForIdle();
+
+        RHI::get_device()->setEventQuery(event_query_.Get(), nvrhi::CommandQueue::Graphics);
+        RHI::get_device()->waitEventQuery(event_query_.Get());
 
         // Read data
         size_t pitch;
@@ -231,6 +391,9 @@ class HydraRenderer {
     Ruzino::cuda::CUDALinearBufferHandle get_output_cuda_buffer(
         const std::string& name = "")
     {
+        // Ensure render thread has finished before reading
+        engine_->StopRenderer();
+
         pxr::TfToken token_key;
 
         if (name.empty()) {
@@ -283,11 +446,26 @@ class HydraRenderer {
         return height_;
     }
 
+    ~HydraRenderer()
+    {
+        engine_.reset();
+        hgi_.reset();
+#ifdef _WIN32
+        if (g_glHwnd) {
+            if (g_glHdc) ReleaseDC(g_glHwnd, g_glHdc);
+            DestroyWindow(g_glHwnd);
+            g_glHwnd = nullptr;
+            g_glHdc = nullptr;
+        }
+#endif
+    }
+
    private:
     pxr::UsdStageRefPtr stage_;
     pxr::UsdGeomCamera camera_;
     std::unique_ptr<pxr::Hgi> hgi_;
     std::unique_ptr<pxr::UsdImagingGLEngine> engine_;
+    nvrhi::EventQueryHandle event_query_;
     int width_;
     int height_;
 };
@@ -314,21 +492,35 @@ NB_MODULE(hd_RUZINO_py, m)
             nb::rv_policy::reference,
             "Get the NodeSystem from the Hydra render delegate")
         .def("render", &HydraRenderer::render, "Render one frame")
+        .def("stop", &HydraRenderer::stop,
+             "Stop the render thread and wait for completion")
         .def(
             "get_output_texture",
-            &HydraRenderer::get_output_texture,
-            nb::arg("name") = "",
-            "Get the rendered texture as a float array (RGBA, row-major). "
-            "Optional name parameter to get specific named texture from "
-            "present nodes.")
+            [](HydraRenderer& self) -> std::vector<float> {
+                return self.get_output_texture();
+            },
+            "Get the rendered texture as a float array (RGBA, row-major).")
+        .def(
+            "get_output_texture",
+            [](HydraRenderer& self, const std::string& name) -> std::vector<float> {
+                return self.get_output_texture(name);
+            },
+            nb::arg("name"),
+            "Get a named texture from present nodes as a float array.")
 #if RUZINO_WITH_CUDA
         .def(
             "get_output_cuda_buffer",
-            &HydraRenderer::get_output_cuda_buffer,
-            nb::arg("name") = "",
-            "Get the rendered texture as CUDA buffer (GPU memory, zero-copy). "
-            "Optional name parameter to get specific named texture from "
-            "present nodes.")
+            [](HydraRenderer& self) -> Ruzino::cuda::CUDALinearBufferHandle {
+                return self.get_output_cuda_buffer();
+            },
+            "Get the rendered texture as CUDA buffer (GPU memory, zero-copy).")
+        .def(
+            "get_output_cuda_buffer",
+            [](HydraRenderer& self, const std::string& name) -> Ruzino::cuda::CUDALinearBufferHandle {
+                return self.get_output_cuda_buffer(name);
+            },
+            nb::arg("name"),
+            "Get a named texture from present nodes as CUDA buffer.")
 #endif
         .def_prop_ro("width", &HydraRenderer::width)
         .def_prop_ro("height", &HydraRenderer::height);

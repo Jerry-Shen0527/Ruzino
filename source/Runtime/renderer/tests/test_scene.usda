@@ -10,25 +10,43 @@ def Camera "Camera"
     float focalLength = 50.0
     float horizontalAperture = 36.0
     float verticalAperture = 20.25
-    matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (0, 1, -5, 1) )
+    matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (0, 1, 5, 1) )
     uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+def Material "RedMaterial"
+{
+    token outputs:surface.connect = </RedMaterial/Shader.outputs:surface>
+
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0.8, 0.2, 0.2)
+        float inputs:metallic = 0
+        float inputs:roughness = 0.5
+        float inputs:opacity = 1
+        token outputs:surface
+    }
 }
 
 def Xform "World"
 {
-    def Mesh "Triangle"
+    def Mesh "Triangle" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
     {
         uniform token subdivisionScheme = "none"
         int[] faceVertexCounts = [3]
         int[] faceVertexIndices = [0, 1, 2]
         normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1)]
         point3f[] points = [(-1, -1, 0), (1, -1, 0), (0, 1, 0)]
-        color3f[] primvars:displayColor = [(0.8, 0.2, 0.2)]
+        rel material:binding = </RedMaterial>
     }
 }
 
 def DistantLight "Sun"
 {
     float intensity = 1.0
-    vector3f direction = (0.5, -0.5, -0.7)
+    matrix4d xformOp:transform = ( (1,0,0,0), (0,-1,0,0), (0,0,-1,0), (0,0,0,1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
 }

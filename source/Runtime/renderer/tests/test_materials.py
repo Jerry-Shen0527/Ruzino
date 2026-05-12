@@ -112,14 +112,14 @@ def test_render_default_materials():
     for _ in range(4):
         hydra.render()
 
+    hydra.stop()
     data = hydra.get_output_texture()
     assert data, "No texture data returned"
 
     img = np.array(data, dtype=np.float32).reshape(128, 128, 4)
     rgb_mean = float(img[:, :, :3].mean())
 
-    if rgb_mean < 1e-6:
-        pytest.xfail(f"Material render appears blank (mean={rgb_mean:.6f})")
+    assert rgb_mean > 1e-3, f"Material render appears blank (mean={rgb_mean:.6f})"
 
 
 def test_render_materialx_file():
@@ -147,6 +147,7 @@ def test_render_materialx_file():
     for _ in range(2):
         hydra.render()
 
+    hydra.stop()
     data = hydra.get_output_texture()
     assert data, "No texture data returned"
 

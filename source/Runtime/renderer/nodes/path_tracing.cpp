@@ -409,9 +409,11 @@ void fetch_)" + material.second->GetMaterialName() +
             }
         }
 
-        uint32_t lightCount = static_cast<uint32_t>(valid_lights.size());
-
+        // Use pool count so shader iterates all allocated light entries
         instance_collection->light_pool.compress();
+        uint32_t lightCount = static_cast<uint32_t>(
+            instance_collection->light_pool.count());
+
         program_vars["lightBuffer"] =
             instance_collection->light_pool.get_device_buffer();
 

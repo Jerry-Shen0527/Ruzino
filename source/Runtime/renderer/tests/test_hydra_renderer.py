@@ -118,6 +118,7 @@ def test_hydra_renderer_basic():
     for _ in range(samples):
         hydra.render()
 
+    hydra.stop()
     texture_data = hydra.get_output_texture()
     assert texture_data, "No texture data returned"
     assert len(texture_data) == width * height * 4, "Unexpected texture length"
@@ -126,13 +127,14 @@ def test_hydra_renderer_basic():
     mean_val = float(img[:, :, :3].mean())
     assert mean_val >= 0.0, "Negative mean (invalid)"
 
-    if mean_val < 1e-6:
-        pytest.xfail(f"Rendered image appears blank (mean={mean_val:.6f})")
+    assert mean_val > 1e-3, f"Rendered image appears blank (mean={mean_val:.6f})"
 
     # Save diagnostic image to Binaries/Release
     try:
         from PIL import Image  # type: ignore
-        rgb = (np.clip(img[:, :, :3], 0, 1) * 255).astype(np.uint8)
+        rgb = img[:, :, :3]
+        max_val = max(rgb.max(), 1e-6)
+        rgb = (np.clip(rgb / max_val, 0, 1) * 255).astype(np.uint8)
         rgb = np.flipud(rgb)
         Image.fromarray(rgb).save(binary_dir / "output_hydra_basic.png")
     except Exception:
@@ -159,6 +161,7 @@ def test_render_to_tensor():
     for _ in range(samples):
         hydra.render()
 
+    hydra.stop()
     texture_data = hydra.get_output_texture()
     assert texture_data, "No texture data returned"
     assert len(texture_data) == width * height * 4, "Unexpected texture length"
@@ -168,8 +171,7 @@ def test_render_to_tensor():
     mean_val = float(rgb.mean())
     assert mean_val >= 0.0, "Negative mean (invalid)"
 
-    if mean_val < 1e-6:
-        pytest.xfail(f"Rendered image appears blank (mean={mean_val:.6f})")
+    assert mean_val > 1e-3, f"Rendered image appears blank (mean={mean_val:.6f})"
 
     # Test tensor conversion if torch available
     try:
@@ -183,7 +185,8 @@ def test_render_to_tensor():
     # Save output image to Binaries/Release
     try:
         from PIL import Image  # type: ignore
-        out_rgb = (np.clip(rgb, 0, 1) * 255).astype(np.uint8)
+        max_val = max(rgb.max(), 1e-6)
+        out_rgb = (np.clip(rgb / max_val, 0, 1) * 255).astype(np.uint8)
         out_rgb = np.flipud(out_rgb)
         Image.fromarray(out_rgb).save(binary_dir / "output_render_to_tensor.png")
     except Exception:

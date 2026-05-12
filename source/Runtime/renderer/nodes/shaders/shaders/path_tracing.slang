@@ -134,24 +134,7 @@ void RayGen()
 #endif
                 }
                 else {
-                    float3 horizonColor = float3(0.8, 0.9, 1.0);
-                    float3 zenithColor = float3(0.2, 0.4, 0.8);
-                    float3 sunsetColor = float3(0.9, 0.5, 0.2);
-
-                    float skyBlend = pow(max(0.0, rayDir.z + 0.1), 0.8);
-                    float3 skyColor = lerp(horizonColor, zenithColor, skyBlend);
-
-                    float3 sunDir = normalize(float3(0.5, 0.5, 0.5));
-                    float sunDot = max(0.0, dot(rayDir, sunDir));
-                    float sunIntensity = pow(sunDot, 128.0) * 0.1;
-                    float sunsetIntensity =
-                        pow(sunDot, 8.0) * (1.0 - rayDir.z * 0.5);
-
-                    skyColor += float3(1.0, 0.9, 0.7) * sunIntensity;
-                    skyColor +=
-                        sunsetColor * sunsetIntensity * (1.0 - skyBlend) * 0.4;
-
-                    envColor = Spectrum(skyColor);
+                    // No dome light — black background
                 }
 
                 accumulated_color =
@@ -170,22 +153,39 @@ void RayGen()
 
             // No material assigned — use fallback eval (index 2)
             if (material_id == uint(-1)) {
-                EvalCallableData evalData;
-                evalData.color = Spectrum(0.0);
-                evalData.throughput = Spectrum(1.0);
-                evalData.L = float3(0, 1, 0);
-                evalData.V = -current_ray.Direction;
-                evalData.sampledDir = float3(0, 0, 0);
-                evalData.pdf = 1.0;
-                evalData.seed = payload.seed;
-                evalData.eta_flipped = eta_flipped;
-                evalData.material_params_index = id;
-                evalData.vertexInfo = vertex;
+                // Accumulate direct lighting from all non-dome lights
+                Spectrum fallbackColor = Spectrum(0.0);
+                for (uint li = 0; li < ptConstants.lightCount; li++) {
+                    LightData light = lightBuffer[li];
+                    if (light.type == uint(LightType::Dome))
+                        continue;
 
-                CallShader(2, evalData);  // eval_fallback
+                    float3 lightDir = -light.dirW;
+                    float NdotL = max(0.0, dot(vertex.normalW, lightDir));
+                    if (NdotL <= 0.0)
+                        continue;
 
-                accumulated_color =
-                    add(accumulated_color, mul(current_throughput, evalData.color));
+                    EvalCallableData evalData;
+                    evalData.color = Spectrum(0.0);
+                    evalData.throughput = Spectrum(1.0);
+                    evalData.L = lightDir;
+                    evalData.V = -current_ray.Direction;
+                    evalData.sampledDir = float3(0, 0, 0);
+                    evalData.pdf = 1.0;
+                    evalData.seed = payload.seed;
+                    evalData.eta_flipped = eta_flipped;
+                    evalData.material_params_index = id;
+                    evalData.vertexInfo = vertex;
+
+                    CallShader(2, evalData);
+
+                    fallbackColor = add(
+                        fallbackColor,
+                        mul(Spectrum(light.intensity * NdotL), evalData.color));
+                }
+
+                accumulated_color = add(
+                    accumulated_color, mul(current_throughput, fallbackColor));
                 break;
             }
 

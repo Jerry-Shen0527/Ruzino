@@ -8,6 +8,7 @@
 #include "pxr/imaging/hd/tokens.h"
 #include "renderBuffer.h"
 #include "renderParam.h"
+#include <spdlog/spdlog.h>
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
@@ -157,7 +158,19 @@ void Hd_RUZINO_Renderer::Render(HdRenderThread* renderThread)
 
         global_payload.reset_accumulation = false;
 
-        node_system->execute(false);
+        // Find a present node to use as required_node so the tree actually
+        // executes. Without this, execute() calls compile(tree, nullptr) which
+        // only marks ALWAYS_REQUIRED nodes.
+        Node* required_node = nullptr;
+        for (auto&& node : node_system->get_node_tree()->nodes) {
+            std::string id(node->typeinfo->id_name);
+            if (id == "present_color" || id == "present_depth") {
+                required_node = node.get();
+                break;
+            }
+        }
+
+        node_system->execute(false, required_node);
 
         // Clear dirty flags after execution
         // Note: nodes should clear specific flags as they handle them
@@ -176,7 +189,8 @@ void Hd_RUZINO_Renderer::Render(HdRenderThread* renderThread)
 
         // Find ALL present nodes of this type and store each one with data
         for (auto&& node : node_system->get_node_tree()->nodes) {
-            if (std::string(node->typeinfo->id_name) != present_name) {
+            std::string node_id(node->typeinfo->id_name);
+            if (node_id != present_name) {
                 continue;  // Skip non-matching nodes
             }
 
@@ -188,11 +202,13 @@ void Hd_RUZINO_Renderer::Render(HdRenderThread* renderThread)
                 ->sync_node_to_external_storage(output_socket, data);
 
             if (!data) {
+                spdlog::warn("Present node '{}' input socket has no data", node->ui_name);
                 continue;  // Skip nodes with no data
             }
 
             nvrhi::TextureHandle texture = data.cast<nvrhi::TextureHandle>();
             if (!texture) {
+                spdlog::warn("Present node '{}' data is not a TextureHandle", node->ui_name);
                 continue;  // Skip invalid textures
             }
 
