@@ -45,6 +45,7 @@ NODE_EXECUTION_FUNCTION(cuda_to_nvrhi)
         Ruzino::cuda::cuda_linear_buffer_to_nvrhi_texture(device, buffer, desc);
 
     params.set_output("Texture", texture);
+    return true;
 }
 
 NODE_DEF_CLOSE_SCOPE

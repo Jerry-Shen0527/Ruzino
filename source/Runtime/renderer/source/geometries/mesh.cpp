@@ -575,7 +575,7 @@ void Hd_RUZINO_Mesh::Sync(
                                     expected_face_vertex_size,
                                     original_size);
                             }
-                            meshUtil.ComputeTriangulatedFaceVaryingPrimvar(
+                            (void)meshUtil.ComputeTriangulatedFaceVaryingPrimvar(
                                 value.Get<VtVec3fArray>().data(),
                                 value.GetArraySize(),
                                 HdTypeFloatVec3,
@@ -590,7 +590,7 @@ void Hd_RUZINO_Mesh::Sync(
                                     expected_face_vertex_size,
                                     original_size);
                             }
-                            meshUtil.ComputeTriangulatedFaceVaryingPrimvar(
+                            (void)meshUtil.ComputeTriangulatedFaceVaryingPrimvar(
                                 value.Get<VtVec2fArray>().data(),
                                 value.GetArraySize(),
                                 HdTypeFloatVec2,
@@ -608,7 +608,7 @@ void Hd_RUZINO_Mesh::Sync(
                             spdlog::info(
                                 "Get a VtVec4fArray, named {}",
                                 primvar.first.GetText());
-                            meshUtil.ComputeTriangulatedFaceVaryingPrimvar(
+                            (void)meshUtil.ComputeTriangulatedFaceVaryingPrimvar(
                                 value.Get<VtVec4fArray>().data(),
                                 value.GetArraySize(),
                                 HdTypeFloatVec4,
@@ -805,7 +805,7 @@ void Hd_RUZINO_Mesh::Sync(
 
                         HdMeshUtil meshUtil(&topology, GetId());
                         VtValue triangulated_normals;
-                        meshUtil.ComputeTriangulatedFaceVaryingPrimvar(
+                        (void)meshUtil.ComputeTriangulatedFaceVaryingPrimvar(
                             normals.data(),
                             normals.size(),
                             HdTypeFloatVec3,
