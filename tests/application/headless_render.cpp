@@ -11,13 +11,11 @@
 // Framework includes
 #include <spdlog/spdlog.h>
 
-#include "GCore/GOP.h"
 #include "GCore/algorithms/intersection.h"
 #include "RHI/rhi.hpp"
 #include "cmdparser.hpp"
 #include "nodes/system/node_system.hpp"
 #include "render_util.hpp"
-#include "stage/stage.hpp"
 
 // USD includes
 #include <rzpython/rzpython.hpp>
@@ -162,16 +160,16 @@ int main(int argc, char* argv[])
         CreateGLContext();
         GarchGLApiLoad();
 
-        // Create USD stage
-        auto stage = create_custom_global_stage(usd_file);
-        stage->save_on_destruct = false;
-        if (!stage) {
+        // Create USD stage — use plain UsdStage::Open to avoid stale
+        // modifier/session layer overriding camera transforms
+        auto usd_stage = pxr::UsdStage::Open(usd_file);
+        if (!usd_stage) {
             throw std::runtime_error(
                 "Failed to load USD stage from " + usd_file);
         }
 
         // Find camera
-        auto camera = GetCamera(stage->get_usd_stage(), camera_path);
+        auto camera = GetCamera(usd_stage, camera_path);
         if (!camera) {
             throw std::runtime_error("No camera found in USD file");
         }
@@ -234,9 +232,65 @@ int main(int argc, char* argv[])
         renderer->SetRenderBufferSize(render_size);
         renderer->SetRenderViewport(GfVec4d(0.0, 0.0, width, height));
 
-        // Setup camera
+        // Setup camera — re-project with actual render resolution aspect ratio
         auto gf_camera = camera.GetCamera(UsdTimeCode::Default());
         auto frustum = gf_camera.GetFrustum();
+        {
+            double fov, aspect_ratio, near_distance, far_distance;
+            frustum.GetPerspective(
+                &fov, &aspect_ratio, &near_distance, &far_distance);
+            spdlog::info(
+                "Camera original: fov={:.2f} deg, aspect={:.4f}, near={:.4f}, "
+                "far={:.4f}",
+                fov,
+                aspect_ratio,
+                near_distance,
+                far_distance);
+            spdlog::info(
+                "Render resolution: {}x{}, render aspect={:.4f}",
+                width,
+                height,
+                float(width) / float(height));
+            spdlog::info(
+                "Camera path: {}, focalLength={:.4f}, horizontalAperture={:.4f}, "
+                "verticalAperture={:.4f}",
+                camera.GetPrim().GetPath().GetString(),
+                gf_camera.GetFocalLength(),
+                gf_camera.GetHorizontalAperture(),
+                gf_camera.GetVerticalAperture());
+
+            frustum.SetPerspective(
+                fov,
+                float(width) / float(height),
+                near_distance,
+                far_distance);
+
+            // Log post-adjustment
+            double fov2, aspect2, near2, far2;
+            frustum.GetPerspective(&fov2, &aspect2, &near2, &far2);
+            spdlog::info(
+                "Camera adjusted: fov={:.2f} deg, aspect={:.4f}",
+                fov2,
+                aspect2);
+
+            auto proj = frustum.ComputeProjectionMatrix();
+            spdlog::info(
+                "Projection matrix:\n"
+                "  [{:.6f}, {:.6f}, {:.6f}, {:.6f}]\n"
+                "  [{:.6f}, {:.6f}, {:.6f}, {:.6f}]\n"
+                "  [{:.6f}, {:.6f}, {:.6f}, {:.6f}]\n"
+                "  [{:.6f}, {:.6f}, {:.6f}, {:.6f}]",
+                proj[0][0], proj[0][1], proj[0][2], proj[0][3],
+                proj[1][0], proj[1][1], proj[1][2], proj[1][3],
+                proj[2][0], proj[2][1], proj[2][2], proj[2][3],
+                proj[3][0], proj[3][1], proj[3][2], proj[3][3]);
+
+            auto view = frustum.ComputeViewMatrix();
+            auto pos = frustum.GetPosition();
+            spdlog::info(
+                "Camera position: ({:.4f}, {:.4f}, {:.4f})",
+                pos[0], pos[1], pos[2]);
+        }
         renderer->SetCameraState(
             frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix());
 
@@ -267,8 +321,29 @@ int main(int argc, char* argv[])
 
             if (node_system) {
                 std::string nodes_json = LoadJSONScript(json_script);
-                (*node_system)->get_node_tree()->deserialize(nodes_json);
-                spdlog::info("Loaded JSON script: {}", json_script);
+                auto tree = (*node_system)->get_node_tree();
+                tree->deserialize(nodes_json);
+
+                // Find a terminal node (present_color or similar) to use as
+                // the required_node for execution
+                Node* required_node = nullptr;
+                for (auto& node_ptr : tree->nodes) {
+                    if (node_ptr &&
+                        node_ptr->getName() == std::string("present_color")) {
+                        required_node = node_ptr.get();
+                        break;
+                    }
+                }
+
+                auto executor = (*node_system)->get_node_tree_executor();
+                executor->reset_allocator();
+                executor->prepare_tree(tree, required_node);
+
+                spdlog::info(
+                    "Loaded JSON script: {} ({} nodes, required={})",
+                    json_script,
+                    tree->nodes.size(),
+                    required_node ? required_node->ui_name : "none");
             }
         }
 
@@ -324,17 +399,18 @@ int main(int argc, char* argv[])
         for (int frame = 0; frame < frames_to_render; ++frame) {
             // Update stage for animation (including first frame for sequences)
             if (is_sequence) {
-                stage->tick(delta_time);
-                stage->finish_tick();
+                // Animation tick requires Stage wrapper — skip for plain UsdStage
+                spdlog::warn(
+                    "Sequence rendering with animation requires Stage wrapper; "
+                    "animation tick skipped");
             }
 
             // Set time code
             pxr::UsdTimeCode time_code(frame * delta_time);
-            stage->set_render_time(time_code);
             render_params.frame = time_code;
 
             // Render the scene with multiple samples
-            UsdPrim root = stage->get_usd_stage()->GetPseudoRoot();
+            UsdPrim root = usd_stage->GetPseudoRoot();
 
             // Start timing (will be set after first sample)
             auto render_start = std::chrono::high_resolution_clock::now();
@@ -575,7 +651,6 @@ int main(int argc, char* argv[])
         // Cleanup
         renderer.reset();
         hgi.reset();
-        stage.reset();
         unregister_cpp_type();
 #ifdef GPU_GEOM_ALGORITHM
         deinit_gpu_geometry_algorithms();

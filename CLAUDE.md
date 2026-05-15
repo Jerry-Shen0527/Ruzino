@@ -122,6 +122,8 @@ Pre-built dependencies managed by `configure.py`: OpenUSD v25.05.01, Slang v2025
 ## Notes
 
 - Recursive git commits should skip the `nvrhi` submodule
+- **`nvrhi` is read-only** — no push access. Keep changes as dirty, never commit/push.
+- `rznode` is pushable — commit and push normally.
 - Python bindings use nanobind; Python3 is found from `SDK/python`
 - The framework supports `find_package(Ruzino)` when installed as an SDK
 - Output binaries go to `Binaries/{BuildType}/` during development, `bin/` when installed
@@ -153,3 +155,26 @@ USD 26.x uses a scene index chain. Property changes flow through `Invalidate()` 
 
 ### Running USD Python scripts
 The SDK Python (`SDK/python/python.exe`) needs `PXR_USD_WINDOWS_DLL_PATH` set to the Binaries directory, and `PYTHONPATH` must include both `Binaries/Release` and `SDK/OpenUSD/Release/lib/python`. See conftest.py files for the canonical setup.
+
+## MaterialX Code Generation
+
+### Parameter mapping in ClosureCompoundNodeSlang
+`ClosureCompoundNodeSlang.cpp` generates fetch callables that write material params to GPU buffers. **Must use name-based mapping**, NOT positional — `node.getInputs()` only returns authored inputs in USD dict order, which does NOT match struct field order.
+
+- **UsdPreviewSurface path** (line ~400): Fixed to name-based lookup — each input is matched by `getName()` against `paramNames[]`
+- **standard_surface path** (line ~336): Uses `packStandardSurfaceMaterialParams(...)` with positional args to a packing function. Same fragility exists but is less likely to trigger since standard_surface typically has more inputs authored.
+
+### MaterialX library path resolution
+`render_global_payload.cpp` resolves the MaterialX `libraries/` path at construction time via `resolve_mtlx_library_path()` (cached with `static`). Searches: exe dir, parent dir, CWD, project root, source tree. The path is needed for MaterialX stdlib (pbrlib, stdlib, etc.) during shader generation.
+
+### Renderer test infrastructure
+- Tests require `os.chdir(binary_dir)` for MaterialX library discovery — done in `conftest.py`
+- `HydraRenderer.render()` does NOT call `StopRenderer()` — call `hydra.stop()` before `get_output_texture()`
+- Output is HDR (path tracer values can be 10000+). Use max-value normalization for LDR display.
+- `run_all_tests.py` handles post-test cleanup crashes (exit code 3221225477 = access violation during C++ destructor shutdown) — if pytest reports all passed, it counts as pass.
+
+## Node System Python API
+
+Full CRUD for node graphs is available from Python via `nodes_core_py` and `nodes_system_py`. See `source/Core/rznode/core/python/nodes_core.cpp` and `source/Core/rznode/system/python/nodes_system.cpp`.
+
+High-level API: `source/Core/rznode/python/ruzino_graph.py` provides `RuzinoGraph` class with `createNode()`, `addEdge()`, `setInput()`, `execute()`, `serialize()`, `to_python_code()`, etc.

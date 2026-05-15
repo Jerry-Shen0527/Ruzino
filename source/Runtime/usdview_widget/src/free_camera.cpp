@@ -430,6 +430,7 @@ void ThirdPersonCamera::MouseScrollUpdate(double xoffset, double yoffset)
 
         UpdateWorldToView();
         UpdateUsdTransform();
+        SaveState();
     }
 }
 
@@ -495,6 +496,7 @@ void ThirdPersonCamera::SetCameraStateFromMatrix(
 
     // Use BaseLookAt to set all internal vectors properly
     BaseLookAt(position, implicit_target, protected_up);
+    SaveState();
 }
 
 void ThirdPersonCamera::SetView(const pxr::GfFrustum& view)
@@ -715,6 +717,7 @@ void ThirdPersonCamera::LookTo(
 
     UpdateWorldToView();
     UpdateUsdTransform();
+    SaveState();
 }
 
 void ThirdPersonCamera::CartesianToSpherical(
@@ -800,6 +803,7 @@ void ThirdPersonCamera::LoadState()
         m_CameraUp = pxr::GfCross(m_CameraRight, m_CameraDir).GetNormalized();
 
         UpdateWorldToView();
+        UpdateUsdTransform();
     }
 }
 
