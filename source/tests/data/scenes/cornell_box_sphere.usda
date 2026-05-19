@@ -1,0 +1,216 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Camera "Camera"
+{
+    float2 clippingRange = (0.1, 100.0)
+    float focalLength = 50.0
+    float horizontalAperture = 36.0
+    float verticalAperture = 20.25
+    matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (0, 0, 4.0, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+def Material "RedWall"
+{
+    token outputs:surface.connect = </RedWall/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0.65, 0.05, 0.05)
+        float inputs:metallic = 0
+        float inputs:roughness = 0.5
+        float inputs:opacity = 1
+        token outputs:surface
+    }
+}
+
+def Material "GreenWall"
+{
+    token outputs:surface.connect = </GreenWall/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0.12, 0.45, 0.15)
+        float inputs:metallic = 0
+        float inputs:roughness = 0.5
+        float inputs:opacity = 1
+        token outputs:surface
+    }
+}
+
+def Material "WhiteMat"
+{
+    token outputs:surface.connect = </WhiteMat/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0.75, 0.75, 0.75)
+        float inputs:metallic = 0
+        float inputs:roughness = 0.5
+        float inputs:opacity = 1
+        token outputs:surface
+    }
+}
+def Xform "World"
+{
+
+    def Mesh "BackWall" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-1, -1, -1), (1, -1, -1), (1, 1, -1), (-1, 1, -1)]
+        rel material:binding = </WhiteMat>
+    }
+
+    def Mesh "Floor" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
+        point3f[] points = [(-1, -1, -1), (-1, -1, 1), (1, -1, 1), (1, -1, -1)]
+        rel material:binding = </WhiteMat>
+    }
+
+    def Mesh "Ceiling" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        normal3f[] normals = [(0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0)]
+        point3f[] points = [(-1, 1, -1), (-1, 1, 1), (1, 1, 1), (1, 1, -1)]
+        rel material:binding = </WhiteMat>
+    }
+
+    def Mesh "LeftWall" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        normal3f[] normals = [(1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0)]
+        point3f[] points = [(-1, -1, -1), (-1, -1, 1), (-1, 1, 1), (-1, 1, -1)]
+        rel material:binding = </RedWall>
+    }
+
+    def Mesh "RightWall" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        normal3f[] normals = [(-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (-1, 0, 0)]
+        point3f[] points = [(1, -1, 1), (1, -1, -1), (1, 1, -1), (1, 1, 1)]
+        rel material:binding = </GreenWall>
+    }
+
+    # Short block - rotated box from Cornell official data
+    # 6 faces × 4 verts = 24 vertices, 12 triangles
+    # Vertices: bottom A(0) B(1) C(2) D(3), top E(4) F(5) G(6) H(7)
+    def Mesh "ShortBlock" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]
+        int[] faceVertexIndices = [
+            4, 5, 6,  4, 6, 7,   # top
+            0, 2, 1,  0, 3, 2,   # bottom
+            8, 9, 10,  8, 10, 11, # side 0-1
+            12, 13, 14,  12, 14, 15, # side 1-2
+            16, 17, 18,  16, 18, 19, # side 2-3
+            20, 21, 22,  20, 22, 23  # side 3-0
+        ]
+        normal3f[] normals = [
+            # top (y up)
+            (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0),
+            # bottom (y down)
+            (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0),
+            # side 0-1
+            (0.957, 0, 0.290), (0.957, 0, 0.290), (0.957, 0, 0.290), (0.957, 0, 0.290),
+            # side 1-2
+            (0.282, 0, -0.959), (0.282, 0, -0.959), (0.282, 0, -0.959), (0.282, 0, -0.959),
+            # side 2-3
+            (-0.952, 0, -0.305), (-0.952, 0, -0.305), (-0.952, 0, -0.305), (-0.952, 0, -0.305),
+            # side 3-0
+            (-0.290, 0, 0.957), (-0.290, 0, 0.957), (-0.290, 0, 0.957), (-0.290, 0, 0.957)
+        ]
+        point3f[] points = [
+            # bottom face: A B C D
+            (0.530, -1.0, 0.768), (0.703, -1.0, 0.195), (0.132, -1.0, 0.027), (-0.049, -1.0, 0.592),
+            # top face: E F G H
+            (0.530, -0.399, 0.768), (0.703, -0.399, 0.195), (0.132, -0.399, 0.027), (-0.049, -0.399, 0.592),
+            # side 0-1: E A B F
+            (0.530, -0.399, 0.768), (0.530, -1.0, 0.768), (0.703, -1.0, 0.195), (0.703, -0.399, 0.195),
+            # side 1-2: F B C G
+            (0.703, -0.399, 0.195), (0.703, -1.0, 0.195), (0.132, -1.0, 0.027), (0.132, -0.399, 0.027),
+            # side 2-3: G C D H
+            (0.132, -0.399, 0.027), (0.132, -1.0, 0.027), (-0.049, -1.0, 0.592), (-0.049, -0.399, 0.592),
+            # side 3-0: H D A E
+            (-0.049, -0.399, 0.592), (-0.049, -1.0, 0.592), (0.530, -1.0, 0.768), (0.530, -0.399, 0.768)
+        ]
+        rel material:binding = </WhiteMat>
+    }
+
+    # Tall block - rotated box from Cornell official data
+    def Mesh "TallBlock" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]
+        int[] faceVertexIndices = [
+            4, 5, 6,  4, 6, 7,   # top
+            0, 2, 1,  0, 3, 2,   # bottom
+            8, 9, 10,  8, 10, 11, # side 0-1
+            12, 13, 14,  12, 14, 15, # side 1-2
+            16, 17, 18,  16, 18, 19, # side 2-3
+            20, 21, 22,  20, 22, 23  # side 3-0
+        ]
+        normal3f[] normals = [
+            (0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0),
+            (0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0),
+            (0.295, 0, 0.956), (0.295, 0, 0.956), (0.295, 0, 0.956), (0.295, 0, 0.956),
+            (0.955, 0, -0.296), (0.955, 0, -0.296), (0.955, 0, -0.296), (0.955, 0, -0.296),
+            (-0.299, 0, -0.954), (-0.299, 0, -0.954), (-0.299, 0, -0.954), (-0.299, 0, -0.954),
+            (-0.954, 0, 0.299), (-0.954, 0, 0.299), (-0.954, 0, 0.299), (-0.954, 0, 0.299)
+        ]
+        point3f[] points = [
+            # bottom: A B C D
+            (-0.530, -1.0, 0.117), (0.041, -1.0, -0.059), (-0.136, -1.0, -0.631), (-0.708, -1.0, -0.452),
+            # top: E F G H
+            (-0.530, 0.203, 0.117), (0.041, 0.203, -0.059), (-0.136, 0.203, -0.631), (-0.708, 0.203, -0.452),
+            # side 0-1: E A B F
+            (-0.530, 0.203, 0.117), (-0.530, -1.0, 0.117), (0.041, -1.0, -0.059), (0.041, 0.203, -0.059),
+            # side 1-2: F B C G
+            (0.041, 0.203, -0.059), (0.041, -1.0, -0.059), (-0.136, -1.0, -0.631), (-0.136, 0.203, -0.631),
+            # side 2-3: G C D H
+            (-0.136, 0.203, -0.631), (-0.136, -1.0, -0.631), (-0.708, -1.0, -0.452), (-0.708, 0.203, -0.452),
+            # side 3-0: H D A E
+            (-0.708, 0.203, -0.452), (-0.708, -1.0, -0.452), (-0.530, -1.0, 0.117), (-0.530, 0.203, 0.117)
+        ]
+        rel material:binding = </WhiteMat>
+    }
+}
+
+def SphereLight "CeilingLight"
+{
+    float inputs:intensity = 70.0
+    float inputs:radius = 0.12
+    matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (0, 0.88, 0, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
