@@ -24,7 +24,7 @@ TEST(USDWIDGET, create_widget)
         GTEST_SKIP() << "Skipping: no DISPLAY available (headless environment)";
     }
 #endif
-    auto stage = create_global_stage();
+    auto stage = create_global_stage("test_fileviewer.usdc");
 
     stage->create_sphere(pxr::SdfPath("/sphere"));
 

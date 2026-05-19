@@ -8,7 +8,7 @@ using namespace Ruzino;
 
 TEST(Stage, CreateStage)
 {
-    Stage stage;
+    Stage stage("test_stage_create.usdc");
     auto prim = stage.add_prim(pxr::SdfPath("/root"));
     ASSERT_TRUE(prim);
 
