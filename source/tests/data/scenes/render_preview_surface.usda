@@ -1,0 +1,103 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Camera "Camera"
+{
+    float2 clippingRange = (0.1, 100.0)
+    float focalLength = 50.0
+    float horizontalAperture = 36.0
+    float verticalAperture = 20.25
+    matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (0, 0, 5, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+def Material "RedMat"
+{
+    token outputs:surface.connect = </RedMat/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (1, 0, 0)
+        float inputs:metallic = 0
+        float inputs:roughness = 0.5
+        float inputs:opacity = 1
+        token outputs:surface
+    }
+}
+
+def Material "GreenMat"
+{
+    token outputs:surface.connect = </GreenMat/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0, 1, 0)
+        float inputs:metallic = 0
+        float inputs:roughness = 0.5
+        float inputs:opacity = 1
+        token outputs:surface
+    }
+}
+
+def Material "BlueMat"
+{
+    token outputs:surface.connect = </BlueMat/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0, 0, 1)
+        float inputs:metallic = 0
+        float inputs:roughness = 0.5
+        float inputs:opacity = 1
+        token outputs:surface
+    }
+}
+
+def Xform "World"
+{
+    def Mesh "Left" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-1.6, -0.8, 0), (-0.4, -0.8, 0), (-1.0, 0.8, 0)]
+        rel material:binding = </RedMat>
+    }
+
+    def Mesh "Center" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-0.5, -0.8, 0), (0.5, -0.8, 0), (0, 0.8, 0)]
+        rel material:binding = </GreenMat>
+    }
+
+    def Mesh "Right" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(0.4, -0.8, 0), (1.6, -0.8, 0), (1.0, 0.8, 0)]
+        rel material:binding = </BlueMat>
+    }
+}
+
+def DistantLight "Sun"
+{
+    float inputs:intensity = 1.0
+    matrix4d xformOp:transform = ( (1,0,0,0), (0,-1,0,0), (0,0,-1,0), (0,0,0,1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}

@@ -109,8 +109,6 @@ def _render_scene(workspace_root, binary_dir, width, height, samples):
 
     for _ in range(samples):
         hydra.render()
-
-    hydra.stop()
     texture_data = hydra.get_output_texture()
     return np.array(texture_data, dtype=np.float32).reshape(height, width, 4)
 
@@ -148,8 +146,6 @@ def test_render_output_size():
 
     for _ in range(spp):
         hydra.render()
-
-    hydra.stop()
     data = hydra.get_output_texture()
     assert data is not None, "No texture data returned"
     assert len(data) == w * h * 4, f"Expected {w*h*4} floats, got {len(data)}"

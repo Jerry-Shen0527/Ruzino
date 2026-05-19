@@ -123,32 +123,29 @@ void Hd_RUZINO_Renderer::Render(HdRenderThread* renderThread)
         }
 
         // Check for material changes
-        static uint32_t last_material_version = 0;
         uint32_t current_material_version =
             global_payload.InstanceCollection->get_material_version();
-        if (last_material_version != current_material_version) {
+        if (render_param->last_material_version != current_material_version) {
             global_payload.mark_dirty(
                 RenderGlobalPayload::SceneDirtyBits::DirtyMaterials);
-            last_material_version = current_material_version;
+            render_param->last_material_version = current_material_version;
         }
 
         // Check for geometry/buffer changes
-        static uint32_t last_geometry_version = 0;
         uint32_t current_geometry_version =
             global_payload.InstanceCollection->get_geometry_version();
-        if (last_geometry_version != current_geometry_version) {
+        if (render_param->last_geometry_version != current_geometry_version) {
             global_payload.mark_dirty(
                 RenderGlobalPayload::SceneDirtyBits::DirtyGeometry);
-            last_geometry_version = current_geometry_version;
+            render_param->last_geometry_version = current_geometry_version;
         }
 
-        static uint32_t last_light_version = 0;
         uint32_t current_light_version =
             global_payload.InstanceCollection->get_light_version();
-        if (last_light_version != current_light_version) {
+        if (render_param->last_light_version != current_light_version) {
             global_payload.mark_dirty(
                 RenderGlobalPayload::SceneDirtyBits::DirtyLights);
-            last_light_version = current_light_version;
+            render_param->last_light_version = current_light_version;
         }
 
         // global_payload.resource_allocator.gc();

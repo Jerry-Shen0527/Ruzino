@@ -95,6 +95,12 @@ class Hd_RUZINO_RenderParam final : public HdRenderParam {
 
     LensSystem* lens_system = nullptr;
 
+    // Per-instance version tracking for dirty detection.
+    // Moved from static locals in renderer.cpp to fix multi-instance bug.
+    uint32_t last_material_version = 0;
+    uint32_t last_geometry_version = 0;
+    uint32_t last_light_version = 0;
+
     std::vector<std::thread> texture_loading_threads;
     std::vector<std::thread> material_loading_threads;
 

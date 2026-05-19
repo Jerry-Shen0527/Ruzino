@@ -20,6 +20,20 @@ struct ShadowPayload {
     bool isVisible;  // Whether light is visible or occluded
 };
 
+// Cosine-weighted hemisphere sampling around normal
+float3 cosineSampleHemisphere(float xi1, float xi2, float3 normal)
+{
+    float r = sqrt(xi1);
+    float phi = 2.0 * 3.14159265359 * xi2;
+    float3 localDir = float3(r * cos(phi), r * sin(phi), sqrt(max(0.0, 1.0 - xi1)));
+
+    float3 up = abs(normal.y) < 0.999 ? float3(0, 1, 0) : float3(1, 0, 0);
+    float3 tangent = normalize(cross(up, normal));
+    float3 bitangent = cross(normal, tangent);
+
+    return localDir.x * tangent + localDir.y * bitangent + localDir.z * normal;
+}
+
 // Sample a random light and return its direction, intensity, and PDF
 LightSample sampleLights(float3 hitPos, float3 hitNormal, inout uint seed)
 {
@@ -100,45 +114,90 @@ LightSample sampleLights(float3 hitPos, float3 hitNormal, inout uint seed)
         }
     }
     else if (light.type == uint(LightType::Sphere)) {
-        // Sphere light - sample a random point on the sphere
-        // For now, treat as point light at center
-        // TODO: Proper sphere light sampling
-        lightDir = light.posW - hitPos;
-        lightDistance = length(lightDir);
-        lightDir /= lightDistance;
+        // Sphere light sampling using uniform cone sampling.
+        // For a diffuse (Lambertian) sphere emitter, radiance L = intensity / pi.
+        // The path tracer computes: L * NdotL * bsdf / pdf.
+        float3 wc = light.posW - hitPos;
+        float dist = length(wc);
+        float3 wcN = wc / dist;
 
-        float NdotL = max(0.0, dot(hitNormal, lightDir));
-        if (NdotL > 0.0) {
-            RayDesc shadowRay;
-            shadowRay.Origin = hitPos + hitNormal * 0.0001;
-            shadowRay.Direction = lightDir;
-            shadowRay.TMin = 0.0;
-            shadowRay.TMax = lightDistance - 0.0001;
+        float radius = sqrt(light.surfaceArea / (4.0 * 3.14159265359));
+        float3 sphereRadiance = light.intensity / 3.14159265359;
 
-            ShadowPayload shadowPayload;
-            shadowPayload.isVisible = true;
-            shadowPayload.rayTMax = lightDistance - 0.0001;
-            shadowPayload.recursionDepth = 0;
-            shadowPayload.seed = seed;
+        if (dist <= radius) {
+            float3 dir = cosineSampleHemisphere(
+                random_float(seed), random_float(seed), hitNormal);
+            sample.direction = dir;
+            sample.intensity = sphereRadiance;
+            sample.pdf = lightPdf;
+            sample.valid = true;
+        }
+        else {
+            float sinThetaMax = min(radius / dist, 1.0);
+            float cosThetaMax = sqrt(1.0 - sinThetaMax * sinThetaMax);
 
-            TraceRay(
-                SceneBVH,
-                RAY_FLAG_NONE,
-                0xFF,
-                1,
-                1,
-                1,
-                shadowRay,
-                shadowPayload);
+            float xi1 = random_float(seed);
+            float xi2 = random_float(seed);
 
-            seed = shadowPayload.seed;
+            float cosTheta = (1.0 - xi1) + xi1 * cosThetaMax;
+            float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+            float phi = 2.0 * 3.14159265359 * xi2;
 
-            if (shadowPayload.isVisible) {
-                float attenuation = 1.0 / (lightDistance * lightDistance);
-                sample.direction = lightDir;
-                sample.intensity = light.intensity * attenuation;
-                sample.pdf = lightPdf;
-                sample.valid = true;
+            float3 wcU, wcV;
+            if (abs(wcN.x) > 0.9) {
+                wcU = normalize(cross(float3(0, 1, 0), wcN));
+            }
+            else {
+                wcU = normalize(cross(float3(1, 0, 0), wcN));
+            }
+            wcV = cross(wcN, wcU);
+
+            lightDir =
+                sinTheta * cos(phi) * wcU +
+                sinTheta * sin(phi) * wcV +
+                cosTheta * wcN;
+
+            float NdotL = max(0.0, dot(hitNormal, lightDir));
+            if (NdotL > 0.0) {
+                float3 oc = hitPos - light.posW;
+                float b = dot(oc, lightDir);
+                float c = dot(oc, oc) - radius * radius;
+                float disc = b * b - c;
+                lightDistance = -b - sqrt(max(0.0, disc));
+
+                float conePdf =
+                    1.0 / (2.0 * 3.14159265359 * (1.0 - cosThetaMax));
+
+                RayDesc shadowRay;
+                shadowRay.Origin = hitPos + hitNormal * 0.0001;
+                shadowRay.Direction = lightDir;
+                shadowRay.TMin = 0.0;
+                shadowRay.TMax = max(0.001, lightDistance - 0.001);
+
+                ShadowPayload shadowPayload;
+                shadowPayload.isVisible = true;
+                shadowPayload.rayTMax = shadowRay.TMax;
+                shadowPayload.recursionDepth = 0;
+                shadowPayload.seed = seed;
+
+                TraceRay(
+                    SceneBVH,
+                    RAY_FLAG_NONE,
+                    0xFF,
+                    1,
+                    1,
+                    1,
+                    shadowRay,
+                    shadowPayload);
+
+                seed = shadowPayload.seed;
+
+                if (shadowPayload.isVisible) {
+                    sample.direction = lightDir;
+                    sample.intensity = sphereRadiance;
+                    sample.pdf = lightPdf * conePdf;
+                    sample.valid = true;
+                }
             }
         }
     }

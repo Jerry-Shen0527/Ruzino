@@ -42,3 +42,8 @@ RuzinoInstall/
 report/
 report.md
 build-release/
+shader_cache/
+# Test output artifacts
+source/tests/data/output/
+**/tests/output/
+*.test_output.png

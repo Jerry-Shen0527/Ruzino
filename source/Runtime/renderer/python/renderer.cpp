@@ -286,7 +286,7 @@ class HydraRenderer {
             .get();  // Return raw pointer for cross-module compatibility
     }
 
-    // Render one frame (does not stop renderer between calls)
+    // Render one frame synchronously (waits for GPU idle)
     void render()
     {
         pxr::UsdImagingGLRenderParams params;
@@ -300,6 +300,11 @@ class HydraRenderer {
 
         pxr::UsdPrim root = stage_->GetPseudoRoot();
         engine_->Render(root, params);
+
+        // Wait for GPU work to complete, matching headless_render.cpp flow
+        RHI::get_device()->waitForIdle();
+        RHI::get_device()->runGarbageCollection();
+        engine_->StopRenderer();
     }
 
     // Stop the render thread and wait for completion

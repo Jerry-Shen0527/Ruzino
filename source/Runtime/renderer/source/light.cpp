@@ -248,19 +248,6 @@ void Hd_RUZINO_Simple_Light::Sync(
         lightData.intensity =
             float3(color[0], color[1], color[2]) * diffuse * finalIntensity;
 
-        spdlog::info(
-            "PointLight {}: pos=({},{},{}), color=({},{},{}), intensity={}, "
-            "exposure={}",
-            id.GetText(),
-            pos[0],
-            pos[1],
-            pos[2],
-            color[0],
-            color[1],
-            color[2],
-            intensity,
-            exposure);
-
         this->light_buffer->write_data(&lightData);
     }
 
@@ -477,20 +464,6 @@ void Hd_RUZINO_Rect_Light::Sync(
         lightData.intensity =
             float3(color[0], color[1], color[2]) * diffuse * finalIntensity;
 
-        // Debug output
-        spdlog::info(
-            "RectLight {}: width={}, height={}, color=({},{},{}), "
-            "intensity={}, exposure={}, finalIntensity={}",
-            id.GetText(),
-            _width,
-            _height,
-            color[0],
-            color[1],
-            color[2],
-            intensity,
-            exposure,
-            finalIntensity);
-
         // Rectangle area
         lightData.surfaceArea = _width * _height;
 
@@ -590,18 +563,6 @@ void Hd_RUZINO_Disk_Light::Sync(
         float finalIntensity = intensity * pow(2.0f, exposure);
         lightData.intensity =
             float3(color[0], color[1], color[2]) * diffuse * finalIntensity;
-
-        // Debug output
-        spdlog::info(
-            "DiskLight {}: radius={}, color=({},{},{}), intensity={}, "
-            "exposure={}",
-            id.GetText(),
-            _radius,
-            color[0],
-            color[1],
-            color[2],
-            intensity,
-            exposure);
 
         // Disk area
         lightData.surfaceArea = 3.14159265359f * _radius * _radius;
