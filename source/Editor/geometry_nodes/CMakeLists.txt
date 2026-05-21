@@ -22,6 +22,10 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/SPH/shaders/
 	DESTINATION bin/shaders/geom_nodes/SPH
 	PATTERN ".git" EXCLUDE
 )
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/BrushSimulation/shaders/
+	DESTINATION bin/shaders/geom_nodes/BrushSimulation
+	PATTERN ".git" EXCLUDE
+)
 
 add_library(tetgen STATIC ${CMAKE_CURRENT_SOURCE_DIR}/tetgen/tetgen.cxx ${CMAKE_CURRENT_SOURCE_DIR}/tetgen/tetgen.h ${CMAKE_CURRENT_SOURCE_DIR}/tetgen/predicates.cxx)
 set_target_properties(tetgen PROPERTIES ${OUTPUT_DIR})
