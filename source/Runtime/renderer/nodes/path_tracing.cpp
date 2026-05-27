@@ -5,7 +5,7 @@
 #include <filesystem>
 #include <memory>
 
-#include "../../../Core/RHI/source/shaderCompiler.h"
+#include "RHI/shaderCompiler.h"
 #include "../source/renderTLAS.h"
 #include "GPUContext/program_vars.hpp"
 #include "GPUContext/raytracing_context.hpp"

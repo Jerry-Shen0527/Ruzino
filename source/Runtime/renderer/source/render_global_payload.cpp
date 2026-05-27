@@ -1,6 +1,6 @@
 #include <hd_RUZINO/render_global_payload.hpp>
 
-#include "../../../Core/RHI/source/shaderCompiler.h"
+#include "RHI/shaderCompiler.h"
 #include "RHI/rhi.hpp"
 
 RUZINO_NAMESPACE_OPEN_SCOPE

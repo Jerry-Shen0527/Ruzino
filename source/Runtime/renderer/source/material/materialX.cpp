@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <fstream>
 
-#include "../../../../Core/RHI/source/shaderCompiler.h"
+#include "RHI/shaderCompiler.h"
 #include "MaterialX/SlangShaderGenerator.h"
 #include "MaterialXCore/Document.h"
 #include "MaterialXFormat/Util.h"

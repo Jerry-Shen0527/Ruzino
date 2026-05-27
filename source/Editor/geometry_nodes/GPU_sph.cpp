@@ -1,4 +1,4 @@
-#include "../../Core/RHI/source/shaderCompiler.h"
+#include "RHI/shaderCompiler.h"
 #include "GCore/Components/MeshComponent.h"
 #include "GCore/Components/PointsComponent.h"
 #include "GCore/algorithms/intersection.h"

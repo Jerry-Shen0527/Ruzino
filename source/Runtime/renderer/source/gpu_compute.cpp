@@ -2,7 +2,7 @@
 
 #include <spdlog/spdlog.h>
 
-#include "../../../Core/RHI/source/shaderCompiler.h"
+#include "RHI/shaderCompiler.h"
 #include "GPUContext/compute_context.hpp"
 #include "GPUContext/program_vars.hpp"
 #include "RHI/internal/resources.hpp"

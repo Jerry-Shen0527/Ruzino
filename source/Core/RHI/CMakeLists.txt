@@ -73,8 +73,8 @@ if(SLANG_FOUND)
         target_link_libraries(cuda_eigen_test PRIVATE Eigen3::Eigen CUDA::cublas CUDA::cusparse)
     endif()
 
-    # Install additional public headers from source directory
-    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/source/shaderCompiler.h
+    # Install additional public headers
+    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/RHI/shaderCompiler.h
         DESTINATION include/RHI
     )
 endif()

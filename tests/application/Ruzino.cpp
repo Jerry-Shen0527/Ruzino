@@ -125,6 +125,213 @@ class MaterialXNodeSystem : public NodeSystem {
     std::shared_ptr<MaterialXNodeTreeDescriptor> descriptor;
 };
 
+// ---------------------------------------------------------------------------
+// Extracted editor creation functions (reusable for startup restoration)
+// ---------------------------------------------------------------------------
+
+static void create_geometry_editor(
+    Stage* stage,
+    Window* window,
+    const pxr::SdfPath& json_path,
+    const std::shared_ptr<UsdviewEngine*>& render_bare_ptr)
+{
+    auto system = create_dynamic_loading_system();
+    system->load_configuration("geometry_nodes.json");
+    system->load_configuration("basic_nodes.json");
+
+    auto plugin_path = std::filesystem::path("./Plugins");
+    if (std::filesystem::exists(plugin_path))
+        for (auto& p : std::filesystem::directory_iterator(plugin_path)) {
+            if (p.path().extension() == ".json") {
+                system->load_configuration(p.path().string());
+            }
+        }
+
+    system->init();
+    system->set_node_tree_executor(create_node_tree_executor({}));
+
+    UsdBasedNodeWidgetSettings desc;
+    desc.json_path = json_path;
+    desc.system = system;
+    desc.stage = stage;
+
+    std::unique_ptr<IWidget> node_widget =
+        std::move(create_node_imgui_widget(desc));
+    node_widget->set_editor_info(json_path.GetString(), "geom");
+
+    node_widget->SetCallBack(
+        [stage, json_path, system, render_bare_ptr](Window*, IWidget*) {
+            GeomPayload geom_global_params;
+#ifdef GEOM_USD_EXTENSION
+            geom_global_params.stage = stage->get_usd_stage();
+            geom_global_params.prim_path = json_path;
+
+            geom_global_params.is_modifier_mode = true;
+            geom_global_params.current_modifier_index = 0;
+            geom_global_params.modifier_layer = stage->get_modifier_layer();
+            geom_global_params.modifier_input_path = json_path;
+            geom_global_params.modifier_output_path = json_path;
+
+            static std::map<pxr::SdfPath, std::string> last_node_graph_map;
+
+            std::string current_node_graph =
+                stage->load_string_from_usd(json_path);
+
+            auto it = last_node_graph_map.find(json_path);
+            bool is_initial_load = (it == last_node_graph_map.end());
+            bool node_graph_changed =
+                !is_initial_load && (it->second != current_node_graph);
+
+            if (node_graph_changed) {
+                auto modifier_layer = stage->get_modifier_layer();
+                if (modifier_layer) {
+                    auto prim_spec =
+                        modifier_layer->GetPrimAtPath(json_path);
+                    if (prim_spec) {
+                        std::vector<pxr::SdfPropertySpecHandle> props_to_remove;
+                        for (auto pit = prim_spec->GetProperties().begin();
+                             pit != prim_spec->GetProperties().end();
+                             ++pit) {
+                            if (*pit) {
+                                props_to_remove.push_back(*pit);
+                            }
+                        }
+                        for (auto& prop : props_to_remove) {
+                            prim_spec->RemoveProperty(prop);
+                        }
+                        prim_spec->SetTypeName(pxr::TfToken());
+                    }
+                }
+                last_node_graph_map[json_path] = current_node_graph;
+            }
+
+#endif
+
+            geom_global_params.has_simulation = false;
+
+            if (*render_bare_ptr) {
+                geom_global_params.pick =
+                    (*render_bare_ptr)->consume_pick_event();
+
+                auto brush = (*render_bare_ptr)->consume_brush_state();
+                geom_global_params.brush_point = brush.point;
+                geom_global_params.brush_time = brush.time;
+                geom_global_params.brush_active = brush.active;
+                geom_global_params.brush_new_point = brush.new_point;
+            }
+
+            system->set_global_params(geom_global_params);
+
+            if (geom_global_params.pick ||
+                geom_global_params.brush_new_point) {
+                system->execute();
+            }
+        });
+
+    window->register_widget(std::move(node_widget));
+}
+
+static void create_material_editor(
+    Stage* stage,
+    Window* window,
+    const std::string& material_path_str)
+{
+    spdlog::info("Material editor requested for: {}", material_path_str);
+
+    pxr::SdfPath material_path(material_path_str);
+    auto material_prim =
+        stage->get_usd_stage()->GetPrimAtPath(material_path);
+
+    if (!material_prim) {
+        spdlog::error("Material prim not found: {}", material_path_str);
+        return;
+    }
+
+    std::string stage_path = stage->GetStagePath();
+    std::filesystem::path stage_file(stage_path);
+    std::filesystem::path stage_dir = stage_file.parent_path();
+
+    std::string material_name = material_prim.GetName();
+    std::string mtlx_filename = material_name + ".mtlx";
+    std::filesystem::path mtlx_path = stage_dir / mtlx_filename;
+
+    bool has_mtlx_file = std::filesystem::exists(mtlx_path);
+    bool has_reference = false;
+
+    auto prim_stack = material_prim.GetPrimStack();
+    for (const auto& spec : prim_stack) {
+        if (spec->HasReferences()) {
+            has_reference = true;
+            spdlog::info("Material already has reference(s)");
+            break;
+        }
+    }
+
+    std::shared_ptr<MaterialXNodeSystem> mtlx_system;
+
+    if (has_mtlx_file && has_reference) {
+        spdlog::info(
+            "Loading existing MaterialX file: {}", mtlx_path.string());
+        try {
+            mx::DocumentPtr existing_doc = mx::createDocument();
+            mx::readFromXmlFile(
+                existing_doc, mx::FilePath(mtlx_path.string()));
+
+            mtlx_system =
+                MaterialXNodeSystem::create_with_default_material(
+                    material_name, existing_doc);
+
+            spdlog::info(
+                "Successfully loaded existing MaterialX document");
+        }
+        catch (const std::exception& e) {
+            spdlog::error(
+                "Failed to load existing MaterialX file: {}", e.what());
+            has_mtlx_file = false;
+            has_reference = false;
+        }
+    }
+
+    if (!has_mtlx_file || !has_reference) {
+        spdlog::info(
+            "Creating new MaterialX file at: {}", mtlx_path.string());
+
+        mtlx_system = MaterialXNodeSystem::create_with_default_material(
+            material_name);
+
+        auto* mtlx_tree_temp = static_cast<MaterialXNodeTree*>(
+            mtlx_system->get_node_tree());
+        mtlx_tree_temp->saveDocument(mx::FilePath(mtlx_path.string()));
+
+        std::string mtlx_relative_path = "./" + mtlx_filename;
+        std::string mtlx_material_path_str =
+            "/MaterialX/Materials/" + material_name;
+
+        auto references = material_prim.GetReferences();
+        references.ClearReferences();
+        references.AddReference(pxr::SdfReference(
+            mtlx_relative_path, pxr::SdfPath(mtlx_material_path_str)));
+
+        spdlog::info(
+            "Added MaterialX reference: {} -> {}",
+            mtlx_relative_path,
+            mtlx_material_path_str);
+
+        stage->get_usd_stage()->Save();
+    }
+
+    FileBasedNodeWidgetSettings widget_desc;
+    widget_desc.system = mtlx_system;
+    widget_desc.json_path =
+        (stage_dir / (material_name + "_layout.json")).string();
+
+    std::unique_ptr<IWidget> node_widget =
+        std::make_unique<MaterialXNodeTreeWidget>(
+            widget_desc, mtlx_path.string(), material_path_str);
+
+    window->register_widget(std::move(node_widget));
+}
+
 class PythonConsoleWidgetFactory : public IWidgetFactory {
    public:
     std::unique_ptr<IWidget> Create(
@@ -156,7 +363,7 @@ int main(int argc, char* argv[])
 #ifdef _DEBUG
     spdlog::set_level(spdlog::level::debug);
 #else
-    spdlog::set_level(spdlog::level::warn);
+    spdlog::set_level(spdlog::level::info);
 #endif
     spdlog::set_pattern("%^[%T] %n: %v%$");
     auto window = std::make_unique<Window>();
@@ -265,7 +472,21 @@ int main(int argc, char* argv[])
             config);
     });
 
-    window->register_menu_action("file_save", [&stage]() { stage->Save(); });
+    window->register_menu_action(
+        "file_save", [&stage, &window]() {
+            stage->Save();
+
+            // Persist open editors alongside the scene
+            std::vector<std::string> entries;
+            for (auto* w : window->get_widgets()) {
+                auto path = w->get_associated_prim_path();
+                auto type = w->get_editor_type();
+                if (!path.empty() && !type.empty()) {
+                    entries.push_back(type + ":" + path);
+                }
+            }
+            stage->save_open_editors(entries);
+        });
 
     window->register_menu_action("file_save_as", [&stage, &window]() {
         auto instance = IGFD::FileDialog::Instance();
@@ -342,123 +563,8 @@ int main(int argc, char* argv[])
     window->events().subscribe(
         "material_editor_requested",
         [&stage, &window](const std::string& material_path_str) {
-            spdlog::info(
-                "Material editor requested for: {}", material_path_str);
-
-            pxr::SdfPath material_path(material_path_str);
-            auto material_prim =
-                stage->get_usd_stage()->GetPrimAtPath(material_path);
-
-            if (!material_prim) {
-                spdlog::error("Material prim not found: {}", material_path_str);
-                return;
-            }
-
-            // Step 1: Create MaterialX file next to the stage file
-            std::string stage_path = stage->GetStagePath();
-            std::filesystem::path stage_file(stage_path);
-            std::filesystem::path stage_dir = stage_file.parent_path();
-
-            // Get material name from the prim
-            std::string material_name = material_prim.GetName();
-            std::string mtlx_filename = material_name + ".mtlx";
-            std::filesystem::path mtlx_path = stage_dir / mtlx_filename;
-
-            // Check if MaterialX file exists AND material prim already has a
-            // reference
-            bool has_mtlx_file = std::filesystem::exists(mtlx_path);
-            bool has_reference = false;
-
-            // Check if material already has references using GetPrimStack
-            auto prim_stack = material_prim.GetPrimStack();
-            for (const auto& spec : prim_stack) {
-                if (spec->HasReferences()) {
-                    has_reference = true;
-                    spdlog::info("Material already has reference(s)");
-                    break;
-                }
-            }
-
-            std::shared_ptr<MaterialXNodeSystem> mtlx_system;
-
-            // Only load existing if BOTH file exists AND reference exists
-            if (has_mtlx_file && has_reference) {
-                // Load existing MaterialX document
-                spdlog::info(
-                    "Loading existing MaterialX file: {}", mtlx_path.string());
-                try {
-                    mx::DocumentPtr existing_doc = mx::createDocument();
-                    mx::readFromXmlFile(
-                        existing_doc, mx::FilePath(mtlx_path.string()));
-
-                    // Create system with existing document using factory method
-                    mtlx_system =
-                        MaterialXNodeSystem::create_with_default_material(
-                            material_name, existing_doc);
-
-                    spdlog::info(
-                        "Successfully loaded existing MaterialX document");
-                }
-                catch (const std::exception& e) {
-                    spdlog::error(
-                        "Failed to load existing MaterialX file: {}", e.what());
-                    has_mtlx_file = false;
-                    has_reference = false;
-                }
-            }
-
-            // Create new if file doesn't exist OR reference doesn't exist
-            if (!has_mtlx_file || !has_reference) {
-                spdlog::info(
-                    "Creating new MaterialX file at: {}", mtlx_path.string());
-
-                mtlx_system = MaterialXNodeSystem::create_with_default_material(
-                    material_name);
-
-                // Save the new MaterialX document to file
-                auto* mtlx_tree_temp = static_cast<MaterialXNodeTree*>(
-                    mtlx_system->get_node_tree());
-                mtlx_tree_temp->saveDocument(mx::FilePath(mtlx_path.string()));
-
-                // Add reference to the MaterialX file
-                std::string mtlx_relative_path = "./" + mtlx_filename;
-                std::string mtlx_material_path_str =
-                    "/MaterialX/Materials/" + material_name;
-
-                auto references = material_prim.GetReferences();
-                references.ClearReferences();
-                references.AddReference(
-                    pxr::SdfReference(
-                        mtlx_relative_path,
-                        pxr::SdfPath(mtlx_material_path_str)));
-
-                spdlog::info(
-                    "Added MaterialX reference: {} -> {}",
-                    mtlx_relative_path,
-                    mtlx_material_path_str);
-
-                stage->get_usd_stage()->Save();
-            }
-
-            // Launch MaterialX editor widget
-            FileBasedNodeWidgetSettings widget_desc;
-            widget_desc.system = mtlx_system;
-            widget_desc.json_path =
-                (stage_dir / (material_name + "_layout.json")).string();
-
-            std::unique_ptr<IWidget> node_widget =
-                std::make_unique<MaterialXNodeTreeWidget>(
-                    widget_desc, mtlx_path.string(), material_path_str);
-
-            // Setup callback to save MaterialX file and update USD reference
-            // when editor closes
-            auto mtlx_path_copy = mtlx_path.string();
-            auto material_name_copy = material_name;
-            auto stage_ptr = stage.get();
-            auto* mtlx_tree =
-                static_cast<MaterialXNodeTree*>(mtlx_system->get_node_tree());
-
-            window->register_widget(std::move(node_widget));
+            create_material_editor(
+                stage.get(), window.get(), material_path_str);
         });
 
     // Subscribe to MaterialX graph change events
@@ -625,112 +731,14 @@ int main(int argc, char* argv[])
             // This would create a MaterialXDocumentViewer widget
         });
 
-    window->register_function_after_frame([&stage,
-                                           render_bare_ptr](Window* window) {
-        pxr::SdfPath json_path;
-        if (stage->consume_editor_creation(json_path)) {
-            auto system = create_dynamic_loading_system();
-            /* Load the node system */
-            auto loaded = system->load_configuration("geometry_nodes.json");
-            loaded = system->load_configuration("basic_nodes.json");
-
-            // iterate over path Plugin (not recursively), get all the json
-            // and load them
-
-            auto plugin_path = std::filesystem::path("./Plugins");
-
-            if (std::filesystem::exists(plugin_path))
-                for (auto& p :
-                     std::filesystem::directory_iterator(plugin_path)) {
-                    if (p.path().extension() == ".json") {
-                        system->load_configuration(p.path().string());
-                    }
-                }
-
-            system->init();
-            system->set_node_tree_executor(create_node_tree_executor({}));
-            /* Done! */
-            UsdBasedNodeWidgetSettings desc;
-
-            desc.json_path = json_path;
-            desc.system = system;
-            desc.stage = stage.get();
-
-            std::unique_ptr<IWidget> node_widget =
-                std::move(create_node_imgui_widget(desc));
-            node_widget->SetCallBack([&stage,
-                                      json_path,
-                                      system,
-                                      render_bare_ptr](Window*, IWidget*) {
-                GeomPayload geom_global_params;
-#ifdef GEOM_USD_EXTENSION
-                geom_global_params.stage = stage->get_usd_stage();
-                geom_global_params.prim_path = json_path;
-
-                // Set up modifier mode for non-destructive editing
-                geom_global_params.is_modifier_mode = true;
-                geom_global_params.current_modifier_index = 0;
-                geom_global_params.modifier_layer = stage->get_modifier_layer();
-                geom_global_params.modifier_input_path = json_path;
-                geom_global_params.modifier_output_path = json_path;
-
-                // Detect node graph changes and clear old modifier
-                // output
-                static std::map<pxr::SdfPath, std::string> last_node_graph_map;
-                
-                std::string current_node_graph =
-                    stage->load_string_from_usd(json_path);
-
-                auto it = last_node_graph_map.find(json_path);
-                bool is_initial_load = (it == last_node_graph_map.end());
-                bool node_graph_changed = 
-                    !is_initial_load && (it->second != current_node_graph);
-
-                if (node_graph_changed) {
-                    auto modifier_layer = stage->get_modifier_layer();
-                    if (modifier_layer) {
-                        auto prim_spec =
-                            modifier_layer->GetPrimAtPath(json_path);
-                        if (prim_spec) {
-                            // Remove all properties
-                            std::vector<pxr::SdfPropertySpecHandle>
-                                props_to_remove;
-                            for (auto it = prim_spec->GetProperties().begin();
-                                 it != prim_spec->GetProperties().end();
-                                 ++it) {
-                                if (*it) {
-                                    props_to_remove.push_back(*it);
-                                }
-                            }
-                            for (auto& prop : props_to_remove) {
-                                prim_spec->RemoveProperty(prop);
-                            }
-                            // Clear type name
-                            prim_spec->SetTypeName(pxr::TfToken());
-                        }
-                    }
-                    last_node_graph_map[json_path] = current_node_graph;
-                }
-
-#endif
-
-                geom_global_params.has_simulation = false;
-
-                // Pass pick event from UI to geometry payload
-                if (*render_bare_ptr) {
-                    geom_global_params.pick =
-                        (*render_bare_ptr)->consume_pick_event();
-                }
-
-                system->set_global_params(geom_global_params);
-                // if (geom_global_params.pick) {
-                //     system->execute();
-                // }
-            });
-
-            window->register_widget(std::move(node_widget));
-        }
-    });
+    window->register_function_after_frame(
+        [&stage, render_bare_ptr](Window* window) {
+            pxr::SdfPath json_path;
+            if (stage->consume_editor_creation(json_path)) {
+                create_geometry_editor(
+                    stage.get(), window, json_path, render_bare_ptr);
+            }
+        });
 
     window->register_function_after_frame([render_bare_ptr](Window* window) {
         if (*render_bare_ptr) {
@@ -741,15 +749,63 @@ int main(int argc, char* argv[])
     window->register_function_after_frame(
         [&stage](Window* window) { stage->finish_tick(); });
     window->SetMaximized(true);
+
+    // Restore editors that were open in the previous session
+    {
+        auto editors = stage->load_open_editors();
+        for (const auto& entry : editors) {
+            auto colon = entry.find(':');
+            if (colon == std::string::npos)
+                continue;
+
+            std::string type = entry.substr(0, colon);
+            std::string path = entry.substr(colon + 1);
+            pxr::SdfPath sdf_path(path);
+
+            if (!stage->get_usd_stage()->GetPrimAtPath(sdf_path)) {
+                spdlog::info(
+                    "Skipping editor restoration for removed prim: {}", path);
+                continue;
+            }
+
+            if (type == "geom") {
+                create_geometry_editor(
+                    stage.get(), window.get(), sdf_path, render_bare_ptr);
+            }
+            else if (type == "materialx") {
+                create_material_editor(
+                    stage.get(), window.get(), path);
+            }
+        }
+        if (!editors.empty()) {
+            spdlog::info("Restored {} editor(s) from previous session",
+                         editors.size());
+        }
+    }
+
     window->run();
+
+    // Save open editors before shutdown
+    {
+        std::vector<std::string> entries;
+        for (auto* w : window->get_widgets()) {
+            auto path = w->get_associated_prim_path();
+            auto type = w->get_editor_type();
+            if (!path.empty() && !type.empty()) {
+                entries.push_back(type + ":" + path);
+            }
+        }
+        stage->save_open_editors(entries);
+        stage->Save();
+    }
 
     tcp_server->stop();
     unregister_cpp_type();
 
-#ifdef GPU_GEOM_ALGORITHM
-#endif
-    deinit_gpu_geometry_algorithms();
-
     window.reset();
+
+#ifdef GPU_GEOM_ALGORITHM
+    deinit_gpu_geometry_algorithms();
+#endif
     stage.reset();
 }

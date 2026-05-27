@@ -3,7 +3,7 @@
 
 #include <cinttypes>
 
-#include "../../../Core/RHI/source/shaderCompiler.h"
+#include "RHI/shaderCompiler.h"
 #define IMGUI_DEFINE_MATH_OPERATORS
 
 #include <spdlog/spdlog.h>

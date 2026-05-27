@@ -1,4 +1,4 @@
-#include "../../../Core/RHI/source/shaderCompiler.h"
+#include "RHI/shaderCompiler.h"
 #include "RHI/internal/resources.hpp"
 #include "hd_RUZINO/render_node_base.h"
 #include "nodes/core/def/node_def.hpp"

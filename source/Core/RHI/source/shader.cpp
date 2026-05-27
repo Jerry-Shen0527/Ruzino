@@ -13,7 +13,7 @@
 
 #include "RHI/ResourceManager/resource_allocator.hpp"
 #include "RHI/internal/resources.hpp"
-#include "shaderCompiler.h"
+#include "RHI/shaderCompiler.h"
 #include "slang-com-ptr.h"
 #include "slang.h"
 

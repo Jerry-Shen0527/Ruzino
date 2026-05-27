@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../../Core/RHI/source/shaderCompiler.h"
+#include "RHI/shaderCompiler.h"
 #include "RHI/ResourceManager/resource_allocator.hpp"
 #include "RHI/ShaderFactory/shader.hpp"
 #include "api.h"
