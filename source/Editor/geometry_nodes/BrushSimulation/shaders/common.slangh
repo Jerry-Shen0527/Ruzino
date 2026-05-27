@@ -1,0 +1,69 @@
+// Shared definitions for GPU brush paint simulation
+// Based on Wetbrush (Chen et al., SIGGRAPH Asia 2015)
+
+#ifndef BRUSH_SIM_COMMON
+#define BRUSH_SIM_COMMON
+
+struct SimConstants {
+    int res;                // Grid resolution N (N×N)
+    float cell_size;        // paper_size / res
+    float paper_size;       // Total paper extent
+    float dt;               // Time step
+
+    float viscosity;        // Viscosity coefficient
+    float diffusion;        // Diffusion rate
+    float drying_rate;      // Drying rate
+    float brush_radius;     // Brush radius (world units)
+
+    float ink_amount;       // Ink deposit amount
+    int num_vertices;       // Number of NEW curve vertices to deposit
+    float center_x;         // Grid center X (world space)
+    float center_y;         // Grid center Y (world space)
+
+    float center_z;         // Grid center Z (world space)
+    float effective_radius; // max(brush_radius, cell_size * 3)
+    int jacobi_mode;        // 0 = diffuse, 1 = pressure
+    float jacobi_alpha;     // alpha for Jacobi: dt*rate*N^2 (diffuse) or 1.0 (pressure)
+};
+
+uint grid_idx(uint x, uint y, int res)
+{
+    return y * (uint)res + x;
+}
+
+// Brightness: ||rgb||_M where M = diag(0.241, 0.691, 0.068)
+// From Wetbrush Algorithm 2
+float color_brightness(float3 rgb)
+{
+    return sqrt(0.241 * rgb.r * rgb.r +
+                0.691 * rgb.g * rgb.g +
+                0.068 * rgb.b * rgb.b);
+}
+
+// RYB -> RGB (Gossett & Chen 2004)
+float3 ryb_to_rgb(float r, float y, float b)
+{
+    float rm = 1.0 - r, ym = 1.0 - y, bm = 1.0 - b;
+    return rm*ym*bm*float3(1,1,1)   + r*ym*bm*float3(1,0,0) +
+           rm*y*bm*float3(1,1,0)    + rm*ym*b*float3(0.163,0.373,0.6) +
+           r*y*bm*float3(1,0.5,0)   + r*ym*b*float3(0.5,0,0.5) +
+           rm*y*b*float3(0,0.66,0.2) + r*y*b*float3(0.2,0.094,0.029);
+}
+
+// Brightness-preserving color mixing — Wetbrush Algorithm 2
+float3 color_mix(float3 c_new_ryb, float3 c_old_ryb, float w_new, float w_old)
+{
+    float b_new = color_brightness(ryb_to_rgb(c_new_ryb.r, c_new_ryb.g, c_new_ryb.b));
+    float b_old = color_brightness(ryb_to_rgb(c_old_ryb.r, c_old_ryb.g, c_old_ryb.b));
+
+    float w_total = w_new + w_old;
+    float3 c_prime = (w_new * c_new_ryb + w_old * c_old_ryb) / w_total;
+    float b_prime  = color_brightness(ryb_to_rgb(c_prime.r, c_prime.g, c_prime.b));
+    float b_dprime = (w_new * b_new + w_old * b_old) / w_total;
+
+    if (b_prime > 1e-6f)
+        return b_dprime * c_prime / b_prime;
+    return c_prime;
+}
+
+#endif
