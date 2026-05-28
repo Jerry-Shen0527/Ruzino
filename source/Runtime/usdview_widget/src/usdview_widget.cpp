@@ -353,6 +353,22 @@ void UsdviewEngine::DrawMenuBar()
         ImGui::EndMenu();
     }
 
+    // Brush mode toggle
+    if (ImGui::BeginMenu("Brush")) {
+        if (ImGui::MenuItem("Brush Mode (B)", "B", brush_mode_)) {
+            brush_mode_ = !brush_mode_;
+            is_drawing_ = false;
+            brush_new_point_ = false;
+        }
+        ImGui::EndMenu();
+    }
+
+    // Brush mode indicator
+    if (brush_mode_) {
+        ImGui::SameLine(ImGui::GetWindowWidth() - 120);
+        ImGui::TextColored(ImVec4(1, 0.7f, 0, 1), "[BRUSH MODE]");
+    }
+
     ImGui::EndMenuBar();
 }
 
@@ -550,6 +566,8 @@ void UsdviewEngine::OnFrame(float delta_time)
     // Save the viewport rect for Gizmo and ViewManipulate
     ImVec2 viewport_pos = ImGui::GetItemRectMin();
     ImVec2 viewport_size = ImGui::GetItemRectSize();
+    cached_viewport_pos_ = viewport_pos;
+    cached_viewport_size_ = viewport_size;
 
     // Set ImGuizmo rect early so IsOver/IsViewManipulateHovered checks use
     // correct coordinates
@@ -733,6 +751,15 @@ bool UsdviewEngine::JoystickAxisUpdate(int axis, float value)
 
 bool UsdviewEngine::KeyboardUpdate(int key, int scancode, int action, int mods)
 {
+    // 'B' key toggles brush mode
+    if (key == GLFW_KEY_B && action == GLFW_PRESS) {
+        brush_mode_ = !brush_mode_;
+        is_drawing_ = false;
+        brush_new_point_ = false;
+        spdlog::info("Brush mode: {}", brush_mode_ ? "ON" : "OFF");
+        return true;
+    }
+
     if (is_active) {
         free_camera_->KeyboardUpdate(key, scancode, action, mods);
     }
@@ -742,6 +769,25 @@ bool UsdviewEngine::KeyboardUpdate(int key, int scancode, int action, int mods)
 bool UsdviewEngine::MousePosUpdate(double xpos, double ypos)
 {
     free_camera_->MousePosUpdate(xpos, ypos);
+
+    // Brush mode: update per-frame brush state during drag
+    if (brush_mode_ && is_drawing_ && is_hovered) {
+        auto mouse_pos_rel = ImGui::GetMousePos() - cached_viewport_pos_;
+        glm::vec3 world_pos = pick_world_pos(
+            mouse_pos_rel.x, mouse_pos_rel.y);
+
+        // Only signal new point if it moved enough
+        float dist = glm::length(glm::vec2(
+            world_pos.x - brush_point_.x,
+            world_pos.y - brush_point_.y));
+        if (dist > 0.001f) {
+            brush_point_ = world_pos;
+            brush_time_ = static_cast<float>(ImGui::GetTime() - stroke_start_time_);
+            brush_active_ = true;
+            brush_new_point_ = true;
+        }
+    }
+
     return false;
 }
 
@@ -775,7 +821,35 @@ bool UsdviewEngine::MouseButtonUpdate(int button, int action, int mods)
 
     bool shift_pressed = io.KeyShift;
 
-    // Left button: picking/selection only
+    // Brush mode: left click starts/stops stroke
+    if (brush_mode_) {
+        if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS &&
+            is_hovered) {
+            is_drawing_ = true;
+            stroke_start_time_ = ImGui::GetTime();
+
+            // First point
+            auto mouse_pos_rel =
+                ImGui::GetMousePos() - cached_viewport_pos_;
+            brush_point_ = pick_world_pos(mouse_pos_rel.x, mouse_pos_rel.y);
+            brush_time_ = 0.0f;
+            brush_active_ = true;
+            brush_new_point_ = true;
+            return false;
+        }
+        if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
+            if (is_drawing_) {
+                spdlog::info("Brush pen up at time={:.3f}", brush_time_);
+                brush_active_ = false;
+                brush_new_point_ = true;  // signal pen-up
+            }
+            is_drawing_ = false;
+            return false;
+        }
+        return false;
+    }
+
+    // Normal mode: left button picking/selection only
     if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS &&
         is_hovered) {
         // Trigger picking
@@ -1027,6 +1101,109 @@ std::shared_ptr<PickEvent> UsdviewEngine::consume_pick_event()
     auto event = current_pick_event_;
     current_pick_event_ = nullptr;
     return event;
+}
+
+UsdviewEngine::BrushState UsdviewEngine::consume_brush_state()
+{
+    BrushState state{brush_point_, brush_time_, brush_active_, brush_new_point_};
+    brush_new_point_ = false;
+    return state;
+}
+
+glm::vec3 UsdviewEngine::pick_world_pos(double screen_x, double screen_y)
+{
+    using namespace pxr;
+
+    if (render_buffer_size_[0] <= 0 || render_buffer_size_[1] <= 0 ||
+        !renderer_)
+        return screen_to_world(screen_x, screen_y);
+
+    // Normalize to [0, 1] then to NDC
+    float ndc_x = static_cast<float>(
+        (screen_x / render_buffer_size_[0]) * 2.0 - 1.0);
+    float ndc_y = static_cast<float>(
+        1.0 - (screen_y / render_buffer_size_[1]) * 2.0);
+
+    // Use the cached frustum (aspect-ratio-corrected) — same as picking
+    GfFrustum frustum = cached_frustum_;
+
+    auto narrowed = frustum.ComputeNarrowedFrustum(
+        {ndc_x, ndc_y},
+        {1.0 / render_buffer_size_[0], 1.0 / render_buffer_size_[1]});
+
+    UsdPrim root = stage_->get_usd_stage()->GetPseudoRoot();
+    GfVec3d point, normal;
+    SdfPath path, instancer;
+    HdInstancerContext ctx;
+    int hitInstance;
+
+    if (renderer_->TestIntersection(
+            narrowed.ComputeViewMatrix(),
+            narrowed.ComputeProjectionMatrix(),
+            root,
+            _renderParams,
+            &point,
+            &normal,
+            &path,
+            &instancer,
+            &hitInstance,
+            &ctx)) {
+        return glm::vec3(
+            static_cast<float>(point[0]),
+            static_cast<float>(point[1]),
+            static_cast<float>(point[2]));
+    }
+
+    // No hit — fallback to Z=0 plane
+    return screen_to_world(screen_x, screen_y);
+}
+
+glm::vec3 UsdviewEngine::screen_to_world(double screen_x, double screen_y)
+{
+    using namespace pxr;
+
+    if (render_buffer_size_[0] <= 0 || render_buffer_size_[1] <= 0)
+        return glm::vec3(0.0f);
+
+    // Screen → NDC
+    float ndc_x = static_cast<float>(
+        (screen_x / render_buffer_size_[0]) * 2.0 - 1.0);
+    float ndc_y = static_cast<float>(
+        1.0 - (screen_y / render_buffer_size_[1]) * 2.0);
+
+    // Use cached frustum (aspect-ratio-corrected)
+    GfFrustum frustum = cached_frustum_;
+
+    GfMatrix4d view = frustum.ComputeViewMatrix();
+    GfMatrix4d proj = frustum.ComputeProjectionMatrix();
+    GfMatrix4d vp = view * proj;
+    GfMatrix4d inv_vp = vp.GetInverse();
+
+    // Unproject near and far points using matrix * homogeneous vector
+    GfVec4d near_h = inv_vp * GfVec4d(ndc_x, ndc_y, -1.0, 1.0);
+    GfVec4d far_h = inv_vp * GfVec4d(ndc_x, ndc_y, 1.0, 1.0);
+    near_h /= near_h[3];
+    far_h /= far_h[3];
+
+    // Ray from near to far
+    GfVec3d origin(near_h[0], near_h[1], near_h[2]);
+    GfVec3d dir(
+        far_h[0] - near_h[0], far_h[1] - near_h[1],
+        far_h[2] - near_h[2]);
+
+    // Intersect with Z=0 plane (paper plane)
+    if (std::abs(dir[2]) > 1e-8) {
+        double t = -origin[2] / dir[2];
+        if (t > 0) {
+            return glm::vec3(
+                static_cast<float>(origin[0] + t * dir[0]),
+                static_cast<float>(origin[1] + t * dir[1]),
+                0.0f);
+        }
+    }
+
+    // Fallback: return NDC mapped to [-1, 1] range
+    return glm::vec3(ndc_x, ndc_y, 0.0f);
 }
 void UsdviewEngine::subscribe_to_selection_events()
 {

@@ -2,6 +2,9 @@
 
 #include <memory>
 #include <string>
+#include <vector>
+
+#include <glm/glm.hpp>
 
 #include "GUI/ImGuizmo.h"
 #include "GUI/widget.h"
@@ -46,6 +49,14 @@ class USDVIEW_WIDGET_API UsdviewEngine final : public IWidget {
 
     std::shared_ptr<PickEvent> consume_pick_event();
 
+    struct BrushState {
+        glm::vec3 point;
+        float time;
+        bool active;
+        bool new_point;
+    };
+    BrushState consume_brush_state();
+
    protected:
     ImGuiWindowFlags GetWindowFlag() override;
     const char* GetWindowName() override;
@@ -57,7 +68,7 @@ class USDVIEW_WIDGET_API UsdviewEngine final : public IWidget {
     enum class CamType { First, Third };
     struct Status {
         CamType cam_type = CamType::Third;  // Default to 3rd person camera
-        unsigned renderer_id = 1;
+        unsigned renderer_id = 0;
     } engine_status;
 
     bool is_editing_ = false;
@@ -80,6 +91,8 @@ class USDVIEW_WIDGET_API UsdviewEngine final : public IWidget {
     pxr::TfHashMap<pxr::TfToken, pxr::VtValue, pxr::TfHash> settings;
     nvrhi::TextureHandle persistent_texture;
     nvrhi::CommandListHandle command_list_;
+    ImVec2 cached_viewport_pos_ = ImVec2(0, 0);
+    ImVec2 cached_viewport_size_ = ImVec2(0, 0);
 
     void DrawMenuBar();
     void OnFrame(float delta_time);
@@ -123,6 +136,20 @@ class USDVIEW_WIDGET_API UsdviewEngine final : public IWidget {
 
     // Cached frustum for raycast during camera switching
     pxr::GfFrustum cached_frustum_;
+
+    // Brush stroke capture state
+    bool brush_mode_ = false;
+    bool is_drawing_ = false;
+    double stroke_start_time_ = 0.0;
+
+    // Per-frame brush state (consumed by Ruzino.cpp callback)
+    glm::vec3 brush_point_ = glm::vec3(0.0f);
+    float brush_time_ = 0.0f;
+    bool brush_active_ = false;
+    bool brush_new_point_ = false;
+
+    glm::vec3 pick_world_pos(double screen_x, double screen_y);
+    glm::vec3 screen_to_world(double screen_x, double screen_y);
 
     // ImGuizmo state
     ImGuizmo::OPERATION gizmo_operation_ = ImGuizmo::TRANSLATE;

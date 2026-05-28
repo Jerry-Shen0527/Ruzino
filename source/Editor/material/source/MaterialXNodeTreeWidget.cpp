@@ -810,7 +810,7 @@ void MaterialXNodeTreeWidget::initialize()
 
 std::string MaterialXNodeTreeWidget::GetWindowUniqueName()
 {
-    return "MaterialXNodeTreeWidget";
+    return "MaterialXNodeTreeWidget##" + material_path_;
 }
 
 void MaterialXNodeTreeWidget::create_new_node(ImVec2 openPopupPosition)

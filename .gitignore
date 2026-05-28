@@ -47,3 +47,4 @@ shader_cache/
 source/tests/data/output/
 **/tests/output/
 *.test_output.png
+build-debug/

@@ -336,6 +336,18 @@ void Stage::remove_prim(const pxr::SdfPath& path)
                               // Omniverse applications, they set the prim to
                               // invisible instead of removing it.
 
+    // Also remove the corresponding spec from the session/modifier layer
+    // so stale 'over' opinions don't keep the prim alive in the renderer
+    auto session_layer = stage->GetSessionLayer();
+    if (session_layer) {
+        auto spec = session_layer->GetPrimAtPath(path);
+        if (spec) {
+            pxr::SdfBatchNamespaceEdit edit;
+            edit.Add(path, pxr::SdfPath());
+            session_layer->Apply(edit);
+        }
+    }
+
 #if SAVE_ALL_THE_TIME
     stage->Save();
 #endif
@@ -383,18 +395,18 @@ pxr::UsdStageRefPtr Stage::get_usd_stage() const
 
 void Stage::create_editor_at_path(const pxr::SdfPath& sdf_path)
 {
-    create_editor_pending_path = sdf_path;
+    create_editor_pending_paths_.push_back(sdf_path);
 }
 
 bool Stage::consume_editor_creation(pxr::SdfPath& json_path, bool fully_consume)
 {
-    if (create_editor_pending_path.IsEmpty()) {
+    if (create_editor_pending_paths_.empty()) {
         return false;
     }
 
-    json_path = create_editor_pending_path;
+    json_path = create_editor_pending_paths_.front();
     if (fully_consume) {
-        create_editor_pending_path = pxr::SdfPath::EmptyPath();
+        create_editor_pending_paths_.erase(create_editor_pending_paths_.begin());
     }
     return true;
 }
@@ -431,6 +443,35 @@ std::string Stage::load_string_from_usd(const pxr::SdfPath& path)
     std::string data;
     attr.Get(&data);
     return data;
+}
+
+void Stage::save_open_editors(const std::vector<std::string>& entries)
+{
+    auto meta_path = pxr::SdfPath("/__RuzinoMetadata__");
+    auto prim = stage->DefinePrim(meta_path);
+
+    auto attr = prim.CreateAttribute(
+        pxr::TfToken("open_editors"), pxr::SdfValueTypeNames->StringArray);
+    pxr::VtArray<std::string> arr(entries.begin(), entries.end());
+    attr.Set(arr);
+}
+
+std::vector<std::string> Stage::load_open_editors()
+{
+    auto meta_path = pxr::SdfPath("/__RuzinoMetadata__");
+    auto prim = stage->GetPrimAtPath(meta_path);
+    if (!prim) {
+        return {};
+    }
+
+    auto attr = prim.GetAttribute(pxr::TfToken("open_editors"));
+    if (!attr) {
+        return {};
+    }
+
+    pxr::VtArray<std::string> arr;
+    attr.Get(&arr);
+    return std::vector<std::string>(arr.begin(), arr.end());
 }
 
 void Stage::import_usd_as_payload(
@@ -882,7 +923,7 @@ void Stage::on_prim_changed(const pxr::SdfPath& path)
         auto& dirty = registry_.get<ecs::DirtyComponent>(entity);
         dirty.needs_geometry_update = true;
 
-        spdlog::info("[Stage] Marked prim as dirty: {}", path.GetString());
+        spdlog::debug("[Stage] Marked prim as dirty: {}", path.GetString());
     }
 }
 

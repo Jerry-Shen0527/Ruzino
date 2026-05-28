@@ -1,6 +1,7 @@
 #pragma once
 #include <pxr/usd/sdf/path.h>
 #include <pxr/usd/usd/stage.h>
+#include <vector>
 #include <pxr/usd/usdLux/sphereLight.h>
 
 #include "pxr/usd/usdGeom/cube.h"
@@ -106,6 +107,10 @@ class STAGE_API Stage {
     void SaveAs(const std::string& new_path);
     bool OpenStage(const std::string& path);
 
+    // Session persistence: which editors were open
+    void save_open_editors(const std::vector<std::string>& entries);
+    std::vector<std::string> load_open_editors();
+
     // ========================================================================
     // Modifier Layer (Persistent Sidecar File)
     // ========================================================================
@@ -177,7 +182,7 @@ class STAGE_API Stage {
 
     std::string m_stage_path;
     pxr::UsdStageRefPtr stage;
-    pxr::SdfPath create_editor_pending_path;
+    std::vector<pxr::SdfPath> create_editor_pending_paths_;
     pxr::UsdTimeCode current_time_code = pxr::UsdTimeCode(0.0f);
     pxr::UsdTimeCode render_time_code = pxr::UsdTimeCode(0.0f);
     template<typename T>

@@ -117,18 +117,14 @@ ProgramDesc& ProgramDesc::set_path(const std::string& path)
 {
     this->paths.clear();
     this->paths.push_back(path);
-#ifdef _DEBUG
     update_last_write_time(path);
-#endif
     return *this;
 }
 
 ProgramDesc& ProgramDesc::add_path(const std::string& path)
 {
     this->paths.push_back(path);
-#ifdef _DEBUG
     update_last_write_time(path);
-#endif
     return *this;
 }
 
@@ -1057,10 +1053,10 @@ ProgramHandle ShaderFactory::createProgram(const ProgramDesc& desc) const
         (RHI::get_backend() == nvrhi::GraphicsAPI::VULKAN) ? SLANG_SPIRV
                                                            : SLANG_DXIL;
 
-    // Try to load from cache first
+    // Try to load from cache (includes staleness check inside)
     if (try_load_from_cache(
             modified_desc, ret->blob, ret->reflection_info, target)) {
-        // Successfully loaded from cache
+        // Successfully loaded from cache (sources unchanged)
         return ret;
     }
 
@@ -1255,7 +1251,32 @@ bool ShaderFactory::try_load_from_cache(
                 std::make_tuple(space, index);
         }
 
+        // Read cached lastWriteTime for staleness detection
+        long long cached_last_write_time = 0;
+        if (!meta_stream.read(
+                reinterpret_cast<char*>(&cached_last_write_time),
+                sizeof(cached_last_write_time))
+                     .good()) {
+            // Old cache format without lastWriteTime — treat as stale
+            meta_stream.close();
+            return false;
+        }
+
         meta_stream.close();
+
+        // Check if any source file has been modified since cache was written
+        for (const auto& path : desc.paths) {
+            auto full_path =
+                std::filesystem::path(ShaderFactory::shader_search_path) / path;
+            if (std::filesystem::exists(full_path)) {
+                auto current_time = std::filesystem::last_write_time(full_path)
+                                        .time_since_epoch()
+                                        .count();
+                if (current_time != cached_last_write_time) {
+                    return false;
+                }
+            }
+        }
 
         // Create blob from buffer using our custom implementation
         blob = Slang::ComPtr<ISlangBlob>(new CustomBlob(std::move(buffer)));
@@ -1357,6 +1378,11 @@ void ShaderFactory::save_to_cache(
             meta_stream.write(
                 reinterpret_cast<const char*>(&index), sizeof(index));
         }
+
+        // Write lastWriteTime for staleness detection
+        meta_stream.write(
+            reinterpret_cast<const char*>(&desc.lastWriteTime),
+            sizeof(desc.lastWriteTime));
 
         meta_stream.close();
     }

@@ -26,6 +26,21 @@ class GUI_API IWidget {
 
     void CallBack();
 
+    // Editor metadata for session restoration
+    virtual std::string get_associated_prim_path() const
+    {
+        return editor_prim_path_;
+    }
+    virtual std::string get_editor_type() const
+    {
+        return editor_type_;
+    }
+    void set_editor_info(const std::string& path, const std::string& type)
+    {
+        editor_prim_path_ = path;
+        editor_type_ = type;
+    }
+
     [[nodiscard]] unsigned Width() const;
     [[nodiscard]] unsigned Height() const;
 
@@ -79,6 +94,8 @@ class GUI_API IWidget {
 
    private:
     bool is_open = true;
+    std::string editor_prim_path_;
+    std::string editor_type_;
 
     friend class Window;
     friend class DockingImguiRenderer;

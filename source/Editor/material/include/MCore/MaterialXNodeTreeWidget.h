@@ -117,6 +117,15 @@ class MCORE_API MaterialXNodeTreeWidget : public NodeEditorWidgetBase {
         _fontScale = val;
     }
 
+    std::string get_associated_prim_path() const override
+    {
+        return material_path_;
+    }
+    std::string get_editor_type() const override
+    {
+        return "materialx";
+    }
+
     using UiNode = Node;
 
     ~MaterialXNodeTreeWidget() { };

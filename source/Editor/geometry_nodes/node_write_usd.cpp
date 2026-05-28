@@ -8,7 +8,9 @@
 
 #include <string>
 
+#include "GCore/Components/MeshComponent.h"
 #include "GCore/Components/CurveComponent.h"
+#include "GCore/Components/PointsComponent.h"
 #include "GCore/geom_payload.hpp"
 #include "GCore/usd_extension.h"
 #include "geom_node_base.h"
@@ -68,14 +70,21 @@ NODE_EXECUTION_FUNCTION(write_usd)
 
     auto geometry = params.get_input<Geometry>("Geometry");
 
+    auto curve = geometry.get_component<CurveComponent>();
+    auto mesh_c = geometry.get_component<MeshComponent>();
+    auto pts_c = geometry.get_component<PointsComponent>();
+    spdlog::info(
+        "[write_usd] input geometry: mesh={}, curve={}, points={}",
+        (bool)mesh_c, (bool)curve,
+        curve ? curve->get_vertices().size() : 0);
+
     pxr::UsdTimeCode time = global_payload.current_time;
 
     pxr::UsdStageRefPtr stage = global_payload.stage;
     pxr::SdfPath sdf_path = global_payload.prim_path;
 
-    spdlog::debug(
-        "[MODIFIER] write_usd called: prim_path='{}', "
-        "is_modifier_mode={}",
+    spdlog::info(
+        "[write_usd] called: prim_path='{}', is_modifier_mode={}",
         sdf_path.GetString(),
         global_payload.is_modifier_mode);
 
@@ -96,19 +105,36 @@ NODE_EXECUTION_FUNCTION(write_usd)
     }
 
     if (modifier_layer) {
-        pxr::SdfPath output_path = global_payload.modifier_output_path.IsEmpty()
-                                       ? sdf_path
-                                       : global_payload.modifier_output_path;
+        // Curves and points use direct write (modifier over spec doesn't
+        // handle them)
+        bool is_mesh = geometry.get_component<MeshComponent>() != nullptr;
+        if (!is_mesh) {
+            spdlog::info(
+                "[write_usd] non-mesh, direct write to '{}'",
+                sdf_path.GetString());
+            write_success =
+                write_geometry_to_usd(geometry, stage, sdf_path, time);
+            spdlog::info(
+                "[write_usd] write_geometry_to_usd result: {}",
+                write_success);
+        }
+        else {
+            pxr::SdfPath output_path =
+                global_payload.modifier_output_path.IsEmpty()
+                    ? sdf_path
+                    : global_payload.modifier_output_path;
 
-        spdlog::debug(
-            "[MODIFIER] Writing to modifier layer, output_path='{}'",
-            output_path.GetString());
+            spdlog::debug(
+                "[MODIFIER] Writing to modifier layer, output_path='{}'",
+                output_path.GetString());
 
         write_success = write_geometry_as_over_spec(
             geometry, stage, output_path, time, modifier_layer);
 
-        spdlog::debug(
-            "[MODIFIER] write_geometry_as_over_spec result: {}", write_success);
+        spdlog::info(
+            "[write_usd] write_geometry_as_over_spec result: {}, path={}",
+            write_success,
+            output_path.GetString());
 
         // Set Animatable attribute on root layer (not modifier layer)
         pxr::UsdPrim prim = stage->GetPrimAtPath(sdf_path);
@@ -116,6 +142,7 @@ NODE_EXECUTION_FUNCTION(write_usd)
             prim.CreateAttribute(
                     pxr::TfToken("Animatable"), pxr::SdfValueTypeNames->Bool)
                 .Set(global_payload.has_simulation);
+        }
         }
     }
     else {

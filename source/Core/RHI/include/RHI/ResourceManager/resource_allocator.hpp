@@ -110,7 +110,13 @@ class ResourceAllocator {
     }                                                     \
     CACHE_NAME(RESOURCE).clear();
 
-    void terminate() noexcept { MACRO_MAP(CLEAR_CACHE, RESOURCE_LIST) }
+    void terminate() noexcept
+    {
+        MACRO_MAP(CLEAR_CACHE, RESOURCE_LIST)
+#ifdef RUZINO_BACKEND_NVRHI
+        mRelatedBindingSets.clear();
+#endif
+    }
 
 #define FOREACH_DESTROY_DYNAMIC(RESOURCE) \
     JUDGE_RESOURCE_DYNAMIC(RESOURCE)      \
@@ -263,6 +269,26 @@ class ResourceAllocator {
     {
         auto it = cache.find(desc);
         if (it != cache.end()) {
+#ifdef RUZINO_BACKEND_NVRHI
+            if constexpr (std::is_same_v<BindingSetHandle, RESOURCE>) {
+                // Cached binding set found — verify layout matches.
+                if constexpr (sizeof...(rest) > 0) {
+                    auto requested_layout = std::get<0>(std::forward_as_tuple(rest...));
+                    auto* cached_layout = it->second.handle
+                        ? it->second.handle->getLayout() : nullptr;
+                    if (cached_layout != requested_layout) {
+                        // Layout mismatch: discard cached entry and create fresh
+                        it->second.handle = nullptr;
+                        cache.erase(it);
+                        handle = create_resource<RESOURCE>(desc, rest...);
+                        for (auto& resource : desc.bindings) {
+                            mRelatedBindingSets.emplace(resource.resourceHandle, desc);
+                        }
+                        return;
+                    }
+                }
+            }
+#endif
             // we do, move the entry to the in-use list, and remove from the
             // cache
             handle = it->second.handle;

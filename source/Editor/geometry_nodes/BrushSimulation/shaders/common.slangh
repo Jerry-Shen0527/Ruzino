@@ -66,4 +66,47 @@ float3 color_mix(float3 c_new_ryb, float3 c_old_ryb, float w_new, float w_old)
     return c_prime;
 }
 
+// ============================================================
+// Bristle model constants (Wetbrush Section 4.1)
+// ============================================================
+struct BristleConstants {
+    int num_bristles;        // N_b (40–200)
+    int verts_per_bristle;   // M (~10)
+    int samples_per_bristle; // S (~32)
+    float beta_B;            // damping [0, 0.1]
+
+    float dt;
+    float brush_pos_x, brush_pos_y, brush_pos_z;
+    float brush_vel_x, brush_vel_y, brush_vel_z;
+    float brush_angular_vel;
+    float brush_rotation;    // radians
+
+    float brush_radius;
+    float spring_k;          // stiffness
+    float damping;
+    int grid_res;
+    float cell_size;
+    float paper_size;
+    float grid_center_x, grid_center_y;
+};
+
+// ============================================================
+// FLIP/PIC particle constants (Wetbrush Section 4.3)
+// ============================================================
+struct ParticleConstants {
+    int max_particles;       // pool capacity
+    float dt;
+    float D0;                // bristle proximity distance
+    float friction_delta;    // delta in Eq.8
+
+    float flip_gamma;        // 0.8 (PIC/FLIP blend)
+    int grid_res;
+    float cell_size;
+    float paper_size;
+    float grid_center_x, grid_center_y;
+    float brush_pos_x, brush_pos_y;
+    float brush_radius;
+    int emit_mode;           // 0 = bristle samples, 1 = grid cells
+};
+
 #endif
