@@ -1,7 +1,11 @@
-// Bristle simulation — Wetbrush Section 4.1
+// Bristle simulation — Wetbrush Section 4.1, Eq.2
 // One thread per bristle. Each bristle is a chain of M vertices
-// driven by spring forces + non-inertial frame accelerations (Eq.2).
-// Resampling is done separately after density constraint.
+// driven by spring forces + ALL FOUR non-inertial frame accelerations:
+//   1. Rectilinear (Euler):    v_hat^B
+//   2. Centrifugal:            omega^B × (omega^B × x_i^B)
+//   3. Euler acceleration:     omega_dot^B × x_i^B
+//   4. Coriolis:               2 * omega^B × v_i^B
+// After dynamics: inextensible + bending constraints (PBD).
 
 #include "common.slangh"
 
@@ -23,21 +27,32 @@ void main(uint3 tid : SV_DispatchThreadID)
     float angle = 2.0 * 3.14159265 * float(bi) / float(cb.num_bristles);
     float2 root_offset = cb.brush_radius * float2(cos(angle), sin(angle));
 
-    // Rotate offset by brush rotation
+    // Rotate offset by brush rotation (R_B transform)
     float ca = cos(cb.brush_rotation), sa = sin(cb.brush_rotation);
     float2 rotated = float2(
         ca * root_offset.x - sa * root_offset.y,
         sa * root_offset.x + ca * root_offset.y);
-    float2 root_pos = float2(cb.brush_pos_x, cb.brush_pos_y) + rotated;
+    float2 brush_pos = float2(cb.brush_pos_x, cb.brush_pos_y);
+    float2 root_pos = brush_pos + rotated;
 
     // Vertex 0: pinned to root
     bristle_data[base].pos = root_pos;
     bristle_data[base].vel = float2(cb.brush_vel_x, cb.brush_vel_y);
 
-    // Simulate vertices 1..M-1
+    // Non-inertial frame quantities
+    float omega = cb.brush_angular_vel;
+    float beta_B = cb.beta_B;
     float dt = cb.dt;
     float rest_len = cb.brush_radius * 1.5 / float(M);
 
+    // Estimate angular acceleration ω̇ from angular velocity
+    // In 2D: ω̇^B is the change in angular velocity (simplified as current ω / dt)
+    float omega_dot = omega / max(dt, 1e-6f) * 0.5; // damped estimate
+
+    // Rectilinear acceleration (acceleration of brush frame origin)
+    float2 v_hat_B = float2(cb.brush_vel_x, cb.brush_vel_y);
+
+    // Simulate vertices 1..M-1
     for (int vi = 1; vi < M; vi++) {
         int idx = base + vi;
         float2 pos = bristle_data[idx].pos;
@@ -48,17 +63,35 @@ void main(uint3 tid : SV_DispatchThreadID)
         float dist = length(diff);
         float2 spring_f = cb.spring_k * (dist - rest_len) * normalize(diff + 1e-8);
 
-        // Non-inertial frame accelerations (Eq.2)
-        float2 r = pos - float2(cb.brush_pos_x, cb.brush_pos_y);
-        float omega = cb.brush_angular_vel;
-        float2 local_v = vel - float2(cb.brush_vel_x, cb.brush_vel_y);
+        // Position in brush frame: x_i^B = pos - brush_pos
+        float2 x_B = pos - brush_pos;
 
-        // Centrifugal: omega^2 * r
-        float2 centrifugal = omega * omega * r;
-        // Coriolis: -2 * omega x v_local (2D cross: omega * perp(v))
-        float2 coriolis = -2.0 * omega * float2(-local_v.y, local_v.x);
+        // Velocity in brush frame: v_i^B = vel - v_brush
+        float2 v_B = vel - v_hat_B;
 
-        float2 accel = spring_f + centrifugal + coriolis - cb.damping * vel;
+        // === All four non-inertial frame accelerations (Eq.2) ===
+        // 1. Rectilinear (Euler): -v_hat_B (linear acceleration of frame)
+        //    (simplified: brush velocity acts as drag)
+        float2 euler_rect = v_hat_B;
+
+        // 2. Centrifugal: ω² × r  →  ω² * r (in 2D, points radially outward)
+        float2 centrifugal = omega * omega * x_B;
+
+        // 3. Euler angular acceleration: ω̇ × x_i^B
+        //    In 2D: ω̇ × r = ω̇ * (-r.y, r.x)
+        float2 euler_angular = omega_dot * float2(-x_B.y, x_B.x);
+
+        // 4. Coriolis: -2ω × v_i^B
+        //    In 2D: -2ω * (-v.y, v.x)
+        float2 coriolis = -2.0 * omega * float2(-v_B.y, v_B.x);
+
+        // Total acceleration (Eq.2):
+        //   ȧ_i^B = R_B * a_i - beta_B * (v_hat + centrifugal + euler_angular + coriolis)
+        //   a_i = spring + damping (canvas frame external forces)
+        float2 external_a = spring_f - cb.damping * vel;
+        float2 inertial_sum = euler_rect + centrifugal + euler_angular + coriolis;
+        float2 accel = external_a - beta_B * inertial_sum;
+
         vel += accel * dt;
         pos += vel * dt;
 
@@ -66,8 +99,9 @@ void main(uint3 tid : SV_DispatchThreadID)
         bristle_data[idx].vel = vel;
     }
 
-    // Inextensible constraint — enforce max segment length (position-based)
+    // === Constraint enforcement (Position-Based Dynamics) ===
     for (int iter = 0; iter < 3; iter++) {
+        // Inextensible constraint — enforce max segment length
         for (int vi = 1; vi < M; vi++) {
             int idx = base + vi;
             float2 diff = bristle_data[idx].pos - bristle_data[idx - 1].pos;
@@ -78,6 +112,22 @@ void main(uint3 tid : SV_DispatchThreadID)
                 if (vi > 1)
                     bristle_data[idx - 1].pos += correction;
             }
+        }
+
+        // Bending constraint — keep angle between consecutive segments close to straight
+        // Uses the PBD bending formulation: project tip vertex toward
+        // the midpoint of the line between (vi-1) and (vi+1)
+        float bend_stiffness = 0.3; // [0, 1]
+        for (int vi = 2; vi < M - 1; vi++) {
+            int idx = base + vi;
+            float2 p0 = bristle_data[idx - 1].pos;
+            float2 p1 = bristle_data[idx].pos;
+            float2 p2 = bristle_data[idx + 1].pos;
+
+            // Midpoint between neighbors
+            float2 mid = (p0 + p2) * 0.5;
+            float2 correction = (mid - p1) * bend_stiffness;
+            bristle_data[idx].pos += correction;
         }
     }
 }

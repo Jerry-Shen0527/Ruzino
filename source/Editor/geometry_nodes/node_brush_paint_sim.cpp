@@ -157,6 +157,20 @@ void upload_constant_buffer(
     rc.destroy(cmd);
 }
 
+void reset_counter(
+    ResourceAllocator& rc, nvrhi::IDevice* device,
+    nvrhi::BufferHandle& counter_buf)
+{
+    uint32_t zero = 0;
+    auto cmd = rc.create(CommandListDesc{});
+    cmd->open();
+    cmd->writeBuffer(counter_buf, &zero, sizeof(uint32_t));
+    cmd->close();
+    device->executeCommandList(cmd);
+    device->waitForIdle();
+    rc.destroy(cmd);
+}
+
 } // anonymous namespace
 } // namespace Ruzino
 
@@ -164,25 +178,31 @@ NODE_DEF_OPEN_SCOPE
 
 // Shader constants — must match common.slangh structs
 struct SimConstants {
-    int res;
-    float cell_size;
-    float paper_size;
-    float dt;
+    int res;                // Grid XY resolution N
+    float cell_size;        // paper_size / res
+    float paper_size;       // Total paper extent (XY)
+    float dt;               // Time step
 
-    float viscosity;
-    float diffusion;
-    float drying_rate;
-    float brush_radius;
+    float viscosity;        // Viscosity coefficient
+    float diffusion;        // Diffusion rate
+    float drying_rate;      // Drying rate
+    float brush_radius;     // Brush radius (world units)
 
-    float ink_amount;
-    int num_vertices;
-    float center_x;
-    float center_y;
+    float ink_amount;       // Ink deposit amount
+    int num_vertices;       // Number of NEW curve vertices to deposit
+    float center_x;         // Grid center X (world space)
+    float center_y;         // Grid center Y (world space)
 
-    float center_z;
-    float effective_radius;
-    int jacobi_mode;
-    float jacobi_alpha;
+    float center_z;         // Grid center Z (world space)
+    float effective_radius; // max(brush_radius, cell_size * 3)
+    int jacobi_mode;        // 0 = diffuse, 1 = pressure
+    float jacobi_alpha;     // alpha for Jacobi
+
+    // --- 3D grid extension ---
+    int res_z;              // Grid Z (height) resolution D
+    float height_extent;    // Total height extent in world units
+    float grid_center_z;    // Z center
+    int _pad;
 };
 
 struct BristleConstants {
@@ -204,6 +224,10 @@ struct BristleConstants {
     float cell_size;
     float paper_size;
     float grid_center_x, grid_center_y;
+    // 3D extension
+    int grid_res_z;
+    float height_extent;
+    float grid_center_z;
 };
 
 struct ParticleConstants {
@@ -214,12 +238,35 @@ struct ParticleConstants {
 
     float flip_gamma;
     int grid_res;
+    int grid_res_z;
     float cell_size;
     float paper_size;
-    float grid_center_x, grid_center_y;
-    float brush_pos_x, brush_pos_y;
+    float height_extent;
+    float grid_center_x, grid_center_y, grid_center_z;
+    float brush_pos_x, brush_pos_y, brush_pos_z;
     float brush_radius;
     int emit_mode;
+    float D1;
+    float brush_angular_vel_z;
+};
+
+struct BristleLiquidConstants {
+    int num_bristles;
+    int samples_per_bristle;
+    float mu;
+    float M_max;
+    float M_min;
+    float rho_0;
+    float eps_emit;
+    int max_emit_per_step;
+    int grid_res;
+    int grid_res_z;
+    float cell_size;
+    float paper_size;
+    float height_extent;
+    float grid_center_x, grid_center_y, grid_center_z;
+    float D0;
+    int max_particles;
 };
 
 struct ConstraintModeCB {
@@ -234,11 +281,12 @@ struct ConstraintModeCB {
 struct PaintSimStorage {
     static constexpr bool has_storage = false;
 
-    // Grid field buffers
+    // Grid field buffers (3D: res × res × res_z)
     nvrhi::BufferHandle density, density_tmp;
     nvrhi::BufferHandle color_r, color_y, color_b, color_tmp;
     nvrhi::BufferHandle vel_x, vel_x_tmp;
     nvrhi::BufferHandle vel_y, vel_y_tmp;
+    nvrhi::BufferHandle vel_z, vel_z_tmp;          // 3D: vertical velocity
     nvrhi::BufferHandle wetness, wetness_tmp;
     nvrhi::BufferHandle height_field;
     nvrhi::BufferHandle pressure_a, pressure_b;
@@ -257,12 +305,18 @@ struct PaintSimStorage {
     nvrhi::BufferHandle sample_pos;     // float2 * Nb*S
     nvrhi::BufferHandle sample_vel;     // float2 * Nb*S
     nvrhi::BufferHandle sample_color;   // float4 * Nb*S
-    nvrhi::BufferHandle bristle_density; // N*N (accumulation)
-    nvrhi::BufferHandle bristle_vel_x;  // N*N
-    nvrhi::BufferHandle bristle_vel_y;  // N*N
-    nvrhi::BufferHandle bristle_color_r; // N*N
+    nvrhi::BufferHandle bristle_density; // N*N*D (accumulation)
+    nvrhi::BufferHandle bristle_vel_x;  // N*N*D
+    nvrhi::BufferHandle bristle_vel_y;  // N*N*D
+    nvrhi::BufferHandle bristle_vel_z;  // N*N*D
+    nvrhi::BufferHandle bristle_color_r; // N*N*D
     nvrhi::BufferHandle bristle_color_y; // N*N
     nvrhi::BufferHandle bristle_color_b; // N*N
+
+    // --- Bristle liquid transfer (Section 5.1) ---
+    nvrhi::BufferHandle sample_liquid;       // SampleLiquid * Nb*S (mass + RYB pigment)
+    nvrhi::BufferHandle sample_liquid_b;      // ping-pong for liquid transfer
+    nvrhi::BufferHandle bristle_input_color_buf; // float4: user paint color RYB
 
     // --- FLIP/PIC particles ---
     static constexpr int MAX_PARTICLES = 16384;
@@ -275,8 +329,12 @@ struct PaintSimStorage {
     nvrhi::BufferHandle ptcl_density;   // N*N
     nvrhi::BufferHandle ptcl_vel_x;     // N*N
     nvrhi::BufferHandle ptcl_vel_y;     // N*N
-    nvrhi::BufferHandle vel_x_old;      // N*N (snapshot for FLIP)
-    nvrhi::BufferHandle vel_y_old;      // N*N
+    nvrhi::BufferHandle ptcl_rast_r;    // N*N (particle rasterized RYB color)
+    nvrhi::BufferHandle ptcl_rast_y;    // N*N
+    nvrhi::BufferHandle ptcl_rast_b;    // N*N
+    nvrhi::BufferHandle vel_x_old;      // N*N*D (snapshot for FLIP)
+    nvrhi::BufferHandle vel_y_old;      // N*N*D
+    nvrhi::BufferHandle vel_z_old;      // N*N*D
     // Ping-pong particle buffers for update
     nvrhi::BufferHandle ptcl_pos_b;
     nvrhi::BufferHandle ptcl_vel_b;
@@ -300,6 +358,8 @@ struct PaintSimStorage {
     ProgramHandle bristle_resample_program;
     ProgramHandle bristle_raster_program;
     ProgramHandle bristle_merge_program;
+    ProgramHandle bri_liquid_transfer_program;  // ABSORB pass
+    ProgramHandle bri_liquid_emit_program;      // EMIT pass
     ProgramHandle field_clear_program;
 
     // Shader programs — particle
@@ -313,8 +373,11 @@ struct PaintSimStorage {
 
     // Grid state
     int grid_res = 0;
+    int grid_res_z = 0;       // Z (height) resolution, default like 32
     int grid_alloc_res = 0;
+    int grid_alloc_res_z = 0;
     float grid_paper = 0.0f;
+    float grid_height = 0.0f; // Height extent in world units
     glm::vec2 grid_center = glm::vec2(0.0f);
     float grid_center_z = 0.0f;
     bool center_initialized = false;
@@ -336,6 +399,7 @@ struct PaintSimStorage {
             release(color_r); release(color_y); release(color_b); release(color_tmp);
             release(vel_x); release(vel_x_tmp);
             release(vel_y); release(vel_y_tmp);
+            release(vel_z); release(vel_z_tmp);
             release(wetness); release(wetness_tmp);
             release(height_field);
             release(pressure_a); release(pressure_b);
@@ -343,12 +407,14 @@ struct PaintSimStorage {
             release(vertex_buf); release(color_buf);
             release(bristle_data); release(sample_pos); release(sample_vel);
             release(sample_color); release(lambda_buf);
-            release(bristle_density); release(bristle_vel_x); release(bristle_vel_y);
+            release(sample_liquid); release(sample_liquid_b); release(bristle_input_color_buf);
+            release(bristle_density); release(bristle_vel_x); release(bristle_vel_y); release(bristle_vel_z);
             release(bristle_color_r); release(bristle_color_y); release(bristle_color_b);
             release(ptcl_pos); release(ptcl_vel); release(ptcl_color);
             release(ptcl_alive); release(ptcl_counter);
             release(ptcl_density); release(ptcl_vel_x); release(ptcl_vel_y);
-            release(vel_x_old); release(vel_y_old);
+            release(ptcl_rast_r); release(ptcl_rast_y); release(ptcl_rast_b);
+            release(vel_x_old); release(vel_y_old); release(vel_z_old);
             release(ptcl_pos_b); release(ptcl_vel_b); release(ptcl_color_b); release(ptcl_alive_b);
             release(deposit_program); release(advect_program);
             release(jacobi_program); release(divergence_program);
@@ -357,6 +423,7 @@ struct PaintSimStorage {
             release(bristle_merge_program); release(field_clear_program);
             release(bristle_density_constraint_program);
             release(bristle_resample_program);
+            release(bri_liquid_transfer_program); release(bri_liquid_emit_program);
             release(ptcl_emit_program); release(ptcl_update_program);
             release(ptcl_raster_program); release(ptcl_flip_pic_program);
             release(ptcl_compact_program); release(ptcl_to_grid_program);
@@ -373,19 +440,21 @@ struct PaintSimStorage {
         destroy_buf(color_r); destroy_buf(color_y); destroy_buf(color_b); destroy_buf(color_tmp);
         destroy_buf(vel_x); destroy_buf(vel_x_tmp);
         destroy_buf(vel_y); destroy_buf(vel_y_tmp);
-        destroy_buf(wetness); destroy_buf(wetness_tmp);
+        destroy_buf(vel_z); destroy_buf(vel_z_tmp); destroy_buf(wetness_tmp);
         destroy_buf(height_field);
         destroy_buf(pressure_a); destroy_buf(pressure_b);
         destroy_buf(divergence_buf);
         destroy_buf(vertex_buf); destroy_buf(color_buf);
         destroy_buf(bristle_data); destroy_buf(sample_pos); destroy_buf(sample_vel);
         destroy_buf(sample_color); destroy_buf(lambda_buf);
-        destroy_buf(bristle_density); destroy_buf(bristle_vel_x); destroy_buf(bristle_vel_y);
+        destroy_buf(sample_liquid); destroy_buf(sample_liquid_b); destroy_buf(bristle_input_color_buf);
+        destroy_buf(bristle_density); destroy_buf(bristle_vel_x); destroy_buf(bristle_vel_y); destroy_buf(bristle_vel_z);
         destroy_buf(bristle_color_r); destroy_buf(bristle_color_y); destroy_buf(bristle_color_b);
         destroy_buf(ptcl_pos); destroy_buf(ptcl_vel); destroy_buf(ptcl_color);
         destroy_buf(ptcl_alive); destroy_buf(ptcl_counter);
         destroy_buf(ptcl_density); destroy_buf(ptcl_vel_x); destroy_buf(ptcl_vel_y);
-        destroy_buf(vel_x_old); destroy_buf(vel_y_old);
+        destroy_buf(ptcl_rast_r); destroy_buf(ptcl_rast_y); destroy_buf(ptcl_rast_b);
+        destroy_buf(vel_x_old); destroy_buf(vel_y_old); destroy_buf(vel_z_old);
         destroy_buf(ptcl_pos_b); destroy_buf(ptcl_vel_b); destroy_buf(ptcl_color_b); destroy_buf(ptcl_alive_b);
 
         auto destroy_prog = [&](ProgramHandle& h) {
@@ -398,6 +467,8 @@ struct PaintSimStorage {
         destroy_prog(bristle_merge_program); destroy_prog(field_clear_program);
         destroy_prog(bristle_density_constraint_program);
         destroy_prog(bristle_resample_program);
+        destroy_prog(bri_liquid_transfer_program);
+        destroy_prog(bri_liquid_emit_program);
         destroy_prog(ptcl_emit_program); destroy_prog(ptcl_update_program);
         destroy_prog(ptcl_raster_program); destroy_prog(ptcl_flip_pic_program);
         destroy_prog(ptcl_compact_program); destroy_prog(ptcl_to_grid_program);
@@ -413,6 +484,7 @@ NODE_DECLARATION_FUNCTION(brush_paint_sim)
 {
     b.add_input<Geometry>("Brush Strokes");
     b.add_input<int>("Resolution").default_val(512).min(64).max(2048);
+    b.add_input<int>("Resolution Z").default_val(32).min(4).max(128);
     b.add_input<float>("Paper Size").default_val(1.0f).min(0.1f).max(10.0f);
     b.add_input<float>("Brush Radius").default_val(0.02f).min(0.001f).max(0.5f);
     b.add_input<float>("Ink Amount").default_val(0.8f).min(0.0f).max(2.0f);
@@ -436,6 +508,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
 
     auto brush_strokes = params.get_input<Geometry>("Brush Strokes");
     int resolution = params.get_input<int>("Resolution");
+    int resolution_z = params.get_input<int>("Resolution Z");
     float paper_size = params.get_input<float>("Paper Size");
     float brush_radius = params.get_input<float>("Brush Radius");
     float ink_amount = params.get_input<float>("Ink Amount");
@@ -518,18 +591,28 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             extent.x + margin * 2.0f,
             extent.y + margin * 2.0f});
         storage.grid_res = resolution;
+        storage.grid_res_z = resolution_z;
+        storage.grid_height = storage.grid_paper;  // Z extent matches XY paper size for cubic voxels
         storage.center_initialized = true;
 
         spdlog::info(
-            "brush_paint_sim: grid {}x{}, paper={:.3f}, cell={:.5f}",
-            resolution, resolution, storage.grid_paper,
+            "brush_paint_sim: grid {}x{}x{}, paper={:.3f}, height={:.3f}, cell={:.5f}",
+            resolution, resolution, resolution_z, storage.grid_paper, storage.grid_height,
             storage.grid_paper / static_cast<float>(resolution));
     }
 
+    // Helper: safely destroy a buffer via resource allocator before recreation
+    auto safe_destroy_buf = [&](nvrhi::BufferHandle& h) {
+        if (h) { rc.destroy(h); h = nullptr; }
+    };
+
     // Create or resize GPU buffers
-    int n = storage.grid_res * storage.grid_res;
-    if (storage.grid_alloc_res != storage.grid_res) {
+    int n  = storage.grid_res * storage.grid_res;
+    int rz = storage.grid_res_z > 0 ? storage.grid_res_z : resolution_z;
+    int n3d = storage.grid_res * storage.grid_res * rz;
+    if (storage.grid_alloc_res != storage.grid_res || storage.grid_alloc_res_z != rz) {
         storage.grid_alloc_res = storage.grid_res;
+        storage.grid_alloc_res_z = rz;
         storage.deposited_count = 0;
         storage.last_sim_time = -1.0f;
         already_deposited = 0;
@@ -537,8 +620,30 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         storage.bristles_initialized = false;
         storage.particles_initialized = false;
 
+        // Release old grid buffers before creating new ones
+        safe_destroy_buf(storage.density);      safe_destroy_buf(storage.density_tmp);
+        safe_destroy_buf(storage.color_r);      safe_destroy_buf(storage.color_y);
+        safe_destroy_buf(storage.color_b);      safe_destroy_buf(storage.color_tmp);
+        safe_destroy_buf(storage.vel_x);        safe_destroy_buf(storage.vel_x_tmp);
+        safe_destroy_buf(storage.vel_y);        safe_destroy_buf(storage.vel_y_tmp);
+        safe_destroy_buf(storage.vel_z);        safe_destroy_buf(storage.vel_z_tmp);
+        safe_destroy_buf(storage.wetness);      safe_destroy_buf(storage.wetness_tmp);
+        safe_destroy_buf(storage.height_field);
+        safe_destroy_buf(storage.pressure_a);   safe_destroy_buf(storage.pressure_b);
+        safe_destroy_buf(storage.divergence_buf);
+        safe_destroy_buf(storage.bristle_density);  safe_destroy_buf(storage.bristle_vel_x);
+        safe_destroy_buf(storage.bristle_vel_y);    safe_destroy_buf(storage.bristle_vel_z);
+        safe_destroy_buf(storage.bristle_color_r);
+        safe_destroy_buf(storage.bristle_color_y);  safe_destroy_buf(storage.bristle_color_b);
+        safe_destroy_buf(storage.ptcl_density);     safe_destroy_buf(storage.ptcl_vel_x);
+        safe_destroy_buf(storage.ptcl_vel_y);       safe_destroy_buf(storage.ptcl_rast_r);
+        safe_destroy_buf(storage.ptcl_rast_y);     safe_destroy_buf(storage.ptcl_rast_b);
+        safe_destroy_buf(storage.vel_x_old);
+        safe_destroy_buf(storage.vel_y_old);
+        safe_destroy_buf(storage.vel_z_old);
+
         auto make_buf = [&](const char* name) -> nvrhi::BufferHandle {
-            return create_field_buffer(rc, n, name);
+            return create_field_buffer(rc, n3d, name);
         };
 
         storage.density      = make_buf("density");
@@ -550,7 +655,10 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         storage.vel_x        = make_buf("vel_x");
         storage.vel_x_tmp    = make_buf("vel_x_tmp");
         storage.vel_y        = make_buf("vel_y");
+        storage.vel_y        = make_buf("vel_y");
         storage.vel_y_tmp    = make_buf("vel_y_tmp");
+        storage.vel_z        = make_buf("vel_z");
+        storage.vel_z_tmp    = make_buf("vel_z_tmp");
         storage.wetness      = make_buf("wetness");
         storage.wetness_tmp  = make_buf("wetness_tmp");
         storage.height_field = make_buf("height");
@@ -562,37 +670,45 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         storage.bristle_density  = make_buf("bristle_density");
         storage.bristle_vel_x   = make_buf("bristle_vel_x");
         storage.bristle_vel_y   = make_buf("bristle_vel_y");
+        storage.bristle_vel_z   = make_buf("bristle_vel_z");
         storage.bristle_color_r = make_buf("bristle_color_r");
         storage.bristle_color_y = make_buf("bristle_color_y");
         storage.bristle_color_b = make_buf("bristle_color_b");
 
         // Particle accumulation grids + FLIP snapshot
-        storage.ptcl_density = make_buf("ptcl_density");
-        storage.ptcl_vel_x   = make_buf("ptcl_vel_x");
-        storage.ptcl_vel_y   = make_buf("ptcl_vel_y");
-        storage.vel_x_old    = make_buf("vel_x_old");
-        storage.vel_y_old    = make_buf("vel_y_old");
+        storage.ptcl_density  = make_buf("ptcl_density");
+        storage.ptcl_vel_x    = make_buf("ptcl_vel_x");
+        storage.ptcl_vel_y    = make_buf("ptcl_vel_y");
+        storage.ptcl_rast_r  = make_buf("ptcl_rast_r");
+        storage.ptcl_rast_y  = make_buf("ptcl_rast_y");
+        storage.ptcl_rast_b  = make_buf("ptcl_rast_b");
+        storage.vel_x_old     = make_buf("vel_x_old");
+        storage.vel_y_old     = make_buf("vel_y_old");
+        storage.vel_z_old     = make_buf("vel_z_old");
 
         // Zero-init all field buffers
-        std::vector<float> zeros(n, 0.0f);
+        std::vector<float> zeros(n3d, 0.0f);
         auto cmd = rc.create(CommandListDesc{});
         cmd->open();
         for (auto* buf : {&storage.density, &storage.density_tmp,
                           &storage.color_r, &storage.color_y, &storage.color_b,
                           &storage.color_tmp, &storage.vel_x, &storage.vel_x_tmp,
                           &storage.vel_y, &storage.vel_y_tmp,
+                          &storage.vel_z, &storage.vel_z_tmp,
                           &storage.wetness, &storage.wetness_tmp,
                           &storage.height_field,
                           &storage.pressure_a, &storage.pressure_b,
                           &storage.divergence_buf,
                           &storage.bristle_density, &storage.bristle_vel_x,
-                          &storage.bristle_vel_y,
+                          &storage.bristle_vel_y, &storage.bristle_vel_z,
                           &storage.bristle_color_r, &storage.bristle_color_y,
                           &storage.bristle_color_b,
                           &storage.ptcl_density, &storage.ptcl_vel_x,
                           &storage.ptcl_vel_y,
-                          &storage.vel_x_old, &storage.vel_y_old}) {
-            cmd->writeBuffer(*buf, zeros.data(), n * sizeof(float));
+                          &storage.ptcl_rast_r, &storage.ptcl_rast_y,
+                          &storage.ptcl_rast_b,
+                          &storage.vel_x_old, &storage.vel_y_old, &storage.vel_z_old}) {
+            cmd->writeBuffer(*buf, zeros.data(), n3d * sizeof(float));
         }
         cmd->close();
         device->executeCommandList(cmd);
@@ -606,6 +722,16 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     int S = PaintSimStorage::SAMPLES_PER_BRISTLE;
 
     if (!storage.bristles_initialized) {
+        // Release old bristle buffers before creating new ones
+        safe_destroy_buf(storage.bristle_data);
+        safe_destroy_buf(storage.lambda_buf);
+        safe_destroy_buf(storage.sample_pos);
+        safe_destroy_buf(storage.sample_vel);
+        safe_destroy_buf(storage.sample_color);
+        safe_destroy_buf(storage.sample_liquid);
+        safe_destroy_buf(storage.sample_liquid_b);
+        safe_destroy_buf(storage.bristle_input_color_buf);
+
         storage.bristle_data  = create_typed_buffer(
             rc, Nb * M, sizeof(float) * 4, "bristle_data"); // float2 pos, float2 vel
         storage.lambda_buf    = create_typed_buffer(
@@ -616,6 +742,18 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             rc, Nb * S, sizeof(float) * 2, "sample_vel");
         storage.sample_color = create_typed_buffer(
             rc, Nb * S, sizeof(float) * 4, "sample_color");
+
+        // Bristle liquid state: SampleLiquid {float mass, float3 pigment} per sample
+        storage.sample_liquid = create_typed_buffer(
+            rc, Nb * S, sizeof(float) * 4, "sample_liquid");
+
+        // Ping-pong buffer for liquid transfer
+        storage.sample_liquid_b = create_typed_buffer(
+            rc, Nb * S, sizeof(float) * 4, "sample_liquid_b");
+
+        // Single-color input for resample (user RYB paint color)
+        storage.bristle_input_color_buf = create_typed_buffer(
+            rc, 1, sizeof(float) * 4, "bristle_input_color");
 
         // Zero-init
         auto cmd = rc.create(CommandListDesc{});
@@ -630,6 +768,17 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                          Nb * S * sizeof(float) * 2);
         cmd->writeBuffer(storage.sample_color, zeros_sample.data(),
                          Nb * S * sizeof(float) * 4);
+        cmd->writeBuffer(storage.sample_liquid, zeros_sample.data(),
+                         Nb * S * sizeof(float) * 4);
+        cmd->writeBuffer(storage.sample_liquid_b, zeros_sample.data(),
+                         Nb * S * sizeof(float) * 4);
+
+        // Set user paint color (from stroke color, default RYB red)
+        glm::vec3 ink_color = (colors.size() > 0)
+            ? colors.back() : glm::vec3(1.0f, 0.0f, 0.0f);
+        float input_color[4] = { ink_color.r, ink_color.g, ink_color.b, ink_amount };
+        cmd->writeBuffer(storage.bristle_input_color_buf, input_color, sizeof(float) * 4);
+
         cmd->close();
         device->executeCommandList(cmd);
         device->waitForIdle();
@@ -641,6 +790,13 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     // Initialize particle buffers
     int max_ptcl = PaintSimStorage::MAX_PARTICLES;
     if (!storage.particles_initialized) {
+        // Release old particle buffers before creating new ones
+        safe_destroy_buf(storage.ptcl_pos);      safe_destroy_buf(storage.ptcl_vel);
+        safe_destroy_buf(storage.ptcl_color);    safe_destroy_buf(storage.ptcl_alive);
+        safe_destroy_buf(storage.ptcl_counter);
+        safe_destroy_buf(storage.ptcl_pos_b);    safe_destroy_buf(storage.ptcl_vel_b);
+        safe_destroy_buf(storage.ptcl_color_b);  safe_destroy_buf(storage.ptcl_alive_b);
+
         storage.ptcl_pos    = create_typed_buffer(rc, max_ptcl, sizeof(float) * 2, "ptcl_pos");
         storage.ptcl_vel    = create_typed_buffer(rc, max_ptcl, sizeof(float) * 2, "ptcl_vel");
         storage.ptcl_color  = create_typed_buffer(rc, max_ptcl, sizeof(float) * 4, "ptcl_color");
@@ -717,12 +873,19 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     if (!storage.grid_to_ptcl_program)
         storage.grid_to_ptcl_program = compile_shader(rc, "grid_to_particle.slang");
 
+    // Bristle liquid transfer shaders (Section 5.1)
+    if (!storage.bri_liquid_transfer_program)
+        storage.bri_liquid_transfer_program = compile_shader(rc, "bristle_liquid_transfer.slang");
+    if (!storage.bri_liquid_emit_program)
+        storage.bri_liquid_emit_program = compile_shader(rc, "bristle_liquid_emit.slang");
+
     if (!storage.deposit_program || !storage.advect_program ||
         !storage.jacobi_program || !storage.divergence_program ||
         !storage.gradient_program || !storage.damp_dry_program ||
         !storage.bristle_sim_program || !storage.bristle_density_constraint_program ||
         !storage.bristle_resample_program || !storage.bristle_raster_program ||
         !storage.bristle_merge_program || !storage.field_clear_program ||
+        !storage.bri_liquid_transfer_program || !storage.bri_liquid_emit_program ||
         !storage.ptcl_emit_program || !storage.ptcl_update_program ||
         !storage.ptcl_raster_program || !storage.ptcl_flip_pic_program ||
         !storage.ptcl_compact_program || !storage.ptcl_to_grid_program ||
@@ -782,6 +945,9 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         bc.spring_k = 50.0f;
         bc.damping = 5.0f;
         bc.grid_res = storage.grid_res;
+        bc.grid_res_z = rz;
+        bc.height_extent = storage.grid_height;
+        bc.grid_center_z = storage.grid_center_z;
         bc.cell_size = cell_sz;
         bc.paper_size = storage.grid_paper;
         bc.grid_center_x = storage.grid_center.x;
@@ -848,9 +1014,10 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             }
         }
 
-        // Step 3: Resample bristle chains → samples
+        // Step 3: Resample bristle chains → samples (with user paint color)
         dispatch_raw(rc, storage.bristle_resample_program,
-            {{"bristle_data", storage.bristle_data}},
+            {{"bristle_data", storage.bristle_data},
+             {"bristle_input_color", storage.bristle_input_color_buf}},
             {{"sample_pos", storage.sample_pos},
              {"sample_vel", storage.sample_vel},
              {"sample_color", storage.sample_color}},
@@ -859,22 +1026,25 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         // Step 4: Clear bristle accumulation grids
         dispatch_field(rc, storage.field_clear_program,
             {},
-            {{"field", storage.bristle_density}}, nullptr, n);
+            {{"field", storage.bristle_density}}, nullptr, n3d);
         dispatch_field(rc, storage.field_clear_program,
             {},
-            {{"field", storage.bristle_vel_x}}, nullptr, n);
+            {{"field", storage.bristle_vel_x}}, nullptr, n3d);
         dispatch_field(rc, storage.field_clear_program,
             {},
-            {{"field", storage.bristle_vel_y}}, nullptr, n);
+            {{"field", storage.bristle_vel_y}}, nullptr, n3d);
         dispatch_field(rc, storage.field_clear_program,
             {},
-            {{"field", storage.bristle_color_r}}, nullptr, n);
+            {{"field", storage.bristle_vel_z}}, nullptr, n3d);
         dispatch_field(rc, storage.field_clear_program,
             {},
-            {{"field", storage.bristle_color_y}}, nullptr, n);
+            {{"field", storage.bristle_color_r}}, nullptr, n3d);
         dispatch_field(rc, storage.field_clear_program,
             {},
-            {{"field", storage.bristle_color_b}}, nullptr, n);
+            {{"field", storage.bristle_color_y}}, nullptr, n3d);
+        dispatch_field(rc, storage.field_clear_program,
+            {},
+            {{"field", storage.bristle_color_b}}, nullptr, n3d);
 
         // Step 5: Rasterize samples → accumulation grids
         dispatch_raw(rc, storage.bristle_raster_program,
@@ -884,6 +1054,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             {{"bristle_density", storage.bristle_density},
              {"bristle_vel_x", storage.bristle_vel_x},
              {"bristle_vel_y", storage.bristle_vel_y},
+             {"bristle_vel_z", storage.bristle_vel_z},
              {"bristle_color_r", storage.bristle_color_r},
              {"bristle_color_y", storage.bristle_color_y},
              {"bristle_color_b", storage.bristle_color_b}},
@@ -893,6 +1064,9 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         nvrhi::BufferHandle merge_cb;
         SimConstants mc = {};
         mc.res = storage.grid_res;
+        mc.res_z = rz;
+        mc.height_extent = storage.grid_height;
+        mc.grid_center_z = storage.grid_center_z;
         mc.cell_size = cell_sz;
         mc.paper_size = storage.grid_paper;
         mc.ink_amount = ink_amount;
@@ -903,6 +1077,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             {{"bristle_density", storage.bristle_density},
              {"bristle_vel_x", storage.bristle_vel_x},
              {"bristle_vel_y", storage.bristle_vel_y},
+             {"bristle_vel_z", storage.bristle_vel_z},
              {"bristle_color_r", storage.bristle_color_r},
              {"bristle_color_y", storage.bristle_color_y},
              {"bristle_color_b", storage.bristle_color_b}},
@@ -912,11 +1087,76 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
              {"color_b", storage.color_b},
              {"vel_x", storage.vel_x},
              {"vel_y", storage.vel_y},
+             {"vel_z", storage.vel_z},
              {"wetness", storage.wetness}},
-            merge_cb, n);
+            merge_cb, n3d);
 
         rc.destroy(bristle_cb);
         rc.destroy(merge_cb);
+
+        // ================================================================
+        // Step 7: Bristle-particle liquid transfer (Section 5.1)
+        // ABSORB: grid → sample (absorb paint capacity), then
+        // EMIT: sample → particles (release if over capacity)
+        // Uses ping-pong on sample_liquid buffer (in-place for now)
+        // ================================================================
+        if (storage.particles_initialized) {
+            BristleLiquidConstants blc = {};
+            blc.num_bristles = Nb;
+            blc.samples_per_bristle = S;
+            blc.mu = 0.5f;
+            blc.M_max = 2.0f;
+            blc.M_min = 0.1f;
+            blc.rho_0 = 1e3f;
+            blc.eps_emit = 0.1f;
+            blc.max_emit_per_step = 10;
+            blc.grid_res = storage.grid_res;
+            blc.grid_res_z = rz;
+            blc.height_extent = storage.grid_height;
+            blc.grid_center_z = storage.grid_center_z;
+            blc.cell_size = cell_sz;
+            blc.paper_size = storage.grid_paper;
+            blc.grid_center_x = storage.grid_center.x;
+            blc.grid_center_y = storage.grid_center.y;
+            blc.D0 = brush_radius * 3.0f;
+            blc.max_particles = max_ptcl;
+
+            nvrhi::BufferHandle liquid_cb;
+            upload_constant_buffer(rc, device, &blc, sizeof(BristleLiquidConstants),
+                                   "liquid_cb", liquid_cb);
+
+            // Pass 0: ABSORB (paint supply → sample using Eq.12/13 capacity from ψ)
+            // Use ping-pong: sample_liquid (SRV) → sample_liquid_b (UAV)
+            dispatch_raw(rc, storage.bri_liquid_transfer_program,
+                {{"sample_pos", storage.sample_pos},
+                 {"sample_color", storage.sample_color},
+                 {"sample_liquid_in", storage.sample_liquid},
+                 {"bristle_psi", storage.bristle_density},
+                 {"grid_density", storage.density}},
+                {{"sample_liquid_out", storage.sample_liquid_b}},
+                liquid_cb, Nb * S);
+            std::swap(storage.sample_liquid, storage.sample_liquid_b);
+
+            // Pass 1: EMIT (sample → particles, hemisphere pattern)
+            // Now sample_liquid has ABSORB result, write to _b
+            reset_counter(rc, device, storage.ptcl_counter);
+            dispatch_raw(rc, storage.bri_liquid_emit_program,
+                {{"sample_pos", storage.sample_pos},
+                 {"sample_color", storage.sample_color},
+                 {"sample_liquid_in", storage.sample_liquid},
+                 {"bristle_psi", storage.bristle_density},
+                 {"grid_density", storage.density}},
+                {{"sample_liquid_out", storage.sample_liquid_b},
+                 {"ptcl_counter", storage.ptcl_counter},
+                 {"ptcl_pos_out", storage.ptcl_pos},
+                 {"ptcl_vel_out", storage.ptcl_vel},
+                 {"ptcl_color_out", storage.ptcl_color},
+                 {"ptcl_alive_out", storage.ptcl_alive}},
+                liquid_cb, Nb * S);
+            std::swap(storage.sample_liquid, storage.sample_liquid_b);
+
+            rc.destroy(liquid_cb);
+        }
     }
 
     // === PARTICLE EMIT + UPDATE ===
@@ -928,17 +1168,26 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         pc.friction_delta = brush_radius;
         pc.flip_gamma = 0.8f;
         pc.grid_res = storage.grid_res;
+        pc.grid_res_z = rz;
+        pc.height_extent = storage.grid_height;
+        pc.grid_center_z = storage.grid_center_z;
         pc.cell_size = cell_sz;
         pc.paper_size = storage.grid_paper;
         pc.grid_center_x = storage.grid_center.x;
         pc.grid_center_y = storage.grid_center.y;
         pc.brush_pos_x = brush_pos_3d.x;
         pc.brush_pos_y = brush_pos_3d.y;
+        pc.brush_pos_z = brush_pos_3d.z;
         pc.brush_radius = brush_radius;
+        pc.D1 = brush_radius * 0.5f;
+        pc.brush_angular_vel_z = brush_angular_vel;
 
         nvrhi::BufferHandle ptcl_cb;
         upload_constant_buffer(rc, device, &pc, sizeof(ParticleConstants),
                                "ptcl_cb", ptcl_cb);
+
+        // Reset particle counter before emission
+        reset_counter(rc, device, storage.ptcl_counter);
 
         // Emit from bristle samples (mode 0)
         pc.emit_mode = 0;
@@ -972,7 +1221,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
              {"ptcl_vel", storage.ptcl_vel},
              {"ptcl_color", storage.ptcl_color},
              {"ptcl_alive", storage.ptcl_alive}},
-            emit1_cb, n);
+            emit1_cb, n3d);
         rc.destroy(emit1_cb);
 
         // Update particles (ping-pong)
@@ -989,15 +1238,21 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         std::swap(storage.ptcl_vel, storage.ptcl_vel_b);
         std::swap(storage.ptcl_alive, storage.ptcl_alive_b);
 
-        // Clear particle accum grids
+        // Clear particle accum grids (density + velocity + color)
         dispatch_field(rc, storage.field_clear_program,
-            {}, {{"field", storage.ptcl_density}}, nullptr, n);
+            {}, {{"field", storage.ptcl_density}}, nullptr, n3d);
         dispatch_field(rc, storage.field_clear_program,
-            {}, {{"field", storage.ptcl_vel_x}}, nullptr, n);
+            {}, {{"field", storage.ptcl_vel_x}}, nullptr, n3d);
         dispatch_field(rc, storage.field_clear_program,
-            {}, {{"field", storage.ptcl_vel_y}}, nullptr, n);
+            {}, {{"field", storage.ptcl_vel_y}}, nullptr, n3d);
+        dispatch_field(rc, storage.field_clear_program,
+            {}, {{"field", storage.ptcl_rast_r}}, nullptr, n3d);
+        dispatch_field(rc, storage.field_clear_program,
+            {}, {{"field", storage.ptcl_rast_y}}, nullptr, n3d);
+        dispatch_field(rc, storage.field_clear_program,
+            {}, {{"field", storage.ptcl_rast_b}}, nullptr, n3d);
 
-        // Rasterize particles
+        // Rasterize particles (density + velocity + RYB color)
         dispatch_raw(rc, storage.ptcl_raster_program,
             {{"ptcl_pos", storage.ptcl_pos},
              {"ptcl_color", storage.ptcl_color},
@@ -1005,11 +1260,13 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
              {"ptcl_alive", storage.ptcl_alive}},
             {{"ptcl_density", storage.ptcl_density},
              {"ptcl_vel_x", storage.ptcl_vel_x},
-             {"ptcl_vel_y", storage.ptcl_vel_y}},
+             {"ptcl_vel_y", storage.ptcl_vel_y},
+             {"ptcl_color_r", storage.ptcl_rast_r},
+             {"ptcl_color_y", storage.ptcl_rast_y},
+             {"ptcl_color_b", storage.ptcl_rast_b}},
             ptcl_cb, max_ptcl);
 
         // Merge particle grids into main grids (reuse bristle merge logic)
-        // Simple additive merge for particle contribution
         nvrhi::BufferHandle merge_cb;
         SimConstants mc2 = {};
         mc2.res = storage.grid_res;
@@ -1023,17 +1280,18 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             {{"bristle_density", storage.ptcl_density},
              {"bristle_vel_x", storage.ptcl_vel_x},
              {"bristle_vel_y", storage.ptcl_vel_y},
-             {"bristle_color_r", storage.ptcl_density},  // reuse density as color placeholder
-             {"bristle_color_y", storage.ptcl_density},
-             {"bristle_color_b", storage.ptcl_density}},
+             {"bristle_color_r", storage.ptcl_rast_r},
+             {"bristle_color_y", storage.ptcl_rast_y},
+             {"bristle_color_b", storage.ptcl_rast_b}},
             {{"density", storage.density},
              {"color_r", storage.color_r},
              {"color_y", storage.color_y},
              {"color_b", storage.color_b},
              {"vel_x", storage.vel_x},
              {"vel_y", storage.vel_y},
+             {"vel_z", storage.vel_z},
              {"wetness", storage.wetness}},
-            merge_cb, n);
+            merge_cb, n3d);
         rc.destroy(merge_cb);
 
         rc.destroy(ptcl_cb);
@@ -1096,6 +1354,9 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
 
         SimConstants dep_cb = {};
         dep_cb.res = storage.grid_res;
+        dep_cb.res_z = rz;
+        dep_cb.height_extent = storage.grid_height;
+        dep_cb.grid_center_z = storage.grid_center_z;
         dep_cb.cell_size = cell_sz;
         dep_cb.paper_size = storage.grid_paper;
         dep_cb.dt = 0.0f;
@@ -1120,6 +1381,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         vars["color_b"] = storage.color_b.Get();
         vars["vel_x"] = storage.vel_x.Get();
         vars["vel_y"] = storage.vel_y.Get();
+        vars["vel_z"] = storage.vel_z.Get();
         vars["wetness"] = storage.wetness.Get();
         vars["height"] = storage.height_field.Get();
         vars.finish_setting_vars();
@@ -1162,11 +1424,14 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         int substeps = std::max(1, static_cast<int>(std::ceil(sim_dt / max_sub_dt)));
         substeps = std::min(substeps, 16);
         float sub_dt = sim_dt / static_cast<float>(substeps);
-        int total = storage.grid_res * storage.grid_res;
+        int total = storage.grid_res * storage.grid_res * rz;
 
         for (int s = 0; s < substeps; s++) {
             SimConstants fluid_cb = {};
             fluid_cb.res = storage.grid_res;
+            fluid_cb.res_z = rz;
+            fluid_cb.height_extent = storage.grid_height;
+            fluid_cb.grid_center_z = storage.grid_center_z;
             fluid_cb.cell_size = cell_sz;
             fluid_cb.paper_size = storage.grid_paper;
             fluid_cb.dt = sub_dt;
@@ -1182,8 +1447,9 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             {
                 auto snap_cmd = rc.create(CommandListDesc{});
                 snap_cmd->open();
-                snap_cmd->copyBuffer(storage.vel_x_old, 0, storage.vel_x, 0, n * sizeof(float));
-                snap_cmd->copyBuffer(storage.vel_y_old, 0, storage.vel_y, 0, n * sizeof(float));
+                snap_cmd->copyBuffer(storage.vel_x_old, 0, storage.vel_x, 0, n3d * sizeof(float));
+                snap_cmd->copyBuffer(storage.vel_y_old, 0, storage.vel_y, 0, n3d * sizeof(float));
+                snap_cmd->copyBuffer(storage.vel_z_old, 0, storage.vel_z, 0, n3d * sizeof(float));
                 snap_cmd->close();
                 device->executeCommandList(snap_cmd);
                 device->waitForIdle();
@@ -1209,13 +1475,18 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                     {{"field_out", storage.vel_y_tmp}}, jcb, total);
                 std::swap(storage.vel_y, storage.vel_y_tmp);
 
+                dispatch_field(rc, storage.jacobi_program,
+                    {{"field_in", storage.vel_z}, {"rhs", storage.vel_z}},
+                    {{"field_out", storage.vel_z_tmp}}, jcb, total);
+                std::swap(storage.vel_z, storage.vel_z_tmp);
+
                 rc.destroy(jcb);
             }
 
             // Project (Fixed-point, Algorithm 1: L=3, 2 Jacobi per L)
             for (int fp = 0; fp < 3; fp++) {
                 dispatch_field(rc, storage.divergence_program,
-                    {{"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}},
+                    {{"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
                     {{"div_out", storage.divergence_buf}}, cb_buf, total);
 
                 fluid_cb.jacobi_mode = 1;
@@ -1234,27 +1505,33 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
 
                 dispatch_field(rc, storage.gradient_program,
                     {{"pressure", storage.pressure_a}},
-                    {{"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}},
+                    {{"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
                     cb_buf, total);
             }
 
             // Advect velocity
             dispatch_field(rc, storage.advect_program,
                 {{"field_in", storage.vel_x},
-                 {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}},
+                 {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
                 {{"field_out", storage.vel_x_tmp}}, cb_buf, total);
             std::swap(storage.vel_x, storage.vel_x_tmp);
 
             dispatch_field(rc, storage.advect_program,
                 {{"field_in", storage.vel_y},
-                 {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}},
+                 {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
                 {{"field_out", storage.vel_y_tmp}}, cb_buf, total);
             std::swap(storage.vel_y, storage.vel_y_tmp);
+
+            dispatch_field(rc, storage.advect_program,
+                {{"field_in", storage.vel_z},
+                 {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
+                {{"field_out", storage.vel_z_tmp}}, cb_buf, total);
+            std::swap(storage.vel_z, storage.vel_z_tmp);
 
             // Project again
             for (int fp = 0; fp < 3; fp++) {
                 dispatch_field(rc, storage.divergence_program,
-                    {{"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}},
+                    {{"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
                     {{"div_out", storage.divergence_buf}}, cb_buf, total);
 
                 fluid_cb.jacobi_mode = 1;
@@ -1273,38 +1550,38 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
 
                 dispatch_field(rc, storage.gradient_program,
                     {{"pressure", storage.pressure_a}},
-                    {{"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}},
+                    {{"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
                     cb_buf, total);
             }
 
             // --- Scalar step ---
             dispatch_field(rc, storage.advect_program,
                 {{"field_in", storage.density},
-                 {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}},
+                 {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
                 {{"field_out", storage.density_tmp}}, cb_buf, total);
             std::swap(storage.density, storage.density_tmp);
 
             dispatch_field(rc, storage.advect_program,
                 {{"field_in", storage.color_r},
-                 {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}},
+                 {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
                 {{"field_out", storage.color_tmp}}, cb_buf, total);
             std::swap(storage.color_r, storage.color_tmp);
 
             dispatch_field(rc, storage.advect_program,
                 {{"field_in", storage.color_y},
-                 {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}},
+                 {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
                 {{"field_out", storage.color_tmp}}, cb_buf, total);
             std::swap(storage.color_y, storage.color_tmp);
 
             dispatch_field(rc, storage.advect_program,
                 {{"field_in", storage.color_b},
-                 {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}},
+                 {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
                 {{"field_out", storage.color_tmp}}, cb_buf, total);
             std::swap(storage.color_b, storage.color_tmp);
 
             dispatch_field(rc, storage.advect_program,
                 {{"field_in", storage.wetness},
-                 {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}},
+                 {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
                 {{"field_out", storage.wetness_tmp}}, cb_buf, total);
             std::swap(storage.wetness, storage.wetness_tmp);
 
@@ -1332,7 +1609,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             // Damp + dry
             dispatch_field(rc, storage.damp_dry_program,
                 {},
-                {{"vel_x", storage.vel_x}, {"vel_y", storage.vel_y},
+                {{"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z},
                  {"wetness", storage.wetness}},
                 cb_buf, total);
 
@@ -1344,12 +1621,16 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                 pc.D0 = brush_radius * 3.0f;
                 pc.flip_gamma = 0.8f;
                 pc.grid_res = storage.grid_res;
+                pc.grid_res_z = rz;
+                pc.height_extent = storage.grid_height;
+                pc.grid_center_z = storage.grid_center_z;
                 pc.cell_size = cell_sz;
                 pc.paper_size = storage.grid_paper;
                 pc.grid_center_x = storage.grid_center.x;
                 pc.grid_center_y = storage.grid_center.y;
                 pc.brush_pos_x = brush_pos_3d.x;
                 pc.brush_pos_y = brush_pos_3d.y;
+                pc.brush_pos_z = brush_pos_3d.z;
                 pc.brush_radius = brush_radius;
 
                 nvrhi::BufferHandle flip_cb;
@@ -1361,8 +1642,10 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                      {"ptcl_alive", storage.ptcl_alive},
                      {"vel_x_old", storage.vel_x_old},
                      {"vel_y_old", storage.vel_y_old},
+                     {"vel_z_old", storage.vel_z_old},
                      {"vel_x_new", storage.vel_x},
-                     {"vel_y_new", storage.vel_y}},
+                     {"vel_y_new", storage.vel_y},
+                     {"vel_z_new", storage.vel_z}},
                     {{"ptcl_vel", storage.ptcl_vel}},
                     flip_cb, max_ptcl);
 
@@ -1380,23 +1663,32 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         pc.dt = 0.016f;
         pc.D0 = brush_radius * 3.0f;
         pc.grid_res = storage.grid_res;
+        pc.grid_res_z = rz;
+        pc.height_extent = storage.grid_height;
+        pc.grid_center_z = storage.grid_center_z;
         pc.cell_size = cell_sz;
         pc.paper_size = storage.grid_paper;
         pc.grid_center_x = storage.grid_center.x;
         pc.grid_center_y = storage.grid_center.y;
         pc.brush_pos_x = brush_pos_3d.x;
         pc.brush_pos_y = brush_pos_3d.y;
+        pc.brush_pos_z = brush_pos_3d.z;
         pc.brush_radius = brush_radius;
 
         nvrhi::BufferHandle maint_cb;
         upload_constant_buffer(rc, device, &pc, sizeof(ParticleConstants),
                                "maint_cb", maint_cb);
 
-        // Particle to grid (absorb distant particles)
+        // Particle to grid (absorb distant slow particles, Section 5.2 Eq.16)
         dispatch_raw(rc, storage.ptcl_to_grid_program,
             {{"ptcl_pos", storage.ptcl_pos},
+             {"ptcl_vel", storage.ptcl_vel},
              {"ptcl_color", storage.ptcl_color},
-             {"ptcl_alive", storage.ptcl_alive}},
+             {"ptcl_alive", storage.ptcl_alive},
+             {"grid_density_in", storage.density},
+             {"grid_color_r_in", storage.color_r},
+             {"grid_color_y_in", storage.color_y},
+             {"grid_color_b_in", storage.color_b}},
             {{"density", storage.density},
              {"color_r", storage.color_r},
              {"color_y", storage.color_y},
@@ -1405,18 +1697,30 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             maint_cb, max_ptcl);
         std::swap(storage.ptcl_alive, storage.ptcl_alive_b);
 
-        // Grid to particle (emit near brush)
+        // Reset counter again before grid-to-particle emission
+        reset_counter(rc, device, storage.ptcl_counter);
+
+        // Grid to particle (emit near brush, with stratified sampling + Eq.15 density subtraction)
+        // Uses density_tmp as output to avoid read-write hazard, then swap
         dispatch_raw(rc, storage.grid_to_ptcl_program,
             {{"density", storage.density},
              {"color_r", storage.color_r},
              {"color_y", storage.color_y},
-             {"color_b", storage.color_b}},
+             {"color_b", storage.color_b},
+             {"vel_x", storage.vel_x},
+             {"vel_y", storage.vel_y},
+             {"vel_z", storage.vel_z}},
             {{"ptcl_counter", storage.ptcl_counter},
              {"ptcl_pos", storage.ptcl_pos},
              {"ptcl_vel", storage.ptcl_vel},
              {"ptcl_color", storage.ptcl_color},
-             {"ptcl_alive", storage.ptcl_alive}},
-            maint_cb, n);
+             {"ptcl_alive", storage.ptcl_alive},
+             {"density_out", storage.density_tmp}},  // Eq.15: density reduced to tmp
+            maint_cb, n3d);
+        std::swap(storage.density, storage.density_tmp);
+
+        // Reset counter before compaction
+        reset_counter(rc, device, storage.ptcl_counter);
 
         // Particle compaction
         dispatch_raw(rc, storage.ptcl_compact_program,
@@ -1439,20 +1743,21 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     }
 
     // === READBACK ===
+    int readback_n = n3d;
     auto readback = [&](nvrhi::BufferHandle field) -> std::vector<float> {
-        std::vector<float> data(n);
+        std::vector<float> data(readback_n);
         auto rb = rc.create(nvrhi::BufferDesc{}
-            .setByteSize(n * sizeof(float))
+            .setByteSize(readback_n * sizeof(float))
             .setCpuAccess(nvrhi::CpuAccessMode::Read)
             .setDebugName("readback"));
         auto cmd = rc.create(CommandListDesc{});
         cmd->open();
-        cmd->copyBuffer(rb, 0, field, 0, n * sizeof(float));
+        cmd->copyBuffer(rb, 0, field, 0, readback_n * sizeof(float));
         cmd->close();
         device->executeCommandList(cmd);
         device->waitForIdle();
         void* mapped = device->mapBuffer(rb, nvrhi::CpuAccessMode::Read);
-        memcpy(data.data(), mapped, n * sizeof(float));
+        memcpy(data.data(), mapped, readback_n * sizeof(float));
         device->unmapBuffer(rb);
         rc.destroy(rb);
         rc.destroy(cmd);
@@ -1470,28 +1775,35 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     std::vector<float> out_widths;
 
     constexpr float threshold = 0.001f;
-    int step = std::max(1, storage.grid_res / 64);
+    int step_xy = std::max(1, storage.grid_res / 64);
+    int step_z  = std::max(1, rz / 16);
+    float cell_sz_z = storage.grid_height / static_cast<float>(rz);
 
-    for (int y = 0; y < storage.grid_res; y += step) {
-        for (int x = 0; x < storage.grid_res; x += step) {
-            int gi = y * storage.grid_res + x;
-            if (density_cpu[gi] > threshold) {
-                float gx = (x + 0.5f) * cell_sz - storage.grid_paper * 0.5f;
-                float gy = (y + 0.5f) * cell_sz - storage.grid_paper * 0.5f;
-                out_pts.push_back(glm::vec3(
-                    gx + storage.grid_center.x,
-                    gy + storage.grid_center.y,
-                    storage.grid_center_z));
+    // Collapse 3D grid into 2D visualization by accumulating along Z
+    for (int z = 0; z < rz; z += step_z) {
+        for (int y = 0; y < storage.grid_res; y += step_xy) {
+            for (int x = 0; x < storage.grid_res; x += step_xy) {
+                int gi = z * storage.grid_res * storage.grid_res
+                       + y * storage.grid_res + x;
+                if (density_cpu[gi] > threshold) {
+                    float gx = (x + 0.5f) * cell_sz - storage.grid_paper * 0.5f;
+                    float gy = (y + 0.5f) * cell_sz - storage.grid_paper * 0.5f;
+                    float gz = (z + 0.5f) * cell_sz_z - storage.grid_height * 0.5f;
+                    out_pts.push_back(glm::vec3(
+                        gx + storage.grid_center.x,
+                        gy + storage.grid_center.y,
+                        gz + storage.grid_center_z));
 
-                float r = cr_cpu[gi], yy = cy_cpu[gi], b = cb_cpu[gi];
-                float rm = 1-r, ym = 1-yy, bm = 1-b;
-                glm::vec3 rgb = rm*ym*bm*glm::vec3(1,1,1) + r*ym*bm*glm::vec3(1,0,0)
-                    + rm*yy*bm*glm::vec3(1,1,0) + rm*ym*b*glm::vec3(0.163f,0.373f,0.6f)
-                    + r*yy*bm*glm::vec3(1,0.5f,0) + r*ym*b*glm::vec3(0.5f,0,0.5f)
-                    + rm*yy*b*glm::vec3(0,0.66f,0.2f) + r*yy*b*glm::vec3(0.2f,0.094f,0.029f);
-                out_colors.push_back(rgb);
-                out_widths.push_back(
-                    cell_sz * step * std::min(density_cpu[gi], 1.0f));
+                    float r = cr_cpu[gi], yy = cy_cpu[gi], b = cb_cpu[gi];
+                    float rm = 1-r, ym = 1-yy, bm = 1-b;
+                    glm::vec3 rgb = rm*ym*bm*glm::vec3(1,1,1) + r*ym*bm*glm::vec3(1,0,0)
+                        + rm*yy*bm*glm::vec3(1,1,0) + rm*ym*b*glm::vec3(0.163f,0.373f,0.6f)
+                        + r*yy*bm*glm::vec3(1,0.5f,0) + r*ym*b*glm::vec3(0.5f,0,0.5f)
+                        + rm*yy*b*glm::vec3(0,0.66f,0.2f) + r*yy*b*glm::vec3(0.2f,0.094f,0.029f);
+                    out_colors.push_back(rgb);
+                    out_widths.push_back(
+                        cell_sz * step_xy * std::min(density_cpu[gi], 1.0f));
+                }
             }
         }
     }

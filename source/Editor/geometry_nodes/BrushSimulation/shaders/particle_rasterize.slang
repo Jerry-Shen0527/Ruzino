@@ -1,5 +1,8 @@
-// Particle rasterization — splat particle density/velocity to accumulation grids
+// Particle rasterization — splat particle density/velocity/color to accumulation grids
 // max_particles threads, alive only
+// Bilinear splat to 2x2 cells. Low collision probability since particles
+// are spread across the grid; rare races are compensated by merge normalization.
+// Rasterizes RYB color channels weighted by particle mass for proper color transfer.
 
 #include "common.slangh"
 
@@ -11,6 +14,10 @@ StructuredBuffer<uint> ptcl_alive : register(t3);
 RWStructuredBuffer<float> ptcl_density : register(u0);
 RWStructuredBuffer<float> ptcl_vel_x : register(u1);
 RWStructuredBuffer<float> ptcl_vel_y : register(u2);
+// Color channels: RYB weighted by mass (for merge into main grid)
+RWStructuredBuffer<float> ptcl_color_r : register(u3);
+RWStructuredBuffer<float> ptcl_color_y : register(u4);
+RWStructuredBuffer<float> ptcl_color_b : register(u5);
 
 [numthreads(256, 1, 1)]
 void main(uint3 tid : SV_DispatchThreadID)
@@ -20,7 +27,7 @@ void main(uint3 tid : SV_DispatchThreadID)
     if (ptcl_alive[idx] == 0) return;
 
     float2 pos = ptcl_pos[idx];
-    float4 col = ptcl_color[idx];
+    float4 col = ptcl_color[idx];  // RYB pigment + mass in w
     float2 vel = ptcl_vel[idx];
 
     float half_p = cb.paper_size * 0.5;
@@ -35,6 +42,8 @@ void main(uint3 tid : SV_DispatchThreadID)
     float fy = gy - float(iy);
 
     float deposit = col.w * 0.1;
+    // Color deposit weighted by mass and bilinear weights
+    float3 color_deposit = col.rgb * col.w * 0.1;
 
     for (int dy = 0; dy <= 1; dy++) {
         for (int dx = 0; dx <= 1; dx++) {
@@ -47,8 +56,12 @@ void main(uint3 tid : SV_DispatchThreadID)
             uint gi = grid_idx(uint(nx), uint(ny), cb.grid_res);
 
             ptcl_density[gi] += deposit * w;
-            ptcl_vel_x[gi] += vel.x * deposit * w;
-            ptcl_vel_y[gi] += vel.y * deposit * w;
+            ptcl_vel_x[gi]   += vel.x * deposit * w;
+            ptcl_vel_y[gi]   += vel.y * deposit * w;
+            // Rasterize RYB color channels
+            ptcl_color_r[gi] += color_deposit.r * w;
+            ptcl_color_y[gi] += color_deposit.g * w;
+            ptcl_color_b[gi] += color_deposit.b * w;
         }
     }
 }

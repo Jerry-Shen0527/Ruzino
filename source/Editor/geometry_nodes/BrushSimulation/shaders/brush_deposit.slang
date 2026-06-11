@@ -1,6 +1,9 @@
-// Brush deposit shader — deposits paint from curve vertices into 2D grid
+// Brush deposit shader — deposits paint from curve vertices into 3D grid
 // Single-threaded to avoid race conditions; processes all vertices sequentially.
 // Uses brightness-preserving RYB color mixing (Wetbrush Algorithm 2).
+// 3D: deposits paint in a volume column around each vertex,
+// with Gaussian falloff along the Z (height) axis.
+// Wetbrush: brush deposits paint in the 3D density field with sub-pixel detail.
 
 #include "common.slangh"
 
@@ -10,22 +13,25 @@ ConstantBuffer<SimConstants> cb : register(b0);
 StructuredBuffer<float4> vertices : register(t0);  // (x, y, z, timestamp)
 StructuredBuffer<float4> colors   : register(t1);  // (r, y, b, pressure)
 
-// Grid fields (RW)
+// Grid fields (RW) — 3D volume: res × res × res_z
 RWStructuredBuffer<float> density  : register(u0);
 RWStructuredBuffer<float> color_r  : register(u1);
 RWStructuredBuffer<float> color_y  : register(u2);
 RWStructuredBuffer<float> color_b  : register(u3);
 RWStructuredBuffer<float> vel_x    : register(u4);
 RWStructuredBuffer<float> vel_y    : register(u5);
-RWStructuredBuffer<float> wetness  : register(u6);
-RWStructuredBuffer<float> height   : register(u7);
+RWStructuredBuffer<float> vel_z    : register(u6);
+RWStructuredBuffer<float> wetness  : register(u7);
+RWStructuredBuffer<float> height   : register(u8);
 
 [numthreads(1, 1, 1)]
 void main(uint3 dtid : SV_DispatchThreadID)
 {
     int N = cb.res;
+    int D = cb.res_z;
     float half_paper = cb.paper_size * 0.5f;
-    int spread = max(1, (int)ceil(cb.effective_radius / cb.cell_size));
+    int spread_xy = max(1, (int)ceil(cb.effective_radius / cb.cell_size));
+    int spread_z = max(1, (int)ceil(cb.effective_radius / cb.cell_size));
 
     float prev_gx = 0.0f, prev_gy = 0.0f;
     float prev_time = -1.0f;
@@ -38,46 +44,56 @@ void main(uint3 dtid : SV_DispatchThreadID)
         // World → grid coordinates
         float gx = (pos.x - cb.center_x + half_paper) / cb.cell_size;
         float gy = (pos.y - cb.center_y + half_paper) / cb.cell_size;
+        // Z: brush touches at z=cb.center_z (paper surface), deposit upward
+        float gz = (pos.z - cb.grid_center_z + cb.height_extent * 0.5f) / cb.cell_size;
 
         int cx = (int)gx;
         int cy = (int)gy;
+        int cz_sat = max(0, min((int)gz, D - 1));
 
         float inv_r = (cb.effective_radius > 1e-8f) ?
                        1.0f / cb.effective_radius : 0.0f;
 
-        // Deposit paint in neighborhood
-        for (int dy = -spread; dy <= spread; dy++)
+        // Deposit paint in 3D neighborhood
+        for (int dz = -spread_z; dz <= spread_z; dz++)
         {
-            for (int dx = -spread; dx <= spread; dx++)
+            for (int dy = -spread_xy; dy <= spread_xy; dy++)
             {
-                int px = cx + dx;
-                int py = cy + dy;
-                if (px < 0 || px >= N || py < 0 || py >= N) continue;
-
-                float dist = sqrt((float)(dx*dx + dy*dy)) * cb.cell_size;
-                if (dist >= cb.effective_radius) continue;
-
-                float w = 1.0f - dist * inv_r;
-                w *= w;
-                float dep = cb.ink_amount * 0.1f * w;
-
-                uint idx = grid_idx((uint)px, (uint)py, N);
-                float old_d = density[idx];
-                float new_d = old_d + dep;
-
-                // Brightness-preserving RYB color mixing (Algorithm 2)
-                if (new_d > 1e-6f)
+                for (int dx = -spread_xy; dx <= spread_xy; dx++)
                 {
-                    float3 old_ryb = float3(color_r[idx], color_y[idx], color_b[idx]);
-                    float3 new_ryb = color_mix(col.xyz, old_ryb, dep, old_d);
-                    color_r[idx] = new_ryb.r;
-                    color_y[idx] = new_ryb.g;
-                    color_b[idx] = new_ryb.b;
-                }
+                    int px = cx + dx;
+                    int py = cy + dy;
+                    int pz = cz_sat + dz;
+                    if (px < 0 || px >= N || py < 0 || py >= N || pz < 0 || pz >= D)
+                        continue;
 
-                density[idx] = new_d;
-                wetness[idx] = min(wetness[idx] + dep * 2.0f, 1.0f);
-                height[idx] += dep;
+                    float dist_xy = sqrt((float)(dx*dx + dy*dy)) * cb.cell_size;
+                    float dist_z = (float)dz * cb.cell_size;
+                    float dist = sqrt(dist_xy * dist_xy + dist_z * dist_z);
+                    if (dist >= cb.effective_radius) continue;
+
+                    float w = 1.0f - dist * inv_r;
+                    w *= w;
+                    float dep = cb.ink_amount * 0.1f * w;
+
+                    uint idx = grid_idx_3d((uint)px, (uint)py, (uint)pz, N, D);
+                    float old_d = density[idx];
+                    float new_d = old_d + dep;
+
+                    // Brightness-preserving RYB color mixing (Algorithm 2)
+                    if (new_d > 1e-6f)
+                    {
+                        float3 old_ryb = float3(color_r[idx], color_y[idx], color_b[idx]);
+                        float3 new_ryb = color_mix(col.xyz, old_ryb, dep, old_d);
+                        color_r[idx] = new_ryb.r;
+                        color_y[idx] = new_ryb.g;
+                        color_b[idx] = new_ryb.b;
+                    }
+
+                    density[idx] = new_d;
+                    wetness[idx] = min(wetness[idx] + dep * 2.0f, 1.0f);
+                    height[idx] += dep;
+                }
             }
         }
 
@@ -87,25 +103,30 @@ void main(uint3 dtid : SV_DispatchThreadID)
             float dt_v = pos.w - prev_time;
             if (dt_v > 1e-6f)
             {
-                // Grid-space velocity in Stam units (grid / N per second)
                 float vx_stam = (gx - prev_gx) / dt_v / (float)N;
                 float vy_stam = (gy - prev_gy) / dt_v / (float)N;
 
-                for (int dy2 = -spread; dy2 <= spread; dy2++)
+                for (int dz2 = -spread_z; dz2 <= spread_z; dz2++)
                 {
-                    for (int dx2 = -spread; dx2 <= spread; dx2++)
+                    for (int dy2 = -spread_xy; dy2 <= spread_xy; dy2++)
                     {
-                        int px2 = cx + dx2;
-                        int py2 = cy + dy2;
-                        if (px2 < 0 || px2 >= N || py2 < 0 || py2 >= N) continue;
+                        for (int dx2 = -spread_xy; dx2 <= spread_xy; dx2++)
+                        {
+                            int px2 = cx + dx2;
+                            int py2 = cy + dy2;
+                            int pz2 = cz_sat + dz2;
+                            if (px2 < 0 || px2 >= N || py2 < 0 || py2 >= N
+                                || pz2 < 0 || pz2 >= D) continue;
 
-                        float dist2 = sqrt((float)(dx2*dx2 + dy2*dy2)) * cb.cell_size;
-                        if (dist2 >= cb.effective_radius) continue;
+                            float dist2 = sqrt((float)(dx2*dx2 + dy2*dy2 + dz2*dz2))
+                                * cb.cell_size;
+                            if (dist2 >= cb.effective_radius) continue;
 
-                        float w2 = 1.0f - dist2 / cb.effective_radius;
-                        uint idx2 = grid_idx((uint)px2, (uint)py2, N);
-                        vel_x[idx2] += vx_stam * w2;
-                        vel_y[idx2] += vy_stam * w2;
+                            float w2 = 1.0f - dist2 / cb.effective_radius;
+                            uint idx2 = grid_idx_3d((uint)px2, (uint)py2, (uint)pz2, N, D);
+                            vel_x[idx2] += vx_stam * w2;
+                            vel_y[idx2] += vy_stam * w2;
+                        }
                     }
                 }
             }
