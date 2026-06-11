@@ -74,7 +74,7 @@ void main(uint3 tid : SV_DispatchThreadID)
             // Weight-by-density linear interpolation in RYB space,
             // then brightness-corrected using Algorithm 2.
             float w_new = col.w * w;
-            float w_old = existing_density;
+            float w_old = density[gi];
             float3 existing_ryb = float3(
                 max(grid_color_r_in[gi], 0.0),
                 max(grid_color_y_in[gi], 0.0),
