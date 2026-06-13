@@ -10,8 +10,17 @@ ConstantBuffer<SimConstants> cb : register(b0);
 
 StructuredBuffer<float> field_in : register(t0);
 StructuredBuffer<float> rhs     : register(t1);
+// Boundary-condition field for pressure projection (Wetbrush §4.2):
+// solid cells get a fixed (Dirichlet) pressure of 0.
+StructuredBuffer<float> bristle_psi : register(t2);
+StructuredBuffer<float> wetness    : register(t3);
 
 RWStructuredBuffer<float> field_out : register(u0);
+
+bool is_solid(uint idx)
+{
+    return bristle_psi[idx] > 0.5 || wetness[idx] < 0.01;
+}
 
 [numthreads(256, 1, 1)]
 void main(uint3 dtid : SV_DispatchThreadID)
@@ -26,20 +35,32 @@ void main(uint3 dtid : SV_DispatchThreadID)
 
     float center = field_in[idx];
 
-    // 6-neighbor stencil with Neumann boundary (global grid bounds)
-    float left   = (x > 0)           ? field_in[idx - 1]  : center;
-    float right  = (x < (uint)N - 1) ? field_in[idx + 1]  : center;
-    float up     = (y > 0)           ? field_in[idx - (uint)N] : center;
-    float down   = (y < (uint)N - 1) ? field_in[idx + (uint)N] : center;
-    float back   = (z > 0)           ? field_in[idx - NN] : center;
-    float front  = (z < (uint)D - 1) ? field_in[idx + NN] : center;
-    float sum = left + right + up + down + back + front;
-
     if (cb.jacobi_mode == 1) {
-        // Pressure solve: P_new = (div + sum_P) / 6
-        field_out[idx] = (rhs[idx] + sum) / 6.0f;
+        // Pressure solve. Solid cells keep pressure = 0 (Dirichlet); fluid
+        // cells average only their fluid neighbors (divisor = fluid count).
+        if (is_solid(idx)) { field_out[idx] = 0.0f; return; }
+
+        float sum = 0.0f;
+        int fluid_neighbors = 0;
+        if (x > 0)           { if (!is_solid(idx - 1))     { sum += field_in[idx - 1];     fluid_neighbors++; } }
+        if (x < (uint)N - 1) { if (!is_solid(idx + 1))     { sum += field_in[idx + 1];     fluid_neighbors++; } }
+        if (y > 0)           { if (!is_solid(idx - (uint)N)){ sum += field_in[idx - (uint)N]; fluid_neighbors++; } }
+        if (y < (uint)N - 1) { if (!is_solid(idx + (uint)N)){ sum += field_in[idx + (uint)N]; fluid_neighbors++; } }
+        if (z > 0)           { if (!is_solid(idx - NN))    { sum += field_in[idx - NN];    fluid_neighbors++; } }
+        if (z < (uint)D - 1) { if (!is_solid(idx + NN))    { sum += field_in[idx + NN];    fluid_neighbors++; } }
+
+        int div = max(fluid_neighbors, 1);
+        field_out[idx] = (rhs[idx] + sum) / float(div);
     } else {
-        // Diffusion: field_new = (field_center + a * sum) / (1 + a * 6)
+        // Diffusion (viscosity): standard 6-neighbor Laplacian with Neumann BC.
+        float left   = (x > 0)           ? field_in[idx - 1]  : center;
+        float right  = (x < (uint)N - 1) ? field_in[idx + 1]  : center;
+        float up     = (y > 0)           ? field_in[idx - (uint)N] : center;
+        float down   = (y < (uint)N - 1) ? field_in[idx + (uint)N] : center;
+        float back   = (z > 0)           ? field_in[idx - NN] : center;
+        float front  = (z < (uint)D - 1) ? field_in[idx + NN] : center;
+        float sum = left + right + up + down + back + front;
+
         float a = cb.jacobi_alpha;
         field_out[idx] = (rhs[idx] + a * sum) / (1.0f + a * 6.0f);
     }

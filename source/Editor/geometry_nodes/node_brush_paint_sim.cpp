@@ -1522,17 +1522,23 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                                        "jacobi_cb", jcb);
 
                 dispatch_field(rc, storage.jacobi_program,
-                    {{"field_in", storage.vel_x}, {"rhs", storage.vel_x}},
+                    {{"field_in", storage.vel_x}, {"rhs", storage.vel_x},
+                     {"bristle_psi", storage.bristle_density},
+                     {"wetness", storage.wetness}},
                     {{"field_out", storage.vel_x_tmp}}, jcb, window_total);
                 std::swap(storage.vel_x, storage.vel_x_tmp);
 
                 dispatch_field(rc, storage.jacobi_program,
-                    {{"field_in", storage.vel_y}, {"rhs", storage.vel_y}},
+                    {{"field_in", storage.vel_y}, {"rhs", storage.vel_y},
+                     {"bristle_psi", storage.bristle_density},
+                     {"wetness", storage.wetness}},
                     {{"field_out", storage.vel_y_tmp}}, jcb, window_total);
                 std::swap(storage.vel_y, storage.vel_y_tmp);
 
                 dispatch_field(rc, storage.jacobi_program,
-                    {{"field_in", storage.vel_z}, {"rhs", storage.vel_z}},
+                    {{"field_in", storage.vel_z}, {"rhs", storage.vel_z},
+                     {"bristle_psi", storage.bristle_density},
+                     {"wetness", storage.wetness}},
                     {{"field_out", storage.vel_z_tmp}}, jcb, window_total);
                 std::swap(storage.vel_z, storage.vel_z_tmp);
 
@@ -1542,7 +1548,9 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             // Project (Fixed-point, Algorithm 1: L=3, 2 Jacobi per L)
             for (int fp = 0; fp < 3; fp++) {
                 dispatch_field(rc, storage.divergence_program,
-                    {{"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
+                    {{"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z},
+                     {"bristle_psi", storage.bristle_density},
+                     {"wetness", storage.wetness}},
                     {{"div_out", storage.divergence_buf}}, cb_buf, window_total);
 
                 fluid_cb.jacobi_mode = 1;
@@ -1553,14 +1561,18 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                 for (int ji = 0; ji < 2; ji++) {
                     dispatch_field(rc, storage.jacobi_program,
                         {{"field_in", storage.pressure_a},
-                         {"rhs", storage.divergence_buf}},
+                         {"rhs", storage.divergence_buf},
+                         {"bristle_psi", storage.bristle_density},
+                         {"wetness", storage.wetness}},
                         {{"field_out", storage.pressure_b}}, pcb, window_total);
                     std::swap(storage.pressure_a, storage.pressure_b);
                 }
                 rc.destroy(pcb);
 
                 dispatch_field(rc, storage.gradient_program,
-                    {{"pressure", storage.pressure_a}},
+                    {{"pressure", storage.pressure_a},
+                     {"bristle_psi", storage.bristle_density},
+                     {"wetness", storage.wetness}},
                     {{"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
                     cb_buf, window_total);
             }
@@ -1587,7 +1599,9 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             // Project again
             for (int fp = 0; fp < 3; fp++) {
                 dispatch_field(rc, storage.divergence_program,
-                    {{"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
+                    {{"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z},
+                     {"bristle_psi", storage.bristle_density},
+                     {"wetness", storage.wetness}},
                     {{"div_out", storage.divergence_buf}}, cb_buf, window_total);
 
                 fluid_cb.jacobi_mode = 1;
@@ -1598,14 +1612,18 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                 for (int ji = 0; ji < 2; ji++) {
                     dispatch_field(rc, storage.jacobi_program,
                         {{"field_in", storage.pressure_a},
-                         {"rhs", storage.divergence_buf}},
+                         {"rhs", storage.divergence_buf},
+                         {"bristle_psi", storage.bristle_density},
+                         {"wetness", storage.wetness}},
                         {{"field_out", storage.pressure_b}}, pcb2, window_total);
                     std::swap(storage.pressure_a, storage.pressure_b);
                 }
                 rc.destroy(pcb2);
 
                 dispatch_field(rc, storage.gradient_program,
-                    {{"pressure", storage.pressure_a}},
+                    {{"pressure", storage.pressure_a},
+                     {"bristle_psi", storage.bristle_density},
+                     {"wetness", storage.wetness}},
                     {{"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
                     cb_buf, window_total);
             }
@@ -1651,12 +1669,16 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                                        "diff_cb", dcb);
 
                 dispatch_field(rc, storage.jacobi_program,
-                    {{"field_in", storage.density}, {"rhs", storage.density}},
+                    {{"field_in", storage.density}, {"rhs", storage.density},
+                     {"bristle_psi", storage.bristle_density},
+                     {"wetness", storage.wetness}},
                     {{"field_out", storage.density_tmp}}, dcb, window_total);
                 std::swap(storage.density, storage.density_tmp);
 
                 dispatch_field(rc, storage.jacobi_program,
-                    {{"field_in", storage.wetness}, {"rhs", storage.wetness}},
+                    {{"field_in", storage.wetness}, {"rhs", storage.wetness},
+                     {"bristle_psi", storage.bristle_density},
+                     {"wetness", storage.wetness}},
                     {{"field_out", storage.wetness_tmp}}, dcb, window_total);
                 std::swap(storage.wetness, storage.wetness_tmp);
                 rc.destroy(dcb);
