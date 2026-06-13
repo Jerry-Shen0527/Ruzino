@@ -214,7 +214,7 @@ struct BristleConstants {
     float dt;
     float brush_pos_x, brush_pos_y, brush_pos_z;
     float brush_vel_x, brush_vel_y, brush_vel_z;
-    float brush_angular_vel;
+    float brush_angular_vel_x, brush_angular_vel_y, brush_angular_vel_z;
     float brush_rotation;
 
     float brush_radius;
@@ -247,7 +247,9 @@ struct ParticleConstants {
     float brush_radius;
     int emit_mode;
     float D1;
-    float brush_angular_vel_z;
+    int num_bristles;
+    int samples_per_bristle;
+    float _pad0;
 };
 
 struct BristleLiquidConstants {
@@ -296,15 +298,18 @@ struct PaintSimStorage {
     nvrhi::BufferHandle vertex_buf;
     nvrhi::BufferHandle color_buf;
 
-    // --- Bristle model ---
+    // --- Bristle model (3D, §4.1) ---
     static constexpr int NUM_BRISTLES = 80;
     static constexpr int VERTS_PER_BRISTLE = 10;
     static constexpr int SAMPLES_PER_BRISTLE = 32;
+    // Each bristle vertex = 2 float4 (pos.xyz+pad, vel.xyz+pad) -> stride 32.
+    static constexpr int BRISTLE_VERTEX_STRIDE = sizeof(float) * 4 * 2;
 
-    nvrhi::BufferHandle bristle_data;   // {float2 pos, vel} * Nb*M (structured)
-    nvrhi::BufferHandle sample_pos;     // float2 * Nb*S
-    nvrhi::BufferHandle sample_vel;     // float2 * Nb*S
+    nvrhi::BufferHandle bristle_data;   // float4 * (Nb*M*2) — 3D pos/vel packed
+    nvrhi::BufferHandle sample_pos;     // float4 * Nb*S — 3D position (.xyz)
+    nvrhi::BufferHandle sample_vel;     // float4 * Nb*S — 3D velocity (.xyz)
     nvrhi::BufferHandle sample_color;   // float4 * Nb*S
+    nvrhi::BufferHandle sample_frame;   // SampleFrame (3 float4) * Nb*S — Bishop frame + omega_L
     nvrhi::BufferHandle bristle_density; // N*N*D (accumulation)
     nvrhi::BufferHandle bristle_vel_x;  // N*N*D
     nvrhi::BufferHandle bristle_vel_y;  // N*N*D
@@ -407,7 +412,7 @@ struct PaintSimStorage {
             release(divergence_buf);
             release(vertex_buf); release(color_buf);
             release(bristle_data); release(sample_pos); release(sample_vel);
-            release(sample_color); release(lambda_buf);
+            release(sample_color); release(sample_frame); release(lambda_buf);
             release(sample_liquid); release(sample_liquid_b); release(bristle_input_color_buf);
             release(bristle_density); release(bristle_vel_x); release(bristle_vel_y); release(bristle_vel_z);
             release(bristle_color_r); release(bristle_color_y); release(bristle_color_b);
@@ -447,7 +452,7 @@ struct PaintSimStorage {
         destroy_buf(divergence_buf);
         destroy_buf(vertex_buf); destroy_buf(color_buf);
         destroy_buf(bristle_data); destroy_buf(sample_pos); destroy_buf(sample_vel);
-        destroy_buf(sample_color); destroy_buf(lambda_buf);
+            destroy_buf(sample_color); destroy_buf(sample_frame); destroy_buf(lambda_buf);
         destroy_buf(sample_liquid); destroy_buf(sample_liquid_b); destroy_buf(bristle_input_color_buf);
         destroy_buf(bristle_density); destroy_buf(bristle_vel_x); destroy_buf(bristle_vel_y); destroy_buf(bristle_vel_z);
         destroy_buf(bristle_color_r); destroy_buf(bristle_color_y); destroy_buf(bristle_color_b);
@@ -731,20 +736,24 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         safe_destroy_buf(storage.sample_pos);
         safe_destroy_buf(storage.sample_vel);
         safe_destroy_buf(storage.sample_color);
+        safe_destroy_buf(storage.sample_frame);
         safe_destroy_buf(storage.sample_liquid);
         safe_destroy_buf(storage.sample_liquid_b);
         safe_destroy_buf(storage.bristle_input_color_buf);
 
         storage.bristle_data  = create_typed_buffer(
-            rc, Nb * M, sizeof(float) * 4, "bristle_data"); // float2 pos, float2 vel
+            rc, Nb * M, PaintSimStorage::BRISTLE_VERTEX_STRIDE, "bristle_data"); // 2×float4 (pos3+vel3)
         storage.lambda_buf    = create_typed_buffer(
             rc, Nb * M, sizeof(float), "lambda_buf");
         storage.sample_pos   = create_typed_buffer(
-            rc, Nb * S, sizeof(float) * 2, "sample_pos");
+            rc, Nb * S, sizeof(float) * 4, "sample_pos");   // float4 (.xyz + pad)
         storage.sample_vel   = create_typed_buffer(
-            rc, Nb * S, sizeof(float) * 2, "sample_vel");
+            rc, Nb * S, sizeof(float) * 4, "sample_vel");   // float4 (.xyz + pad)
         storage.sample_color = create_typed_buffer(
             rc, Nb * S, sizeof(float) * 4, "sample_color");
+        // Bishop frame: SampleFrame { tangent, normal, binormal } — 3 float4 = 48 bytes
+        storage.sample_frame = create_typed_buffer(
+            rc, Nb * S, sizeof(float) * 4 * 3, "sample_frame");
 
         // Bristle liquid state: SampleLiquid {float mass, float3 pigment} per sample
         storage.sample_liquid = create_typed_buffer(
@@ -761,16 +770,18 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         // Zero-init
         auto cmd = rc.create(CommandListDesc{});
         cmd->open();
-        std::vector<float> zeros_bristle(Nb * M * 4, 0.0f);
+        std::vector<float> zeros_bristle(Nb * M * (PaintSimStorage::BRISTLE_VERTEX_STRIDE / sizeof(float)), 0.0f);
         cmd->writeBuffer(storage.bristle_data, zeros_bristle.data(),
                          zeros_bristle.size() * sizeof(float));
         std::vector<float> zeros_sample(Nb * S * 4, 0.0f);
         cmd->writeBuffer(storage.sample_pos, zeros_sample.data(),
-                         Nb * S * sizeof(float) * 2);
+                         Nb * S * sizeof(float) * 4);
         cmd->writeBuffer(storage.sample_vel, zeros_sample.data(),
-                         Nb * S * sizeof(float) * 2);
+                         Nb * S * sizeof(float) * 4);
         cmd->writeBuffer(storage.sample_color, zeros_sample.data(),
                          Nb * S * sizeof(float) * 4);
+        cmd->writeBuffer(storage.sample_frame, zeros_sample.data(),
+                         Nb * S * sizeof(float) * 4 * 3);
         cmd->writeBuffer(storage.sample_liquid, zeros_sample.data(),
                          Nb * S * sizeof(float) * 4);
         cmd->writeBuffer(storage.sample_liquid_b, zeros_sample.data(),
@@ -907,7 +918,9 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     glm::vec3 brush_pos_3d(0.0f);
     glm::vec3 brush_vel_3d(0.0f);
     float brush_rotation = 0.0f;
-    float brush_angular_vel = 0.0f;
+    // Brush rotates about the canvas normal (Z axis); the stroke is planar so
+    // ω is dominantly z. x/y components stay 0 unless the canvas tilts.
+    glm::vec3 brush_angular_vel(0.0f);
 
     if (!vertices.empty()) {
         int last = static_cast<int>(vertices.size()) - 1;
@@ -917,13 +930,14 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
 
         if (last > 0) {
             brush_vel_3d = vertices[last] - vertices[last - 1];
-            // Estimate rotation from velocity direction
+            // Heading angle in the XY plane
             brush_rotation = atan2(brush_vel_3d.y, brush_vel_3d.x);
             if (last > 1) {
                 float prev_rot = atan2(
                     vertices[last-1].y - vertices[last-2].y,
                     vertices[last-1].x - vertices[last-2].x);
-                brush_angular_vel = brush_rotation - prev_rot;
+                // Angular velocity about canvas normal (Z)
+                brush_angular_vel.z = brush_rotation - prev_rot;
             }
         }
     }
@@ -942,7 +956,9 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         bc.brush_vel_x = brush_vel_3d.x;
         bc.brush_vel_y = brush_vel_3d.y;
         bc.brush_vel_z = brush_vel_3d.z;
-        bc.brush_angular_vel = brush_angular_vel;
+        bc.brush_angular_vel_x = brush_angular_vel.x;
+        bc.brush_angular_vel_y = brush_angular_vel.y;
+        bc.brush_angular_vel_z = brush_angular_vel.z;
         bc.brush_rotation = brush_rotation;
         bc.brush_radius = brush_radius;
         bc.spring_k = 50.0f;
@@ -1023,7 +1039,8 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
              {"bristle_input_color", storage.bristle_input_color_buf}},
             {{"sample_pos", storage.sample_pos},
              {"sample_vel", storage.sample_vel},
-             {"sample_color", storage.sample_color}},
+             {"sample_color", storage.sample_color},
+             {"sample_frame", storage.sample_frame}},
             bristle_cb, Nb);
 
         // Step 4: Clear bristle accumulation grids
@@ -1183,7 +1200,9 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         pc.brush_pos_z = brush_pos_3d.z;
         pc.brush_radius = brush_radius;
         pc.D1 = brush_radius * 0.5f;
-        pc.brush_angular_vel_z = brush_angular_vel;
+        pc.num_bristles = Nb;
+        pc.samples_per_bristle = S;
+        pc._pad0 = 0.0f;
 
         nvrhi::BufferHandle ptcl_cb;
         upload_constant_buffer(rc, device, &pc, sizeof(ParticleConstants),
@@ -1232,7 +1251,9 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             {{"ptcl_pos", storage.ptcl_pos},
              {"ptcl_vel", storage.ptcl_vel},
              {"ptcl_color", storage.ptcl_color},
-             {"ptcl_alive", storage.ptcl_alive}},
+             {"ptcl_alive", storage.ptcl_alive},
+             {"sample_pos", storage.sample_pos},
+             {"sample_frame", storage.sample_frame}},
             {{"ptcl_pos_out", storage.ptcl_pos_b},
              {"ptcl_vel_out", storage.ptcl_vel_b},
              {"ptcl_alive_out", storage.ptcl_alive_b}},

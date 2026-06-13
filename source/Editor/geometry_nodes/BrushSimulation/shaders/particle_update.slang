@@ -1,11 +1,12 @@
-// Particle update — Wetbrush Section 4.3, Eq.8-10  (3D)
-// Two-step update in non-inertial brush frame (Eq.9) + canvas frame,
-// blended by adhesion distance (Eq.10).
-// Also applies friction (Eq.8) near solid surfaces.
+// Particle update — Wetbrush Section 4.3, Eq.8-10 (3D, per-sample local frame)
+// Two-step update in non-inertial brush frame (Eq.9) + canvas frame, blended
+// by adhesion distance (Eq.10). Also applies friction (Eq.8) near solid
+// surfaces.
 //
-// Z convention: canvas/paper lies at z = grid_center_z - height_extent/2 (the
-// bottom of the paint volume). Brush rotates about the canvas normal (z-axis),
-// so the angular velocity vector is ω = (0, 0, ω_z).
+// Per §4.1 "Bristle samples and local frames": each particle is simulated
+// in the local frame of its CLOSEST bristle sample. The sample frame
+// (tangent/normal/binormal = R_L, omega_L) drives the four non-inertial
+// accelerations in Eq.9.
 
 #include "common.slangh"
 
@@ -14,9 +15,26 @@ StructuredBuffer<float4> ptcl_pos : register(t0);
 StructuredBuffer<float4> ptcl_vel : register(t1);
 StructuredBuffer<float4> ptcl_color : register(t2);
 StructuredBuffer<uint> ptcl_alive : register(t3);
+// Per-sample bristle frame data for Eq.9 local-frame simulation
+StructuredBuffer<float4> sample_pos : register(t4);
+StructuredBuffer<SampleFrame> sample_frame : register(t5);
 RWStructuredBuffer<float4> ptcl_pos_out : register(u0);
 RWStructuredBuffer<float4> ptcl_vel_out : register(u1);
 RWStructuredBuffer<uint> ptcl_alive_out : register(u2);
+
+// Convert canvas-frame vector v to the local frame of a sample (R_L is
+// the matrix whose columns are the sample's tangent/normal/binormal).
+float3 to_local(float3 v, SampleFrame f)
+{
+    return float3(dot(v, f.tangent.xyz),
+                  dot(v, f.normal.xyz),
+                  dot(v, f.binormal.xyz));
+}
+// Inverse: local → canvas (R_L^T, since columns are orthonormal).
+float3 to_canvas(float3 v, SampleFrame f)
+{
+    return f.tangent.xyz * v.x + f.normal.xyz * v.y + f.binormal.xyz * v.z;
+}
 
 [numthreads(256, 1, 1)]
 void main(uint3 tid : SV_DispatchThreadID)
@@ -33,82 +51,77 @@ void main(uint3 tid : SV_DispatchThreadID)
     float3 brush_center = float3(cb.brush_pos_x, cb.brush_pos_y, cb.brush_pos_z);
     float dt = cb.dt;
 
-    // --- Distance to brush center (3D) ---
-    float3 r_from_brush = pos - brush_center;
-    float d_B = length(r_from_brush);
+    // --- Find closest bristle sample (linear scan; Nb*S ~ 2560 is cheap) ---
+    int num_samples = cb.num_bristles * cb.samples_per_bristle;
+    int best = 0;
+    float best_d2 = 1e30;
+    for (int s = 0; s < num_samples; s++) {
+        float3 d = pos - sample_pos[s].xyz;
+        float d2 = dot(d, d);
+        if (d2 < best_d2) { best_d2 = d2; best = s; }
+    }
+    SampleFrame frame = sample_frame[best];
+    float3 sample_origin = sample_pos[best].xyz;
+    float3 omega_L = float3(frame.tangent.w, frame.normal.w, frame.binormal.w);
 
-    // --- Friction force (Eq.8): f = -max((1 - d/D0)^2, 0) * v ---
-    float friction_t = max(1.0 - d_B / cb.friction_delta, 0.0);
-    float3 friction_force = -friction_t * friction_t * vel;
+    // --- Step A: simulate in the closest sample's local frame (Eq.9) ---
+    // Convert position/velocity into the local (non-inertial) frame.
+    float3 r_from_sample = pos - sample_origin;
+    float3 p_L = to_local(r_from_sample, frame);
+    float3 v_L = to_local(vel, frame);
 
-    // --- Acceleration in canvas frame (gravity kept small; paint is viscous) ---
-    float3 a_canvas = friction_force;
+    // External acceleration (canvas-frame forces): gravity + friction (Eq.8).
+    // Distance to canvas (bottom of paint volume).
+    float canvas_z = cb.grid_center_z - cb.height_extent * 0.5;
+    float d_k = abs(pos.z - canvas_z);
+    float friction = -max((1.0 - cb.friction_delta * d_k) * (1.0 - cb.friction_delta * d_k), 0.0);
+    float3 a_ext_canvas = float3(0.0, 0.0, -0.2) + friction * vel;
 
-    // ======================================================================
-    // Step 1: Update in local (brush) frame — Eq.9
-    // Full non-inertial frame: rectilinear + centrifugal + Euler + Coriolis
-    // ======================================================================
-    float beta_L = 0.1;  // Table 1: β_L ∈ [0, 0.2]
+    // omega_dot estimate (damped)
+    float3 omega_dot_L = omega_L / max(dt, 1e-6f) * 0.5;
 
-    // Brush angular velocity about canvas normal (z-axis)
-    float3 omega = float3(0.0, 0.0, cb.brush_angular_vel_z);
+    // Eq.2/Eq.9 four inertial accelerations, all in the local frame:
+    //   rectilinear (from sample origin motion ~ 0 here), centrifugal,
+    //   Euler angular, Coriolis.
+    float3 a_ext_L = to_local(a_ext_canvas, frame);
+    float3 centrifugal_L = cross(omega_L, cross(omega_L, p_L));
+    float3 euler_ang_L = cross(omega_dot_L, p_L);
+    float3 coriolis_L = -2.0 * cross(omega_L, v_L);
+    float beta_L = 0.2;  // [0, 0.2] per Table 1
 
-    // Position in brush frame: p_k^L = R_L · (p_k - brush_center)
-    // For small per-step rotations, approximate R_L ≈ I.
-    float3 p_local = r_from_brush;
-    float3 v_local = vel;  // friction already slows canvas-frame motion
+    float3 a_L = a_ext_L - beta_L * (centrifugal_L + euler_ang_L + coriolis_L);
+    float3 v_L_new = v_L + a_L * dt;
+    float3 p_L_new = p_L + v_L_new * dt;
 
-    // --- All four inertial accelerations from Eq.9 (3D, via cross products) ---
-    // 1. Rectilinear: linear accel of brush-frame origin.
-    //    Approximated as zero here (handled indirectly by adhesion blend below).
-    // 2. Centrifugal: ω × (ω × p_local)
-    float3 centrifugal = cross(omega, cross(omega, p_local));
-    // 3. Euler acceleration: ω̇ × p_local  (ω̇ estimated from ω_z)
-    float omega_dot_z = cb.brush_angular_vel_z / max(dt, 1e-6f) * 0.3;
-    float3 euler_accel = cross(float3(0.0, 0.0, omega_dot_z), p_local);
-    // 4. Coriolis: 2 ω × v_local
-    float3 coriolis = 2.0 * cross(omega, v_local);
+    // Convert local result back to canvas frame.
+    float3 pos_local = sample_origin + to_canvas(p_L_new, frame);
+    float3 vel_local = to_canvas(v_L_new, frame);
 
-    // Total acceleration in local frame (Eq.9):
-    //   v̇_k^L = R_L * a_k - β_L * (rect + centrifugal + euler + coriolis)
-    float3 accel_local = a_canvas
-        - beta_L * (centrifugal + euler_accel + coriolis);
+    // --- Step B: canvas-frame integration (no adhesion) ---
+    float3 a_canvas = a_ext_canvas;
+    float3 v_canvas_new = vel + a_canvas * dt;
+    float3 pos_canvas = pos + v_canvas_new * dt;
 
-    // Integrate in local frame
-    float3 v_local_new = v_local + accel_local * dt;
-    float3 p_local_new = p_local + v_local_new * dt;
+    // Clamp Z to the paint volume.
+    float half_h = cb.height_extent * 0.5;
+    pos_local.z = clamp(pos_local.z, canvas_z, canvas_z + cb.height_extent);
+    pos_canvas.z = clamp(pos_canvas.z, canvas_z, canvas_z + cb.height_extent);
 
-    // Transform back to canvas frame
-    float3 p_prime = p_local_new + brush_center;
+    // --- Blend by adhesion (Eq.10): p_new = p'' + max(1 - d_B/D1, 0) * (p' - p'') ---
+    float d_B = sqrt(best_d2);  // distance to closest bristle sample
+    float blend = max(1.0 - d_B / max(cb.D1, 1e-6f), 0.0);
 
-    // ======================================================================
-    // Step 2: Update in canvas frame — standard Euler
-    // ======================================================================
-    float3 p_double_prime = pos + vel * dt + 0.5 * a_canvas * dt * dt;
+    float3 new_pos = lerp(pos_canvas, pos_local, blend);
+    float3 new_vel = lerp(v_canvas_new, vel_local, blend);
 
-    // ======================================================================
-    // Step 3: Blend by adhesion distance (Eq.10)
-    // p_new = p'' + max(1 - d_B/D1, 0) * (p' - p'')
-    // ======================================================================
-    float adhesion = max(1.0 - d_B / cb.D1, 0.0);
-    float3 new_pos = p_double_prime + adhesion * (p_prime - p_double_prime);
-
-    // Keep particles inside the paint volume in Z
-    float z_lo = cb.grid_center_z - cb.height_extent * 0.5;
-    float z_hi = cb.grid_center_z + cb.height_extent * 0.5;
-    new_pos.z = clamp(new_pos.z, z_lo, z_hi);
-
-    // Correct velocity from position change
-    float3 new_vel = (new_pos - pos) / max(dt, 1e-6f);
-
-    // Kill slow particles far from brush
+    // Kill particles that drift very far and stall — reclaims pool slots.
     float speed = length(new_vel);
-    if (d_B > cb.D0 * 1.5 && speed < 0.001) {
+    if (d_B > cb.D0 * 2.0 && speed < 0.01) {
         ptcl_alive_out[idx] = 0;
-    } else {
-        ptcl_alive_out[idx] = 1;
+        return;
     }
 
     ptcl_pos_out[idx] = float4(new_pos, 0.0);
     ptcl_vel_out[idx] = float4(new_vel, 0.0);
+    ptcl_alive_out[idx] = 1;
 }
