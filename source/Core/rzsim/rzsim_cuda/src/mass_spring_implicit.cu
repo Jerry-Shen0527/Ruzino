@@ -6,6 +6,7 @@
 #include <thrust/sort.h>
 #include <thrust/transform.h>
 #include <thrust/transform_reduce.h>
+#include <thrust/tuple.h>
 #include <thrust/unique.h>
 
 #include <Eigen/Dense>

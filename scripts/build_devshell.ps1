@@ -50,7 +50,7 @@ if ($Reconfigure -or -not (Test-Path "$BuildPath\build.ninja")) {
         New-Item -ItemType Directory -Path $BuildPath | Out-Null
     }
     Push-Location $BuildPath
-    cmake -G Ninja -DCMAKE_BUILD_TYPE=$BuildType -DUSTC_CG_WITH_CUDA=ON -DUSTC_HOMEWORK_PLUGINS=OFF ..
+    cmake -G Ninja -DCMAKE_BUILD_TYPE=$BuildType -DRUZINO_WITH_CUDA=ON -DUSTC_HOMEWORK_PLUGINS=OFF ..
     if ($LASTEXITCODE -ne 0) {
         Write-Host "✗ CMake 配置失败" -ForegroundColor Red
         Pop-Location

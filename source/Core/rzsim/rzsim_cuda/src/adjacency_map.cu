@@ -4,6 +4,7 @@
 #include <thrust/for_each.h>
 #include <thrust/scan.h>
 #include <thrust/sort.h>
+#include <thrust/tuple.h>
 #include <thrust/unique.h>
 
 #include <RHI/cuda.hpp>
