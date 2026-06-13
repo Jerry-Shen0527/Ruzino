@@ -326,10 +326,11 @@ struct PaintSimStorage {
     nvrhi::BufferHandle ptcl_color;
     nvrhi::BufferHandle ptcl_alive;
     nvrhi::BufferHandle ptcl_counter;   // ByteAddressBuffer, 4 bytes
-    nvrhi::BufferHandle ptcl_density;   // N*N
-    nvrhi::BufferHandle ptcl_vel_x;     // N*N
-    nvrhi::BufferHandle ptcl_vel_y;     // N*N
-    nvrhi::BufferHandle ptcl_rast_r;    // N*N (particle rasterized RYB color)
+    nvrhi::BufferHandle ptcl_density;   // N*N*D
+    nvrhi::BufferHandle ptcl_vel_x;     // N*N*D
+    nvrhi::BufferHandle ptcl_vel_y;     // N*N*D
+    nvrhi::BufferHandle ptcl_vel_z;     // N*N*D (3D particle z-velocity accum)
+    nvrhi::BufferHandle ptcl_rast_r;    // N*N*D (particle rasterized RYB color)
     nvrhi::BufferHandle ptcl_rast_y;    // N*N
     nvrhi::BufferHandle ptcl_rast_b;    // N*N
     nvrhi::BufferHandle vel_x_old;      // N*N*D (snapshot for FLIP)
@@ -412,7 +413,7 @@ struct PaintSimStorage {
             release(bristle_color_r); release(bristle_color_y); release(bristle_color_b);
             release(ptcl_pos); release(ptcl_vel); release(ptcl_color);
             release(ptcl_alive); release(ptcl_counter);
-            release(ptcl_density); release(ptcl_vel_x); release(ptcl_vel_y);
+            release(ptcl_density); release(ptcl_vel_x); release(ptcl_vel_y); release(ptcl_vel_z);
             release(ptcl_rast_r); release(ptcl_rast_y); release(ptcl_rast_b);
             release(vel_x_old); release(vel_y_old); release(vel_z_old);
             release(ptcl_pos_b); release(ptcl_vel_b); release(ptcl_color_b); release(ptcl_alive_b);
@@ -452,7 +453,7 @@ struct PaintSimStorage {
         destroy_buf(bristle_color_r); destroy_buf(bristle_color_y); destroy_buf(bristle_color_b);
         destroy_buf(ptcl_pos); destroy_buf(ptcl_vel); destroy_buf(ptcl_color);
         destroy_buf(ptcl_alive); destroy_buf(ptcl_counter);
-        destroy_buf(ptcl_density); destroy_buf(ptcl_vel_x); destroy_buf(ptcl_vel_y);
+        destroy_buf(ptcl_density); destroy_buf(ptcl_vel_x); destroy_buf(ptcl_vel_y); destroy_buf(ptcl_vel_z);
         destroy_buf(ptcl_rast_r); destroy_buf(ptcl_rast_y); destroy_buf(ptcl_rast_b);
         destroy_buf(vel_x_old); destroy_buf(vel_y_old); destroy_buf(vel_z_old);
         destroy_buf(ptcl_pos_b); destroy_buf(ptcl_vel_b); destroy_buf(ptcl_color_b); destroy_buf(ptcl_alive_b);
@@ -636,7 +637,8 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         safe_destroy_buf(storage.bristle_color_r);
         safe_destroy_buf(storage.bristle_color_y);  safe_destroy_buf(storage.bristle_color_b);
         safe_destroy_buf(storage.ptcl_density);     safe_destroy_buf(storage.ptcl_vel_x);
-        safe_destroy_buf(storage.ptcl_vel_y);       safe_destroy_buf(storage.ptcl_rast_r);
+        safe_destroy_buf(storage.ptcl_vel_y);       safe_destroy_buf(storage.ptcl_vel_z);
+        safe_destroy_buf(storage.ptcl_rast_r);
         safe_destroy_buf(storage.ptcl_rast_y);     safe_destroy_buf(storage.ptcl_rast_b);
         safe_destroy_buf(storage.vel_x_old);
         safe_destroy_buf(storage.vel_y_old);
@@ -679,6 +681,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         storage.ptcl_density  = make_buf("ptcl_density");
         storage.ptcl_vel_x    = make_buf("ptcl_vel_x");
         storage.ptcl_vel_y    = make_buf("ptcl_vel_y");
+        storage.ptcl_vel_z    = make_buf("ptcl_vel_z");
         storage.ptcl_rast_r  = make_buf("ptcl_rast_r");
         storage.ptcl_rast_y  = make_buf("ptcl_rast_y");
         storage.ptcl_rast_b  = make_buf("ptcl_rast_b");
@@ -704,7 +707,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                           &storage.bristle_color_r, &storage.bristle_color_y,
                           &storage.bristle_color_b,
                           &storage.ptcl_density, &storage.ptcl_vel_x,
-                          &storage.ptcl_vel_y,
+                          &storage.ptcl_vel_y, &storage.ptcl_vel_z,
                           &storage.ptcl_rast_r, &storage.ptcl_rast_y,
                           &storage.ptcl_rast_b,
                           &storage.vel_x_old, &storage.vel_y_old, &storage.vel_z_old}) {
@@ -797,28 +800,28 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         safe_destroy_buf(storage.ptcl_pos_b);    safe_destroy_buf(storage.ptcl_vel_b);
         safe_destroy_buf(storage.ptcl_color_b);  safe_destroy_buf(storage.ptcl_alive_b);
 
-        storage.ptcl_pos    = create_typed_buffer(rc, max_ptcl, sizeof(float) * 2, "ptcl_pos");
-        storage.ptcl_vel    = create_typed_buffer(rc, max_ptcl, sizeof(float) * 2, "ptcl_vel");
+        storage.ptcl_pos    = create_typed_buffer(rc, max_ptcl, sizeof(float) * 4, "ptcl_pos");
+        storage.ptcl_vel    = create_typed_buffer(rc, max_ptcl, sizeof(float) * 4, "ptcl_vel");
         storage.ptcl_color  = create_typed_buffer(rc, max_ptcl, sizeof(float) * 4, "ptcl_color");
         storage.ptcl_alive  = create_typed_buffer(rc, max_ptcl, sizeof(uint32_t), "ptcl_alive");
         storage.ptcl_counter = create_byte_buffer(rc, sizeof(uint32_t), "ptcl_counter");
-        storage.ptcl_pos_b   = create_typed_buffer(rc, max_ptcl, sizeof(float) * 2, "ptcl_pos_b");
-        storage.ptcl_vel_b   = create_typed_buffer(rc, max_ptcl, sizeof(float) * 2, "ptcl_vel_b");
+        storage.ptcl_pos_b   = create_typed_buffer(rc, max_ptcl, sizeof(float) * 4, "ptcl_pos_b");
+        storage.ptcl_vel_b   = create_typed_buffer(rc, max_ptcl, sizeof(float) * 4, "ptcl_vel_b");
         storage.ptcl_color_b = create_typed_buffer(rc, max_ptcl, sizeof(float) * 4, "ptcl_color_b");
         storage.ptcl_alive_b = create_typed_buffer(rc, max_ptcl, sizeof(uint32_t), "ptcl_alive_b");
 
         auto cmd = rc.create(CommandListDesc{});
         cmd->open();
         std::vector<float> zeros_ptcl(max_ptcl * 4, 0.0f);
-        cmd->writeBuffer(storage.ptcl_pos, zeros_ptcl.data(), max_ptcl * sizeof(float) * 2);
-        cmd->writeBuffer(storage.ptcl_vel, zeros_ptcl.data(), max_ptcl * sizeof(float) * 2);
+        cmd->writeBuffer(storage.ptcl_pos, zeros_ptcl.data(), max_ptcl * sizeof(float) * 3);
+        cmd->writeBuffer(storage.ptcl_vel, zeros_ptcl.data(), max_ptcl * sizeof(float) * 3);
         cmd->writeBuffer(storage.ptcl_color, zeros_ptcl.data(), max_ptcl * sizeof(float) * 4);
         std::vector<uint32_t> zeros_u(max_ptcl, 0);
         cmd->writeBuffer(storage.ptcl_alive, zeros_u.data(), max_ptcl * sizeof(uint32_t));
         uint32_t zero_c = 0;
         cmd->writeBuffer(storage.ptcl_counter, &zero_c, sizeof(uint32_t));
-        cmd->writeBuffer(storage.ptcl_pos_b, zeros_ptcl.data(), max_ptcl * sizeof(float) * 2);
-        cmd->writeBuffer(storage.ptcl_vel_b, zeros_ptcl.data(), max_ptcl * sizeof(float) * 2);
+        cmd->writeBuffer(storage.ptcl_pos_b, zeros_ptcl.data(), max_ptcl * sizeof(float) * 3);
+        cmd->writeBuffer(storage.ptcl_vel_b, zeros_ptcl.data(), max_ptcl * sizeof(float) * 3);
         cmd->writeBuffer(storage.ptcl_color_b, zeros_ptcl.data(), max_ptcl * sizeof(float) * 4);
         cmd->writeBuffer(storage.ptcl_alive_b, zeros_u.data(), max_ptcl * sizeof(uint32_t));
         cmd->close();
@@ -1246,6 +1249,8 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         dispatch_field(rc, storage.field_clear_program,
             {}, {{"field", storage.ptcl_vel_y}}, nullptr, n3d);
         dispatch_field(rc, storage.field_clear_program,
+            {}, {{"field", storage.ptcl_vel_z}}, nullptr, n3d);
+        dispatch_field(rc, storage.field_clear_program,
             {}, {{"field", storage.ptcl_rast_r}}, nullptr, n3d);
         dispatch_field(rc, storage.field_clear_program,
             {}, {{"field", storage.ptcl_rast_y}}, nullptr, n3d);
@@ -1261,6 +1266,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             {{"ptcl_density", storage.ptcl_density},
              {"ptcl_vel_x", storage.ptcl_vel_x},
              {"ptcl_vel_y", storage.ptcl_vel_y},
+             {"ptcl_vel_z", storage.ptcl_vel_z},
              {"ptcl_color_r", storage.ptcl_rast_r},
              {"ptcl_color_y", storage.ptcl_rast_y},
              {"ptcl_color_b", storage.ptcl_rast_b}},
@@ -1280,6 +1286,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             {{"bristle_density", storage.ptcl_density},
              {"bristle_vel_x", storage.ptcl_vel_x},
              {"bristle_vel_y", storage.ptcl_vel_y},
+             {"bristle_vel_z", storage.ptcl_vel_z},
              {"bristle_color_r", storage.ptcl_rast_r},
              {"bristle_color_y", storage.ptcl_rast_y},
              {"bristle_color_b", storage.ptcl_rast_b}},
@@ -1684,11 +1691,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             {{"ptcl_pos", storage.ptcl_pos},
              {"ptcl_vel", storage.ptcl_vel},
              {"ptcl_color", storage.ptcl_color},
-             {"ptcl_alive", storage.ptcl_alive},
-             {"grid_density_in", storage.density},
-             {"grid_color_r_in", storage.color_r},
-             {"grid_color_y_in", storage.color_y},
-             {"grid_color_b_in", storage.color_b}},
+             {"ptcl_alive", storage.ptcl_alive}},
             {{"density", storage.density},
              {"color_r", storage.color_r},
              {"color_y", storage.color_y},

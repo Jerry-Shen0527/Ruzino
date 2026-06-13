@@ -1,16 +1,16 @@
-// Particle compaction — remove dead particles, pack alive ones
+// Particle compaction — remove dead particles, pack alive ones  (3D)
 // Single-pass prefix-sum compaction
 
 #include "common.slangh"
 
 ConstantBuffer<ParticleConstants> cb : register(b0);
 StructuredBuffer<uint> ptcl_alive : register(t0);
-StructuredBuffer<float2> ptcl_pos : register(t1);
-StructuredBuffer<float2> ptcl_vel : register(t2);
+StructuredBuffer<float4> ptcl_pos : register(t1);
+StructuredBuffer<float4> ptcl_vel : register(t2);
 StructuredBuffer<float4> ptcl_color : register(t3);
 RWByteAddressBuffer ptcl_counter : register(u0);
-RWStructuredBuffer<float2> ptcl_pos_out : register(u1);
-RWStructuredBuffer<float2> ptcl_vel_out : register(u2);
+RWStructuredBuffer<float4> ptcl_pos_out : register(u1);
+RWStructuredBuffer<float4> ptcl_vel_out : register(u2);
 RWStructuredBuffer<float4> ptcl_color_out : register(u3);
 RWStructuredBuffer<uint> ptcl_alive_out : register(u4);
 

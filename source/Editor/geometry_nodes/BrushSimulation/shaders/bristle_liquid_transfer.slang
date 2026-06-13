@@ -36,9 +36,11 @@ StructuredBuffer<float> grid_density : register(t4);
 RWStructuredBuffer<SampleLiquid> sample_liquid_out : register(u0);
 
 // Output: particles (written in EMIT pass only)
+// NOTE: float4 (not float3) to avoid RWStructuredBuffer<float3> stride hazards
+// on some drivers; .xyz stores position/velocity, .w unused.
 RWByteAddressBuffer ptcl_counter : register(u1);
-RWStructuredBuffer<float2> ptcl_pos_out : register(u2);
-RWStructuredBuffer<float2> ptcl_vel_out : register(u3);
+RWStructuredBuffer<float4> ptcl_pos_out : register(u2);
+RWStructuredBuffer<float4> ptcl_vel_out : register(u3);
 RWStructuredBuffer<float4> ptcl_color_out : register(u4);
 RWStructuredBuffer<uint> ptcl_alive_out : register(u5);
 
@@ -206,23 +208,30 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     float total_emit_mass = 0.0;
 
-    // Emit particles in circular pattern (2D projection of bottom hemisphere)
+    // Emit particles in a bottom hemisphere pattern (Section 5.1, Figure 10).
+    // Bristles are planar (XY) at the canvas surface; emit upward into the
+    // paint volume.
+    float canvas_z = cb.grid_center_z - cb.height_extent * 0.5;
     for (int ei = 0; ei < num_emit; ei++) {
         uint slot;
         ptcl_counter.InterlockedAdd(0, 1, slot);
         slot = slot % uint(cb.max_particles);
 
-        // Uniform circular distribution
+        // Uniform circular distribution in XY + upward arc in Z
         float angle = 6.2831853 * (float(ei) + 0.5) / float(num_emit);
         float jitter_r = cb.cell_size * 0.5;
-        float2 emit_pos = s_pos + float2(cos(angle), sin(angle)) * jitter_r;
+        float z_lift = (float(ei) + 0.5) / float(num_emit) * cb.cell_size;
+        float3 emit_pos = float3(
+            s_pos.x + cos(angle) * jitter_r,
+            s_pos.y + sin(angle) * jitter_r,
+            canvas_z + z_lift);
 
         // Distribute excess evenly
         float emit_m = excess / float(num_emit);
         total_emit_mass += emit_m;
 
-        ptcl_pos_out[slot] = emit_pos;
-        ptcl_vel_out[slot] = float2(0.0, 0.0);
+        ptcl_pos_out[slot] = float4(emit_pos, 0.0);
+        ptcl_vel_out[slot] = float4(0.0, 0.0, 0.0, 0.0);
         ptcl_color_out[slot] = float4(c_j, emit_m);
         ptcl_alive_out[slot] = 1;
     }
