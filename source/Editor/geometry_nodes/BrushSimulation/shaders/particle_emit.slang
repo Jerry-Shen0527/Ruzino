@@ -13,8 +13,8 @@ RWStructuredBuffer<float4> ptcl_vel : register(u2);
 RWStructuredBuffer<float4> ptcl_color : register(u3);
 RWStructuredBuffer<uint> ptcl_alive : register(u4);
 
-// Mode 0: bristle sample data (sample_pos is float2 — bristles are planar)
-StructuredBuffer<float2> sample_pos : register(t0);
+// Mode 0: bristle sample data (sample_pos.xyz = 3D position)
+StructuredBuffer<float4> sample_pos : register(t0);
 StructuredBuffer<float4> sample_color : register(t1);
 
 // Mode 1: grid data
@@ -43,12 +43,11 @@ void main(uint3 tid : SV_DispatchThreadID)
         float4 col = sample_color[idx];
         if (col.w < 0.5) return; // only emit if density is high
 
-        // Per-sample hash for a stable jitter (no Math.random available on GPU
-        // anyway; sin-hash is the standard cheap trick here).
-        float jitter_z = frac(sin(float(idx) * 127.1 + 0.5) * 43758.5453);
-
+        // Per-sample hash for a stable jitter (sin-hash, cheap GPU trick).
         uint slot = alloc_slot();
-        ptcl_pos[slot] = float4(sample_pos[idx], canvas_z + jitter_z * cb.cell_size, 0.0);
+        // Emit at the sample's 3D position with a small upward jitter.
+        float jitter_z = frac(sin(float(idx) * 127.1 + 0.5) * 43758.5453) * cb.cell_size;
+        ptcl_pos[slot] = float4(sample_pos[idx].xyz + float3(0, 0, jitter_z), 0.0);
         ptcl_vel[slot] = float4(0, 0, 0, 0);
         ptcl_color[slot] = col;
         ptcl_alive[slot] = 1;
