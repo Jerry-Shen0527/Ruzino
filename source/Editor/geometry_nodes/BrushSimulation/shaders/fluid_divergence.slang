@@ -16,16 +16,13 @@ RWStructuredBuffer<float> div_out : register(u0);
 [numthreads(256, 1, 1)]
 void main(uint3 dtid : SV_DispatchThreadID)
 {
-    uint idx = dtid.x;
     int N = cb.res;
     int D = cb.res_z;
-    int total = N * N * D;
-    if (idx >= (uint)total) return;
 
-    uint z = idx / (uint)(N * N);
-    uint rem = idx % (uint)(N * N);
-    uint y = rem / (uint)N;
-    uint x = rem % (uint)N;
+    WindowCell c;
+    if (!window_map(cb, dtid.x, c)) return;
+    uint x = c.x, y = c.y, z = c.z, idx = c.idx;
+    uint NN = (uint)(N * N);
 
     float div = 0.0f;
 
@@ -48,11 +45,11 @@ void main(uint3 dtid : SV_DispatchThreadID)
     // ∂w/∂z
     if (D > 1) {
         if (z > 0 && z < (uint)D - 1)
-            div += vel_z[idx + (uint)(N*N)] - vel_z[idx - (uint)(N*N)];
+            div += vel_z[idx + NN] - vel_z[idx - NN];
         else if (z == 0)
-            div += vel_z[idx + (uint)(N*N)];
+            div += vel_z[idx + NN];
         else
-            div -= vel_z[idx - (uint)(N*N)];
+            div -= vel_z[idx - NN];
     }
 
     div_out[idx] = -div * 0.5f;

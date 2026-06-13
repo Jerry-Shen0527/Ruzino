@@ -15,16 +15,13 @@ RWStructuredBuffer<float> vel_z : register(u2);
 [numthreads(256, 1, 1)]
 void main(uint3 dtid : SV_DispatchThreadID)
 {
-    uint idx = dtid.x;
     int N = cb.res;
     int D = cb.res_z;
-    int total = N * N * D;
-    if (idx >= (uint)total) return;
+    uint NN = (uint)(N * N);
 
-    uint z = idx / (uint)(N * N);
-    uint rem = idx % (uint)(N * N);
-    uint y = rem / (uint)N;
-    uint x = rem % (uint)N;
+    WindowCell c;
+    if (!window_map(cb, dtid.x, c)) return;
+    uint x = c.x, y = c.y, z = c.z, idx = c.idx;
 
     // ∂P/∂x
     if (x > 0 && x < (uint)N - 1)
@@ -45,10 +42,10 @@ void main(uint3 dtid : SV_DispatchThreadID)
     // ∂P/∂z
     if (D > 1) {
         if (z > 0 && z < (uint)D - 1)
-            vel_z[idx] -= 0.5f * (pressure[idx + (uint)(N*N)] - pressure[idx - (uint)(N*N)]);
+            vel_z[idx] -= 0.5f * (pressure[idx + NN] - pressure[idx - NN]);
         else if (z == 0)
-            vel_z[idx] -= 0.5f * pressure[idx + (uint)(N*N)];
+            vel_z[idx] -= 0.5f * pressure[idx + NN];
         else
-            vel_z[idx] += 0.5f * pressure[idx - (uint)(N*N)];
+            vel_z[idx] += 0.5f * pressure[idx - NN];
     }
 }

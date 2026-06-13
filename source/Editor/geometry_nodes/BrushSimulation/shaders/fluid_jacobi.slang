@@ -16,26 +16,23 @@ RWStructuredBuffer<float> field_out : register(u0);
 [numthreads(256, 1, 1)]
 void main(uint3 dtid : SV_DispatchThreadID)
 {
-    uint idx = dtid.x;
     int N = cb.res;
     int D = cb.res_z;
-    int total = N * N * D;
-    if (idx >= (uint)total) return;
+    uint NN = (uint)(N * N);
 
-    uint z = idx / (uint)(N * N);
-    uint rem = idx % (uint)(N * N);
-    uint y = rem / (uint)N;
-    uint x = rem % (uint)N;
+    WindowCell c;
+    if (!window_map(cb, dtid.x, c)) return;
+    uint x = c.x, y = c.y, z = c.z, idx = c.idx;
 
     float center = field_in[idx];
 
-    // 6-neighbor stencil with Neumann boundary
-    float left   = (x > 0)           ? field_in[idx - 1]         : center;
-    float right  = (x < (uint)N - 1) ? field_in[idx + 1]         : center;
-    float up     = (y > 0)           ? field_in[idx - (uint)N]   : center;
-    float down   = (y < (uint)N - 1) ? field_in[idx + (uint)N]   : center;
-    float back   = (z > 0)           ? field_in[idx - (uint)(N*N)]: center;
-    float front  = (z < (uint)D - 1) ? field_in[idx + (uint)(N*N)]: center;
+    // 6-neighbor stencil with Neumann boundary (global grid bounds)
+    float left   = (x > 0)           ? field_in[idx - 1]  : center;
+    float right  = (x < (uint)N - 1) ? field_in[idx + 1]  : center;
+    float up     = (y > 0)           ? field_in[idx - (uint)N] : center;
+    float down   = (y < (uint)N - 1) ? field_in[idx + (uint)N] : center;
+    float back   = (z > 0)           ? field_in[idx - NN] : center;
+    float front  = (z < (uint)D - 1) ? field_in[idx + NN] : center;
     float sum = left + right + up + down + back + front;
 
     if (cb.jacobi_mode == 1) {

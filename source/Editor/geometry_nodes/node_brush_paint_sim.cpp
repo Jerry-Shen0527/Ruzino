@@ -202,7 +202,14 @@ struct SimConstants {
     int res_z;              // Grid Z (height) resolution D
     float height_extent;    // Total height extent in world units
     float grid_center_z;    // Z center
-    int _pad;
+
+    // --- Active window (Wetbrush §4.2) ---
+    int window_origin_x;
+    int window_origin_y;
+    int window_origin_z;
+    int window_size_x;
+    int window_size_y;
+    int window_size_z;
 };
 
 struct BristleConstants {
@@ -1452,7 +1459,22 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         int substeps = std::max(1, static_cast<int>(std::ceil(sim_dt / max_sub_dt)));
         substeps = std::min(substeps, 16);
         float sub_dt = sim_dt / static_cast<float>(substeps);
-        int total = storage.grid_res * storage.grid_res * rz;
+
+        // --- Active window (Wetbrush §4.2) ---
+        // Restrict fluid sim to a brush-centered sub-volume. Window size is
+        // capped at 128×128×res_z (paper's value); smaller grids use the
+        // full extent. Origin is centered on the brush and clamped to grid.
+        const int WIN_XY = std::min(128, storage.grid_res);
+        const int WIN_Z  = rz;  // simulate the full paint height
+        float half_p = storage.grid_paper * 0.5f;
+        // Brush position in grid cell coordinates (centered at origin).
+        float bgx = (brush_pos_3d.x - storage.grid_center.x + half_p) / cell_sz;
+        float bgy = (brush_pos_3d.y - storage.grid_center.y + half_p) / cell_sz;
+        int wox = static_cast<int>(bgx) - WIN_XY / 2;
+        int woy = static_cast<int>(bgy) - WIN_XY / 2;
+        wox = std::max(0, std::min(wox, storage.grid_res - WIN_XY));
+        woy = std::max(0, std::min(woy, storage.grid_res - WIN_XY));
+        int window_total = WIN_XY * WIN_XY * WIN_Z;
 
         for (int s = 0; s < substeps; s++) {
             SimConstants fluid_cb = {};
@@ -1466,6 +1488,12 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             fluid_cb.viscosity = viscosity;
             fluid_cb.diffusion = diffusion;
             fluid_cb.drying_rate = drying_rate;
+            fluid_cb.window_origin_x = wox;
+            fluid_cb.window_origin_y = woy;
+            fluid_cb.window_origin_z = 0;
+            fluid_cb.window_size_x = WIN_XY;
+            fluid_cb.window_size_y = WIN_XY;
+            fluid_cb.window_size_z = WIN_Z;
 
             nvrhi::BufferHandle cb_buf;
             upload_constant_buffer(rc, device, &fluid_cb, sizeof(SimConstants),
@@ -1495,17 +1523,17 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
 
                 dispatch_field(rc, storage.jacobi_program,
                     {{"field_in", storage.vel_x}, {"rhs", storage.vel_x}},
-                    {{"field_out", storage.vel_x_tmp}}, jcb, total);
+                    {{"field_out", storage.vel_x_tmp}}, jcb, window_total);
                 std::swap(storage.vel_x, storage.vel_x_tmp);
 
                 dispatch_field(rc, storage.jacobi_program,
                     {{"field_in", storage.vel_y}, {"rhs", storage.vel_y}},
-                    {{"field_out", storage.vel_y_tmp}}, jcb, total);
+                    {{"field_out", storage.vel_y_tmp}}, jcb, window_total);
                 std::swap(storage.vel_y, storage.vel_y_tmp);
 
                 dispatch_field(rc, storage.jacobi_program,
                     {{"field_in", storage.vel_z}, {"rhs", storage.vel_z}},
-                    {{"field_out", storage.vel_z_tmp}}, jcb, total);
+                    {{"field_out", storage.vel_z_tmp}}, jcb, window_total);
                 std::swap(storage.vel_z, storage.vel_z_tmp);
 
                 rc.destroy(jcb);
@@ -1515,7 +1543,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             for (int fp = 0; fp < 3; fp++) {
                 dispatch_field(rc, storage.divergence_program,
                     {{"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
-                    {{"div_out", storage.divergence_buf}}, cb_buf, total);
+                    {{"div_out", storage.divergence_buf}}, cb_buf, window_total);
 
                 fluid_cb.jacobi_mode = 1;
                 nvrhi::BufferHandle pcb;
@@ -1526,7 +1554,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                     dispatch_field(rc, storage.jacobi_program,
                         {{"field_in", storage.pressure_a},
                          {"rhs", storage.divergence_buf}},
-                        {{"field_out", storage.pressure_b}}, pcb, total);
+                        {{"field_out", storage.pressure_b}}, pcb, window_total);
                     std::swap(storage.pressure_a, storage.pressure_b);
                 }
                 rc.destroy(pcb);
@@ -1534,33 +1562,33 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                 dispatch_field(rc, storage.gradient_program,
                     {{"pressure", storage.pressure_a}},
                     {{"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
-                    cb_buf, total);
+                    cb_buf, window_total);
             }
 
             // Advect velocity
             dispatch_field(rc, storage.advect_program,
                 {{"field_in", storage.vel_x},
                  {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
-                {{"field_out", storage.vel_x_tmp}}, cb_buf, total);
+                {{"field_out", storage.vel_x_tmp}}, cb_buf, window_total);
             std::swap(storage.vel_x, storage.vel_x_tmp);
 
             dispatch_field(rc, storage.advect_program,
                 {{"field_in", storage.vel_y},
                  {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
-                {{"field_out", storage.vel_y_tmp}}, cb_buf, total);
+                {{"field_out", storage.vel_y_tmp}}, cb_buf, window_total);
             std::swap(storage.vel_y, storage.vel_y_tmp);
 
             dispatch_field(rc, storage.advect_program,
                 {{"field_in", storage.vel_z},
                  {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
-                {{"field_out", storage.vel_z_tmp}}, cb_buf, total);
+                {{"field_out", storage.vel_z_tmp}}, cb_buf, window_total);
             std::swap(storage.vel_z, storage.vel_z_tmp);
 
             // Project again
             for (int fp = 0; fp < 3; fp++) {
                 dispatch_field(rc, storage.divergence_program,
                     {{"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
-                    {{"div_out", storage.divergence_buf}}, cb_buf, total);
+                    {{"div_out", storage.divergence_buf}}, cb_buf, window_total);
 
                 fluid_cb.jacobi_mode = 1;
                 nvrhi::BufferHandle pcb2;
@@ -1571,7 +1599,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                     dispatch_field(rc, storage.jacobi_program,
                         {{"field_in", storage.pressure_a},
                          {"rhs", storage.divergence_buf}},
-                        {{"field_out", storage.pressure_b}}, pcb2, total);
+                        {{"field_out", storage.pressure_b}}, pcb2, window_total);
                     std::swap(storage.pressure_a, storage.pressure_b);
                 }
                 rc.destroy(pcb2);
@@ -1579,38 +1607,38 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                 dispatch_field(rc, storage.gradient_program,
                     {{"pressure", storage.pressure_a}},
                     {{"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
-                    cb_buf, total);
+                    cb_buf, window_total);
             }
 
             // --- Scalar step ---
             dispatch_field(rc, storage.advect_program,
                 {{"field_in", storage.density},
                  {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
-                {{"field_out", storage.density_tmp}}, cb_buf, total);
+                {{"field_out", storage.density_tmp}}, cb_buf, window_total);
             std::swap(storage.density, storage.density_tmp);
 
             dispatch_field(rc, storage.advect_program,
                 {{"field_in", storage.color_r},
                  {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
-                {{"field_out", storage.color_tmp}}, cb_buf, total);
+                {{"field_out", storage.color_tmp}}, cb_buf, window_total);
             std::swap(storage.color_r, storage.color_tmp);
 
             dispatch_field(rc, storage.advect_program,
                 {{"field_in", storage.color_y},
                  {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
-                {{"field_out", storage.color_tmp}}, cb_buf, total);
+                {{"field_out", storage.color_tmp}}, cb_buf, window_total);
             std::swap(storage.color_y, storage.color_tmp);
 
             dispatch_field(rc, storage.advect_program,
                 {{"field_in", storage.color_b},
                  {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
-                {{"field_out", storage.color_tmp}}, cb_buf, total);
+                {{"field_out", storage.color_tmp}}, cb_buf, window_total);
             std::swap(storage.color_b, storage.color_tmp);
 
             dispatch_field(rc, storage.advect_program,
                 {{"field_in", storage.wetness},
                  {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
-                {{"field_out", storage.wetness_tmp}}, cb_buf, total);
+                {{"field_out", storage.wetness_tmp}}, cb_buf, window_total);
             std::swap(storage.wetness, storage.wetness_tmp);
 
             // Diffuse density + wetness
@@ -1624,12 +1652,12 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
 
                 dispatch_field(rc, storage.jacobi_program,
                     {{"field_in", storage.density}, {"rhs", storage.density}},
-                    {{"field_out", storage.density_tmp}}, dcb, total);
+                    {{"field_out", storage.density_tmp}}, dcb, window_total);
                 std::swap(storage.density, storage.density_tmp);
 
                 dispatch_field(rc, storage.jacobi_program,
                     {{"field_in", storage.wetness}, {"rhs", storage.wetness}},
-                    {{"field_out", storage.wetness_tmp}}, dcb, total);
+                    {{"field_out", storage.wetness_tmp}}, dcb, window_total);
                 std::swap(storage.wetness, storage.wetness_tmp);
                 rc.destroy(dcb);
             }
@@ -1639,7 +1667,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                 {},
                 {{"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z},
                  {"wetness", storage.wetness}},
-                cb_buf, total);
+                cb_buf, window_total);
 
             // FLIP/PIC velocity update for particles
             if (storage.particles_initialized) { // re-enable for testing

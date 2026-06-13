@@ -14,9 +14,9 @@ RWStructuredBuffer<float> wetness : register(u3);
 [numthreads(256, 1, 1)]
 void main(uint3 dtid : SV_DispatchThreadID)
 {
-    uint idx = dtid.x;
-    int total = cb.res * cb.res * cb.res_z;
-    if (idx >= (uint)total) return;
+    WindowCell c;
+    if (!window_map(cb, dtid.x, c)) return;
+    uint idx = c.idx;
 
     // Damp velocity (viscous drag)
     vel_x[idx] *= 0.98f;

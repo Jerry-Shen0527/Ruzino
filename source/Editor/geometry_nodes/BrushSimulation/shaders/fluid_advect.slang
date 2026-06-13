@@ -16,33 +16,31 @@ RWStructuredBuffer<float> field_out : register(u0);
 [numthreads(256, 1, 1)]
 void main(uint3 dtid : SV_DispatchThreadID)
 {
-    uint idx = dtid.x;
     int N = cb.res;
     int D = cb.res_z;
-    int total = N * N * D;
-    if (idx >= (uint)total) return;
 
-    uint z = idx / (uint)(N * N);
-    uint rem = idx % (uint)(N * N);
-    uint y = rem / (uint)N;
-    uint x = rem % (uint)N;
+    WindowCell c;
+    if (!window_map(cb, dtid.x, c)) return;
+    uint x = c.x, y = c.y, z = c.z;
+    uint idx = c.idx;  // global index — used to read own velocity
 
     float dt0 = cb.dt * (float)N;
     float dt_z = cb.dt * (float)D;
 
-    // Trace back
+    // Trace back (in global grid coordinates)
     float px = (float)x - dt0 * vel_x[idx];
     float py = (float)y - dt0 * vel_y[idx];
     float pz = (float)z - dt_z * vel_z[idx];
 
-    // Clamp to grid bounds
+    // Clamp to global grid bounds (cells outside the window keep stale
+    // values, so reading them on trace-back is correct).
     float max_xy = (float)N - 1.5f;
     float max_z = (float)D - 1.5f;
     px = max(0.5f, min(px, max_xy));
     py = max(0.5f, min(py, max_xy));
     pz = max(0.5f, min(pz, max_z));
 
-    // Trilinear interpolation
+    // Trilinear interpolation over the full grid
     int x0 = (int)px, y0 = (int)py, z0 = (int)pz;
     int x1 = min(x0 + 1, N - 1), y1 = min(y0 + 1, N - 1), z1 = min(z0 + 1, D - 1);
     float sx = px - (float)x0, sy = py - (float)y0, sz = pz - (float)z0;

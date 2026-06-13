@@ -33,7 +33,18 @@ struct SimConstants {
     int res_z;              // Grid Z (height) resolution D
     float height_extent;    // Total height extent in world units
     float grid_center_z;    // Override center_z for 3D (same as center_z usually)
-    int _pad;
+
+    // --- Active window (Wetbrush §4.2) ---
+    // Fluid simulation only runs inside this brush-centered sub-volume.
+    // Dispatch threads index the window [0,window_size); the shader adds
+    // window_origin to map to global (x,y,z) cells. Cells outside the
+    // window keep their previous values (read on advect trace-back).
+    int window_origin_x;
+    int window_origin_y;
+    int window_origin_z;
+    int window_size_x;
+    int window_size_y;
+    int window_size_z;
 };
 
 // ============================================================
@@ -49,6 +60,41 @@ uint grid_idx_3d(uint x, uint y, uint z, int res, int res_z)
 uint grid_idx(uint x, uint y, int res)
 {
     return y * (uint)res + x;
+}
+
+// ============================================================
+// Active-window thread mapping (Wetbrush §4.2)
+// Dispatch threads index the window [0,window_size). This maps a window
+// thread index to its global (x,y,z) cell and global linear index.
+// Returns false if the thread is outside the window (caller should return).
+// ============================================================
+struct WindowCell {
+    uint x, y, z;     // global cell coordinates
+    uint idx;         // global linear index into the full grid
+};
+
+bool window_map(SimConstants cb, uint window_idx, out WindowCell c)
+{
+    int wsx = cb.window_size_x, wsy = cb.window_size_y, wsz = cb.window_size_z;
+    int total = wsx * wsy * wsz;
+    if (window_idx >= (uint)total) return false;
+
+    uint wz = window_idx / (uint)(wsx * wsy);
+    uint rem = window_idx % (uint)(wsx * wsy);
+    uint wy = rem / (uint)wsx;
+    uint wx = rem % (uint)wsx;
+
+    int N = cb.res;
+    int D = cb.res_z;
+    c.x = (uint)(wx + cb.window_origin_x);
+    c.y = (uint)(wy + cb.window_origin_y);
+    c.z = (uint)(wz + cb.window_origin_z);
+
+    // Clamp to global grid (window_origin may place edges past the grid)
+    if (c.x >= (uint)N || c.y >= (uint)N || c.z >= (uint)D) return false;
+
+    c.idx = grid_idx_3d(c.x, c.y, c.z, N, D);
+    return true;
 }
 
 // Brightness: ||rgb||_M where M = diag(0.241, 0.691, 0.068)
