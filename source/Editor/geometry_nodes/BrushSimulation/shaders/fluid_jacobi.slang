@@ -49,8 +49,12 @@ void main(uint3 dtid : SV_DispatchThreadID)
         if (z > 0)           { if (!is_solid(idx - NN))    { sum += field_in[idx - NN];    fluid_neighbors++; } }
         if (z < (uint)D - 1) { if (!is_solid(idx + NN))    { sum += field_in[idx + NN];    fluid_neighbors++; } }
 
-        int div = max(fluid_neighbors, 1);
-        field_out[idx] = (rhs[idx] + sum) / float(div);
+        // A fluid cell with NO fluid neighbors is fully enclosed by solid —
+        // treat it as solid (pressure pinned to 0) instead of collapsing to
+        // the raw divergence, which would inject spurious velocity.
+        if (fluid_neighbors == 0) { field_out[idx] = 0.0f; return; }
+
+        field_out[idx] = (rhs[idx] + sum) / float(fluid_neighbors);
     } else {
         // Diffusion (viscosity): standard 6-neighbor Laplacian with Neumann BC.
         float left   = (x > 0)           ? field_in[idx - 1]  : center;

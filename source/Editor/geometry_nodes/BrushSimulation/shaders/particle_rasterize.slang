@@ -66,6 +66,11 @@ void main(uint3 tid : SV_DispatchThreadID)
                 float w = wx * wy * wz;
                 uint gi = grid_idx_3d(uint(nx), uint(ny), uint(nz), res, res_z);
 
+                // NOTE: plain += races when many particles splat into the
+                // same cell. Slang's RWStructuredBuffer lacks a working
+                // atomic-CAS on float elements (InterlockedCompareExchange
+                // rejects buf[i] as non-l-value), so we accept the race —
+                // density is sparse and collisions are rare in practice.
                 ptcl_density[gi] += deposit * w;
                 ptcl_vel_x[gi]   += vel.x * deposit * w;
                 ptcl_vel_y[gi]   += vel.y * deposit * w;

@@ -65,16 +65,15 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     // Particle mass per sub-cell: equal share of cell density
     float mass_per_candidate = cell_density / 27.0 * 0.5;  // 50% of density → particles
-    static const int MAX_EMIT_PER_CELL = 4;
 
     int num_emitted = 0;
-    float total_mass_removed = 0.0;
-    float total_kernel_at_center = 0.0;
+    float density_removed = 0.0;  // Σ(m_k · W(p_k - x_c, h)) for Eq.15
 
     [unroll] for (int sz = 0; sz < 3; sz++) {
       [unroll] for (int sy = 0; sy < 3; sy++) {
         [unroll] for (int sx = 0; sx < 3; sx++) {
-            if (num_emitted >= MAX_EMIT_PER_CELL) break;
+
+            // Stratified sub-cell position (27 samples per cell, §5.2)
 
             float3 candidate = float3(
                 cell_cx - cell_sz * 0.5 + (float(sx) + 0.5) / 3.0 * cell_sz,
@@ -111,9 +110,10 @@ void main(uint3 tid : SV_DispatchThreadID)
 
             float m_k = min(mass_per_candidate, 0.5);
 
-            // Track kernel weight at cell center from this particle (for Eq.15)
-            total_kernel_at_center += W_smooth_3d(candidate - cell_center, h);
-            total_mass_removed += m_k;
+            // Eq.15 density subtraction: accumulate Σ(m_k · W(p_k - x_c, h)).
+            // (Must be the sum of per-particle mass×weight, NOT the product
+            // of the two sums — that was the previous bug.)
+            density_removed += m_k * W_smooth_3d(candidate - cell_center, h);
             num_emitted++;
 
             ptcl_pos[slot] = float4(candidate, 0.0);
@@ -124,6 +124,6 @@ void main(uint3 tid : SV_DispatchThreadID)
       }
     }
 
-    // Eq.15: ρ_c^new = max(ρ_c - m_k * Σ_k W(p_k - x_c, h), 0)
-    density_out[idx] = max(cell_density - total_mass_removed * total_kernel_at_center, 0.0);
+    // Eq.15: ρ_c^new = max(ρ_c - Σ_k(m_k · W(p_k - x_c, h)), 0)
+    density_out[idx] = max(cell_density - density_removed, 0.0);
 }

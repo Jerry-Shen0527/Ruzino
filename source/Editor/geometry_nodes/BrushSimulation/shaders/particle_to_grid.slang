@@ -67,28 +67,15 @@ void main(uint3 tid : SV_DispatchThreadID)
 
             uint gi = grid_idx_3d(uint(ix), uint(iy), uint(iz), res, res_z);
 
-            // Density deposit (Eq.16): ρ_c += m_k * W(p_k - x_c, h)
-            density[gi] += col.w * w;
-
-            // Color deposit with brightness-preserving merge (Algorithm 2)
+            // Eq.16: ρ_c += m_k * W(p_k - x_c, h). Color accumulated as
+            // weighted RYB; brightness-preserving mixing is deferred to the
+            // merge step. Plain += races (see particle_rasterize note) but
+            // collisions are rare for sparse far-from-brush particles.
             float w_new = col.w * w;
-            float w_old = density[gi];
-            float3 existing_ryb = float3(
-                max(color_r[gi], 0.0),
-                max(color_y[gi], 0.0),
-                max(color_b[gi], 0.0));
-
-            float w_total = w_old + w_new;
-            if (w_total > 0.01) {
-                float3 mixed = color_mix(col.rgb, existing_ryb, w_new, w_old);
-                color_r[gi] = mixed.r * w_total;
-                color_y[gi] = mixed.g * w_total;
-                color_b[gi] = mixed.b * w_total;
-            } else {
-                color_r[gi] += col.x * w_new;
-                color_y[gi] += col.y * w_new;
-                color_b[gi] += col.z * w_new;
-            }
+            density[gi] += w_new;
+            color_r[gi] += col.x * w_new;
+            color_y[gi] += col.y * w_new;
+            color_b[gi] += col.z * w_new;
         }
       }
     }

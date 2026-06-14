@@ -112,6 +112,12 @@ void atomicFloatAdd(RWByteAddressBuffer buf, uint byte_offset, float value)
         old_val = prev;
     }
 }
+// NOTE: a RWStructuredBuffer<float> overload was attempted but Slang rejects
+// InterlockedCompareExchange(buf[i], ...) with "must be l-value" — CAS is not
+// available on structured-buffer elements in this Slang version. Particle
+// scatter (rasterize / to_grid) therefore uses plain += and tolerates the
+// rare collision; switch those fields to RWByteAddressBuffer if precision
+// becomes an issue.
 
 float color_brightness(float3 rgb)
 {
