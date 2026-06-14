@@ -46,10 +46,11 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     float half_p = cb.paper_size * 0.5;
     float half_h = cb.height_extent * 0.5;
-    float cell_sz = cb.cell_size;
+    float cell_sz = cb.cell_size;                 // XY cell size
+    float cell_z  = cb.height_extent / float(res_z);  // Z cell size (≠ XY)
     float cell_cx = (float(x) + 0.5) * cell_sz - half_p + cb.grid_center_x;
     float cell_cy = (float(y) + 0.5) * cell_sz - half_p + cb.grid_center_y;
-    float cell_cz = (float(z) + 0.5) * cell_sz - half_h + cb.grid_center_z;
+    float cell_cz = (float(z) + 0.5) * cell_z - half_h + cb.grid_center_z;
     float3 cell_center = float3(cell_cx, cell_cy, cell_cz);
 
     // Only convert cells within D0 of the brush footprint (XY)
@@ -61,7 +62,7 @@ void main(uint3 tid : SV_DispatchThreadID)
     }
 
     // Stratified sampling: 27 candidate positions (3×3×3 sub-grid per cell)
-    float h = cell_sz * 1.5;  // smoothing kernel radius
+    float h = cell_sz * 1.5;  // smoothing kernel radius (XY-isotropic approx)
 
     // Particle mass per sub-cell: equal share of cell density
     float mass_per_candidate = cell_density / 27.0 * 0.5;  // 50% of density → particles
@@ -78,13 +79,13 @@ void main(uint3 tid : SV_DispatchThreadID)
             float3 candidate = float3(
                 cell_cx - cell_sz * 0.5 + (float(sx) + 0.5) / 3.0 * cell_sz,
                 cell_cy - cell_sz * 0.5 + (float(sy) + 0.5) / 3.0 * cell_sz,
-                cell_cz - cell_sz * 0.5 + (float(sz) + 0.5) / 3.0 * cell_sz);
+                cell_cz - cell_z  * 0.5 + (float(sz) + 0.5) / 3.0 * cell_z);
 
             // Interpolate density at candidate from neighboring cells (3×3×3 kernel)
             float interp_density = 0.0;
             int cx = int(floor((candidate.x - cb.grid_center_x + half_p) / cell_sz));
             int cy = int(floor((candidate.y - cb.grid_center_y + half_p) / cell_sz));
-            int cz = int(floor((candidate.z - cb.grid_center_z + half_h) / cell_sz));
+            int cz = int(floor((candidate.z - cb.grid_center_z + half_h) / cell_z));
             for (int dz = -1; dz <= 1; dz++) {
                 for (int dy = -1; dy <= 1; dy++) {
                     for (int dx = -1; dx <= 1; dx++) {
@@ -93,7 +94,7 @@ void main(uint3 tid : SV_DispatchThreadID)
                         float3 npos = float3(
                             (float(nx) + 0.5) * cell_sz - half_p + cb.grid_center_x,
                             (float(ny) + 0.5) * cell_sz - half_p + cb.grid_center_y,
-                            (float(nz) + 0.5) * cell_sz - half_h + cb.grid_center_z);
+                            (float(nz) + 0.5) * cell_z  - half_h + cb.grid_center_z);
                         float w = W_smooth_3d(candidate - npos, h);
                         uint gi = grid_idx_3d(uint(nx), uint(ny), uint(nz), res, res_z);
                         interp_density += density[gi] * w;
