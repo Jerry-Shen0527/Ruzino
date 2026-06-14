@@ -178,6 +178,10 @@ struct BristleConstants {
     int grid_res_z;          // Z resolution D
     float height_extent;     // total height in world units
     float grid_center_z;
+    // Frame-origin acceleration (a_B) and angular acceleration (ω̇) for Eq.2,
+    // finite-differenced on the host (rad/s² for omega_dot).
+    float brush_accel_x, brush_accel_y, brush_accel_z;
+    float brush_angular_accel_x, brush_angular_accel_y, brush_angular_accel_z;
 };
 
 // ============================================================
@@ -255,7 +259,10 @@ struct ParticleConstants {
     float D1;                // adhesion range (Table 1: 0.3cm)
     int num_bristles;        // for nearest-sample lookup
     int samples_per_bristle; // for nearest-sample lookup
-    float _pad0;
+    // Eq.9 frame-origin acceleration a_L and angular acceleration ω̇_L for the
+    // local-frame non-inertial terms (finite-differenced on the host).
+    float brush_accel_x, brush_accel_y, brush_accel_z;
+    float brush_angular_accel_x, brush_angular_accel_y, brush_angular_accel_z;
 };
 
 // ============================================================

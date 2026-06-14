@@ -45,18 +45,16 @@ void main(uint3 tid : SV_DispatchThreadID)
     store_pos(base, root_pos);
     store_vel(base, brush_vel);
 
-    // Non-inertial frame quantities (full 3D)
-    float3 omega = float3(cb.brush_angular_vel_x, cb.brush_angular_vel_y, cb.brush_angular_vel_z);
     float beta_B = cb.beta_B;
     float dt = cb.dt;
     float rest_len = cb.brush_radius * 1.5 / float(M);
 
-    // Angular acceleration estimate (finite difference of omega magnitude)
-    float omega_mag = length(omega);
-    float3 omega_dot = omega / max(dt, 1e-6f) * 0.5;  // damped estimate
-
-    // Position in brush frame: x_i^B = pos - brush_pos
-    // Velocity in brush frame: v_i^B = vel - brush_vel
+    // Non-inertial frame quantities (full 3D). omega is rad/s; omega_dot is
+    // rad/s², both finite-differenced on the host from the previous frame.
+    float3 omega = float3(cb.brush_angular_vel_x, cb.brush_angular_vel_y, cb.brush_angular_vel_z);
+    float3 omega_dot = float3(cb.brush_angular_accel_x, cb.brush_angular_accel_y, cb.brush_angular_accel_z);
+    // Frame-origin linear acceleration a_B (Eq.2 rectilinear term).
+    float3 a_B = float3(cb.brush_accel_x, cb.brush_accel_y, cb.brush_accel_z);
 
     // Simulate vertices 1..M-1
     for (int vi = 1; vi < M; vi++) {
@@ -64,18 +62,27 @@ void main(uint3 tid : SV_DispatchThreadID)
         float3 pos = load_pos(idx);
         float3 vel = load_vel(idx);
 
-        // Spring force toward previous vertex
+        // Structural spring toward previous vertex (i ↔ i−1)
         float3 diff = load_pos(idx - 1) - pos;
         float dist = length(diff);
-        float3 spring_f = cb.spring_k * (dist - rest_len) * normalize(diff + 1e-8);
+        float3 structural_f = cb.spring_k * (dist - rest_len) * normalize(diff + 1e-8);
+
+        // Shear spring toward the previous vertex of the previous vertex
+        // (i ↔ i−2): resists shearing between adjacent segments.
+        float3 shear_f = float3(0,0,0);
+        if (vi >= 2) {
+            float3 d2 = load_pos(idx - 2) - pos;
+            float dist2 = length(d2);
+            float rest2 = rest_len * 2.0;
+            shear_f = cb.spring_k * 0.5 * (dist2 - rest2) * normalize(d2 + 1e-8);
+        }
 
         float3 x_B = pos - brush_pos;     // brush-frame position
         float3 v_B = vel - brush_vel;     // brush-frame velocity
 
         // === All four non-inertial frame accelerations (Eq.2, 3D) ===
-        // 1. Rectilinear (Euler): linear acceleration of frame origin.
-        //    Approximated by the brush velocity (acts as drag).
-        float3 euler_rect = brush_vel;
+        // 1. Rectilinear: linear acceleration of the frame origin (a_B).
+        float3 euler_rect = a_B;
 
         // 2. Centrifugal: omega × (omega × x_B)
         float3 centrifugal = cross(omega, cross(omega, x_B));
@@ -86,8 +93,8 @@ void main(uint3 tid : SV_DispatchThreadID)
         // 4. Coriolis: -2 * omega × v_B
         float3 coriolis = -2.0 * cross(omega, v_B);
 
-        // External acceleration: spring + damping (canvas-frame forces)
-        float3 external_a = spring_f - cb.damping * vel;
+        // External acceleration: structural + shear springs + damping.
+        float3 external_a = structural_f + shear_f - cb.damping * vel;
 
         // Eq.2: a_i^B = R_B * a_i - beta_B * (rect + centrifugal + euler_ang + coriolis)
         float3 inertial_sum = euler_rect + centrifugal + euler_angular + coriolis;

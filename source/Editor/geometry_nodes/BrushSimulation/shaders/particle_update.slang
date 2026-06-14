@@ -74,22 +74,26 @@ void main(uint3 tid : SV_DispatchThreadID)
     // Distance to canvas (bottom of paint volume).
     float canvas_z = cb.grid_center_z - cb.height_extent * 0.5;
     float d_k = abs(pos.z - canvas_z);
-    float friction = -max((1.0 - cb.friction_delta * d_k) * (1.0 - cb.friction_delta * d_k), 0.0);
-    float3 a_ext_canvas = float3(0.0, 0.0, -0.2) + friction * vel;
+    // Eq.8 friction multiplier: delta_k = 1 - (d_k / D0)^2 (D0 = proximity
+    // distance from Table 1). Applied as a drag on velocity.
+    float delta_k = max(1.0 - (d_k / max(cb.D0, 1e-6f)) * (d_k / max(cb.D0, 1e-6f)), 0.0);
+    float3 a_ext_canvas = float3(0.0, 0.0, -0.2) - delta_k * vel;
 
-    // omega_dot estimate (damped)
-    float3 omega_dot_L = omega_L / max(dt, 1e-6f) * 0.5;
+    // Frame-origin acceleration a_L (Eq.2 rectilinear) and angular
+    // acceleration ω̇_L, finite-differenced on the host (rad/s²).
+    float3 a_B = float3(cb.brush_accel_x, cb.brush_accel_y, cb.brush_accel_z);
+    float3 omega_dot_L = float3(cb.brush_angular_accel_x, cb.brush_angular_accel_y, cb.brush_angular_accel_z);
 
-    // Eq.2/Eq.9 four inertial accelerations, all in the local frame:
-    //   rectilinear (from sample origin motion ~ 0 here), centrifugal,
-    //   Euler angular, Coriolis.
+    // Eq.2/Eq.9 four inertial accelerations in the local frame:
+    //   rectilinear (a_B), centrifugal, Euler angular (ω̇), Coriolis.
     float3 a_ext_L = to_local(a_ext_canvas, frame);
+    float3 a_B_L = to_local(a_B, frame);
     float3 centrifugal_L = cross(omega_L, cross(omega_L, p_L));
     float3 euler_ang_L = cross(omega_dot_L, p_L);
     float3 coriolis_L = -2.0 * cross(omega_L, v_L);
     float beta_L = 0.2;  // [0, 0.2] per Table 1
 
-    float3 a_L = a_ext_L - beta_L * (centrifugal_L + euler_ang_L + coriolis_L);
+    float3 a_L = a_ext_L - beta_L * (a_B_L + centrifugal_L + euler_ang_L + coriolis_L);
     float3 v_L_new = v_L + a_L * dt;
     float3 p_L_new = p_L + v_L_new * dt;
 

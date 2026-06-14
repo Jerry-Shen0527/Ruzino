@@ -235,6 +235,10 @@ struct BristleConstants {
     int grid_res_z;
     float height_extent;
     float grid_center_z;
+    // Frame-origin acceleration (a_B) and angular acceleration (ω̇) for the
+    // Eq.2 non-inertial terms, finite-differenced on the host.
+    float brush_accel_x, brush_accel_y, brush_accel_z;
+    float brush_angular_accel_x, brush_angular_accel_y, brush_angular_accel_z;
 };
 
 struct ParticleConstants {
@@ -256,7 +260,9 @@ struct ParticleConstants {
     float D1;
     int num_bristles;
     int samples_per_bristle;
-    float _pad0;
+    // Eq.9 frame-origin acceleration a_L and angular acceleration ω̇_L.
+    float brush_accel_x, brush_accel_y, brush_accel_z;
+    float brush_angular_accel_x, brush_angular_accel_y, brush_angular_accel_z;
 };
 
 struct BristleLiquidConstants {
@@ -396,6 +402,10 @@ struct PaintSimStorage {
     bool center_initialized = false;
     int deposited_count = 0;
     float last_sim_time = -1.0f;
+    // Previous-frame brush state for finite-difference inertial terms
+    // (brush acceleration a_B, angular acceleration ω̇). Eq.2/Eq.9.
+    glm::vec3 prev_brush_vel = glm::vec3(0.0f);
+    glm::vec3 prev_angular_vel = glm::vec3(0.0f);
 
     // Bristle state
     bool bristles_initialized = false;
@@ -924,10 +934,14 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
 
     glm::vec3 brush_pos_3d(0.0f);
     glm::vec3 brush_vel_3d(0.0f);
+    glm::vec3 brush_accel_3d(0.0f);
     float brush_rotation = 0.0f;
     // Brush rotates about the canvas normal (Z axis); the stroke is planar so
     // ω is dominantly z. x/y components stay 0 unless the canvas tilts.
     glm::vec3 brush_angular_vel(0.0f);
+    glm::vec3 brush_angular_accel(0.0f);
+
+    const float frame_dt = 0.016f;
 
     if (!vertices.empty()) {
         int last = static_cast<int>(vertices.size()) - 1;
@@ -936,18 +950,30 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         brush_pos_3d.y -= storage.grid_center.y;
 
         if (last > 0) {
-            brush_vel_3d = vertices[last] - vertices[last - 1];
+            glm::vec3 new_vel = vertices[last] - vertices[last - 1];
+            // Frame-origin linear acceleration a_B = Δv/Δt (Eq.2 rectilinear).
+            brush_accel_3d = (new_vel - storage.prev_brush_vel) / frame_dt;
+            brush_vel_3d = new_vel;
+
             // Heading angle in the XY plane
             brush_rotation = atan2(brush_vel_3d.y, brush_vel_3d.x);
             if (last > 1) {
                 float prev_rot = atan2(
                     vertices[last-1].y - vertices[last-2].y,
                     vertices[last-1].x - vertices[last-2].x);
-                // Angular velocity about canvas normal (Z)
-                brush_angular_vel.z = brush_rotation - prev_rot;
+                // Angular velocity about canvas normal (Z), in rad/s, wrapped
+                // to [-π, π] to handle the ±π seam.
+                float dtheta = brush_rotation - prev_rot;
+                dtheta = atan2(sin(dtheta), cos(dtheta));
+                glm::vec3 new_omega(0.0f, 0.0f, dtheta / frame_dt);
+                // ω̇ = Δω/Δt for Eq.2 Euler angular term.
+                brush_angular_accel = (new_omega - storage.prev_angular_vel) / frame_dt;
+                brush_angular_vel = new_omega;
             }
         }
     }
+    storage.prev_brush_vel = brush_vel_3d;
+    storage.prev_angular_vel = brush_angular_vel;
 
     // === BRISTLE SIMULATION ===
     {
@@ -967,6 +993,12 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         bc.brush_angular_vel_y = brush_angular_vel.y;
         bc.brush_angular_vel_z = brush_angular_vel.z;
         bc.brush_rotation = brush_rotation;
+        bc.brush_accel_x = brush_accel_3d.x;
+        bc.brush_accel_y = brush_accel_3d.y;
+        bc.brush_accel_z = brush_accel_3d.z;
+        bc.brush_angular_accel_x = brush_angular_accel.x;
+        bc.brush_angular_accel_y = brush_angular_accel.y;
+        bc.brush_angular_accel_z = brush_angular_accel.z;
         bc.brush_radius = brush_radius;
         bc.spring_k = 50.0f;
         bc.damping = 5.0f;
@@ -1209,7 +1241,12 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         pc.D1 = brush_radius * 0.5f;
         pc.num_bristles = Nb;
         pc.samples_per_bristle = S;
-        pc._pad0 = 0.0f;
+        pc.brush_accel_x = brush_accel_3d.x;
+        pc.brush_accel_y = brush_accel_3d.y;
+        pc.brush_accel_z = brush_accel_3d.z;
+        pc.brush_angular_accel_x = brush_angular_accel.x;
+        pc.brush_angular_accel_y = brush_angular_accel.y;
+        pc.brush_angular_accel_z = brush_angular_accel.z;
 
         nvrhi::BufferHandle ptcl_cb;
         upload_constant_buffer(rc, device, &pc, sizeof(ParticleConstants),
