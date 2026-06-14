@@ -30,8 +30,9 @@ void main(uint3 dtid : SV_DispatchThreadID)
     int N = cb.res;
     int D = cb.res_z;
     float half_paper = cb.paper_size * 0.5f;
+    float cell_z = cb.height_extent / float(D);  // Z cell size (≠ XY cell_size)
     int spread_xy = max(1, (int)ceil(cb.effective_radius / cb.cell_size));
-    int spread_z = max(1, (int)ceil(cb.effective_radius / cb.cell_size));
+    int spread_z = max(1, (int)ceil(cb.effective_radius / cell_z));
 
     float prev_gx = 0.0f, prev_gy = 0.0f;
     float prev_time = -1.0f;
@@ -45,7 +46,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
         float gx = (pos.x - cb.center_x + half_paper) / cb.cell_size;
         float gy = (pos.y - cb.center_y + half_paper) / cb.cell_size;
         // Z: brush touches at z=cb.center_z (paper surface), deposit upward
-        float gz = (pos.z - cb.grid_center_z + cb.height_extent * 0.5f) / cb.cell_size;
+        float gz = (pos.z - cb.grid_center_z + cb.height_extent * 0.5f) / cell_z;
 
         int cx = (int)gx;
         int cy = (int)gy;
@@ -68,7 +69,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
                         continue;
 
                     float dist_xy = sqrt((float)(dx*dx + dy*dy)) * cb.cell_size;
-                    float dist_z = (float)dz * cb.cell_size;
+                    float dist_z = (float)dz * cell_z;
                     float dist = sqrt(dist_xy * dist_xy + dist_z * dist_z);
                     if (dist >= cb.effective_radius) continue;
 

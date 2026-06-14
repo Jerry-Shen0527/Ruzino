@@ -42,12 +42,13 @@ void main(uint3 tid : SV_DispatchThreadID)
     float4 col = ptcl_color[idx];  // RYB pigment + mass in w
     float half_p = cb.paper_size * 0.5;
     float half_h = cb.height_extent * 0.5;
-    float h = cb.cell_size * 1.5;  // kernel radius
+    float cell_z = cb.height_extent / float(cb.grid_res_z);
+    float h = cb.cell_size * 1.5;  // kernel radius (XY)
     int res = cb.grid_res, res_z = cb.grid_res_z;
 
     int cx = int(floor((pos.x - cb.grid_center_x + half_p) / cb.cell_size));
     int cy = int(floor((pos.y - cb.grid_center_y + half_p) / cb.cell_size));
-    int cz = int(floor((pos.z - cb.grid_center_z + half_h) / cb.cell_size));
+    int cz = int(floor((pos.z - cb.grid_center_z + half_h) / cell_z));
 
     // 3×3×3 neighborhood with kernel weights (Eq.16)
     [unroll] for (int dz = -1; dz <= 1; dz++) {
@@ -61,7 +62,7 @@ void main(uint3 tid : SV_DispatchThreadID)
             float3 cell_pos = float3(
                 (float(ix) + 0.5) * cb.cell_size - half_p + cb.grid_center_x,
                 (float(iy) + 0.5) * cb.cell_size - half_p + cb.grid_center_y,
-                (float(iz) + 0.5) * cb.cell_size - half_h + cb.grid_center_z);
+                (float(iz) + 0.5) * cell_z - half_h + cb.grid_center_z);
             float w = W_smooth_3d(pos - cell_pos, h);
 
             uint gi = grid_idx_3d(uint(ix), uint(iy), uint(iz), res, res_z);

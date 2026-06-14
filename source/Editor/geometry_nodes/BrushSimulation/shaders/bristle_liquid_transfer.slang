@@ -53,10 +53,11 @@ float3 world_to_grid_f3(float3 pos)
 {
     float half_p = cb.paper_size * 0.5;
     float half_h = cb.height_extent * 0.5;
+    float cell_z = cb.height_extent / float(cb.grid_res_z);
     return float3(
         (pos.x - cb.grid_center_x + half_p) / cb.cell_size,
         (pos.y - cb.grid_center_y + half_p) / cb.cell_size,
-        (pos.z - cb.grid_center_z + half_h) / cb.cell_size);
+        (pos.z - cb.grid_center_z + half_h) / cell_z);
 }
 
 bool in_grid(int ix, int iy, int iz)
@@ -110,10 +111,11 @@ float estimate_surface_distance(float3 s_pos, float R_j)
 
             uint gi = grid_idx_3d(uint(nx), uint(ny), uint(nz), cb.grid_res, cb.grid_res_z);
             if (grid_density[gi] > 0.1) {
+                float cell_z = cb.height_extent / float(cb.grid_res_z);
                 float3 cell_world = float3(
                     (float(nx) + 0.5) * cb.cell_size - cb.paper_size * 0.5 + cb.grid_center_x,
                     (float(ny) + 0.5) * cb.cell_size - cb.paper_size * 0.5 + cb.grid_center_y,
-                    (float(nz) + 0.5) * cb.cell_size - cb.height_extent * 0.5 + cb.grid_center_z);
+                    (float(nz) + 0.5) * cell_z - cb.height_extent * 0.5 + cb.grid_center_z);
                 float dist = length(s_pos - cell_world);
                 min_dist = min(min_dist, dist);
             }

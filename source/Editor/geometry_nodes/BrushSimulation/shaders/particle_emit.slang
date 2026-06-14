@@ -65,9 +65,10 @@ void main(uint3 tid : SV_DispatchThreadID)
 
         float half_p = cb.paper_size * 0.5;
         float half_h = cb.height_extent * 0.5;
+        float cell_z = cb.height_extent / float(cb.grid_res_z);
         float wx = (float(x) + 0.5) * cb.cell_size - half_p + cb.grid_center_x;
         float wy = (float(y) + 0.5) * cb.cell_size - half_p + cb.grid_center_y;
-        float wz = (float(z) + 0.5) * cb.cell_size - half_h + cb.grid_center_z;
+        float wz = (float(z) + 0.5) * cell_z - half_h + cb.grid_center_z;
 
         float3 cell_pos = float3(wx, wy, wz);
         float3 brush_pos3 = float3(cb.brush_pos_x, cb.brush_pos_y, cb.brush_pos_z);

@@ -33,9 +33,10 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     float half_p = cb.paper_size * 0.5;
     float half_h = cb.height_extent * 0.5;
+    float cell_z = cb.height_extent / float(cb.grid_res_z);
     float gx = (pos.x - cb.grid_center_x + half_p) / cb.cell_size;
     float gy = (pos.y - cb.grid_center_y + half_p) / cb.cell_size;
-    float gz = (pos.z - cb.grid_center_z + half_h) / cb.cell_size;
+    float gz = (pos.z - cb.grid_center_z + half_h) / cell_z;
 
     int ix = int(floor(gx));
     int iy = int(floor(gy));

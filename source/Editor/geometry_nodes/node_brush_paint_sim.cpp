@@ -1454,7 +1454,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     sim_dt = std::max(sim_dt, 0.0f);
     storage.last_sim_time = current_time;
 
-    if (sim_dt > 1e-6f) {
+    if (sim_dt > 1e-6f) {  // TEMP reverted: fluid re-enabled
         float max_sub_dt = 2.0f / static_cast<float>(storage.grid_res);
         int substeps = std::max(1, static_cast<int>(std::ceil(sim_dt / max_sub_dt)));
         substeps = std::min(substeps, 16);
