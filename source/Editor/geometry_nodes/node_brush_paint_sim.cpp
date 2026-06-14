@@ -334,6 +334,7 @@ struct PaintSimStorage {
     // --- Bristle liquid transfer (Section 5.1) ---
     nvrhi::BufferHandle sample_liquid;       // SampleLiquid * Nb*S (mass + RYB pigment)
     nvrhi::BufferHandle sample_liquid_b;      // ping-pong for liquid transfer
+    nvrhi::BufferHandle sample_supply;        // per-sample paint supply (consumed by ABSORB)
     nvrhi::BufferHandle bristle_input_color_buf; // float4: user paint color RYB
 
     // --- FLIP/PIC particles ---
@@ -430,7 +431,7 @@ struct PaintSimStorage {
             release(vertex_buf); release(color_buf);
             release(bristle_data); release(sample_pos); release(sample_vel);
             release(sample_color); release(sample_frame); release(lambda_buf);
-            release(sample_liquid); release(sample_liquid_b); release(bristle_input_color_buf);
+            release(sample_liquid); release(sample_liquid_b); release(sample_supply); release(bristle_input_color_buf);
             release(bristle_density); release(bristle_vel_x); release(bristle_vel_y); release(bristle_vel_z);
             release(bristle_color_r); release(bristle_color_y); release(bristle_color_b);
             release(ptcl_pos); release(ptcl_vel); release(ptcl_color);
@@ -470,7 +471,7 @@ struct PaintSimStorage {
         destroy_buf(vertex_buf); destroy_buf(color_buf);
         destroy_buf(bristle_data); destroy_buf(sample_pos); destroy_buf(sample_vel);
             destroy_buf(sample_color); destroy_buf(sample_frame); destroy_buf(lambda_buf);
-        destroy_buf(sample_liquid); destroy_buf(sample_liquid_b); destroy_buf(bristle_input_color_buf);
+        destroy_buf(sample_liquid); destroy_buf(sample_liquid_b); destroy_buf(sample_supply); destroy_buf(bristle_input_color_buf);
         destroy_buf(bristle_density); destroy_buf(bristle_vel_x); destroy_buf(bristle_vel_y); destroy_buf(bristle_vel_z);
         destroy_buf(bristle_color_r); destroy_buf(bristle_color_y); destroy_buf(bristle_color_b);
         destroy_buf(ptcl_pos); destroy_buf(ptcl_vel); destroy_buf(ptcl_color);
@@ -780,6 +781,11 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         storage.sample_liquid_b = create_typed_buffer(
             rc, Nb * S, sizeof(float) * 4, "sample_liquid_b");
 
+        // Per-sample paint supply reservoir (consumed by ABSORB, §5.1).
+        // Refilled to ink_amount at the start of each cook (see below).
+        storage.sample_supply = create_typed_buffer(
+            rc, Nb * S, sizeof(float), "sample_supply");
+
         // Single-color input for resample (user RYB paint color)
         storage.bristle_input_color_buf = create_typed_buffer(
             rc, 1, sizeof(float) * 4, "bristle_input_color");
@@ -977,6 +983,21 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
 
     // === BRISTLE SIMULATION ===
     {
+        // Refill the per-sample paint supply reservoir to ink_amount — the
+        // brush is "re-dipped" each frame. ABSORB consumes it (§5.1), so the
+        // supply is finite within a frame and mass is conserved.
+        {
+            std::vector<float> supply(Nb * S, ink_amount);
+            auto cmd = rc.create(CommandListDesc{});
+            cmd->open();
+            cmd->writeBuffer(storage.sample_supply, supply.data(),
+                             supply.size() * sizeof(float));
+            cmd->close();
+            device->executeCommandList(cmd);
+            device->waitForIdle();
+            rc.destroy(cmd);
+        }
+
         BristleConstants bc = {};
         bc.num_bristles = Nb;
         bc.verts_per_bristle = M;
@@ -1192,7 +1213,8 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                  {"sample_liquid_in", storage.sample_liquid},
                  {"bristle_psi", storage.bristle_density},
                  {"grid_density", storage.density}},
-                {{"sample_liquid_out", storage.sample_liquid_b}},
+                {{"sample_liquid_out", storage.sample_liquid_b},
+                 {"sample_supply", storage.sample_supply}},
                 liquid_cb, Nb * S);
             std::swap(storage.sample_liquid, storage.sample_liquid_b);
 
@@ -1202,10 +1224,12 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             dispatch_raw(rc, storage.bri_liquid_emit_program,
                 {{"sample_pos", storage.sample_pos},
                  {"sample_color", storage.sample_color},
+                 {"sample_vel", storage.sample_vel},
                  {"sample_liquid_in", storage.sample_liquid},
                  {"bristle_psi", storage.bristle_density},
                  {"grid_density", storage.density}},
                 {{"sample_liquid_out", storage.sample_liquid_b},
+                 {"sample_supply", storage.sample_supply},
                  {"ptcl_counter", storage.ptcl_counter},
                  {"ptcl_pos_out", storage.ptcl_pos},
                  {"ptcl_vel_out", storage.ptcl_vel},

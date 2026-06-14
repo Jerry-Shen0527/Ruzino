@@ -22,6 +22,7 @@ ConstantBuffer<BristleLiquidConstants> cb : register(b0);
 // Bristle sample state (read-only in both passes)
 StructuredBuffer<float4> sample_pos : register(t0);
 StructuredBuffer<float4> sample_color : register(t1);    // RYB+density from resample
+StructuredBuffer<float4> sample_vel : register(t5);      // sample velocity (for EMIT)
 
 // Liquid state: ping-pong between two buffers
 StructuredBuffer<SampleLiquid> sample_liquid_in : register(t2);
@@ -31,6 +32,10 @@ StructuredBuffer<float> bristle_psi : register(t3);
 
 // Grid density field (for Eq.13 surface distance estimation)
 StructuredBuffer<float> grid_density : register(t4);
+
+// Per-sample paint supply reservoir (consumed by ABSORB, §5.1 conservation).
+// Read-modify-write: ABSORB takes min(available, capacity_room) and decrements.
+RWStructuredBuffer<float> sample_supply : register(u6);
 
 // Output: updated sample liquid state
 RWStructuredBuffer<SampleLiquid> sample_liquid_out : register(u0);
@@ -166,34 +171,39 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     float m_j = liquid.mass;
     float3 c_j = liquid.pigment;
-    float has_supply = (s_color.w > 0.1) ? 1.0 : 0.0;
+    float avail_supply = sample_supply[idx];  // finite reservoir (refilled/frame)
 
 #if PASS == 0
     // ================================================================
-    // ABSORB: Initialize/load paint into sample (Section 5.1)
+    // ABSORB: Initialize/load paint into sample (Section 5.1).
+    // Mass-conserving: transfer is capped by both remaining capacity AND
+    // remaining supply; the supply is decremented by what is taken.
     // ================================================================
 
     SampleLiquid result;
     result.pigment = c_j;
     result.mass = m_j;
 
-    if (m_j < 0.01 && has_supply) {
-        // Dry sample — seed with paint supply color
-        result.mass = s_color.w * 0.5;
+    if (m_j < 0.01 && avail_supply > 0.01) {
+        // Dry sample — seed from supply (capped).
+        float take = min(avail_supply * 0.5, M_j);
+        result.mass = take;
         result.pigment = s_color.rgb;
-    } else if (m_j >= 0.01 && m_j < M_j && has_supply) {
-        // Below capacity — absorb from continuous paint supply
-        float supply = s_color.w * 0.05 * M_j;
-        float new_mass = min(m_j + supply, M_j);
+        sample_supply[idx] = avail_supply - take;
+    } else if (m_j >= 0.01 && m_j < M_j && avail_supply > 0.01) {
+        // Below capacity — absorb from supply, capped by both room and supply.
+        float room = M_j - m_j;
+        float take = min(avail_supply * 0.05 * M_j, room);
+        float new_mass = m_j + take;
 
         // Color mixing with supply using brightness-preserving Algorithm 2
-        result.pigment = color_mix(s_color.rgb, c_j, supply, m_j);
+        result.pigment = color_mix(s_color.rgb, c_j, take, m_j);
         result.mass = new_mass;
-    } else if (m_j >= M_j && has_supply) {
-        // Color bleeding (Section 5.1):
-        // "a saturated bristle can still pick up new colors through
-        //  its contact with paint liquid" — mix color without changing mass
-        float bleed_weight = s_color.w * 0.02 * m_j;
+        sample_supply[idx] = avail_supply - take;
+    } else if (m_j >= M_j && avail_supply > 0.01) {
+        // Color bleeding (Section 5.1): saturated sample still picks up color
+        // without changing mass. Supply not consumed for color-only transfer.
+        float bleed_weight = avail_supply * 0.02 * m_j;
         result.pigment = color_mix(s_color.rgb, c_j, bleed_weight, m_j);
         result.mass = min(m_j, M_j * (1.0 + cb.eps_emit));
     }
@@ -223,30 +233,38 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     float total_emit_mass = 0.0;
 
-    // Emit particles in a bottom hemisphere pattern (Section 5.1, Figure 10).
-    // Bristles are planar (XY) at the canvas surface; emit upward into the
-    // paint volume.
+    // Sphere-cap radius for emission (same R_j as Eq.13).
+    float R_j = pow(3.0 * M_prime / (4.0 * 3.14159265 * cb.rho_0), 1.0 / 3.0);
+    float3 s_vel = sample_vel[idx].xyz;
+
+    // Emit particles on the bottom hemisphere of radius R_j around the sample
+    // (Section 5.1, Fig. 10). Each particle inherits the sample velocity.
     float canvas_z = cb.grid_center_z - cb.height_extent * 0.5;
     for (int ei = 0; ei < num_emit; ei++) {
         uint slot;
         ptcl_counter.InterlockedAdd(0, 1, slot);
         slot = slot % uint(cb.max_particles);
 
-        // Uniform circular distribution in XY + upward arc in Z
-        float angle = 6.2831853 * (float(ei) + 0.5) / float(num_emit);
-        float jitter_r = cb.cell_size * 0.5;
-        float z_lift = (float(ei) + 0.5) / float(num_emit) * cb.cell_size;
-        float3 emit_pos = float3(
-            s_pos.x + cos(angle) * jitter_r,
-            s_pos.y + sin(angle) * jitter_r,
-            canvas_z + z_lift);
+        // Random direction on the lower hemisphere (z <= 0 relative to sample).
+        uint seed = uint(idx) * 1973u + uint(ei) * 9277u;
+        float r1 = frac(sin(float(seed)) * 43758.5453);
+        float r2 = frac(sin(float(seed + 1u)) * 43758.5453);
+        float phi = 6.2831853 * r1;            // azimuth
+        float cos_theta = 1.0 - 2.0 * r2;      // lower hemisphere: cos in [-1, 0]
+        cos_theta = -abs(cos_theta);           // force z <= 0 (toward canvas)
+        float sin_theta = sqrt(max(1.0 - cos_theta * cos_theta, 0.0));
+
+        float3 dir = float3(sin_theta * cos(phi), sin_theta * sin(phi), cos_theta);
+        float3 emit_pos = s_pos + dir * R_j;
+        // Keep emission inside the paint volume (above the canvas).
+        emit_pos.z = max(emit_pos.z, canvas_z);
 
         // Distribute excess evenly
         float emit_m = excess / float(num_emit);
         total_emit_mass += emit_m;
 
         ptcl_pos_out[slot] = float4(emit_pos, 0.0);
-        ptcl_vel_out[slot] = float4(0.0, 0.0, 0.0, 0.0);
+        ptcl_vel_out[slot] = float4(s_vel, 0.0);   // inherit sample velocity
         ptcl_color_out[slot] = float4(c_j, emit_m);
         ptcl_alive_out[slot] = 1;
     }
