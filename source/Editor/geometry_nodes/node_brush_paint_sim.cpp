@@ -183,7 +183,7 @@ struct SimConstants {
     float paper_size;       // Total paper extent (XY)
     float dt;               // Time step
 
-    float viscosity;        // Viscosity coefficient
+    float viscosity;        // Viscosity coefficient (base, × oil_density per-cell)
     float diffusion;        // Diffusion rate
     float drying_rate;      // Drying rate
     float brush_radius;     // Brush radius (world units)
@@ -196,7 +196,7 @@ struct SimConstants {
     float center_z;         // Grid center Z (world space)
     float effective_radius; // max(brush_radius, cell_size * 3)
     int jacobi_mode;        // 0 = diffuse, 1 = pressure
-    float jacobi_alpha;     // alpha for Jacobi
+    float jacobi_alpha;     // alpha for Jacobi: dt*rate*N^2 (diffuse) or 1.0 (pressure)
 
     // --- 3D grid extension ---
     int res_z;              // Grid Z (height) resolution D
@@ -210,6 +210,10 @@ struct SimConstants {
     int window_size_x;
     int window_size_y;
     int window_size_z;
+
+    // --- Oil density (Wetbrush §6) ---
+    float oil_density_base;
+    float _pad0, _pad1, _pad2;
 };
 
 struct BristleConstants {
@@ -307,6 +311,7 @@ struct PaintSimStorage {
     nvrhi::BufferHandle vel_y, vel_y_tmp;
     nvrhi::BufferHandle vel_z, vel_z_tmp;          // 3D: vertical velocity
     nvrhi::BufferHandle wetness, wetness_tmp;
+    nvrhi::BufferHandle oil_density, oil_density_tmp;  // §6 oil density field (per-cell)
     nvrhi::BufferHandle height_field;
     nvrhi::BufferHandle pressure_a, pressure_b;
     nvrhi::BufferHandle divergence_buf;
@@ -429,6 +434,7 @@ struct PaintSimStorage {
             release(vel_y); release(vel_y_tmp);
             release(vel_z); release(vel_z_tmp);
             release(wetness); release(wetness_tmp);
+            release(oil_density); release(oil_density_tmp);
             release(height_field);
             release(pressure_a); release(pressure_b);
             release(divergence_buf);
@@ -469,6 +475,7 @@ struct PaintSimStorage {
         destroy_buf(vel_x); destroy_buf(vel_x_tmp);
         destroy_buf(vel_y); destroy_buf(vel_y_tmp);
         destroy_buf(vel_z); destroy_buf(vel_z_tmp); destroy_buf(wetness_tmp);
+        destroy_buf(oil_density); destroy_buf(oil_density_tmp);
         destroy_buf(height_field);
         destroy_buf(pressure_a); destroy_buf(pressure_b);
         destroy_buf(divergence_buf);
@@ -518,6 +525,7 @@ NODE_DECLARATION_FUNCTION(brush_paint_sim)
     b.add_input<float>("Brush Pressure").default_val(1.0f).min(0.0f).max(4.0f);
     b.add_input<float>("Ink Amount").default_val(0.8f).min(0.0f).max(2.0f);
     b.add_input<float>("Viscosity").default_val(0.5f).min(0.0f).max(10.0f);
+    b.add_input<float>("Oil Density").default_val(0.5f).min(0.0f).max(1.0f);
     b.add_input<float>("Diffusion Rate")
         .default_val(0.0001f).min(0.0f).max(0.01f);
     b.add_input<float>("Pickup Rate").default_val(0.1f).min(0.0f).max(1.0f);
@@ -543,6 +551,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     float brush_pressure = params.get_input<float>("Brush Pressure");
     float ink_amount = params.get_input<float>("Ink Amount");
     float viscosity = params.get_input<float>("Viscosity");
+    float oil_density_in = params.get_input<float>("Oil Density");
     float diffusion = params.get_input<float>("Diffusion Rate");
     float drying_rate = params.get_input<float>("Drying Rate");
 
@@ -661,6 +670,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         safe_destroy_buf(storage.vel_y);        safe_destroy_buf(storage.vel_y_tmp);
         safe_destroy_buf(storage.vel_z);        safe_destroy_buf(storage.vel_z_tmp);
         safe_destroy_buf(storage.wetness);      safe_destroy_buf(storage.wetness_tmp);
+        safe_destroy_buf(storage.oil_density);  safe_destroy_buf(storage.oil_density_tmp);
         safe_destroy_buf(storage.height_field);
         safe_destroy_buf(storage.pressure_a);   safe_destroy_buf(storage.pressure_b);
         safe_destroy_buf(storage.divergence_buf);
@@ -689,12 +699,13 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         storage.vel_x        = make_buf("vel_x");
         storage.vel_x_tmp    = make_buf("vel_x_tmp");
         storage.vel_y        = make_buf("vel_y");
-        storage.vel_y        = make_buf("vel_y");
         storage.vel_y_tmp    = make_buf("vel_y_tmp");
         storage.vel_z        = make_buf("vel_z");
         storage.vel_z_tmp    = make_buf("vel_z_tmp");
         storage.wetness      = make_buf("wetness");
         storage.wetness_tmp  = make_buf("wetness_tmp");
+        storage.oil_density  = make_buf("oil_density");
+        storage.oil_density_tmp = make_buf("oil_density_tmp");
         storage.height_field = make_buf("height");
         storage.pressure_a   = make_buf("pressure_a");
         storage.pressure_b   = make_buf("pressure_b");
@@ -731,6 +742,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                           &storage.vel_y, &storage.vel_y_tmp,
                           &storage.vel_z, &storage.vel_z_tmp,
                           &storage.wetness, &storage.wetness_tmp,
+                          &storage.oil_density, &storage.oil_density_tmp,
                           &storage.height_field,
                           &storage.pressure_a, &storage.pressure_b,
                           &storage.divergence_buf,
@@ -1161,6 +1173,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         mc.cell_size = cell_sz;
         mc.paper_size = storage.grid_paper;
         mc.ink_amount = ink_amount;
+        mc.oil_density_base = oil_density_in;
         upload_constant_buffer(rc, device, &mc, sizeof(SimConstants),
                                "merge_cb", merge_cb);
 
@@ -1179,7 +1192,8 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
              {"vel_x", storage.vel_x},
              {"vel_y", storage.vel_y},
              {"vel_z", storage.vel_z},
-             {"wetness", storage.wetness}},
+             {"wetness", storage.wetness},
+             {"oil_density", storage.oil_density}},
             merge_cb, n3d);
 
         rc.destroy(bristle_cb);
@@ -1223,7 +1237,10 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                  {"sample_color", storage.sample_color},
                  {"sample_liquid_in", storage.sample_liquid},
                  {"bristle_psi", storage.bristle_density},
-                 {"grid_density", storage.density}},
+                 {"grid_density", storage.density},
+                 {"grid_color_r", storage.color_r},
+                 {"grid_color_y", storage.color_y},
+                 {"grid_color_b", storage.color_b}},
                 {{"sample_liquid_out", storage.sample_liquid_b},
                  {"sample_supply", storage.sample_supply}},
                 liquid_cb, Nb * S);
@@ -1238,7 +1255,10 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                  {"sample_vel", storage.sample_vel},
                  {"sample_liquid_in", storage.sample_liquid},
                  {"bristle_psi", storage.bristle_density},
-                 {"grid_density", storage.density}},
+                 {"grid_density", storage.density},
+                 {"grid_color_r", storage.color_r},
+                 {"grid_color_y", storage.color_y},
+                 {"grid_color_b", storage.color_b}},
                 {{"sample_liquid_out", storage.sample_liquid_b},
                  {"sample_supply", storage.sample_supply},
                  {"ptcl_counter", storage.ptcl_counter},
@@ -1259,7 +1279,10 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         pc.max_particles = max_ptcl;
         pc.dt = 0.016f;
         pc.D0 = brush_radius * 3.0f;
-        pc.friction_delta = brush_radius;
+        // Eq.8 friction range δ (paper Table 1: δ = 1/0.2 cm). Our world units
+        // are scaled by D0, so set δ = 5/D0 → active band = D0/5, matching the
+        // paper's 0.2 cm band relative to D0 = 1 cm.
+        pc.friction_delta = 5.0f / pc.D0;
         pc.flip_gamma = 0.8f;
         pc.grid_res = storage.grid_res;
         pc.grid_res_z = rz;
@@ -1379,6 +1402,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         mc2.cell_size = cell_sz;
         mc2.paper_size = storage.grid_paper;
         mc2.ink_amount = ink_amount;
+        mc2.oil_density_base = oil_density_in;
         upload_constant_buffer(rc, device, &mc2, sizeof(SimConstants),
                                "ptcl_merge_cb", merge_cb);
 
@@ -1397,7 +1421,8 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
              {"vel_x", storage.vel_x},
              {"vel_y", storage.vel_y},
              {"vel_z", storage.vel_z},
-             {"wetness", storage.wetness}},
+             {"wetness", storage.wetness},
+             {"oil_density", storage.oil_density}},
             merge_cb, n3d);
         rc.destroy(merge_cb);
 
@@ -1473,6 +1498,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         dep_cb.center_y = storage.grid_center.y;
         dep_cb.center_z = storage.grid_center_z;
         dep_cb.effective_radius = eff_radius;
+        dep_cb.oil_density_base = oil_density_in;
 
         nvrhi::BufferHandle dep_cb_buf;
         upload_constant_buffer(rc, device, &dep_cb, sizeof(SimConstants),
@@ -1490,6 +1516,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         vars["vel_y"] = storage.vel_y.Get();
         vars["vel_z"] = storage.vel_z.Get();
         vars["wetness"] = storage.wetness.Get();
+        vars["oil_density"] = storage.oil_density.Get();
         vars["height"] = storage.height_field.Get();
         vars.finish_setting_vars();
 
@@ -1560,6 +1587,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             fluid_cb.viscosity = viscosity;
             fluid_cb.diffusion = diffusion;
             fluid_cb.drying_rate = drying_rate;
+            fluid_cb.oil_density_base = oil_density_in;
             fluid_cb.window_origin_x = wox;
             fluid_cb.window_origin_y = woy;
             fluid_cb.window_origin_z = 0;
@@ -1731,6 +1759,13 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                 {{"field_out", storage.wetness_tmp}}, cb_buf, window_total);
             std::swap(storage.wetness, storage.wetness_tmp);
 
+            // Advect oil density (§6 — advect all fields)
+            dispatch_field(rc, storage.advect_program,
+                {{"field_in", storage.oil_density},
+                 {"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z}},
+                {{"field_out", storage.oil_density_tmp}}, cb_buf, window_total);
+            std::swap(storage.oil_density, storage.oil_density_tmp);
+
             // Diffuse density + wetness
             fluid_cb.jacobi_mode = 0;
             fluid_cb.jacobi_alpha = sub_dt * diffusion *
@@ -1758,7 +1793,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
 
             // Damp + dry
             dispatch_field(rc, storage.damp_dry_program,
-                {},
+                {{"oil_density", storage.oil_density}},
                 {{"vel_x", storage.vel_x}, {"vel_y", storage.vel_y}, {"vel_z", storage.vel_z},
                  {"wetness", storage.wetness}},
                 cb_buf, window_total);

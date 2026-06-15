@@ -74,9 +74,12 @@ void main(uint3 tid : SV_DispatchThreadID)
     // Distance to canvas (bottom of paint volume).
     float canvas_z = cb.grid_center_z - cb.height_extent * 0.5;
     float d_k = abs(pos.z - canvas_z);
-    // Eq.8 friction multiplier: delta_k = 1 - (d_k / D0)^2 (D0 = proximity
-    // distance from Table 1). Applied as a drag on velocity.
-    float delta_k = max(1.0 - (d_k / max(cb.D0, 1e-6f)) * (d_k / max(cb.D0, 1e-6f)), 0.0);
+    // Eq.8 friction multiplier — Wetbrush (1-δ·d_k)² with cutoff at d_k = 1/δ.
+    // δ (cb.friction_delta) is the inverse friction range; paper uses δ=1/0.2cm
+    // so the active band is D0/5 when friction_delta = 5/D0.
+    float delta = cb.friction_delta;
+    float t = 1.0 - delta * d_k;
+    float delta_k = max(t * t, 0.0);
     float3 a_ext_canvas = float3(0.0, 0.0, -0.2) - delta_k * vel;
 
     // Frame-origin acceleration a_L (Eq.2 rectilinear) and angular

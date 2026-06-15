@@ -33,6 +33,13 @@ StructuredBuffer<float> bristle_psi : register(t3);
 // Grid density field (for Eq.13 surface distance estimation)
 StructuredBuffer<float> grid_density : register(t4);
 
+// Grid color fields (RYB) — ABSORB picks up color from grid paint near the
+// sample (§5.1 Eq.14 in the hybrid representation: a sample near the
+// grid-fluid surface absorbs the grid paint, rather than a fixed supply).
+StructuredBuffer<float> grid_color_r : register(t6);
+StructuredBuffer<float> grid_color_y : register(t7);
+StructuredBuffer<float> grid_color_b : register(t8);
+
 // Per-sample paint supply reservoir (consumed by ABSORB, §5.1 conservation).
 // Read-modify-write: ABSORB takes min(available, capacity_room) and decrements.
 RWStructuredBuffer<float> sample_supply : register(u6);
@@ -70,6 +77,37 @@ bool in_grid(int ix, int iy, int iz)
     return ix >= 0 && ix < cb.grid_res
         && iy >= 0 && iy < cb.grid_res
         && iz >= 0 && iz < cb.grid_res_z;
+}
+
+// Sample the average grid paint color (RYB) and density near s_pos, over a
+// small 3×3×3 neighborhood. Returns density-weighted RYB in .rgb and the
+// total density in .a. Used by ABSORB to pick up real paint color from the
+// grid-fluid surface (§5.1 Eq.14 in the hybrid representation).
+float4 sample_grid_paint(float3 s_pos)
+{
+    float3 gp = world_to_grid_f3(s_pos);
+    int cx = int(floor(gp.x));
+    int cy = int(floor(gp.y));
+    int cz = int(floor(gp.z));
+
+    float3 color_sum = float3(0,0,0);
+    float density_sum = 0.0;
+    [unroll] for (int dz = -1; dz <= 1; dz++) {
+      [unroll] for (int dy = -1; dy <= 1; dy++) {
+        [unroll] for (int dx = -1; dx <= 1; dx++) {
+            int nx = cx + dx, ny = cy + dy, nz = cz + dz;
+            if (!in_grid(nx, ny, nz)) continue;
+            uint gi = grid_idx_3d(uint(nx), uint(ny), uint(nz), cb.grid_res, cb.grid_res_z);
+            float d = grid_density[gi];
+            if (d > 0.01) {
+                color_sum += float3(grid_color_r[gi], grid_color_y[gi], grid_color_b[gi]) * d;
+                density_sum += d;
+            }
+        }
+      }
+    }
+    float3 avg = (density_sum > 1e-6) ? color_sum / density_sum : float3(0,0,0);
+    return float4(avg, density_sum);
 }
 
 // Compute potential capacity M'_j from bristle density ψ (Eq.12):
@@ -175,36 +213,55 @@ void main(uint3 tid : SV_DispatchThreadID)
 
 #if PASS == 0
     // ================================================================
-    // ABSORB: Initialize/load paint into sample (Section 5.1).
-    // Mass-conserving: transfer is capped by both remaining capacity AND
-    // remaining supply; the supply is decremented by what is taken.
+    // ABSORB: Load paint into sample (Section 5.1, Eq.14).
+    //
+    // Color source priority (closest to paper semantics in the hybrid
+    // representation): if the sample touches grid paint (grid-fluid surface),
+    // absorb that real paint color — this is the Eq.14 "particle absorbed"
+    // behavior mapped onto the density field. Otherwise fall back to the
+    // supply reservoir (the brush's own loaded ink). Mass is conserved in
+    // both cases: the supply is decremented; the grid-density subtraction
+    // happens in the grid→particle/merge step.
     // ================================================================
+
+    // Real paint near the sample in the grid (density-weighted RYB).
+    float4 grid_paint = sample_grid_paint(s_pos);
+    bool has_grid_paint = grid_paint.a > 0.05;
+
+    // Absorb color: grid paint if present, else the brush supply color.
+    float3 absorb_color = has_grid_paint ? grid_paint.rgb : s_color.rgb;
+    // Absorb mass source: grid paint density drives absorption rate when
+    // present (the brush is wiping through actual paint), capped by supply.
+    float absorb_rate = has_grid_paint
+        ? min(grid_paint.a, 1.0)   // rich paint nearby → fast pickup
+        : (avail_supply * 0.05 * M_j);  // else draw from the dipped supply
 
     SampleLiquid result;
     result.pigment = c_j;
     result.mass = m_j;
 
-    if (m_j < 0.01 && avail_supply > 0.01) {
-        // Dry sample — seed from supply (capped).
-        float take = min(avail_supply * 0.5, M_j);
+    if (m_j < 0.01 && (avail_supply > 0.01 || has_grid_paint)) {
+        // Dry sample — seed from the nearest paint source.
+        float take = min(absorb_rate + avail_supply * 0.5, M_j);
+        take = max(min(take, avail_supply + grid_paint.a), 0.0);
         result.mass = take;
-        result.pigment = s_color.rgb;
-        sample_supply[idx] = avail_supply - take;
-    } else if (m_j >= 0.01 && m_j < M_j && avail_supply > 0.01) {
-        // Below capacity — absorb from supply, capped by both room and supply.
+        result.pigment = absorb_color;
+        sample_supply[idx] = max(avail_supply - take, 0.0);
+    } else if (m_j >= 0.01 && m_j < M_j && (avail_supply > 0.01 || has_grid_paint)) {
+        // Below capacity — absorb from the paint source, capped by room.
         float room = M_j - m_j;
-        float take = min(avail_supply * 0.05 * M_j, room);
+        float take = min(absorb_rate, room);
         float new_mass = m_j + take;
 
-        // Color mixing with supply using brightness-preserving Algorithm 2
-        result.pigment = color_mix(s_color.rgb, c_j, take, m_j);
+        // Brightness-preserving color mix (Algorithm 2)
+        result.pigment = color_mix(absorb_color, c_j, take, m_j);
         result.mass = new_mass;
-        sample_supply[idx] = avail_supply - take;
-    } else if (m_j >= M_j && avail_supply > 0.01) {
+        sample_supply[idx] = max(avail_supply - take, 0.0);
+    } else if (m_j >= M_j && (avail_supply > 0.01 || has_grid_paint)) {
         // Color bleeding (Section 5.1): saturated sample still picks up color
-        // without changing mass. Supply not consumed for color-only transfer.
-        float bleed_weight = avail_supply * 0.02 * m_j;
-        result.pigment = color_mix(s_color.rgb, c_j, bleed_weight, m_j);
+        // without changing mass.
+        float bleed_weight = (has_grid_paint ? grid_paint.a : avail_supply * 0.02) * m_j;
+        result.pigment = color_mix(absorb_color, c_j, bleed_weight, m_j);
         result.mass = min(m_j, M_j * (1.0 + cb.eps_emit));
     }
 

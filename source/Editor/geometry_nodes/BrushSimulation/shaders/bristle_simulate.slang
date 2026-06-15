@@ -90,8 +90,20 @@ void main(uint3 tid : SV_DispatchThreadID)
             shear_f = cb.spring_k * 0.5 * (dist2 - rest2) * normalize(d2 + 1e-8);
         }
 
+        // === Non-inertial brush frame integration (Wetbrush Eq.2) ===
+        // Convert into the brush frame, integrate there, convert back. With
+        // β_B → 0 the vertex is carried rigidly by the brush (position-based
+        // adhesion); β_B = 1 recovers canvas-frame Newton. R_B = I here
+        // (brush frame differs from canvas frame by translation only, since
+        // brush_rotation only rotates the footprint, not the integration
+        // frame), so R_B·a_i = a_i.
         float3 x_B = pos - brush_pos;     // brush-frame position
         float3 v_B = vel - brush_vel;     // brush-frame velocity
+
+        // External acceleration a_i in the CANVAS frame (springs + damping).
+        // Damping acts on the canvas-frame velocity so that bristles moving
+        // with the brush (v ≈ brush_vel) are not over-damped.
+        float3 external_a = structural_f + shear_f - cb.damping * vel;
 
         // === All four non-inertial frame accelerations (Eq.2, 3D) ===
         // 1. Rectilinear: linear acceleration of the frame origin (a_B).
@@ -106,21 +118,31 @@ void main(uint3 tid : SV_DispatchThreadID)
         // 4. Coriolis: -2 * omega × v_B
         float3 coriolis = -2.0 * cross(omega, v_B);
 
-        // External acceleration: structural + shear springs + damping.
-        float3 external_a = structural_f + shear_f - cb.damping * vel;
-
-        // Eq.2: a_i^B = R_B * a_i - beta_B * (rect + centrifugal + euler_ang + coriolis)
+        // Eq.2: dv_i^B/dt = R_B·a_i − β_B·(rect + centrifugal + euler + coriolis)
         float3 inertial_sum = euler_rect + centrifugal + euler_angular + coriolis;
-        float3 accel = external_a - beta_B * inertial_sum;
+        float3 accel_B = external_a - beta_B * inertial_sum;
 
-        vel += accel * dt;
-        pos += vel * dt;
+        // Integrate IN THE BRUSH FRAME.
+        v_B += accel_B * dt;
+        x_B += v_B * dt;
+
+        // Convert back to canvas frame.
+        vel = v_B + brush_vel;
+        pos = x_B + brush_pos;
 
         store_pos(idx, pos);
         store_vel(idx, vel);
     }
 
     // === Constraint enforcement (Position-Based Dynamics) ===
+    // Paper §4.1: "enforce inextensible and bending constraints on vertex
+    // positions AND velocities". We accumulate the per-vertex position
+    // correction Δp across all constraint iterations, then fold Δp/dt into
+    // the velocity (with stiffness-style damping) at the end — the standard
+    // PBD velocity update (Müller et al. 2007, Macklin & Müller 2013).
+    float3 delta_pos[64];
+    [unroll] for (int zi = 0; zi < 64; zi++) delta_pos[zi] = float3(0,0,0);
+
     for (int iter = 0; iter < 3; iter++) {
         // Inextensible constraint — enforce max segment length
         for (int vi = 1; vi < M; vi++) {
@@ -130,8 +152,11 @@ void main(uint3 tid : SV_DispatchThreadID)
             if (d > rest_len * 1.05) {
                 float3 correction = (d - rest_len) * normalize(diff + 1e-8) * 0.5;
                 store_pos(idx, load_pos(idx) - correction);
-                if (vi > 1)
+                delta_pos[vi] -= correction;
+                if (vi > 1) {
                     store_pos(idx - 1, load_pos(idx - 1) + correction);
+                    delta_pos[vi - 1] += correction;
+                }
             }
         }
 
@@ -146,6 +171,7 @@ void main(uint3 tid : SV_DispatchThreadID)
             float3 mid = (p0 + p2) * 0.5;
             float3 correction = (mid - p1) * bend_stiffness;
             store_pos(idx, p1 + correction);
+            delta_pos[vi] += correction;
         }
 
         // Canvas collision + pressure splaying (§4.1, Fig 3a).
@@ -161,8 +187,8 @@ void main(uint3 tid : SV_DispatchThreadID)
             // Non-penetration: clamp to canvas plane.
             if (p.z < cb.canvas_z) {
                 float penetration = cb.canvas_z - p.z;
+                float3 old_p = p;
                 p.z = cb.canvas_z;
-                store_pos(idx, p);
 
                 // Splay: push the contact point radially outward in XY by
                 // an amount proportional to penetration depth and pressure.
@@ -174,9 +200,24 @@ void main(uint3 tid : SV_DispatchThreadID)
                     float tip_weight = float(vi) / float(M);  // tips splay more
                     float splay = penetration * pressure * tip_weight * cb.brush_radius;
                     float3 push = normalize(radial) * splay;
-                    store_pos(idx, float3(p.x + push.x, p.y + push.y, p.z));
+                    p.x += push.x;
+                    p.y += push.y;
                 }
+                store_pos(idx, p);
+                delta_pos[vi] += p - old_p;
             }
         }
+    }
+
+    // PBD velocity update: fold accumulated position correction into velocity.
+    // Stiffness damping η controls how strongly the correction rescales the
+    // velocity (Müller et al. 2007 Eq.21-style, η∈[0,1]).
+    float inv_dt = (cb.dt > 1e-6f) ? 1.0f / cb.dt : 0.0f;
+    float vel_damp = 1.0f;  // full correction; reduce to soften
+    for (int vi = 1; vi < M; vi++) {
+        int idx = base + vi;
+        float3 v = load_vel(idx);
+        v += delta_pos[vi] * (inv_dt * vel_damp);
+        store_vel(idx, v);
     }
 }

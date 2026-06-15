@@ -19,6 +19,7 @@ RWStructuredBuffer<float> vel_x : register(u4);
 RWStructuredBuffer<float> vel_y : register(u5);
 RWStructuredBuffer<float> vel_z : register(u6);
 RWStructuredBuffer<float> wetness : register(u7);
+RWStructuredBuffer<float> oil_density : register(u8);  // §6 oil density (per-cell)
 
 [numthreads(256, 1, 1)]
 void main(uint3 tid : SV_DispatchThreadID)
@@ -56,5 +57,7 @@ void main(uint3 tid : SV_DispatchThreadID)
     color_r[idx] = mixed.x;
     color_y[idx] = mixed.y;
     color_b[idx] = mixed.z;
-    wetness[idx] = min(wetness[idx] + bd * 0.5, 1.0);
+    wetness[idx] = min(wetness[idx] + bd * 0.5, 1.0f);
+    // Oil density relaxes toward base as bristle paint merges in (§6).
+    oil_density[idx] += (cb.oil_density_base - oil_density[idx]) * bd * 0.5;
 }

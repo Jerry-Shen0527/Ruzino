@@ -22,7 +22,8 @@ RWStructuredBuffer<float> vel_x    : register(u4);
 RWStructuredBuffer<float> vel_y    : register(u5);
 RWStructuredBuffer<float> vel_z    : register(u6);
 RWStructuredBuffer<float> wetness  : register(u7);
-RWStructuredBuffer<float> height   : register(u8);
+RWStructuredBuffer<float> oil_density : register(u8);  // §6 oil density (per-cell)
+RWStructuredBuffer<float> height   : register(u9);
 
 [numthreads(1, 1, 1)]
 void main(uint3 dtid : SV_DispatchThreadID)
@@ -93,6 +94,9 @@ void main(uint3 dtid : SV_DispatchThreadID)
 
                     density[idx] = new_d;
                     wetness[idx] = min(wetness[idx] + dep * 2.0f, 1.0f);
+                    // Oil density relaxes toward the user base as paint is
+                    // deposited (§6: paint carries the oil content).
+                    oil_density[idx] += (cb.oil_density_base - oil_density[idx]) * dep;
                     height[idx] += dep;
                 }
             }
