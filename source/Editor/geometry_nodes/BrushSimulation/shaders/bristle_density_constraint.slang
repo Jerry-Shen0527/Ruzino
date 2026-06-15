@@ -23,6 +23,8 @@ ConstantBuffer<ConstraintModeCB> mode_cb : register(b1);
 
 float3 load_pos(int idx) { return bristle_data[idx * BRV_STRIDE].xyz; }
 void store_pos(int idx, float3 p) { bristle_data[idx * BRV_STRIDE] = float4(p, 0.0); }
+float3 load_vel(int idx) { return bristle_data[idx * BRV_STRIDE + 1].xyz; }
+void store_vel(int idx, float3 v) { bristle_data[idx * BRV_STRIDE + 1] = float4(v, 0.0); }
 
 // Poly6 kernel (3D): W(r,h) = (315 / (64π h⁹)) * (h² - r²)³
 float W_poly6(float r2, float h2)
@@ -88,7 +90,11 @@ void main(uint3 tid : SV_DispatchThreadID)
         }
     }
     else {
-        // === Pass 1: position correction ===
+        // === Pass 1: position correction + PBD velocity update ===
+        // PBF (Macklin & Müller 2013) corrects both position and velocity.
+        // Without the velocity update the density solve injects kinetic
+        // energy each iteration (C2 / §4.1 applies the same scheme to the
+        // inextensible/bending constraints in bristle_simulate.slang).
         float lambda_i = lambda_buf[idx];
         float3 dp = float3(0,0,0);
 
@@ -106,6 +112,13 @@ void main(uint3 tid : SV_DispatchThreadID)
 
         // Relaxation (Macklin & Müller recommend s=0.5)
         float s = 0.5;
-        store_pos(idx, pos_i + s * dp);
+        float3 new_pos = pos_i + s * dp;
+        store_pos(idx, new_pos);
+
+        // Fold the position correction into velocity: v += s·dp/dt.
+        float inv_dt = (cb.dt > 1e-6f) ? 1.0f / cb.dt : 0.0f;
+        float3 v = load_vel(idx);
+        v += s * dp * inv_dt;
+        store_vel(idx, v);
     }
 }
