@@ -1273,7 +1273,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         pc.brush_pos_y = brush_pos_3d.y;
         pc.brush_pos_z = brush_pos_3d.z;
         pc.brush_radius = brush_radius;
-        pc.D1 = brush_radius * 0.5f;
+        pc.D1 = brush_radius * 0.9f;  // D1/D0 ≈ 0.3 (paper Table 1: 0.3cm/1cm)
         pc.num_bristles = Nb;
         pc.samples_per_bristle = S;
         pc.brush_accel_x = brush_accel_3d.x;

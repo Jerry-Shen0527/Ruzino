@@ -91,7 +91,7 @@ void main(uint3 tid : SV_DispatchThreadID)
     float3 centrifugal_L = cross(omega_L, cross(omega_L, p_L));
     float3 euler_ang_L = cross(omega_dot_L, p_L);
     float3 coriolis_L = -2.0 * cross(omega_L, v_L);
-    float beta_L = 0.2;  // [0, 0.2] per Table 1
+    float beta_L = 0.1;  // mid-range of [0, 0.2] per Table 1
 
     float3 a_L = a_ext_L - beta_L * (a_B_L + centrifugal_L + euler_ang_L + coriolis_L);
     float3 v_L_new = v_L + a_L * dt;
