@@ -318,7 +318,7 @@ struct PaintSimStorage {
     // --- Bristle model (3D, §4.1) ---
     static constexpr int NUM_BRISTLES = 80;
     static constexpr int VERTS_PER_BRISTLE = 10;
-    static constexpr int SAMPLES_PER_BRISTLE = 32;
+    static constexpr int SAMPLES_PER_BRISTLE = 128;
     // Each bristle vertex = 2 float4 (pos.xyz+pad, vel.xyz+pad) -> stride 32.
     static constexpr int BRISTLE_VERTEX_STRIDE = sizeof(float) * 4 * 2;
 

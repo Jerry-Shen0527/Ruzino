@@ -32,10 +32,13 @@ void main(uint3 tid : SV_DispatchThreadID)
     int M = cb.verts_per_bristle;
     int base = bi * M;
 
-    // Root position: evenly distributed on a circle in the XY plane at the
-    // brush hold point. Bristles point toward the canvas (-Z) initially.
-    float angle = 2.0 * 3.14159265 * float(bi) / float(cb.num_bristles);
-    float3 root_offset = cb.brush_radius * float3(cos(angle), sin(angle), 0.0);
+    // Root position: distribute bristles across the 2D brush footprint (a
+    // filled disk) using a golden-angle spiral (Vogel/sunflower pattern) —
+    // gives a near-uniform area filling rather than a hollow ring.
+    float golden_angle = 2.39996323;  // radians (~137.5°)
+    float angle = golden_angle * float(bi);
+    float r_frac = sqrt((float(bi) + 0.5) / float(cb.num_bristles));
+    float3 root_offset = cb.brush_radius * r_frac * float3(cos(angle), sin(angle), 0.0);
 
     float3 brush_pos = float3(cb.brush_pos_x, cb.brush_pos_y, cb.brush_pos_z);
     float3 brush_vel = float3(cb.brush_vel_x, cb.brush_vel_y, cb.brush_vel_z);

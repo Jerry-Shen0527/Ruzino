@@ -87,8 +87,9 @@ void main(uint3 tid : SV_DispatchThreadID)
     }
 
     // First pass: sample positions + velocities via Catmull-Rom
-    float3 positions[64];
-    float3 velocities[64];
+    // Sized for up to SAMPLES_PER_BRISTLE samples (must hold all of S).
+    float3 positions[128];
+    float3 velocities[128];
     for (int si = 0; si < S; si++) {
         float t = float(si) / float(S - 1) * chain_len;
 

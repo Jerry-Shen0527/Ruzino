@@ -53,8 +53,9 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     float3 pos_i = load_pos(idx);
 
-    // Smoothing radius: ~2× bristle spacing on the circle
-    float h = max(2.0 * 3.14159265 * cb.brush_radius / float(Nb), cb.cell_size);
+    // Smoothing radius: ~average bristle spacing over the filled disk
+    // footprint (area π·r² shared by Nb bristles → spacing ≈ r·√(π/Nb)).
+    float h = max(cb.brush_radius * sqrt(3.14159265 / float(Nb)), cb.cell_size);
     float h2 = h * h;
 
     // Rest density tuned for 3D Poly6 (typical neighbor count in a h-ball).
