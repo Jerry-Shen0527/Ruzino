@@ -338,7 +338,7 @@ struct PaintSimStorage {
     nvrhi::BufferHandle bristle_input_color_buf; // float4: user paint color RYB
 
     // --- FLIP/PIC particles ---
-    static constexpr int MAX_PARTICLES = 16384;
+    static constexpr int MAX_PARTICLES = 262144;  // 256K (paper: 210K-2M)
 
     nvrhi::BufferHandle ptcl_pos;
     nvrhi::BufferHandle ptcl_vel;
@@ -616,7 +616,10 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             extent.y + margin * 2.0f});
         storage.grid_res = resolution;
         storage.grid_res_z = resolution_z;
-        storage.grid_height = storage.grid_paper;  // Z extent matches XY paper size for cubic voxels
+        // Paint height chosen so Z cells are (near-)isotropic with XY cells:
+        // height = paper * (res_z / res). Matches the paper's thin paint layer.
+        storage.grid_height = storage.grid_paper * static_cast<float>(resolution_z)
+                             / static_cast<float>(resolution);
         storage.center_initialized = true;
 
         spdlog::info(
