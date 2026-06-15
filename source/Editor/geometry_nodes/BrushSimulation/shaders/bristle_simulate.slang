@@ -45,9 +45,12 @@ void main(uint3 tid : SV_DispatchThreadID)
     store_pos(base, root_pos);
     store_vel(base, brush_vel);
 
+    // Bristle rest length per segment (chain points from root toward canvas).
     float beta_B = cb.beta_B;
     float dt = cb.dt;
     float rest_len = cb.brush_radius * 1.5 / float(M);
+    // Vertical extent of the bristle (root → tip toward the canvas, -Z).
+    float3 down_dir = float3(0.0, 0.0, -1.0);
 
     // Non-inertial frame quantities (full 3D). omega is rad/s; omega_dot is
     // rad/s², both finite-differenced on the host from the previous frame.
@@ -61,6 +64,13 @@ void main(uint3 tid : SV_DispatchThreadID)
         int idx = base + vi;
         float3 pos = load_pos(idx);
         float3 vel = load_vel(idx);
+
+        // First-frame initialization: lay the bristle out as a straight
+        // vertical chain from the root toward the canvas (down -Z). Detected
+        // by an all-zero persisted position (buffer is zero-initialized).
+        if (pos.x == 0.0 && pos.y == 0.0 && pos.z == 0.0) {
+            pos = root_pos + down_dir * rest_len * float(vi);
+        }
 
         // Structural spring toward previous vertex (i ↔ i−1)
         float3 diff = load_pos(idx - 1) - pos;
@@ -133,6 +143,37 @@ void main(uint3 tid : SV_DispatchThreadID)
             float3 mid = (p0 + p2) * 0.5;
             float3 correction = (mid - p1) * bend_stiffness;
             store_pos(idx, p1 + correction);
+        }
+
+        // Canvas collision + pressure splaying (§4.1, Fig 3a).
+        // Vertices cannot penetrate below the canvas plane. Vertices in
+        // contact are pushed radially outward (away from the brush XY
+        // center) proportional to pressure — this produces the fan/splay
+        // footprint when the brush is pressed down.
+        float pressure = max(cb.brush_pressure, 0.0);
+        for (int vi = 1; vi < M; vi++) {
+            int idx = base + vi;
+            float3 p = load_pos(idx);
+
+            // Non-penetration: clamp to canvas plane.
+            if (p.z < cb.canvas_z) {
+                float penetration = cb.canvas_z - p.z;
+                p.z = cb.canvas_z;
+                store_pos(idx, p);
+
+                // Splay: push the contact point radially outward in XY by
+                // an amount proportional to penetration depth and pressure.
+                // The deeper the press / higher the pressure, the wider the
+                // footprint spreads. Tip vertices (large vi) splay more.
+                float3 radial = float3(p.x - brush_pos.x, p.y - brush_pos.y, 0.0);
+                float rlen = length(radial);
+                if (rlen > 1e-6) {
+                    float tip_weight = float(vi) / float(M);  // tips splay more
+                    float splay = penetration * pressure * tip_weight * cb.brush_radius;
+                    float3 push = normalize(radial) * splay;
+                    store_pos(idx, float3(p.x + push.x, p.y + push.y, p.z));
+                }
+            }
         }
     }
 }

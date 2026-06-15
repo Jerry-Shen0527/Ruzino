@@ -239,6 +239,10 @@ struct BristleConstants {
     // Eq.2 non-inertial terms, finite-differenced on the host.
     float brush_accel_x, brush_accel_y, brush_accel_z;
     float brush_angular_accel_x, brush_angular_accel_y, brush_angular_accel_z;
+    // Canvas contact (§4.1 splaying): pressure drives footprint spread;
+    // canvas_z is the (impenetrable) paint-volume floor.
+    float brush_pressure;
+    float canvas_z;
 };
 
 struct ParticleConstants {
@@ -511,6 +515,7 @@ NODE_DECLARATION_FUNCTION(brush_paint_sim)
     b.add_input<int>("Resolution Z").default_val(32).min(4).max(128);
     b.add_input<float>("Paper Size").default_val(1.0f).min(0.1f).max(10.0f);
     b.add_input<float>("Brush Radius").default_val(0.02f).min(0.001f).max(0.5f);
+    b.add_input<float>("Brush Pressure").default_val(1.0f).min(0.0f).max(4.0f);
     b.add_input<float>("Ink Amount").default_val(0.8f).min(0.0f).max(2.0f);
     b.add_input<float>("Viscosity").default_val(0.5f).min(0.0f).max(10.0f);
     b.add_input<float>("Diffusion Rate")
@@ -535,6 +540,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     int resolution_z = params.get_input<int>("Resolution Z");
     float paper_size = params.get_input<float>("Paper Size");
     float brush_radius = params.get_input<float>("Brush Radius");
+    float brush_pressure = params.get_input<float>("Brush Pressure");
     float ink_amount = params.get_input<float>("Ink Amount");
     float viscosity = params.get_input<float>("Viscosity");
     float diffusion = params.get_input<float>("Diffusion Rate");
@@ -1023,6 +1029,8 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         bc.brush_angular_accel_x = brush_angular_accel.x;
         bc.brush_angular_accel_y = brush_angular_accel.y;
         bc.brush_angular_accel_z = brush_angular_accel.z;
+        bc.brush_pressure = brush_pressure;
+        bc.canvas_z = storage.grid_center_z - storage.grid_height * 0.5f;
         bc.brush_radius = brush_radius;
         bc.spring_k = 50.0f;
         bc.damping = 5.0f;

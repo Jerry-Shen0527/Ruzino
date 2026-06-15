@@ -182,6 +182,10 @@ struct BristleConstants {
     // finite-differenced on the host (rad/s² for omega_dot).
     float brush_accel_x, brush_accel_y, brush_accel_z;
     float brush_angular_accel_x, brush_angular_accel_y, brush_angular_accel_z;
+    // Canvas contact (§4.1): pressure drives footprint splay; canvas_z is the
+    // impenetrable paint-volume floor used by the collision constraint.
+    float brush_pressure;
+    float canvas_z;
 };
 
 // ============================================================
