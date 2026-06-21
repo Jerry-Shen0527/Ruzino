@@ -150,6 +150,118 @@ def copy_nvapi_header_to_slang(dry_run=False):
             print(f"  ✗ Failed to copy {header} to SDK/slang/include/: {e}")
 
 
+def _python_include_dir(python_dir):
+    """Return the CPython headers directory, handling the Windows 'Include'
+    (capital I) convention as well as the POSIX 'include' spelling."""
+    for name in ("include", "Include"):
+        candidate = os.path.join(python_dir, name)
+        if os.path.isdir(candidate):
+            return candidate
+    return os.path.join(python_dir, "include")
+
+
+def _python_install_is_complete(python_dir):
+    """Check that a Python installation has the dev artifacts needed to build
+    C/C++ extensions against it: the interpreter executable, the headers
+    (including pyconfig.h) and the link library directory.
+
+    A bare python.exe with no headers/libs is a common partial-install state
+    (e.g. the embeddable distribution or a partially copied SDK/python) that
+    silently breaks any target that #includes Python's C API.
+    """
+    exe_names = (
+        ["python.exe", "pythonw.exe"] if is_windows()
+        else ["python3", "python"]
+    )
+    has_exe = any(os.path.isfile(os.path.join(python_dir, n)) for n in exe_names)
+    inc_dir = _python_include_dir(python_dir)
+    has_headers = os.path.isfile(os.path.join(inc_dir, "pyconfig.h"))
+    libs_dir = os.path.join(python_dir, "libs") if is_windows() else python_dir
+    lib_ext = ".lib" if is_windows() else (".so" if is_linux() else ".dylib")
+    has_lib = any(
+        f.endswith(lib_ext) for f in os.listdir(libs_dir)
+    ) if os.path.isdir(libs_dir) else False
+    return has_exe and has_headers and has_lib
+
+
+def _is_virtualenv(python_dir):
+    """True if python_dir looks like a venv (has a pyvenv.cfg marker), which
+    lacks its own Include/libs and must not be used as a copy source."""
+    return os.path.isfile(os.path.join(python_dir, "pyvenv.cfg"))
+
+
+def _find_system_python():
+    """Locate a real, complete Python installation suitable for copying into
+    SDK/python.
+
+    Order of preference:
+      1. Windows: the 'py' launcher (--list / -3.11 / -3.10), which resolves
+         to base installs and is not fooled by an active virtualenv on PATH.
+      2. 'python3' / 'python' on PATH, but only if the resolved dir is a real
+         install (not a venv) AND passes the completeness check.
+      3. Common well-known install locations as a last resort.
+
+    Returns the directory of a complete Python installation, or None.
+    """
+    candidates = []
+
+    # 1. Windows py launcher — most reliable, skips venvs.
+    if is_windows():
+        py_launcher = shutil.which("py")
+        if py_launcher:
+            for ver in ("3.11", "3.10"):
+                try:
+                    exe = subprocess.check_output(
+                        [py_launcher, f"-{ver}", "-c",
+                         "import sys; print(sys.executable)"],
+                        text=True, stderr=subprocess.DEVNULL,
+                    ).strip()
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    continue
+                if exe:
+                    candidates.append(os.path.dirname(exe))
+
+    # 2. PATH lookup — may resolve to a venv, filtered below.
+    for cmd in ("python3", "python"):
+        exe = shutil.which(cmd)
+        if exe:
+            candidates.append(os.path.dirname(os.path.abspath(exe)))
+
+    # 3. Well-known base install roots (Windows).
+    if is_windows():
+        program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+        local_appdata = os.environ.get("LocalAppData", "")
+        roots = [
+            os.path.join(local_appdata, "Programs", "Python"),
+            os.path.join(program_files, "Python310"),
+            os.path.join(program_files, "Python311"),
+        ]
+        for root in roots:
+            if os.path.isdir(root):
+                for name in sorted(os.listdir(root), reverse=True):
+                    candidates.append(os.path.join(root, name))
+        # scoop shimmed installs
+        scoop = os.environ.get("SCOOP", r"C:\Users\%USERNAME%\scoop")
+        scoop_apps = os.path.join(os.path.expandvars(scoop), "apps")
+        if os.path.isdir(scoop_apps):
+            for name in sorted(os.listdir(scoop_apps), reverse=True):
+                if name.lower().startswith("python"):
+                    candidates.append(os.path.join(scoop_apps, name, "current"))
+
+    # Deduplicate while preserving order, then keep the first real + complete one.
+    seen = set()
+    for cand in candidates:
+        cand_norm = os.path.normcase(os.path.normpath(cand))
+        if cand_norm in seen:
+            continue
+        seen.add(cand_norm)
+        if _is_virtualenv(cand):
+            continue
+        if _python_install_is_complete(cand):
+            return cand
+    return None
+
+
 def _copy_python_installation(python_dir, dst_python_dir, dry_run=False):
     """Copy essential Python installation files from system Python to SDK/python."""
     if dry_run:
@@ -229,11 +341,13 @@ def _copy_python_installation(python_dir, dst_python_dir, dry_run=False):
             else:
                 shutil.copy2(src_item, dst_item)
 
-    # Copy Include directory if exists
-    include_dir = os.path.join(python_dir, "include")
+    # Copy Include directory if exists (Windows CPython uses 'Include',
+    # POSIX uses 'include' — _python_include_dir handles both)
+    include_dir = _python_include_dir(python_dir)
     if os.path.exists(include_dir):
         dst_include_dir = os.path.join(dst_python_dir, "include")
         shutil.copytree(include_dir, dst_include_dir, dirs_exist_ok=True)
+        print(f"Copied include directory")
 
     print(f"Python installation copied successfully")
 
@@ -617,8 +731,100 @@ def download_dep(url, src_base_dir, folder_name=None, dry_run=False):
     return src_dir
 
 
+_MSOFT_VS_ENV_APPLIED = False
+
+
+def find_visual_studio():
+    """Locate the latest Visual Studio installation via vswhere.
+
+    Returns the installation path (e.g. C:\\Program Files\\Microsoft Visual
+    Studio\\18\\Community) or None if not found / not on Windows.
+    """
+    if not is_windows():
+        return None
+    candidates = [
+        os.path.join(
+            os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+            "Microsoft Visual Studio", "Installer", "vswhere.exe",
+        ),
+        os.path.join(
+            os.environ.get("ProgramFiles", r"C:\Program Files"),
+            "Microsoft Visual Studio", "Installer", "vswhere.exe",
+        ),
+    ]
+    vswhere = next((p for p in candidates if os.path.isfile(p)), None)
+    if not vswhere:
+        return None
+    # The VC-tools component requirement is intentionally omitted: some
+    # installations report it unreliably (e.g. VS 2026 previews), which would
+    # cause a false negative. vcvarsall.bat below validates the toolset anyway.
+    out = subprocess.run(
+        [vswhere, "-latest", "-products", "*", "-property", "installationPath"],
+        capture_output=True, text=True,
+    )
+    path = out.stdout.strip()
+    return path or None
+
+
+def _ensure_msvc_env(force=False):
+    """Source vcvarsall.bat (x64) into os.environ on Windows, idempotently.
+
+    Ninja needs cl.exe / INCLUDE / LIB to be visible. When configure.py is run
+    from a plain shell (not a Developer PowerShell), none of these are set, so
+    every CMake configure with the Ninja generator fails with "No
+    CMAKE_C_COMPILER could be found". Mirrors build_devshell.ps1's
+    Enter-VsDevShell approach but in pure Python so the script works from any
+    shell.
+    """
+    global _MSOFT_VS_ENV_APPLIED
+    if not is_windows() or (_MSOFT_VS_ENV_APPLIED and not force):
+        return
+    # Already in a Developer shell: cl.exe is reachable, nothing to do.
+    if shutil.which("cl") or os.environ.get("VCINSTALLDIR"):
+        _MSOFT_VS_ENV_APPLIED = True
+        return
+
+    vs_path = find_visual_studio()
+    if not vs_path:
+        print(
+            "Warning: could not locate a Visual Studio installation via "
+            "vswhere; MSVC environment will not be set up. Run this script "
+            "from a Developer PowerShell if CMake configure fails."
+        )
+        return
+
+    vcvarsall = os.path.join(vs_path, "VC", "Auxiliary", "Build", "vcvarsall.bat")
+    if not os.path.isfile(vcvarsall):
+        print(f"Warning: {vcvarsall} not found; skipping MSVC env setup.")
+        return
+
+    # cmd parses our string directly, so the quoted path with spaces is handled
+    # correctly. list-form subprocess would double-escape the quotes.
+    cmd = f'"{vcvarsall}" x64 >nul 2>&1 && set'
+    out = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    if out.returncode != 0:
+        print(
+            f"Warning: vcvarsall.bat failed (rc={out.returncode}). "
+            "MSVC environment may be incomplete.\n"
+            f"{out.stderr.strip()}"
+        )
+        return
+
+    for line in out.stdout.splitlines():
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        # Preserve case sensitivity of existing vars where possible, but
+        # Windows env lookups are case-insensitive so this is cosmetic.
+        os.environ[key] = value
+
+    _MSOFT_VS_ENV_APPLIED = True
+    print(f"MSVC environment loaded from {vs_path}")
+
+
 def run_cmake_build(src_dir, install_prefix, build_type, extra_args=None, dry_run=False):
     """Generic CMake configure + build + install using Ninja."""
+    _ensure_msvc_env()
     parent = os.path.dirname(src_dir)
     dep_name = os.path.basename(src_dir)
     build_dir = os.path.join(parent, f"{dep_name}-build-{build_type.lower()}")
@@ -1219,22 +1425,37 @@ def process_usd(targets, dry_run=False, keep_original_files=True, copy_only=Fals
         except (subprocess.CalledProcessError, FileNotFoundError):
             has_python_d = False
 
-        # Setup SDK/python if not present
+        # Setup SDK/python if not present or incomplete (needs headers/libs to
+        # build C/C++ extensions against it, not just the bare interpreter).
         sdk_python_dir = os.path.join(os.path.dirname(__file__), "SDK", "python")
         sdk_python = os.path.join(
             sdk_python_dir,
             "python.exe" if is_windows() else "bin/python3",
         )
-        if not os.path.exists(sdk_python):
-            # Find system Python and copy it to SDK/python
-            python_cmd = "python" if is_windows() else "python3"
-            sys_python = shutil.which(python_cmd)
-            if sys_python is None:
-                print("ERROR: Python not found on system")
+        if not _python_install_is_complete(sdk_python_dir):
+            if os.path.isdir(sdk_python_dir) and not _python_install_is_complete(sdk_python_dir):
+                print(
+                    "SDK/python is incomplete (missing headers/libs); "
+                    "re-copying from system Python..."
+                )
+            # Find a real, complete system Python (skips venvs) and copy it
+            # into SDK/python.
+            python_dir = _find_system_python()
+            if python_dir is None:
+                print(
+                    "ERROR: No complete Python installation found. Install "
+                    "Python 3.10 or 3.11 (with dev headers/libs) and ensure "
+                    "it is not only a virtualenv."
+                )
                 return
-            python_dir = os.path.dirname(os.path.abspath(sys_python))
             print(f"Setting up SDK/python from {python_dir}...")
             _copy_python_installation(python_dir, sdk_python_dir, dry_run)
+            if not dry_run and not _python_install_is_complete(sdk_python_dir):
+                print(
+                    "ERROR: SDK/python is still incomplete after copy "
+                    "(source Python lacks dev headers/libs). Install the "
+                    "Python development files and re-run."
+                )
 
         # Find Python executable for USD Python bindings
         # Prefer system Python (has jinja2 for USD code generation) over SDK Python

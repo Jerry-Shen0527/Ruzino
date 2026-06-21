@@ -13,7 +13,7 @@ This document describes the build and test workflow for the Ruzino Framework3D p
 ### Prerequisites
 - CMake (>= 3.31.5)
 - Ninja build system
-- Python 3.10.11
+- Python 3.10 or 3.11
 - Vulkan SDK 1.3.296
 - MSVC compiler (Windows) or Xcode (macOS)
 
@@ -36,7 +36,7 @@ The project uses CMake with Ninja generator. Follow these steps:
 2. **Configure the project** (run in build directory):
    ```bash
    cd build
-   cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DUSTC_CG_WITH_CUDA=ON -DUSTC_HOMEWORK_PLUGINS=OFF ..
+   cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DRUZINO_WITH_CUDA=ON -DUSTC_HOMEWORK_PLUGINS=OFF ..
    ```
 
 3. **Build the project**:
@@ -170,7 +170,7 @@ if [ ! -f "build/build.ninja" ]; then
     echo "Configuring build..."
     mkdir -p build
     cd build
-    cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DUSTC_CG_WITH_CUDA=ON -DUSTC_HOMEWORK_PLUGINS=OFF ..
+    cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DRUZINO_WITH_CUDA=ON -DUSTC_HOMEWORK_PLUGINS=OFF ..
 else
     echo "Build already configured, running ninja..."
     cd build
@@ -247,7 +247,7 @@ When making code changes:
 ### Build Issues
 - If cmake fails, check that all dependencies are installed (see README.md)
 - If ninja fails, try cleaning the build: `rm -rf build/*` and reconfigure
-- Ensure Python version is exactly 3.10.11
+- Ensure Python version is 3.10 or 3.11
 
 ### Test Issues
 - If C++ tests are not found, ensure you've built the project first

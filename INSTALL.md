@@ -39,7 +39,7 @@ If you prefer manual installation or need more control:
 ```bash
 cd build
 cmake -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DUSTC_CG_WITH_CUDA=ON \
+  -DRUZINO_WITH_CUDA=ON \
   -DUSTC_HOMEWORK_PLUGINS=OFF \
   -DRUZINO_INSTALL_TESTS=ON \
   -DCMAKE_INSTALL_PREFIX=/path/to/RuzinoInstall \

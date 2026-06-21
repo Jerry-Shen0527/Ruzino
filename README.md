@@ -39,10 +39,10 @@ git submodule update --init --recursive
 ## Windows + MSVC
 强烈建议在Windows系统下使用本框架，并使用最新版MSVC进行构建和编译。
 
-### Python 3.10.11
-[下载地址](https://www.python.org/downloads/release/python-31011/)
+### Python 3.10 / 3.11
+[下载地址](https://www.python.org/downloads/)
 
-安装时无需勾选Debug库，需要加入path。
+安装时无需勾选Debug库，需要加入path。建议使用 3.10 或 3.11 的任意完整发行版（含头文件与 libs）。
 
 #### python依赖
 PyOpenGL PySide6 numpy
@@ -63,11 +63,11 @@ pip install PyOpenGL PySide6 numpy
 
 本框架依赖于OpenUSD和slang，你有两种方式来构建依赖
 
-1. 打开终端。如果你在使用Windows，打开VS附带的**Developer PowerShell for VS 2022**，以确保默认使用的编译器是MSVC。在开始构建前，你需要确保已安装最新版的CMake(>3.31.5)和Python3.10.11，并将其加入环境变量。输入以下命令以测试：
+1. 打开终端。如果你在使用Windows，打开VS附带的**Developer PowerShell for VS 2022**，以确保默认使用的编译器是MSVC。在开始构建前，你需要确保已安装最新版的CMake(>3.31.5)和Python3.10或3.11，并将其加入环境变量。输入以下命令以测试：
 
    ```shell
    python --version
-   # 确保输出为Python 3.10.11
+   # 确保输出为Python 3.10.x 或 3.11.x
 
    cmake --version
    # 确保输出为CMake version 3.31.5
@@ -140,11 +140,11 @@ App Store 下载Xcode安装
 sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 ```
 
-### Python 3.10.11
+### Python 3.10 / 3.11
 ```Terminal
 brew install pyenv
-pyenv install 3.10.11
-pyenv global 3.10.11   # 全局设置为3.10.11版本
+pyenv install 3.11.9        # 3.10 或 3.11 任意版本均可
+pyenv global 3.11.9
 ```
 
 Terminal 设置
@@ -170,7 +170,7 @@ brew install ninja
 
 确保Python和CMake的版本正确
 python --version
-# 确保输出为Python 3.10.11
+# 确保输出为Python 3.10.x 或 3.11.x
 ```
 pip install pyside6 pyopengl jinja2 -i https://pypi.mirrors.ustc.edu.cn/simple/    # 必须安装
 cmake --version
