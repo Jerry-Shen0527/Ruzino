@@ -1,6 +1,7 @@
 # Build and Test Workflow
 
 This document describes the build and test workflow for the Ruzino Framework3D project.
+It is a quick reference for AI agents; see `INSTALL.md` for the full installation guide.
 
 ## Project Structure
 
@@ -8,243 +9,106 @@ This document describes the build and test workflow for the Ruzino Framework3D p
 - Configuration flags (`RZNODE_CUDA_EXTRA_FLAGS`, `RZNODE_LINK_PYTHON_TO_NANOBIND`) are set in root `CMakeLists.txt`
 - `source/Core/rznode/cmake/AddLibrary.cmake`: Canonical source containing all build logic
 
-## Build Process
+## Scripts Quick Reference
 
-### Prerequisites
-- CMake (>= 3.31.5)
-- Ninja build system
+| Script | Purpose |
+|--------|---------|
+| `scripts/build_devshell.ps1` | Windows incremental build inside VS DevShell (fastest dev loop) |
+| `scripts/build_and_install.py` | Full SDK-style configure → build → install → deps → test |
+| `scripts/install_deps.py` | Copy runtime deps (DLLs, Python, USD, CUDA) to an install dir; called by `build_and_install.py` |
+| `scripts/run_all_tests.py` | Find and run pytest + C++ tests under `source/` and `Binaries/Release/` |
+| `scripts/format_and_commit_manager.py` | Format C/C++ changes + recursive commit/push (skips nvrhi) |
+| `scripts/install_linux_deps.sh` | apt install Linux system dev packages |
+| `scripts/format_and_commit_manager.ps1` | PowerShell launcher for the above (double-click friendly) |
+
+## Prerequisites
+
+- CMake (>= 3.31.5), Ninja
 - Python 3.10 or 3.11
 - Vulkan SDK 1.3.296
-- MSVC compiler (Windows) or Xcode (macOS)
+- MSVC (Windows) or Xcode (macOS)
 
-### Initial Setup
-
-Before building, ensure all submodules are initialized:
+Initial setup:
 ```bash
 git submodule update --init --recursive
 ```
 
-### Build Commands
+## Build
 
-The project uses CMake with Ninja generator. Follow these steps:
+### Incremental build (daily development)
 
-1. **Create build directory** (if it doesn't exist):
-   ```bash
-   mkdir build
-   ```
-
-2. **Configure the project** (run in build directory):
-   ```bash
-   cd build
-   cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DRUZINO_WITH_CUDA=ON -DUSTC_HOMEWORK_PLUGINS=OFF ..
-   ```
-
-3. **Build the project**:
-   ```bash
-   ninja
-   ```
-
-### Quick Build (if already configured)
-
-If the build directory is already configured (contains `build.ninja` and `CMakeCache.txt`), you can skip the cmake configuration step and directly run:
-
+If `build/build.ninja` exists, just rebuild:
 ```bash
 cd build
 ninja
 ```
 
-To check if build is ready:
-- Verify `build/build.ninja` exists
-- Verify `build/CMakeCache.txt` exists
-
-### Automated Build and Install
-
-For a complete SDK-style installation, use the `build_and_install.py` script:
-
-```bash
-# Basic installation
-python scripts/build_and_install.py --install-dir ../RuzinoInstall
-
-# Installation with tests
-python scripts/build_and_install.py --install-dir ../RuzinoInstall --with-tests
-
-# Custom build type
-python scripts/build_and_install.py --install-dir ../RuzinoInstall --build-type Debug
-
+On Windows, `build_devshell.ps1` loads the VS DevShell and runs an incremental build in one step:
+```powershell
+pwsh -File scripts/build_devshell.ps1            # incremental
+pwsh -File scripts/build_devshell.ps1 -Reconfigure # wipe + reconfigure
 ```
 
-This script performs:
-1. Configure CMake with the specified install prefix
-2. Build the project using cmake --build
-3. Install all targets (executables, libraries, headers)
-4. Copy all runtime dependencies (DLLs, resources, Python, CUDA, etc.)
-5. Optionally run tests to verify the installation
-
-Result: A self-contained SDK directory usable via CMake's `find_package(Ruzino)`.
-
-### Manual Installation Process
-
-For manual control over the installation process:
-
-1. **Configure with install prefix**:
-   ```bash
-   cmake -DCMAKE_INSTALL_PREFIX=/path/to/install -DRUZINO_INSTALL_TESTS=ON ..
-   ```
-
-2. **Build and install**:
-   ```bash
-   cmake --build .
-   cmake --install .
-   ```
-
-3. **Install dependencies** (SDK runtime libraries):
-   ```bash
-   python scripts/install_deps.py --install-dir /path/to/install --build-type Release
-   ```
-
-This script will:
-1. Configure CMake with the specified install prefix
-2. Build the project
-3. Install all targets (executables, libraries, headers)
-4. Copy all runtime dependencies (DLLs, resources, Python, CUDA, etc.)
-5. Optionally run tests to verify the installation
-
-The result is a self-contained SDK directory that can be used by other projects via CMake's `find_package(Ruzino)`.
-
-## Test Process
-
-### Running All Tests
-
-The project includes a comprehensive test runner script: `scripts/run_all_tests.py`
-
-This script:
-1. Recursively finds all `tests/` folders under `./source/`
-2. Runs pytest on any `test_*.py` files found
-3. Runs corresponding C++ test executables from `./Binaries/Release/`
-
-#### Usage
+### Fresh configure
 
 ```bash
-# Run all tests
-python scripts/run_all_tests.py
-
-# Run specific test by name
-python scripts/run_all_tests.py <test_name>
-
-# Examples:
-python scripts/run_all_tests.py rhi_test
-python scripts/run_all_tests.py cpu_slang
-```
-
-### Test Types
-
-#### Python Tests
-- Located in `source/*/tests/test_*.py`
-- Run using pytest
-- Must pass `-v` and `--tb=short` flags
-- Timeout: 300 seconds per test file
-
-#### C++ Tests
-- Executables located in `Binaries/Release/` (or `Binaries/Debug/`)
-- Naming convention: `<name>_test.exe` or `<name>.cpp` → `<name>_test.exe`
-- Timeout: 300 seconds per test
-
-### Test Output
-
-The test runner provides:
-- Progress output for each test
-- Summary of passed/failed/skipped tests
-- Detailed error output for failed tests (last 50 lines)
-- Exit code: 0 for success, 1 for any failures
-
-## Complete Build and Test Workflow
-
-For a complete build and test cycle:
-
-```bash
-# 1. Navigate to project root
-cd /path/to/Ruzino
-
-# 2. Configure and build
-if [ ! -f "build/build.ninja" ]; then
-    echo "Configuring build..."
-    mkdir -p build
-    cd build
-    cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DRUZINO_WITH_CUDA=ON -DUSTC_HOMEWORK_PLUGINS=OFF ..
-else
-    echo "Build already configured, running ninja..."
-    cd build
-fi
-
+mkdir build && cd build
+cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DRUZINO_WITH_CUDA=ON -DUSTC_HOMEWORK_PLUGINS=OFF ..
 ninja
-cd ..
-
-# 3. Run tests
-python scripts/run_all_tests.py
 ```
 
-## Installation Process
+Build readiness check: `build/build.ninja` and `build/CMakeCache.txt` must exist.
 
-### CMake Install
+### SDK installation
 
-The project supports full installation via CMake:
-
-1. **Configure with install prefix**:
-   ```bash
-   cmake -DRUZINO_INSTALL_TESTS=ON -DCMAKE_INSTALL_PREFIX=/path/to/install ..
-   ```
-
-2. **Build and install**:
-   ```bash
-   cmake --build .
-   cmake --install .
-   ```
-
-3. **Install dependencies** (SDK runtime libraries):
-   ```bash
-   python scripts/install_deps.py --install-dir /path/to/install --build-type Release
-   ```
-
-### Installation Structure
-
-- `bin/`: Applications (Ruzino.exe, node_editor.exe, etc.) and DLLs
-- `bin/tests/`: Test executables (when `RUZINO_INSTALL_TESTS=ON`)
-- `lib/`: Static libraries and CMake config files
-- `include/`: Public headers
-
-### Testing Installation
-
-Run tests from the configured build (the test runner reads from `./Binaries/Release/` and `./source/`):
+Use `build_and_install.py` for a self-contained, `find_package(Ruzino)`-ready install. See `INSTALL.md` for details:
 ```bash
-python scripts/run_all_tests.py
+python scripts/build_and_install.py --install-dir ../RuzinoInstall
+python scripts/build_and_install.py --install-dir ../RuzinoInstall --with-tests
 ```
 
-See `INSTALL.md` for detailed installation documentation.
+## Test
 
-## Notes for AI Agents
+`run_all_tests.py` finds `tests/` folders under `./source/`, runs pytest on `test_*.py`, and runs matching `*_test.exe` from `./Binaries/Release/`.
 
-### Task History
+```bash
+python scripts/run_all_tests.py                 # all tests
+python scripts/run_all_tests.py rhi_test        # filter by name
+```
 
-- **2026-03-16: Recursive commit workflow** - Implemented recursive commit and push based on format_and_commit_manager.py pattern; skips nvrhi submodule as requested; processes submodules (rznode, geometry) first in depth-first order, then root repository
+- Python tests: `source/*/tests/test_*.py`, run via pytest, 300s timeout each.
+- C++ tests: `Binaries/Release/*_test.exe`, 300s timeout each.
+- Exit code 0 = all pass, 1 = any failure; failures print their last 50 lines.
 
-When making code changes:
+## Commit
 
-1. **Always build before testing** to ensure C++ test executables are up-to-date
-2. **Check build readiness** by verifying `build/build.ninja` exists
-3. **Use the test runner** instead of running individual tests manually
-4. **Review test output** carefully - failed tests will show detailed error messages
-5. **Build type matters** - ensure you're building the same type (Release/Debug) as the test runner expects
-6. **Installation support** - Use `scripts/install_deps.py` to copy dependencies to install directory
-7. **Recursive commits** - Use `scripts/format_and_commit_manager.py` for recursive git operations; it recursively commits to all repositories (submodules first, then root, depth-first) and explicitly skips the nvrhi submodule. Provides a quick mode (auto-format + only prompt for commit messages) and an interactive mode.
+`format_and_commit_manager.py` formats modified C/C++ files and commits recursively across the repo and submodules (depth-first, submodules before root), **always skipping nvrhi**.
+
+- **Quick mode**: auto-formats and only prompts for commit messages.
+- **Interactive mode**: lets you select which files to format and confirm each commit/push.
+
+```bash
+python scripts/format_and_commit_manager.py
+```
+
+## Conventions for Code Changes
+
+1. **Build before testing** so C++ test executables are up to date.
+2. **Check build readiness** by verifying `build/build.ninja` exists.
+3. **Use the test runner** rather than invoking individual tests manually.
+4. **Review failed-test output** — failures show detailed error messages.
+5. **Match build type** — build the same type (Release/Debug) the test runner expects.
+6. **Installation deps** — run `install_deps.py` after `cmake --install` to copy SDK runtime libraries.
+7. **Recursive commits** — use `format_and_commit_manager.py`; it skips the nvrhi submodule.
 
 ## Troubleshooting
 
 ### Build Issues
-- If cmake fails, check that all dependencies are installed (see README.md)
-- If ninja fails, try cleaning the build: `rm -rf build/*` and reconfigure
-- Ensure Python version is 3.10 or 3.11
+- cmake fails → check dependencies (see `README.md`)
+- ninja fails → try `rm -rf build/*` and reconfigure
+- Python must be 3.10 or 3.11
 
 ### Test Issues
-- If C++ tests are not found, ensure you've built the project first
-- If Python tests fail with import errors, ensure all Python dependencies are installed
-- Check that you're in the correct directory when running tests
+- C++ tests not found → build first
+- Python import errors → install Python dependencies
+- Wrong-directory errors → run from project root

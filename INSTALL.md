@@ -123,21 +123,17 @@ Installed to `<install_prefix>/lib/cmake/Ruzino/`:
 
 ## Testing the Installation
 
-### Run Tests from Installation Directory
+`run_all_tests.py` runs from the current build tree (`./Binaries/Release/` and `./source/`); it does not take an install directory:
+
 ```bash
-python scripts/run_all_tests.py --install-dir /path/to/RuzinoInstall
+# All tests
+python scripts/run_all_tests.py
+
+# Filter by name
+python scripts/run_all_tests.py cpu_slang
 ```
 
-### Run Specific Test
-```bash
-python scripts/run_all_tests.py --install-dir /path/to/RuzinoInstall cpu_slang
-```
-
-### Skip UI Tests (Headless Environment)
-```bash
-python scripts/run_all_tests.py --install-dir /path/to/RuzinoInstall
-```
-(UI tests are automatically skipped in headless environments)
+(UI/rendering tests are automatically skipped in headless environments.)
 
 ## Installation Structure
 
@@ -183,7 +179,7 @@ RuzinoInstall/
 
 3. **Cross-Platform**: Works on Windows, Linux, and macOS.
 
-4. **Python Tests**: run_all_tests.py supports both build directory and installation directory testing.
+4. **Python Tests**: `run_all_tests.py` runs from the build tree (`./Binaries/Release/` and `./source/`); run it from the project root.
 
 5. **Headless Testing**: UI/rendering tests are automatically skipped in headless environments.
 
@@ -221,8 +217,8 @@ cmake --install .
 cd ..
 python scripts/install_deps.py --install-dir ../RuzinoInstall --build-type Release
 
-# 5. Test installation
-python scripts/run_all_tests.py --install-dir ../RuzinoInstall
+# 5. Test
+python scripts/run_all_tests.py
 ```
 
 ## Verification
@@ -232,7 +228,7 @@ After installation, verify:
 1. **Applications**: Check `bin/` directory for expected executables
 2. **Dependencies**: Check `bin/` contains OpenUSD, Slang, Python, etc.
 3. **Tests**: Check `bin/tests/` contains test executables (if enabled)
-4. **Functionality**: Run `run_all_tests.py --install-dir ../RuzinoInstall`
+4. **Functionality**: Run `python scripts/run_all_tests.py` from the project root
 
 ## Troubleshooting
 
