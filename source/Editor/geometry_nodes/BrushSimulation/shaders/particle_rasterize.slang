@@ -51,6 +51,7 @@ void main(uint3 tid : SV_DispatchThreadID)
     float3 color_deposit = col.rgb * col.w * 0.1;
 
     int res = cb.grid_res, res_z = cb.grid_res_z;
+    int WSX = cb.window_size_x, WSZ = cb.window_size_z;
     [unroll] for (int dz = 0; dz <= 1; dz++) {
         [unroll] for (int dy = 0; dy <= 1; dy++) {
             [unroll] for (int dx = 0; dx <= 1; dx++) {
@@ -64,7 +65,14 @@ void main(uint3 tid : SV_DispatchThreadID)
                 float wy = (dy == 0) ? (1.0 - fy) : fy;
                 float wz = (dz == 0) ? (1.0 - fz) : fz;
                 float w = wx * wy * wz;
-                uint gi = grid_idx_3d(uint(nx), uint(ny), uint(nz), res, res_z);
+                // Window-local index. Particles outside the active window are
+                // skipped (they belong to committed canvas / will be culled).
+                int lx = nx - cb.window_origin_x;
+                int ly = ny - cb.window_origin_y;
+                int lz = nz - cb.window_origin_z;
+                if (lx < 0 || lx >= WSX || ly < 0 || ly >= WSX || lz < 0 || lz >= WSZ)
+                    continue;
+                uint gi = grid_idx_3d(uint(lx), uint(ly), uint(lz), WSX, WSZ);
 
                 // NOTE: plain += races when many particles splat into the
                 // same cell. Slang's RWStructuredBuffer lacks a working

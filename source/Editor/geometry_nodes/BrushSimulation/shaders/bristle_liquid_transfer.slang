@@ -79,6 +79,21 @@ bool in_grid(int ix, int iy, int iz)
         && iz >= 0 && iz < cb.grid_res_z;
 }
 
+// Convert a GLOBAL grid cell to a WINDOW-LOCAL linear index.
+// Returns false if the cell is outside the active window — callers treat
+// out-of-window cells as empty (their paint is committed to the canvas layer).
+bool window_gi(int gx, int gy, int gz, out uint gi)
+{
+    int lx = gx - cb.window_origin_x;
+    int ly = gy - cb.window_origin_y;
+    int lz = gz - cb.window_origin_z;
+    int WSX = cb.window_size_x, WSZ = cb.window_size_z;
+    if (lx < 0 || lx >= WSX || ly < 0 || ly >= WSX || lz < 0 || lz >= WSZ)
+        return false;
+    gi = grid_idx_3d(uint(lx), uint(ly), uint(lz), WSX, WSZ);
+    return true;
+}
+
 // Sample the average grid paint color (RYB) and density near s_pos, over a
 // small 3×3×3 neighborhood. Returns density-weighted RYB in .rgb and the
 // total density in .a. Used by ABSORB to pick up real paint color from the
@@ -97,7 +112,8 @@ float4 sample_grid_paint(float3 s_pos)
         [unroll] for (int dx = -1; dx <= 1; dx++) {
             int nx = cx + dx, ny = cy + dy, nz = cz + dz;
             if (!in_grid(nx, ny, nz)) continue;
-            uint gi = grid_idx_3d(uint(nx), uint(ny), uint(nz), cb.grid_res, cb.grid_res_z);
+            uint gi;
+            if (!window_gi(nx, ny, nz, gi)) continue;  // outside window → empty
             float d = grid_density[gi];
             if (d > 0.01) {
                 color_sum += float3(grid_color_r[gi], grid_color_y[gi], grid_color_b[gi]) * d;
@@ -121,8 +137,8 @@ float compute_potential_capacity(float3 s_pos)
 
     float psi = 0.0;
     if (in_grid(ix, iy, iz)) {
-        uint gi = grid_idx_3d(uint(ix), uint(iy), uint(iz), cb.grid_res, cb.grid_res_z);
-        psi = bristle_psi[gi];
+        uint gi;
+        if (window_gi(ix, iy, iz, gi)) psi = bristle_psi[gi];
     }
 
     return max((1.0 - cb.mu * psi) * cb.M_max, cb.M_min);
@@ -152,7 +168,8 @@ float estimate_surface_distance(float3 s_pos, float R_j)
             int nx = cx + dx, ny = cy + dy, nz = cz + dz;
             if (!in_grid(nx, ny, nz)) continue;
 
-            uint gi = grid_idx_3d(uint(nx), uint(ny), uint(nz), cb.grid_res, cb.grid_res_z);
+            uint gi;
+            if (!window_gi(nx, ny, nz, gi)) continue;  // outside window → empty
             if (grid_density[gi] > 0.1) {
                 float cell_z = cb.height_extent / float(cb.grid_res_z);
                 float3 cell_world = float3(

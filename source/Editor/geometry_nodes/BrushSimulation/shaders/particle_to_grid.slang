@@ -45,6 +45,7 @@ void main(uint3 tid : SV_DispatchThreadID)
     float cell_z = cb.height_extent / float(cb.grid_res_z);
     float h = cb.cell_size * 1.5;  // kernel radius (XY)
     int res = cb.grid_res, res_z = cb.grid_res_z;
+    int WSX = cb.window_size_x, WSZ = cb.window_size_z;
 
     int cx = int(floor((pos.x - cb.grid_center_x + half_p) / cb.cell_size));
     int cy = int(floor((pos.y - cb.grid_center_y + half_p) / cb.cell_size));
@@ -65,7 +66,13 @@ void main(uint3 tid : SV_DispatchThreadID)
                 (float(iz) + 0.5) * cell_z - half_h + cb.grid_center_z);
             float w = W_smooth_3d(pos - cell_pos, h);
 
-            uint gi = grid_idx_3d(uint(ix), uint(iy), uint(iz), res, res_z);
+            // Window-local index.
+            int lx = ix - cb.window_origin_x;
+            int ly = iy - cb.window_origin_y;
+            int lz = iz - cb.window_origin_z;
+            if (lx < 0 || lx >= WSX || ly < 0 || ly >= WSX || lz < 0 || lz >= WSZ)
+                continue;
+            uint gi = grid_idx_3d(uint(lx), uint(ly), uint(lz), WSX, WSZ);
 
             // Eq.16: ρ_c += m_k * W(p_k - x_c, h). Color accumulated as
             // weighted RYB; brightness-preserving mixing is deferred to the

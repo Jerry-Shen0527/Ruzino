@@ -194,7 +194,7 @@ struct SimConstants {
     float center_y;         // Grid center Y (world space)
 
     float center_z;         // Grid center Z (world space)
-    float effective_radius; // max(brush_radius, cell_size * 3)
+    float effective_radius; // brush_radius (world units)
     int jacobi_mode;        // 0 = diffuse, 1 = pressure
     float jacobi_alpha;     // alpha for Jacobi: dt*rate*N^2 (diffuse) or 1.0 (pressure)
 
@@ -247,6 +247,12 @@ struct BristleConstants {
     // canvas_z is the (impenetrable) paint-volume floor.
     float brush_pressure;
     float canvas_z;
+    // Active-window origin/size (Wetbrush §4.2) — 3D buffers are window-sized.
+    int window_origin_x;
+    int window_origin_y;
+    int window_origin_z;
+    int window_size_x;
+    int window_size_z;
 };
 
 struct ParticleConstants {
@@ -271,6 +277,12 @@ struct ParticleConstants {
     // Eq.9 frame-origin acceleration a_L and angular acceleration ω̇_L.
     float brush_accel_x, brush_accel_y, brush_accel_z;
     float brush_angular_accel_x, brush_angular_accel_y, brush_angular_accel_z;
+    // Active-window origin/size (Wetbrush §4.2) — 3D buffers are window-sized.
+    int window_origin_x;
+    int window_origin_y;
+    int window_origin_z;
+    int window_size_x;
+    int window_size_z;
 };
 
 struct BristleLiquidConstants {
@@ -290,6 +302,12 @@ struct BristleLiquidConstants {
     float grid_center_x, grid_center_y, grid_center_z;
     float D0;
     int max_particles;
+    // Active-window origin/size (Wetbrush §4.2) — 3D buffers are window-sized.
+    int window_origin_x;
+    int window_origin_y;
+    int window_origin_z;
+    int window_size_x;
+    int window_size_z;
 };
 
 struct ConstraintModeCB {
@@ -315,6 +333,20 @@ struct PaintSimStorage {
     nvrhi::BufferHandle height_field;
     nvrhi::BufferHandle pressure_a, pressure_b;
     nvrhi::BufferHandle divergence_buf;
+
+    // --- 2D canvas layer (Wetbrush §4.2: dried paint = "canvas") ---
+    // Full-resolution 2D fields storing paint that has been committed from the
+    // 3D active window. Once paint dries or the brush moves away, the window's
+    // Z-column is collapsed (density summed, color mass-weighted) into these
+    // 2D fields. This is what lets the 3D window follow the brush WITHOUT
+    // losing previously painted regions: the canvas remembers everything.
+    // Memory: res*res * 5 fields * 4 bytes (e.g. 335MB at 4096²) — far smaller
+    // than a full 3D grid and independent of paint height.
+    nvrhi::BufferHandle canvas_density;   // res*res — accumulated paint height
+    nvrhi::BufferHandle canvas_color_r;   // res*res — RYB-R
+    nvrhi::BufferHandle canvas_color_y;   // res*res — RYB-Y
+    nvrhi::BufferHandle canvas_color_b;   // res*res — RYB-B
+    nvrhi::BufferHandle canvas_wetness;   // res*res — dryness (0=wet,1=dry)
 
     // Per-frame upload buffers
     nvrhi::BufferHandle vertex_buf;
@@ -400,6 +432,9 @@ struct PaintSimStorage {
     ProgramHandle ptcl_to_grid_program;
     ProgramHandle grid_to_ptcl_program;
 
+    // Canvas commit program — collapses 3D window columns into 2D canvas layer
+    ProgramHandle canvas_commit_program;
+
     // Grid state
     int grid_res = 0;
     int grid_res_z = 0;       // Z (height) resolution, default like 32
@@ -410,6 +445,22 @@ struct PaintSimStorage {
     glm::vec2 grid_center = glm::vec2(0.0f);
     float grid_center_z = 0.0f;
     bool center_initialized = false;
+
+    // --- Active window allocation (Wetbrush §4.2) ---
+    // 3D fluid fields are allocated at WINDOW size, not full-grid size. The
+    // window follows the brush; paint that leaves the window is committed to
+    // the 2D canvas layer. This makes 3D memory independent of resolution.
+    // WIN_ALLOC_* are the fixed allocation dimensions (set once at alloc).
+    static constexpr int WIN_ALLOC_XY = 128;  // paper's active-window XY size
+    int win_alloc_z = 0;                      // = res_z at alloc time
+    // Current window origin in global grid coords (top-left corner). Updated
+    // each frame to track the brush. When it changes, the old region is
+    // committed to the canvas layer and cleared before moving.
+    int win_origin_x = 0;
+    int win_origin_y = 0;
+    int win_origin_z = 0;
+    bool win_origin_set = false;  // first-frame flag (no commit needed)
+
     int deposited_count = 0;
     float last_sim_time = -1.0f;
     // Previous-frame brush state for finite-difference inertial terms
@@ -438,6 +489,9 @@ struct PaintSimStorage {
             release(height_field);
             release(pressure_a); release(pressure_b);
             release(divergence_buf);
+            release(canvas_density); release(canvas_color_r);
+            release(canvas_color_y); release(canvas_color_b);
+            release(canvas_wetness);
             release(vertex_buf); release(color_buf);
             release(bristle_data); release(sample_pos); release(sample_vel);
             release(sample_color); release(sample_frame); release(lambda_buf);
@@ -462,6 +516,7 @@ struct PaintSimStorage {
             release(ptcl_raster_program); release(ptcl_flip_pic_program);
             release(ptcl_compact_program); release(ptcl_to_grid_program);
             release(grid_to_ptcl_program);
+            release(canvas_commit_program);
             return;
         }
 
@@ -479,6 +534,9 @@ struct PaintSimStorage {
         destroy_buf(height_field);
         destroy_buf(pressure_a); destroy_buf(pressure_b);
         destroy_buf(divergence_buf);
+        destroy_buf(canvas_density); destroy_buf(canvas_color_r);
+        destroy_buf(canvas_color_y); destroy_buf(canvas_color_b);
+        destroy_buf(canvas_wetness);
         destroy_buf(vertex_buf); destroy_buf(color_buf);
         destroy_buf(bristle_data); destroy_buf(sample_pos); destroy_buf(sample_vel);
             destroy_buf(sample_color); destroy_buf(sample_frame); destroy_buf(lambda_buf);
@@ -508,6 +566,7 @@ struct PaintSimStorage {
         destroy_prog(ptcl_raster_program); destroy_prog(ptcl_flip_pic_program);
         destroy_prog(ptcl_compact_program); destroy_prog(ptcl_to_grid_program);
         destroy_prog(grid_to_ptcl_program);
+        destroy_prog(canvas_commit_program);
     }
 };
 
@@ -518,9 +577,21 @@ struct PaintSimStorage {
 NODE_DECLARATION_FUNCTION(brush_paint_sim)
 {
     b.add_input<Geometry>("Brush Strokes");
-    b.add_input<int>("Resolution").default_val(512).min(64).max(2048);
+    b.add_input<int>("Resolution").default_val(512).min(64).max(4096);
     b.add_input<int>("Resolution Z").default_val(32).min(4).max(128);
     b.add_input<float>("Paper Size").default_val(1.0f).min(0.1f).max(10.0f);
+    // Fixed canvas domain (AABB). The simulation grid is anchored to this box
+    // and NEVER re-anchors or resizes when new strokes arrive — this keeps
+    // previously painted cells at fixed world positions instead of being
+    // stretched/relabeled when a later stroke touches the boundary. Strokes
+    // outside the AABB are simply ignored by the deposit (clamped at the edge).
+    // Center defaults to origin; canvas Z is the bottom face of the box (paper
+    // surface), paint stacks upward from there.
+    b.add_input<float>("Canvas Center X").default_val(0.0f);
+    b.add_input<float>("Canvas Center Y").default_val(0.0f);
+    b.add_input<float>("Canvas Z").default_val(0.0f);
+    b.add_input<float>("Canvas Height").default_val(0.0f)
+        .min(0.0f).max(2.0f);  // 0 = auto (isotropic cells)
     b.add_input<float>("Brush Radius").default_val(0.02f).min(0.001f).max(0.5f);
     b.add_input<float>("Brush Pressure").default_val(1.0f).min(0.0f).max(4.0f);
     b.add_input<float>("Ink Amount").default_val(0.8f).min(0.0f).max(2.0f);
@@ -559,6 +630,11 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     int resolution = params.get_input<int>("Resolution");
     int resolution_z = params.get_input<int>("Resolution Z");
     float paper_size = params.get_input<float>("Paper Size");
+    glm::vec2 canvas_center_xy(
+        params.get_input<float>("Canvas Center X"),
+        params.get_input<float>("Canvas Center Y"));
+    float canvas_z_input = params.get_input<float>("Canvas Z");
+    float canvas_height_input = params.get_input<float>("Canvas Height");
     float brush_radius = params.get_input<float>("Brush Radius");
     float brush_pressure = params.get_input<float>("Brush Pressure");
     float ink_amount = params.get_input<float>("Ink Amount");
@@ -599,7 +675,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     auto vertices = curve->get_vertices();
     auto colors = curve->get_display_color();
 
-    // Detect stroke reset
+    // Detect stroke reset (node re-evaluated with fewer vertices than before)
     if (static_cast<int>(vertices.size()) < storage.deposited_count) {
         storage.deposited_count = 0;
         storage.last_sim_time = -1.0f;
@@ -610,63 +686,37 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     int already_deposited = storage.deposited_count;
     int new_count = static_cast<int>(vertices.size()) - already_deposited;
 
-    // Re-anchor if all new vertices are outside current grid
-    if (storage.center_initialized && new_count > 0) {
-        bool any_inside = false;
-        glm::vec2 c = storage.grid_center;
-        float half = storage.grid_paper * 0.5f;
-        float cs = storage.grid_paper / static_cast<float>(storage.grid_res);
-        for (size_t si = 0; si < vertices.size(); si++) {
-            if (static_cast<int>(si) < already_deposited) continue;
-            float gx = (vertices[si].x - c.x + half) / cs;
-            float gy = (vertices[si].y - c.y + half) / cs;
-            if (gx >= 0 && gx < storage.grid_res &&
-                gy >= 0 && gy < storage.grid_res) {
-                any_inside = true;
-                break;
-            }
-        }
-        if (!any_inside) {
-            spdlog::info("brush_paint_sim: re-anchoring grid");
-            storage.center_initialized = false;
-            storage.deposited_count = 0;
-            already_deposited = 0;
-            new_count = static_cast<int>(vertices.size());
-            storage.bristles_initialized = false;
-        }
-    }
-
-    // Initialize grid from bounding box
-    if (!storage.center_initialized && !vertices.empty()) {
-        glm::vec2 bmin(std::numeric_limits<float>::max());
-        glm::vec2 bmax(std::numeric_limits<float>::lowest());
-        float z_sum = 0.0f;
-        for (const auto& v : vertices) {
-            bmin = glm::min(bmin, glm::vec2(v.x, v.y));
-            bmax = glm::max(bmax, glm::vec2(v.x, v.y));
-            z_sum += v.z;
-        }
-        storage.grid_center = (bmin + bmax) * 0.5f;
-        storage.grid_center_z = z_sum / static_cast<float>(vertices.size());
-
-        glm::vec2 extent = bmax - bmin;
-        float margin = std::max(brush_radius * 8, 0.5f);
-        storage.grid_paper = std::max({
-            paper_size,
-            extent.x + margin * 2.0f,
-            extent.y + margin * 2.0f});
+    // ---- Fixed canvas domain (Wetbrush §4.2: "space ABOVE canvas") ----
+    // The grid is anchored to a user-specified AABB and NEVER re-anchors or
+    // resizes when new strokes arrive. This is the fix for the "domain
+    // stretching" symptom: previously the grid was recomputed from the stroke
+    // bounding box, so a later stroke touching the boundary enlarged
+    // grid_paper and relabeled every already-painted cell to a new world
+    // position — visually the whole canvas stretched. Now the AABB is fixed;
+    // strokes outside it are simply clamped at deposit time (see brush_deposit).
+    // Canvas Z = the bottom face of the box = the paper surface. Paint stacks
+    // only upward (z >= 0 in grid space), giving a single-sided paint layer
+    // instead of the previous z-mirror image across the stroke plane.
+    if (!storage.center_initialized) {
+        storage.grid_center = canvas_center_xy;
+        // grid_center_z is the CENTER of the Z extent; canvas (paper) is the
+        // bottom face. canvas_z_input names the paper surface directly.
+        float height = canvas_height_input > 1e-6f
+            ? canvas_height_input
+            : paper_size * static_cast<float>(resolution_z)
+                / static_cast<float>(resolution);  // auto: isotropic Z cells
+        storage.grid_height = height;
+        storage.grid_center_z = canvas_z_input + height * 0.5f;
+        storage.grid_paper = paper_size;
         storage.grid_res = resolution;
         storage.grid_res_z = resolution_z;
-        // Paint height chosen so Z cells are (near-)isotropic with XY cells:
-        // height = paper * (res_z / res). Matches the paper's thin paint layer.
-        storage.grid_height = storage.grid_paper * static_cast<float>(resolution_z)
-                             / static_cast<float>(resolution);
         storage.center_initialized = true;
 
         spdlog::info(
-            "brush_paint_sim: grid {}x{}x{}, paper={:.3f}, height={:.3f}, cell={:.5f}",
+            "brush_paint_sim: grid {}x{}x{}, paper={:.3f}, height={:.3f}, cell={:.5f}, "
+            "canvas_z={:.3f}",
             resolution, resolution, resolution_z, storage.grid_paper, storage.grid_height,
-            storage.grid_paper / static_cast<float>(resolution));
+            storage.grid_paper / static_cast<float>(resolution), canvas_z_input);
     }
 
     // Helper: safely destroy a buffer via resource allocator before recreation
@@ -677,10 +727,18 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     // Create or resize GPU buffers
     int n  = storage.grid_res * storage.grid_res;
     int rz = storage.grid_res_z > 0 ? storage.grid_res_z : resolution_z;
-    int n3d = storage.grid_res * storage.grid_res * rz;
+    // 3D fluid fields are allocated at active-WINDOW size (Wetbrush §4.2),
+    // NOT full grid. This keeps 3D memory ~constant (~25 fields × 128³×res_z)
+    // independent of the canvas resolution. The 2D canvas layer carries the
+    // full-resolution committed paint.
+    int win_xy = std::min(PaintSimStorage::WIN_ALLOC_XY, storage.grid_res);
+    int alloc_win_n3d = win_xy * win_xy * rz;
+    int n2d = n;  // 2D canvas layer = full grid XY
     if (storage.grid_alloc_res != storage.grid_res || storage.grid_alloc_res_z != rz) {
         storage.grid_alloc_res = storage.grid_res;
         storage.grid_alloc_res_z = rz;
+        storage.win_alloc_z = rz;
+        storage.win_origin_set = false;  // reset window tracking on realloc
         storage.deposited_count = 0;
         storage.last_sim_time = -1.0f;
         already_deposited = 0;
@@ -711,9 +769,18 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         safe_destroy_buf(storage.vel_x_old);
         safe_destroy_buf(storage.vel_y_old);
         safe_destroy_buf(storage.vel_z_old);
+        // Release old canvas layer
+        safe_destroy_buf(storage.canvas_density);
+        safe_destroy_buf(storage.canvas_color_r);
+        safe_destroy_buf(storage.canvas_color_y);
+        safe_destroy_buf(storage.canvas_color_b);
+        safe_destroy_buf(storage.canvas_wetness);
 
         auto make_buf = [&](const char* name) -> nvrhi::BufferHandle {
-            return create_field_buffer(rc, n3d, name);
+            return create_field_buffer(rc, alloc_win_n3d, name);
+        };
+        auto make_canvas = [&](const char* name) -> nvrhi::BufferHandle {
+            return create_field_buffer(rc, n2d, name);
         };
 
         storage.density      = make_buf("density");
@@ -758,8 +825,16 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         storage.vel_y_old     = make_buf("vel_y_old");
         storage.vel_z_old     = make_buf("vel_z_old");
 
-        // Zero-init all field buffers
-        std::vector<float> zeros(n3d, 0.0f);
+        // 2D canvas layer (full-resolution, persistent committed paint)
+        storage.canvas_density  = make_canvas("canvas_density");
+        storage.canvas_color_r  = make_canvas("canvas_color_r");
+        storage.canvas_color_y  = make_canvas("canvas_color_y");
+        storage.canvas_color_b  = make_canvas("canvas_color_b");
+        storage.canvas_wetness  = make_canvas("canvas_wetness");
+
+        // Zero-init all field buffers (3D window + 2D canvas)
+        std::vector<float> zeros3d(alloc_win_n3d, 0.0f);
+        std::vector<float> zeros2d(n2d, 0.0f);
         auto cmd = rc.create(CommandListDesc{});
         cmd->open();
         for (auto* buf : {&storage.density, &storage.density_tmp,
@@ -781,7 +856,13 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                           &storage.ptcl_rast_r, &storage.ptcl_rast_y,
                           &storage.ptcl_rast_b,
                           &storage.vel_x_old, &storage.vel_y_old, &storage.vel_z_old}) {
-            cmd->writeBuffer(*buf, zeros.data(), n3d * sizeof(float));
+            cmd->writeBuffer(*buf, zeros3d.data(), alloc_win_n3d * sizeof(float));
+        }
+        // Zero-init the 2D canvas layer
+        for (auto* buf : {&storage.canvas_density, &storage.canvas_color_r,
+                          &storage.canvas_color_y, &storage.canvas_color_b,
+                          &storage.canvas_wetness}) {
+            cmd->writeBuffer(*buf, zeros2d.data(), n2d * sizeof(float));
         }
         cmd->close();
         device->executeCommandList(cmd);
@@ -967,6 +1048,10 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     if (!storage.bri_liquid_emit_program)
         storage.bri_liquid_emit_program = compile_shader(rc, "bristle_liquid_emit.slang");
 
+    // Canvas commit shader (2D canvas layer persistence)
+    if (!storage.canvas_commit_program)
+        storage.canvas_commit_program = compile_shader(rc, "canvas_commit.slang");
+
     if (!storage.deposit_program || !storage.advect_program ||
         !storage.jacobi_program || !storage.divergence_program ||
         !storage.gradient_program || !storage.damp_dry_program ||
@@ -988,7 +1073,12 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
 
     // === Derive brush transform from latest vertex ===
     float cell_sz = storage.grid_paper / static_cast<float>(storage.grid_res);
-    float eff_radius = std::max(brush_radius, cell_sz * 3.0f);
+    // Effective deposit radius equals the user-specified brush radius exactly.
+    // Previously this was max(brush_radius, cell_sz*3), which enlarged thin
+    // brushes (e.g. 0.02 became 0.06 when cell_sz≈0.02) — the deposit footprint
+    // no longer matched the brush. The minimum-cell-coverage guarantee belongs
+    // in the shader (spread_xy = max(1, ceil(r/cell))), not in the world radius.
+    float eff_radius = brush_radius;
 
     glm::vec3 brush_pos_3d(0.0f);
     glm::vec3 brush_vel_3d(0.0f);
@@ -1032,6 +1122,93 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     }
     storage.prev_brush_vel = brush_vel_3d;
     storage.prev_angular_vel = brush_angular_vel;
+
+    // === ACTIVE WINDOW ORIGIN (Wetbrush §4.2) ===
+    // Compute the window origin for THIS frame, centered on the brush and
+    // clamped to the canvas. The 3D buffers are allocated at fixed window size
+    // (WIN_ALLOC_XY × WIN_ALLOC_XY × res_z), so only cells inside the window
+    // are live; everything else lives in the committed 2D canvas layer.
+    //
+    // Window tracking: when the origin moves, the OLD window region must be
+    // committed to the canvas layer and cleared BEFORE moving, otherwise the
+    // paint there is lost (overwritten by the next frame's new region). On the
+    // very first frame (win_origin_set == false) no commit is needed.
+    const int WIN_XY = std::min(PaintSimStorage::WIN_ALLOC_XY, storage.grid_res);
+    const int WIN_Z  = rz;
+    const int win_n3d = WIN_XY * WIN_XY * WIN_Z;
+    {
+        float half_p = storage.grid_paper * 0.5f;
+        float bgx = (brush_pos_3d.x - storage.grid_center.x + half_p) / cell_sz;
+        float bgy = (brush_pos_3d.y - storage.grid_center.y + half_p) / cell_sz;
+        int new_wox = static_cast<int>(bgx) - WIN_XY / 2;
+        int new_woy = static_cast<int>(bgy) - WIN_XY / 2;
+        new_wox = std::max(0, std::min(new_wox, storage.grid_res - WIN_XY));
+        new_woy = std::max(0, std::min(new_woy, storage.grid_res - WIN_XY));
+
+        // If the window moved (or first frame), commit old region then update.
+        bool moved = !storage.win_origin_set
+                  || new_wox != storage.win_origin_x
+                  || new_woy != storage.win_origin_y;
+        if (moved && storage.win_origin_set) {
+            // Commit the current window's Z-columns into the 2D canvas layer,
+            // using the OLD origin (still in storage). This bakes the live 3D
+            // paint into the persistent canvas before the window slides away.
+            SimConstants commit_cb = {};
+            commit_cb.res = storage.grid_res;
+            commit_cb.cell_size = cell_sz;
+            commit_cb.paper_size = storage.grid_paper;
+            commit_cb.res_z = rz;
+            commit_cb.height_extent = storage.grid_height;
+            commit_cb.grid_center_z = storage.grid_center_z;
+            commit_cb.window_origin_x = storage.win_origin_x;
+            commit_cb.window_origin_y = storage.win_origin_y;
+            commit_cb.window_origin_z = 0;
+            commit_cb.window_size_x = WIN_XY;
+            commit_cb.window_size_y = WIN_XY;
+            commit_cb.window_size_z = WIN_Z;
+
+            nvrhi::BufferHandle commit_cb_buf;
+            upload_constant_buffer(rc, device, &commit_cb, sizeof(SimConstants),
+                                   "commit_cb", commit_cb_buf);
+            ProgramVars cv(rc, storage.canvas_commit_program);
+            cv["cb"] = commit_cb_buf.Get();
+            cv["density"]  = storage.density.Get();
+            cv["color_r"]  = storage.color_r.Get();
+            cv["color_y"]  = storage.color_y.Get();
+            cv["color_b"]  = storage.color_b.Get();
+            cv["wetness"]  = storage.wetness.Get();
+            cv["canvas_density"] = storage.canvas_density.Get();
+            cv["canvas_color_r"] = storage.canvas_color_r.Get();
+            cv["canvas_color_y"] = storage.canvas_color_y.Get();
+            cv["canvas_color_b"] = storage.canvas_color_b.Get();
+            cv["canvas_wetness"] = storage.canvas_wetness.Get();
+            cv.finish_setting_vars();
+            ComputeContext cctx(rc, cv);
+            cctx.finish_setting_pso();
+            cctx.begin();
+            cctx.dispatch({}, cv, WIN_XY * WIN_XY, 256);  // one thread per column
+            cctx.finish();
+            rc.destroy(commit_cb_buf);
+
+            // Clear the 3D window fields so the new region starts empty.
+            auto clr = rc.create(CommandListDesc{});
+            clr->open();
+            std::vector<float> z(win_n3d, 0.0f);
+            for (auto* b : {&storage.density, &storage.color_r, &storage.color_y,
+                            &storage.color_b, &storage.wetness, &storage.oil_density,
+                            &storage.height_field, &storage.vel_x, &storage.vel_y,
+                            &storage.vel_z})
+                clr->writeBuffer(*b, z.data(), win_n3d * sizeof(float));
+            clr->close();
+            device->executeCommandList(clr);
+            device->waitForIdle();
+            rc.destroy(clr);
+        }
+        storage.win_origin_x = new_wox;
+        storage.win_origin_y = new_woy;
+        storage.win_origin_z = 0;
+        storage.win_origin_set = true;
+    }
 
     // === BRISTLE SIMULATION ===
     {
@@ -1085,6 +1262,11 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         bc.paper_size = storage.grid_paper;
         bc.grid_center_x = storage.grid_center.x;
         bc.grid_center_y = storage.grid_center.y;
+        bc.window_origin_x = storage.win_origin_x;
+        bc.window_origin_y = storage.win_origin_y;
+        bc.window_origin_z = 0;
+        bc.window_size_x = WIN_XY;
+        bc.window_size_z = WIN_Z;
 
         nvrhi::BufferHandle bristle_cb;
         upload_constant_buffer(rc, device, &bc, sizeof(BristleConstants),
@@ -1160,25 +1342,25 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         // Step 4: Clear bristle accumulation grids
         dispatch_field(rc, storage.field_clear_program,
             {},
-            {{"field", storage.bristle_density}}, nullptr, n3d);
+            {{"field", storage.bristle_density}}, nullptr, win_n3d);
         dispatch_field(rc, storage.field_clear_program,
             {},
-            {{"field", storage.bristle_vel_x}}, nullptr, n3d);
+            {{"field", storage.bristle_vel_x}}, nullptr, win_n3d);
         dispatch_field(rc, storage.field_clear_program,
             {},
-            {{"field", storage.bristle_vel_y}}, nullptr, n3d);
+            {{"field", storage.bristle_vel_y}}, nullptr, win_n3d);
         dispatch_field(rc, storage.field_clear_program,
             {},
-            {{"field", storage.bristle_vel_z}}, nullptr, n3d);
+            {{"field", storage.bristle_vel_z}}, nullptr, win_n3d);
         dispatch_field(rc, storage.field_clear_program,
             {},
-            {{"field", storage.bristle_color_r}}, nullptr, n3d);
+            {{"field", storage.bristle_color_r}}, nullptr, win_n3d);
         dispatch_field(rc, storage.field_clear_program,
             {},
-            {{"field", storage.bristle_color_y}}, nullptr, n3d);
+            {{"field", storage.bristle_color_y}}, nullptr, win_n3d);
         dispatch_field(rc, storage.field_clear_program,
             {},
-            {{"field", storage.bristle_color_b}}, nullptr, n3d);
+            {{"field", storage.bristle_color_b}}, nullptr, win_n3d);
 
         // Step 5: Rasterize samples → accumulation grids
         dispatch_raw(rc, storage.bristle_raster_program,
@@ -1225,7 +1407,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
              {"vel_z", storage.vel_z},
              {"wetness", storage.wetness},
              {"oil_density", storage.oil_density}},
-            merge_cb, n3d);
+            merge_cb, win_n3d);
 
         rc.destroy(bristle_cb);
         rc.destroy(merge_cb);
@@ -1256,6 +1438,11 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             blc.grid_center_y = storage.grid_center.y;
             blc.D0 = brush_radius * 3.0f;
             blc.max_particles = max_ptcl;
+            blc.window_origin_x = storage.win_origin_x;
+            blc.window_origin_y = storage.win_origin_y;
+            blc.window_origin_z = 0;
+            blc.window_size_x = WIN_XY;
+            blc.window_size_z = WIN_Z;
 
             nvrhi::BufferHandle liquid_cb;
             upload_constant_buffer(rc, device, &blc, sizeof(BristleLiquidConstants),
@@ -1323,6 +1510,11 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         pc.paper_size = storage.grid_paper;
         pc.grid_center_x = storage.grid_center.x;
         pc.grid_center_y = storage.grid_center.y;
+        pc.window_origin_x = storage.win_origin_x;
+        pc.window_origin_y = storage.win_origin_y;
+        pc.window_origin_z = 0;
+        pc.window_size_x = WIN_XY;
+        pc.window_size_z = WIN_Z;
         pc.brush_pos_x = brush_pos_3d.x;
         pc.brush_pos_y = brush_pos_3d.y;
         pc.brush_pos_z = brush_pos_3d.z;
@@ -1376,7 +1568,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
              {"ptcl_vel", storage.ptcl_vel},
              {"ptcl_color", storage.ptcl_color},
              {"ptcl_alive", storage.ptcl_alive}},
-            emit1_cb, n3d);
+            emit1_cb, win_n3d);
         rc.destroy(emit1_cb);
 
         // Update particles (ping-pong)
@@ -1400,19 +1592,19 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
 
         // Clear particle accum grids (density + velocity + color)
         dispatch_field(rc, storage.field_clear_program,
-            {}, {{"field", storage.ptcl_density}}, nullptr, n3d);
+            {}, {{"field", storage.ptcl_density}}, nullptr, win_n3d);
         dispatch_field(rc, storage.field_clear_program,
-            {}, {{"field", storage.ptcl_vel_x}}, nullptr, n3d);
+            {}, {{"field", storage.ptcl_vel_x}}, nullptr, win_n3d);
         dispatch_field(rc, storage.field_clear_program,
-            {}, {{"field", storage.ptcl_vel_y}}, nullptr, n3d);
+            {}, {{"field", storage.ptcl_vel_y}}, nullptr, win_n3d);
         dispatch_field(rc, storage.field_clear_program,
-            {}, {{"field", storage.ptcl_vel_z}}, nullptr, n3d);
+            {}, {{"field", storage.ptcl_vel_z}}, nullptr, win_n3d);
         dispatch_field(rc, storage.field_clear_program,
-            {}, {{"field", storage.ptcl_rast_r}}, nullptr, n3d);
+            {}, {{"field", storage.ptcl_rast_r}}, nullptr, win_n3d);
         dispatch_field(rc, storage.field_clear_program,
-            {}, {{"field", storage.ptcl_rast_y}}, nullptr, n3d);
+            {}, {{"field", storage.ptcl_rast_y}}, nullptr, win_n3d);
         dispatch_field(rc, storage.field_clear_program,
-            {}, {{"field", storage.ptcl_rast_b}}, nullptr, n3d);
+            {}, {{"field", storage.ptcl_rast_b}}, nullptr, win_n3d);
 
         // Rasterize particles (density + velocity + RYB color)
         dispatch_raw(rc, storage.ptcl_raster_program,
@@ -1457,7 +1649,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
              {"vel_z", storage.vel_z},
              {"wetness", storage.wetness},
              {"oil_density", storage.oil_density}},
-            merge_cb, n3d);
+            merge_cb, win_n3d);
         rc.destroy(merge_cb);
 
         rc.destroy(ptcl_cb);
@@ -1533,6 +1725,12 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         dep_cb.center_z = storage.grid_center_z;
         dep_cb.effective_radius = eff_radius;
         dep_cb.oil_density_base = oil_density_in;
+        dep_cb.window_origin_x = storage.win_origin_x;
+        dep_cb.window_origin_y = storage.win_origin_y;
+        dep_cb.window_origin_z = 0;
+        dep_cb.window_size_x = WIN_XY;
+        dep_cb.window_size_y = WIN_XY;
+        dep_cb.window_size_z = WIN_Z;
 
         nvrhi::BufferHandle dep_cb_buf;
         upload_constant_buffer(rc, device, &dep_cb, sizeof(SimConstants),
@@ -1587,21 +1785,11 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     sim_dt = std::max(sim_dt, 0.0f);
     storage.last_sim_time = current_time;
 
-    // --- Active window (Wetbrush §4.2) ---
-    // Computed once outside the fluid-sim block so the post-sim readback /
-    // statistics code below can scope divergence measurements to the same
-    // sub-volume the solver actually ran in. Window size is capped at
-    // 128×128×res_z (paper's value); smaller grids use the full extent.
-    // Origin is centered on the brush and clamped to the grid.
-    const int WIN_XY = std::min(128, storage.grid_res);
-    const int WIN_Z  = rz;  // simulate the full paint height
-    float half_p = storage.grid_paper * 0.5f;
-    float bgx = (brush_pos_3d.x - storage.grid_center.x + half_p) / cell_sz;
-    float bgy = (brush_pos_3d.y - storage.grid_center.y + half_p) / cell_sz;
-    int wox = static_cast<int>(bgx) - WIN_XY / 2;
-    int woy = static_cast<int>(bgy) - WIN_XY / 2;
-    wox = std::max(0, std::min(wox, storage.grid_res - WIN_XY));
-    woy = std::max(0, std::min(woy, storage.grid_res - WIN_XY));
+    // --- Active window origin/size were computed above (early binding) ---
+    // Reuse storage.win_origin_* and WIN_XY/WIN_Z. wox/woy aliases for the
+    // fluid-sim block below.
+    int wox = storage.win_origin_x;
+    int woy = storage.win_origin_y;
 
     if (sim_dt > 1e-6f) {  // TEMP reverted: fluid re-enabled
         float max_sub_dt = 2.0f / static_cast<float>(storage.grid_res);
@@ -1639,9 +1827,9 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             {
                 auto snap_cmd = rc.create(CommandListDesc{});
                 snap_cmd->open();
-                snap_cmd->copyBuffer(storage.vel_x_old, 0, storage.vel_x, 0, n3d * sizeof(float));
-                snap_cmd->copyBuffer(storage.vel_y_old, 0, storage.vel_y, 0, n3d * sizeof(float));
-                snap_cmd->copyBuffer(storage.vel_z_old, 0, storage.vel_z, 0, n3d * sizeof(float));
+                snap_cmd->copyBuffer(storage.vel_x_old, 0, storage.vel_x, 0, win_n3d * sizeof(float));
+                snap_cmd->copyBuffer(storage.vel_y_old, 0, storage.vel_y, 0, win_n3d * sizeof(float));
+                snap_cmd->copyBuffer(storage.vel_z_old, 0, storage.vel_z, 0, win_n3d * sizeof(float));
                 snap_cmd->close();
                 device->executeCommandList(snap_cmd);
                 device->waitForIdle();
@@ -1824,6 +2012,32 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                      {"wetness", storage.wetness}},
                     {{"field_out", storage.wetness_tmp}}, dcb, window_total);
                 std::swap(storage.wetness, storage.wetness_tmp);
+
+                // Diffuse RYB color channels — MUST stay in sync with density
+                // diffusion. Wetbrush §4.2: "we diffuse all of the fields".
+                // Without this, density bleeds into neighbouring cells whose
+                // color stays 0, producing white "ghost" particles on readback
+                // (ryb_to_rgb(0,0,0) = white). Reuses color_tmp like advection.
+                dispatch_field(rc, storage.jacobi_program,
+                    {{"field_in", storage.color_r}, {"rhs", storage.color_r},
+                     {"bristle_psi", storage.bristle_density},
+                     {"wetness", storage.wetness}},
+                    {{"field_out", storage.color_tmp}}, dcb, window_total);
+                std::swap(storage.color_r, storage.color_tmp);
+
+                dispatch_field(rc, storage.jacobi_program,
+                    {{"field_in", storage.color_y}, {"rhs", storage.color_y},
+                     {"bristle_psi", storage.bristle_density},
+                     {"wetness", storage.wetness}},
+                    {{"field_out", storage.color_tmp}}, dcb, window_total);
+                std::swap(storage.color_y, storage.color_tmp);
+
+                dispatch_field(rc, storage.jacobi_program,
+                    {{"field_in", storage.color_b}, {"rhs", storage.color_b},
+                     {"bristle_psi", storage.bristle_density},
+                     {"wetness", storage.wetness}},
+                    {{"field_out", storage.color_tmp}}, dcb, window_total);
+                std::swap(storage.color_b, storage.color_tmp);
                 rc.destroy(dcb);
             }
 
@@ -1849,6 +2063,11 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                 pc.paper_size = storage.grid_paper;
                 pc.grid_center_x = storage.grid_center.x;
                 pc.grid_center_y = storage.grid_center.y;
+                pc.window_origin_x = storage.win_origin_x;
+                pc.window_origin_y = storage.win_origin_y;
+                pc.window_origin_z = 0;
+                pc.window_size_x = WIN_XY;
+                pc.window_size_z = WIN_Z;
                 pc.brush_pos_x = brush_pos_3d.x;
                 pc.brush_pos_y = brush_pos_3d.y;
                 pc.brush_pos_z = brush_pos_3d.z;
@@ -1891,6 +2110,11 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         pc.paper_size = storage.grid_paper;
         pc.grid_center_x = storage.grid_center.x;
         pc.grid_center_y = storage.grid_center.y;
+        pc.window_origin_x = storage.win_origin_x;
+        pc.window_origin_y = storage.win_origin_y;
+        pc.window_origin_z = 0;
+        pc.window_size_x = WIN_XY;
+        pc.window_size_z = WIN_Z;
         pc.brush_pos_x = brush_pos_3d.x;
         pc.brush_pos_y = brush_pos_3d.y;
         pc.brush_pos_z = brush_pos_3d.z;
@@ -1933,7 +2157,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
              {"ptcl_color", storage.ptcl_color},
              {"ptcl_alive", storage.ptcl_alive},
              {"density_out", storage.density_tmp}},  // Eq.15: density reduced to tmp
-            maint_cb, n3d);
+            maint_cb, win_n3d);
         std::swap(storage.density, storage.density_tmp);
 
         // Reset counter before compaction
@@ -1960,7 +2184,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     }
 
     // === READBACK ===
-    int readback_n = n3d;
+    int readback_n = win_n3d;
     auto readback = [&](nvrhi::BufferHandle field) -> std::vector<float> {
         std::vector<float> data(readback_n);
         auto rb = rc.create(nvrhi::BufferDesc{}
@@ -1993,10 +2217,9 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     // particle counts should be bounded). See tests/test_brush_sim_fidelity.py.
 
     // -- Grid-side: divergence over the active window, density/color totals
-    //    over the full grid. divergence_buf only holds meaningful values
-    //    inside the window the solver ran in; scoping to that sub-volume
-    //    gives a true picture of the residual.
-    float max_div = 0.0f;
+    //    over the window. divergence_buf holds window-local values now (the
+    //    buffer is window-sized), so indices are window-local [0,WIN)³.
+    float max_div = 0.0;
     double div_sum = 0.0;
     int   div_count = 0;
     if (sim_dt > 1e-6f && storage.divergence_buf) {
@@ -2004,9 +2227,8 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         for (int dz = 0; dz < WIN_Z; ++dz)
         for (int dy = 0; dy < WIN_XY; ++dy)
         for (int dx = 0; dx < WIN_XY; ++dx) {
-            int gx = wox + dx, gy = woy + dy;
-            int gi = dz * storage.grid_res * storage.grid_res
-                   + gy * storage.grid_res + gx;
+            // Window-local linear index (matches grid_idx_3d with WIN strides).
+            int gi = dz * WIN_XY * WIN_XY + dy * WIN_XY + dx;
             if (gi < 0 || gi >= readback_n) continue;
             float ad = std::fabs(div_cpu[gi]);
             max_div = std::max(max_div, ad);
@@ -2096,42 +2318,120 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     params.set_output("Particle Count", ptcl_count);
     params.set_output("Total Particle Mass", ptcl_mass);
 
+    // === FINAL COMMIT: flush live window into the 2D canvas layer ===
+    // Every frame, bake the current 3D window paint into the persistent canvas
+    // so the output reflects ALL painted regions (not just the live brush
+    // window). The canvas accumulates; the window keeps its paint too (it will
+    // be cleared on the next window move). Without this, only the brush's
+    // current neighborhood would show.
+    {
+        SimConstants commit_cb = {};
+        commit_cb.res = storage.grid_res;
+        commit_cb.cell_size = cell_sz;
+        commit_cb.paper_size = storage.grid_paper;
+        commit_cb.res_z = rz;
+        commit_cb.height_extent = storage.grid_height;
+        commit_cb.grid_center_z = storage.grid_center_z;
+        commit_cb.window_origin_x = storage.win_origin_x;
+        commit_cb.window_origin_y = storage.win_origin_y;
+        commit_cb.window_origin_z = 0;
+        commit_cb.window_size_x = WIN_XY;
+        commit_cb.window_size_y = WIN_XY;
+        commit_cb.window_size_z = WIN_Z;
+
+        nvrhi::BufferHandle commit_cb_buf;
+        upload_constant_buffer(rc, device, &commit_cb, sizeof(SimConstants),
+                               "final_commit_cb", commit_cb_buf);
+        ProgramVars cv(rc, storage.canvas_commit_program);
+        cv["cb"] = commit_cb_buf.Get();
+        cv["density"]  = storage.density.Get();
+        cv["color_r"]  = storage.color_r.Get();
+        cv["color_y"]  = storage.color_y.Get();
+        cv["color_b"]  = storage.color_b.Get();
+        cv["wetness"]  = storage.wetness.Get();
+        cv["canvas_density"] = storage.canvas_density.Get();
+        cv["canvas_color_r"] = storage.canvas_color_r.Get();
+        cv["canvas_color_y"] = storage.canvas_color_y.Get();
+        cv["canvas_color_b"] = storage.canvas_color_b.Get();
+        cv["canvas_wetness"] = storage.canvas_wetness.Get();
+        cv.finish_setting_vars();
+        ComputeContext cctx(rc, cv);
+        cctx.finish_setting_pso();
+        cctx.begin();
+        cctx.dispatch({}, cv, WIN_XY * WIN_XY, 256);
+        cctx.finish();
+        rc.destroy(commit_cb_buf);
+    }
+
+    // === OUTPUT: read the 2D canvas layer and emit a point per painted cell ===
     auto [particles, pts] = make_particles();
     std::vector<glm::vec3> out_pts;
     std::vector<glm::vec3> out_colors;
     std::vector<float> out_widths;
 
+    // Read back the 2D canvas layer (full grid XY).
+    int n2d_read = storage.grid_res * storage.grid_res;
+    auto readback_2d = [&](nvrhi::BufferHandle field) -> std::vector<float> {
+        std::vector<float> data(n2d_read);
+        auto rb = rc.create(nvrhi::BufferDesc{}
+            .setByteSize(n2d_read * sizeof(float))
+            .setCpuAccess(nvrhi::CpuAccessMode::Read)
+            .setDebugName("canvas_rb"));
+        auto cmd = rc.create(CommandListDesc{});
+        cmd->open();
+        cmd->copyBuffer(rb, 0, field, 0, n2d_read * sizeof(float));
+        cmd->close();
+        device->executeCommandList(cmd);
+        device->waitForIdle();
+        void* mapped = device->mapBuffer(rb, nvrhi::CpuAccessMode::Read);
+        memcpy(data.data(), mapped, n2d_read * sizeof(float));
+        device->unmapBuffer(rb);
+        rc.destroy(rb);
+        rc.destroy(cmd);
+        return data;
+    };
+    auto cdensity = readback_2d(storage.canvas_density);
+    auto ccr = readback_2d(storage.canvas_color_r);
+    auto ccy = readback_2d(storage.canvas_color_y);
+    auto ccb = readback_2d(storage.canvas_color_b);
+
     constexpr float threshold = 0.001f;
-    int step_xy = std::max(1, storage.grid_res / 64);
-    int step_z  = std::max(1, rz / 16);
-    float cell_sz_z = storage.grid_height / static_cast<float>(rz);
+    constexpr float rgb_white_cutoff = 0.9f;
+    // Canvas is 2D (height field). One point per painted cell, at the canvas
+    // surface Z offset by the accumulated density (paint thickness). step_xy=1
+    // gives full resolution — no downsampling, so the brush footprint renders
+    // at its true size. Width = true cell size (no inflation).
+    float canvas_floor_z = storage.grid_center_z - storage.grid_height * 0.5f;
+    for (int y = 0; y < storage.grid_res; ++y) {
+        for (int x = 0; x < storage.grid_res; ++x) {
+            int gi = y * storage.grid_res + x;
+            if (cdensity[gi] <= threshold) continue;
+            // canvas_color stores density-weighted RYB sum; normalize by density
+            // to recover the average pigment.
+            float d = cdensity[gi];
+            float r = ccr[gi] / (d + 1e-8f);
+            float yy = ccy[gi] / (d + 1e-8f);
+            float b = ccb[gi] / (d + 1e-8f);
+            r = std::min(std::max(r, 0.0f), 1.0f);
+            yy = std::min(std::max(yy, 0.0f), 1.0f);
+            b = std::min(std::max(b, 0.0f), 1.0f);
+            float rm = 1-r, ym = 1-yy, bm = 1-b;
+            glm::vec3 rgb = rm*ym*bm*glm::vec3(1,1,1) + r*ym*bm*glm::vec3(1,0,0)
+                + rm*yy*bm*glm::vec3(1,1,0) + rm*ym*b*glm::vec3(0.163f,0.373f,0.6f)
+                + r*yy*bm*glm::vec3(1,0.5f,0) + r*ym*b*glm::vec3(0.5f,0,0.5f)
+                + rm*yy*b*glm::vec3(0,0.66f,0.2f) + r*yy*b*glm::vec3(0.2f,0.094f,0.029f);
+            if (std::min({rgb.r, rgb.g, rgb.b}) >= rgb_white_cutoff) continue;
 
-    // Collapse 3D grid into 2D visualization by accumulating along Z
-    for (int z = 0; z < rz; z += step_z) {
-        for (int y = 0; y < storage.grid_res; y += step_xy) {
-            for (int x = 0; x < storage.grid_res; x += step_xy) {
-                int gi = z * storage.grid_res * storage.grid_res
-                       + y * storage.grid_res + x;
-                if (density_cpu[gi] > threshold) {
-                    float gx = (x + 0.5f) * cell_sz - storage.grid_paper * 0.5f;
-                    float gy = (y + 0.5f) * cell_sz - storage.grid_paper * 0.5f;
-                    float gz = (z + 0.5f) * cell_sz_z - storage.grid_height * 0.5f;
-                    out_pts.push_back(glm::vec3(
-                        gx + storage.grid_center.x,
-                        gy + storage.grid_center.y,
-                        gz + storage.grid_center_z));
-
-                    float r = cr_cpu[gi], yy = cy_cpu[gi], b = cb_cpu[gi];
-                    float rm = 1-r, ym = 1-yy, bm = 1-b;
-                    glm::vec3 rgb = rm*ym*bm*glm::vec3(1,1,1) + r*ym*bm*glm::vec3(1,0,0)
-                        + rm*yy*bm*glm::vec3(1,1,0) + rm*ym*b*glm::vec3(0.163f,0.373f,0.6f)
-                        + r*yy*bm*glm::vec3(1,0.5f,0) + r*ym*b*glm::vec3(0.5f,0,0.5f)
-                        + rm*yy*b*glm::vec3(0,0.66f,0.2f) + r*yy*b*glm::vec3(0.2f,0.094f,0.029f);
-                    out_colors.push_back(rgb);
-                    out_widths.push_back(
-                        cell_sz * step_xy * std::min(density_cpu[gi], 1.0f));
-                }
-            }
+            float gx = (x + 0.5f) * cell_sz - storage.grid_paper * 0.5f;
+            float gy = (y + 0.5f) * cell_sz - storage.grid_paper * 0.5f;
+            // Paint thickness in Z: scale density to a visible height, capped.
+            float gz = canvas_floor_z + std::min(d * cell_sz * 0.5f, cell_sz * 2.0f);
+            out_pts.push_back(glm::vec3(
+                gx + storage.grid_center.x,
+                gy + storage.grid_center.y,
+                gz));
+            out_colors.push_back(rgb);
+            out_widths.push_back(cell_sz * std::min(d, 1.0f));
         }
     }
 

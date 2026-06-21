@@ -3,6 +3,9 @@
 // 3D grid: res × res × res_z, 6-neighbor stencil
 // Pressure: sum of 6 neighbors, divisor = 6
 // Diffusion: implicit solve with dt*rate*N^2
+//
+// Window-relative: neighbors are addressed with WINDOW-LOCAL strides
+// (WIN, WIN*WIN), and boundary checks use window-local coords/dims.
 
 #include "common.slangh"
 
@@ -25,13 +28,15 @@ bool is_solid(uint idx)
 [numthreads(256, 1, 1)]
 void main(uint3 dtid : SV_DispatchThreadID)
 {
-    int N = cb.res;
-    int D = cb.res_z;
-    uint NN = (uint)(N * N);
+    int WIN  = cb.window_size_x;   // window XY size
+    int WINZ = cb.window_size_z;   // window Z size
+    uint WNN = (uint)(WIN * WIN);  // window Z stride (in local index space)
 
     WindowCell c;
     if (!window_map(cb, dtid.x, c)) return;
-    uint x = c.x, y = c.y, z = c.z, idx = c.idx;
+    // Window-local coords and index.
+    uint lx = c.lx, ly = c.ly, lz = c.lz;
+    uint idx = c.idx;
 
     float center = field_in[idx];
 
@@ -42,12 +47,12 @@ void main(uint3 dtid : SV_DispatchThreadID)
 
         float sum = 0.0f;
         int fluid_neighbors = 0;
-        if (x > 0)           { if (!is_solid(idx - 1))     { sum += field_in[idx - 1];     fluid_neighbors++; } }
-        if (x < (uint)N - 1) { if (!is_solid(idx + 1))     { sum += field_in[idx + 1];     fluid_neighbors++; } }
-        if (y > 0)           { if (!is_solid(idx - (uint)N)){ sum += field_in[idx - (uint)N]; fluid_neighbors++; } }
-        if (y < (uint)N - 1) { if (!is_solid(idx + (uint)N)){ sum += field_in[idx + (uint)N]; fluid_neighbors++; } }
-        if (z > 0)           { if (!is_solid(idx - NN))    { sum += field_in[idx - NN];    fluid_neighbors++; } }
-        if (z < (uint)D - 1) { if (!is_solid(idx + NN))    { sum += field_in[idx + NN];    fluid_neighbors++; } }
+        if (lx > 0)              { if (!is_solid(idx - 1))    { sum += field_in[idx - 1];    fluid_neighbors++; } }
+        if (lx < (uint)WIN - 1)  { if (!is_solid(idx + 1))    { sum += field_in[idx + 1];    fluid_neighbors++; } }
+        if (ly > 0)              { if (!is_solid(idx - (uint)WIN)){ sum += field_in[idx - (uint)WIN]; fluid_neighbors++; } }
+        if (ly < (uint)WIN - 1)  { if (!is_solid(idx + (uint)WIN)){ sum += field_in[idx + (uint)WIN]; fluid_neighbors++; } }
+        if (lz > 0)              { if (!is_solid(idx - WNN))  { sum += field_in[idx - WNN];  fluid_neighbors++; } }
+        if (lz < (uint)WINZ - 1) { if (!is_solid(idx + WNN))  { sum += field_in[idx + WNN];  fluid_neighbors++; } }
 
         // A fluid cell with NO fluid neighbors is fully enclosed by solid —
         // treat it as solid (pressure pinned to 0) instead of collapsing to
@@ -57,12 +62,12 @@ void main(uint3 dtid : SV_DispatchThreadID)
         field_out[idx] = (rhs[idx] + sum) / float(fluid_neighbors);
     } else {
         // Diffusion (viscosity): standard 6-neighbor Laplacian with Neumann BC.
-        float left   = (x > 0)           ? field_in[idx - 1]  : center;
-        float right  = (x < (uint)N - 1) ? field_in[idx + 1]  : center;
-        float up     = (y > 0)           ? field_in[idx - (uint)N] : center;
-        float down   = (y < (uint)N - 1) ? field_in[idx + (uint)N] : center;
-        float back   = (z > 0)           ? field_in[idx - NN] : center;
-        float front  = (z < (uint)D - 1) ? field_in[idx + NN] : center;
+        float left   = (lx > 0)              ? field_in[idx - 1]        : center;
+        float right  = (lx < (uint)WIN - 1)  ? field_in[idx + 1]        : center;
+        float up     = (ly > 0)              ? field_in[idx - (uint)WIN] : center;
+        float down   = (ly < (uint)WIN - 1)  ? field_in[idx + (uint)WIN] : center;
+        float back   = (lz > 0)              ? field_in[idx - WNN]      : center;
+        float front  = (lz < (uint)WINZ - 1) ? field_in[idx + WNN]      : center;
         float sum = left + right + up + down + back + front;
 
         float a = cb.jacobi_alpha;

@@ -29,20 +29,28 @@ void main(uint3 tid : SV_DispatchThreadID)
     int idx = int(tid.x);
     int res = cb.grid_res;
     int res_z = cb.grid_res_z;
-    int total = res * res * res_z;
+    // Window-relative: dispatch over the active window. Map tid → window-local
+    // (lx,ly,lz), then to global (x,y,z) via window_origin for world coords.
+    int WSX = cb.window_size_x, WSZ = cb.window_size_z;
+    int total = WSX * WSX * WSZ;
     if (idx >= total) return;
 
-    float cell_density = density[idx];
+    int lz = idx / (WSX * WSX);
+    int rem = idx - lz * WSX * WSX;
+    int ly = rem / WSX;
+    int lx = rem - ly * WSX;
+    int x = lx + cb.window_origin_x;
+    int y = ly + cb.window_origin_y;
+    int z = lz + cb.window_origin_z;
+    if (x < 0 || x >= res || y < 0 || y >= res || z < 0 || z >= res_z) return;
+
+    // Read from window-local buffer index.
+    uint widx = grid_idx_3d(uint(lx), uint(ly), uint(lz), WSX, WSZ);
+    float cell_density = density[widx];
     if (cell_density < 0.15) {
-        // No emission, propagate density unchanged
-        density_out[idx] = cell_density;
+        density_out[widx] = cell_density;
         return;
     }
-
-    int z = idx / (res * res);
-    int rem = idx - z * res * res;
-    int y = rem / res;
-    int x = rem - y * res;
 
     float half_p = cb.paper_size * 0.5;
     float half_h = cb.height_extent * 0.5;
@@ -57,7 +65,7 @@ void main(uint3 tid : SV_DispatchThreadID)
     float2 dxy = cell_center.xy - float2(cb.brush_pos_x, cb.brush_pos_y);
     float d_to_brush = length(dxy);
     if (d_to_brush > cb.D0) {
-        density_out[idx] = cell_density;
+        density_out[widx] = cell_density;
         return;
     }
 
@@ -91,12 +99,17 @@ void main(uint3 tid : SV_DispatchThreadID)
                     for (int dx = -1; dx <= 1; dx++) {
                         int nx = cx + dx, ny = cy + dy, nz = cz + dz;
                         if (nx < 0 || nx >= res || ny < 0 || ny >= res || nz < 0 || nz >= res_z) continue;
+                        // Window-local index for the density read.
+                        int nlx = nx - cb.window_origin_x;
+                        int nly = ny - cb.window_origin_y;
+                        int nlz = nz - cb.window_origin_z;
+                        if (nlx < 0 || nlx >= WSX || nly < 0 || nly >= WSX || nlz < 0 || nlz >= WSZ) continue;
                         float3 npos = float3(
                             (float(nx) + 0.5) * cell_sz - half_p + cb.grid_center_x,
                             (float(ny) + 0.5) * cell_sz - half_p + cb.grid_center_y,
                             (float(nz) + 0.5) * cell_z  - half_h + cb.grid_center_z);
                         float w = W_smooth_3d(candidate - npos, h);
-                        uint gi = grid_idx_3d(uint(nx), uint(ny), uint(nz), res, res_z);
+                        uint gi = grid_idx_3d(uint(nlx), uint(nly), uint(nlz), WSX, WSZ);
                         interp_density += density[gi] * w;
                     }
                 }
@@ -118,13 +131,13 @@ void main(uint3 tid : SV_DispatchThreadID)
             num_emitted++;
 
             ptcl_pos[slot] = float4(candidate, 0.0);
-            ptcl_vel[slot] = float4(vel_x[idx], vel_y[idx], vel_z[idx], 0.0);
-            ptcl_color[slot] = float4(color_r[idx], color_y[idx], color_b[idx], m_k);
+            ptcl_vel[slot] = float4(vel_x[widx], vel_y[widx], vel_z[widx], 0.0);
+            ptcl_color[slot] = float4(color_r[widx], color_y[widx], color_b[widx], m_k);
             ptcl_alive[slot] = 1;
         }
       }
     }
 
     // Eq.15: ρ_c^new = max(ρ_c - Σ_k(m_k · W(p_k - x_c, h)), 0)
-    density_out[idx] = max(cell_density - density_removed, 0.0);
+    density_out[widx] = max(cell_density - density_removed, 0.0);
 }

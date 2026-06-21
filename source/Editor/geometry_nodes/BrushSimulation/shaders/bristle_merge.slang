@@ -24,9 +24,10 @@ RWStructuredBuffer<float> oil_density : register(u8);  // §6 oil density (per-c
 [numthreads(256, 1, 1)]
 void main(uint3 tid : SV_DispatchThreadID)
 {
-    uint idx = tid.x;
-    int total = cb.res * cb.res * cb.res_z;
-    if (idx >= (uint)total) return;
+    // Window-relative: dispatch over the active window, not the full grid.
+    WindowCell c;
+    if (!window_map(cb, tid.x, c)) return;
+    uint idx = c.idx;  // window-local index
 
     float bd = bristle_density[idx];
     if (bd < 1e-6) return;

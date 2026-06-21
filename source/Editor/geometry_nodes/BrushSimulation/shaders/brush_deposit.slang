@@ -46,18 +46,26 @@ void main(uint3 dtid : SV_DispatchThreadID)
         // World → grid coordinates
         float gx = (pos.x - cb.center_x + half_paper) / cb.cell_size;
         float gy = (pos.y - cb.center_y + half_paper) / cb.cell_size;
-        // Z: brush touches at z=cb.center_z (paper surface), deposit upward
+        // Z: the brush tip touches the canvas surface. Paint deposits UPWARD
+        // from the canvas (the grid floor at z=0), never below it. The stroke
+        // vertex z is the brush tip position; we treat any tip at/below the
+        // canvas as contact at the surface (gz=0), so a planar stroke drawn at
+        // z≈0 paints only the cells z>=0 above the paper — no mirror image
+        // below. (Wetbrush §4.2: "we discretize the space ABOVE canvas".)
         float gz = (pos.z - cb.grid_center_z + cb.height_extent * 0.5f) / cell_z;
-
         int cx = (int)gx;
         int cy = (int)gy;
-        int cz_sat = max(0, min((int)gz, D - 1));
+        // Clamp the deposit center to the bottom layer (canvas surface).
+        // gz<0 means the tip is below the paper; paint still goes on the paper.
+        int cz_center = max(0, min((int)gz, D - 1));
 
         float inv_r = (cb.effective_radius > 1e-8f) ?
                        1.0f / cb.effective_radius : 0.0f;
 
-        // Deposit paint in 3D neighborhood
-        for (int dz = -spread_z; dz <= spread_z; dz++)
+        // Deposit paint in 3D neighborhood — upper half only (dz >= 0), since
+        // the canvas is a solid floor and there is no paint volume below it.
+        int WSX = cb.window_size_x, WSZ = cb.window_size_z;
+        for (int dz = 0; dz <= spread_z; dz++)
         {
             for (int dy = -spread_xy; dy <= spread_xy; dy++)
             {
@@ -65,9 +73,18 @@ void main(uint3 dtid : SV_DispatchThreadID)
                 {
                     int px = cx + dx;
                     int py = cy + dy;
-                    int pz = cz_sat + dz;
+                    int pz = cz_center + dz;
                     if (px < 0 || px >= N || py < 0 || py >= N || pz < 0 || pz >= D)
                         continue;
+
+                    // Map GLOBAL cell to WINDOW-LOCAL index. The brush is
+                    // centered in the window so deposits normally land inside;
+                    // out-of-window cells are skipped (committed canvas owns them).
+                    int lx = px - cb.window_origin_x;
+                    int ly = py - cb.window_origin_y;
+                    int lz = pz - cb.window_origin_z;
+                    if (lx < 0 || lx >= WSX || ly < 0 || ly >= WSX ||
+                        lz < 0 || lz >= WSZ) continue;
 
                     float dist_xy = sqrt((float)(dx*dx + dy*dy)) * cb.cell_size;
                     float dist_z = (float)dz * cell_z;
@@ -78,7 +95,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
                     w *= w;
                     float dep = cb.ink_amount * 0.1f * w;
 
-                    uint idx = grid_idx_3d((uint)px, (uint)py, (uint)pz, N, D);
+                    uint idx = grid_idx_3d((uint)lx, (uint)ly, (uint)lz, WSX, WSZ);
                     float old_d = density[idx];
                     float new_d = old_d + dep;
 
@@ -111,7 +128,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
                 float vx_stam = (gx - prev_gx) / dt_v / (float)N;
                 float vy_stam = (gy - prev_gy) / dt_v / (float)N;
 
-                for (int dz2 = -spread_z; dz2 <= spread_z; dz2++)
+                for (int dz2 = 0; dz2 <= spread_z; dz2++)
                 {
                     for (int dy2 = -spread_xy; dy2 <= spread_xy; dy2++)
                     {
@@ -119,7 +136,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
                         {
                             int px2 = cx + dx2;
                             int py2 = cy + dy2;
-                            int pz2 = cz_sat + dz2;
+                            int pz2 = cz_center + dz2;
                             if (px2 < 0 || px2 >= N || py2 < 0 || py2 >= N
                                 || pz2 < 0 || pz2 >= D) continue;
 
@@ -128,7 +145,13 @@ void main(uint3 dtid : SV_DispatchThreadID)
                             if (dist2 >= cb.effective_radius) continue;
 
                             float w2 = 1.0f - dist2 / cb.effective_radius;
-                            uint idx2 = grid_idx_3d((uint)px2, (uint)py2, (uint)pz2, N, D);
+                            // Window-local index (same mapping as deposit above).
+                            int lx2 = px2 - cb.window_origin_x;
+                            int ly2 = py2 - cb.window_origin_y;
+                            int lz2 = pz2 - cb.window_origin_z;
+                            if (lx2 < 0 || lx2 >= WSX || ly2 < 0 || ly2 >= WSX ||
+                                lz2 < 0 || lz2 >= WSZ) continue;
+                            uint idx2 = grid_idx_3d((uint)lx2, (uint)ly2, (uint)lz2, WSX, WSZ);
                             vel_x[idx2] += vx_stam * w2;
                             vel_y[idx2] += vy_stam * w2;
                         }

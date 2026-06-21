@@ -77,11 +77,13 @@ uint grid_idx(uint x, uint y, int res)
 // ============================================================
 struct WindowCell {
     uint x, y, z;     // global cell coordinates
-    uint idx;         // global linear index into the full grid
+    uint lx, ly, lz;  // window-local cell coordinates [0,WIN)
+    uint idx;         // window-local linear index into the window-sized buffer
 };
 
 bool window_map(SimConstants cb, uint window_idx, out WindowCell c)
 {
+    c.idx = 0; c.lx = 0; c.ly = 0; c.lz = 0; c.x = 0; c.y = 0; c.z = 0;
     int wsx = cb.window_size_x, wsy = cb.window_size_y, wsz = cb.window_size_z;
     int total = wsx * wsy * wsz;
     if (window_idx >= (uint)total) return false;
@@ -100,7 +102,32 @@ bool window_map(SimConstants cb, uint window_idx, out WindowCell c)
     // Clamp to global grid (window_origin may place edges past the grid)
     if (c.x >= (uint)N || c.y >= (uint)N || c.z >= (uint)D) return false;
 
-    c.idx = grid_idx_3d(c.x, c.y, c.z, N, D);
+    // Window-local coords and index. 3D buffers are allocated at window size
+    // (WIN_ALLOC_XY × WIN_ALLOC_XY × WIN_ALLOC_Z), so all buffer access uses
+    // LOCAL indices, never global. This is the key to resolution-independent
+    // 3D memory: the buffer is always window-sized regardless of canvas res.
+    c.lx = wx;
+    c.ly = wy;
+    c.lz = wz;
+    c.idx = grid_idx_3d(c.lx, c.ly, c.lz, wsx, wsz);
+    return true;
+}
+
+// Convert a GLOBAL grid cell (x,y,z) to a window-LOCAL linear index.
+// Returns false if the cell is outside the current active window — callers
+// must skip such cells (they belong to the committed 2D canvas layer, not
+// the live 3D window). Used by deposit/bristle/particle shaders that compute
+// global coords from world space then need to write into the window buffer.
+bool window_local_idx(SimConstants cb, int gx, int gy, int gz, out uint lidx)
+{
+    lidx = 0;
+    int lx = gx - cb.window_origin_x;
+    int ly = gy - cb.window_origin_y;
+    int lz = gz - cb.window_origin_z;
+    int wsx = cb.window_size_x, wsz = cb.window_size_z;
+    if (lx < 0 || lx >= wsx || ly < 0 || ly >= wsx || lz < 0 || lz >= wsz)
+        return false;
+    lidx = grid_idx_3d((uint)lx, (uint)ly, (uint)lz, wsx, wsz);
     return true;
 }
 
@@ -193,6 +220,14 @@ struct BristleConstants {
     // impenetrable paint-volume floor used by the collision constraint.
     float brush_pressure;
     float canvas_z;
+    // Active-window origin/size (Wetbrush §4.2) — 3D buffers are window-sized,
+    // so bristle/particle shaders that splat into grid fields must convert
+    // global cell coords to window-local indices via these.
+    int window_origin_x;
+    int window_origin_y;
+    int window_origin_z;
+    int window_size_x;
+    int window_size_z;
 };
 
 // ============================================================
@@ -274,6 +309,12 @@ struct ParticleConstants {
     // local-frame non-inertial terms (finite-differenced on the host).
     float brush_accel_x, brush_accel_y, brush_accel_z;
     float brush_angular_accel_x, brush_angular_accel_y, brush_angular_accel_z;
+    // Active-window origin/size (Wetbrush §4.2) — 3D buffers are window-sized.
+    int window_origin_x;
+    int window_origin_y;
+    int window_origin_z;
+    int window_size_x;
+    int window_size_z;
 };
 
 // ============================================================
@@ -327,6 +368,12 @@ struct BristleLiquidConstants {
     float grid_center_x, grid_center_y, grid_center_z;
     float D0;                // grid-particle conversion distance
     int max_particles;       // for slot wrap in EMIT
+    // Active-window origin/size (Wetbrush §4.2) — 3D buffers are window-sized.
+    int window_origin_x;
+    int window_origin_y;
+    int window_origin_z;
+    int window_size_x;
+    int window_size_z;
 };
 
 #endif

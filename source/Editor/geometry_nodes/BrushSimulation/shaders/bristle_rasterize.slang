@@ -56,7 +56,16 @@ void main(uint3 tid : SV_DispatchThreadID)
 
         // Vertical falloff: strongest at center, weaker above/below
         float z_weight = 1.0 - 0.3 * abs(float(dz - 1));
-        uint gi = grid_idx_3d((uint)ix, (uint)iy, (uint)iz, N, D);
+        // Convert GLOBAL cell to WINDOW-LOCAL index. Samples outside the
+        // active window are skipped (they belong to the committed canvas).
+        uint gi;
+        int WSX = cb.window_size_x, WSZ = cb.window_size_z;
+        int lx = ix - cb.window_origin_x;
+        int ly = iy - cb.window_origin_y;
+        int lz = iz - cb.window_origin_z;
+        if (lx < 0 || lx >= WSX || ly < 0 || ly >= WSX || lz < 0 || lz >= WSZ)
+            continue;
+        gi = grid_idx_3d((uint)lx, (uint)ly, (uint)lz, WSX, WSZ);
 
         bristle_density[gi] += deposit * z_weight;
         bristle_vel_x[gi] += vel.x * deposit * z_weight;
