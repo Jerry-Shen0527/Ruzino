@@ -228,6 +228,13 @@ struct BristleConstants {
     int window_origin_z;
     int window_size_x;
     int window_size_z;
+    // Brush SWEEP (anti-zebra): previous-frame brush center (grid-relative).
+    // bristle_rasterize splats each sample along prev→current so fast drag
+    // deposits a continuous band instead of isolated blobs per frame.
+    // has_prev_brush_pos != 0 means prev is valid (first frame: no sweep).
+    float prev_brush_pos_x, prev_brush_pos_y, prev_brush_pos_z;
+    int has_prev_brush_pos;
+    float _sweep_pad0, _sweep_pad1, _sweep_pad2;
 };
 
 // ============================================================

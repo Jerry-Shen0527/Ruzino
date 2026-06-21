@@ -368,6 +368,14 @@ struct BristleConstants {
     int window_origin_z;
     int window_size_x;
     int window_size_z;
+    // Brush SWEEP (anti-zebra): previous-frame brush center (grid-relative).
+    // bristle_rasterize splats each sample along prev→current so fast drag
+    // still deposits a continuous band instead of isolated blobs per frame.
+    // has_prev_brush_pos != 0 means the prev position is valid (first frame
+    // has no motion to sweep). See bristle_rasterize.slang.
+    float prev_brush_pos_x, prev_brush_pos_y, prev_brush_pos_z;
+    int has_prev_brush_pos;
+    float _sweep_pad0, _sweep_pad1, _sweep_pad2;
 };
 
 struct ParticleConstants {
@@ -582,6 +590,16 @@ struct PaintSimStorage {
     // (brush acceleration a_B, angular acceleration ω̇). Eq.2/Eq.9.
     glm::vec3 prev_brush_vel = glm::vec3(0.0f);
     glm::vec3 prev_angular_vel = glm::vec3(0.0f);
+    // Previous-frame brush WORLD position (grid-relative, i.e. already
+    // centered). Used by the bristle sweep deposit so each bristle sample
+    // is splatted along the prev→current displacement arc — this is the
+    // fix for the "zebra stripe" symptom: without it, the bristle path
+    // only deposits at the single contact point of the current frame, so
+    // fast brush motion leaves gaps between frames. With sweep, contact
+    // is continuous along the drag trajectory (paper §4.1 implies the
+    // brush sweeps; physically the bristles DO sweep through the medium).
+    glm::vec3 prev_brush_pos = glm::vec3(0.0f);
+    bool has_prev_brush_pos = false;
 
     // Bristle state
     bool bristles_initialized = false;
@@ -796,6 +814,8 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         storage.last_sim_time = -1.0f;
         storage.center_initialized = false;
         storage.bristles_initialized = false;
+        // New stroke: no prior brush position to sweep from.
+        storage.has_prev_brush_pos = false;
     }
 
     int already_deposited = storage.deposited_count;
@@ -899,6 +919,8 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         new_count = static_cast<int>(vertices.size());
         storage.bristles_initialized = false;
         storage.particles_initialized = false;
+        // Grid realloc invalidates prior frame-to-frame brush position.
+        storage.has_prev_brush_pos = false;
 
         // Release old grid buffers before creating new ones
         safe_destroy_buf(storage.density);      safe_destroy_buf(storage.density_tmp);
@@ -1276,6 +1298,13 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     }
     storage.prev_brush_vel = brush_vel_3d;
     storage.prev_angular_vel = brush_angular_vel;
+    // Record this frame's brush center for next frame's bristle sweep.
+    // Only set has_prev_brush_pos once we actually have a position; the
+    // rasterize shader skips sweep on the first frame.
+    if (!vertices.empty()) {
+        storage.prev_brush_pos = brush_pos_3d;
+        storage.has_prev_brush_pos = true;
+    }
 
     // === ACTIVE WINDOW ORIGIN (Wetbrush §4.2) ===
     // Compute the window origin for THIS frame, centered on the brush and
@@ -1421,6 +1450,14 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         bc.window_origin_z = 0;
         bc.window_size_x = WIN_XY;
         bc.window_size_z = WIN_Z;
+        // Sweep (anti-zebra): previous brush center + validity flag.
+        bc.prev_brush_pos_x = storage.prev_brush_pos.x;
+        bc.prev_brush_pos_y = storage.prev_brush_pos.y;
+        bc.prev_brush_pos_z = storage.prev_brush_pos.z;
+        bc.has_prev_brush_pos = storage.has_prev_brush_pos ? 1 : 0;
+        bc._sweep_pad0 = 0.0f;
+        bc._sweep_pad1 = 0.0f;
+        bc._sweep_pad2 = 0.0f;
 
         nvrhi::BufferHandle bristle_cb;
         upload_constant_buffer(rc, device, &bc, sizeof(BristleConstants),
