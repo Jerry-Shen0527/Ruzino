@@ -531,6 +531,18 @@ NODE_DECLARATION_FUNCTION(brush_paint_sim)
     b.add_input<float>("Pickup Rate").default_val(0.1f).min(0.0f).max(1.0f);
     b.add_input<float>("Drying Rate").default_val(0.1f).min(0.0f).max(2.0f);
     b.add_output<Geometry>("Paint Particles");
+    // --- Debug / fidelity statistics (read back from GPU buffers for tests) ---
+    // These are full-grid or active-window aggregates exposed as floats so
+    // Python tests (see tests/test_brush_sim_fidelity.py) can assert on
+    // physical correctness without binding volumetric grid components.
+    b.add_output<float>("Max Divergence");   // max|div u| in the active window (post-projection)
+    b.add_output<float>("Mean Divergence");  // mean |div u| in the active window
+    b.add_output<float>("Total Density");    // sum of grid density (paint mass proxy)
+    b.add_output<float>("Total Color R");    // sum of grid RYB-R channel
+    b.add_output<float>("Total Color Y");    // sum of grid RYB-Y channel
+    b.add_output<float>("Total Color B");    // sum of grid RYB-B channel
+    b.add_output<int>("Particle Count");     // number of alive FLIP/PIC particles
+    b.add_output<float>("Total Particle Mass"); // sum of alive particle mass (color.w)
 }
 
 // ============================================================
@@ -562,10 +574,24 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         return {std::move(geom), pts.get()};
     };
 
+    // Zero-fill the debug output ports on early-return paths (no curve /
+    // shader failure) so downstream consumers always see all ports set.
+    auto emit_zero_debug = [&]() {
+        params.set_output("Max Divergence", 0.0f);
+        params.set_output("Mean Divergence", 0.0f);
+        params.set_output("Total Density", 0.0f);
+        params.set_output("Total Color R", 0.0f);
+        params.set_output("Total Color Y", 0.0f);
+        params.set_output("Total Color B", 0.0f);
+        params.set_output("Particle Count", 0);
+        params.set_output("Total Particle Mass", 0.0f);
+    };
+
     auto curve = brush_strokes.get_component<CurveComponent>();
     if (!curve || curve->get_vertices().empty()) {
         auto [geom, pts] = make_particles();
         params.set_output("Paint Particles", std::move(geom));
+        emit_zero_debug();
         params.set_storage(storage);
         return true;
     }
@@ -824,7 +850,11 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                          Nb * S * sizeof(float) * 4);
         cmd->writeBuffer(storage.sample_color, zeros_sample.data(),
                          Nb * S * sizeof(float) * 4);
-        cmd->writeBuffer(storage.sample_frame, zeros_sample.data(),
+        // sample_frame holds SampleFrame{tangent,normal,binormal} = 3 float4
+        // per sample, so it needs a zero buffer 3x the size of zeros_sample.
+        // (Using zeros_sample here previously read 3x past its end -> crash.)
+        std::vector<float> zeros_frame(Nb * S * 4 * 3, 0.0f);
+        cmd->writeBuffer(storage.sample_frame, zeros_frame.data(),
                          Nb * S * sizeof(float) * 4 * 3);
         cmd->writeBuffer(storage.sample_liquid, zeros_sample.data(),
                          Nb * S * sizeof(float) * 4);
@@ -951,6 +981,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         spdlog::error("brush_paint_sim: shader compilation failed");
         auto [geom, pts] = make_particles();
         params.set_output("Paint Particles", std::move(geom));
+        emit_zero_debug();
         params.set_storage(storage);
         return false;
     }
@@ -1556,26 +1587,28 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     sim_dt = std::max(sim_dt, 0.0f);
     storage.last_sim_time = current_time;
 
+    // --- Active window (Wetbrush §4.2) ---
+    // Computed once outside the fluid-sim block so the post-sim readback /
+    // statistics code below can scope divergence measurements to the same
+    // sub-volume the solver actually ran in. Window size is capped at
+    // 128×128×res_z (paper's value); smaller grids use the full extent.
+    // Origin is centered on the brush and clamped to the grid.
+    const int WIN_XY = std::min(128, storage.grid_res);
+    const int WIN_Z  = rz;  // simulate the full paint height
+    float half_p = storage.grid_paper * 0.5f;
+    float bgx = (brush_pos_3d.x - storage.grid_center.x + half_p) / cell_sz;
+    float bgy = (brush_pos_3d.y - storage.grid_center.y + half_p) / cell_sz;
+    int wox = static_cast<int>(bgx) - WIN_XY / 2;
+    int woy = static_cast<int>(bgy) - WIN_XY / 2;
+    wox = std::max(0, std::min(wox, storage.grid_res - WIN_XY));
+    woy = std::max(0, std::min(woy, storage.grid_res - WIN_XY));
+
     if (sim_dt > 1e-6f) {  // TEMP reverted: fluid re-enabled
         float max_sub_dt = 2.0f / static_cast<float>(storage.grid_res);
         int substeps = std::max(1, static_cast<int>(std::ceil(sim_dt / max_sub_dt)));
         substeps = std::min(substeps, 16);
         float sub_dt = sim_dt / static_cast<float>(substeps);
 
-        // --- Active window (Wetbrush §4.2) ---
-        // Restrict fluid sim to a brush-centered sub-volume. Window size is
-        // capped at 128×128×res_z (paper's value); smaller grids use the
-        // full extent. Origin is centered on the brush and clamped to grid.
-        const int WIN_XY = std::min(128, storage.grid_res);
-        const int WIN_Z  = rz;  // simulate the full paint height
-        float half_p = storage.grid_paper * 0.5f;
-        // Brush position in grid cell coordinates (centered at origin).
-        float bgx = (brush_pos_3d.x - storage.grid_center.x + half_p) / cell_sz;
-        float bgy = (brush_pos_3d.y - storage.grid_center.y + half_p) / cell_sz;
-        int wox = static_cast<int>(bgx) - WIN_XY / 2;
-        int woy = static_cast<int>(bgy) - WIN_XY / 2;
-        wox = std::max(0, std::min(wox, storage.grid_res - WIN_XY));
-        woy = std::max(0, std::min(woy, storage.grid_res - WIN_XY));
         int window_total = WIN_XY * WIN_XY * WIN_Z;
 
         for (int s = 0; s < substeps; s++) {
@@ -1952,6 +1985,116 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     auto cr_cpu = readback(storage.color_r);
     auto cy_cpu = readback(storage.color_y);
     auto cb_cpu = readback(storage.color_b);
+
+    // === FIDELITY STATISTICS ===
+    // Aggregate GPU state into the debug output ports declared above, so the
+    // Python fidelity tests can assert on physical correctness (divergence
+    // should fall after pressure projection, paint mass should be conserved,
+    // particle counts should be bounded). See tests/test_brush_sim_fidelity.py.
+
+    // -- Grid-side: divergence over the active window, density/color totals
+    //    over the full grid. divergence_buf only holds meaningful values
+    //    inside the window the solver ran in; scoping to that sub-volume
+    //    gives a true picture of the residual.
+    float max_div = 0.0f;
+    double div_sum = 0.0;
+    int   div_count = 0;
+    if (sim_dt > 1e-6f && storage.divergence_buf) {
+        auto div_cpu = readback(storage.divergence_buf);
+        for (int dz = 0; dz < WIN_Z; ++dz)
+        for (int dy = 0; dy < WIN_XY; ++dy)
+        for (int dx = 0; dx < WIN_XY; ++dx) {
+            int gx = wox + dx, gy = woy + dy;
+            int gi = dz * storage.grid_res * storage.grid_res
+                   + gy * storage.grid_res + gx;
+            if (gi < 0 || gi >= readback_n) continue;
+            float ad = std::fabs(div_cpu[gi]);
+            max_div = std::max(max_div, ad);
+            div_sum += ad;
+            ++div_count;
+        }
+    }
+    float mean_div = div_count > 0
+        ? static_cast<float>(div_sum / static_cast<double>(div_count)) : 0.0f;
+
+    double tot_density = 0.0, tot_r = 0.0, tot_y = 0.0, tot_b = 0.0;
+    for (int i = 0; i < readback_n; ++i) {
+        tot_density += density_cpu[i];
+        tot_r += cr_cpu[i];
+        tot_y += cy_cpu[i];
+        tot_b += cb_cpu[i];
+    }
+
+    // -- Particle-side: alive count + total mass (color.w carries density).
+    //    ptcl_counter is a 4-byte ByteAddressBuffer, so it needs its own
+    //    tiny readback rather than the n3d-float lambda above. The color
+    //    buffer is float4 × max_ptcl.
+    int ptcl_count = 0;
+    float ptcl_mass = 0.0f;
+    if (storage.particles_initialized && storage.ptcl_counter) {
+        // Read the 4-byte counter.
+        {
+            uint32_t cnt = 0;
+            auto rb = rc.create(nvrhi::BufferDesc{}
+                .setByteSize(sizeof(uint32_t))
+                .setCpuAccess(nvrhi::CpuAccessMode::Read)
+                .setDebugName("ptcl_counter_rb"));
+            auto cmd = rc.create(CommandListDesc{});
+            cmd->open();
+            cmd->copyBuffer(rb, 0, storage.ptcl_counter, 0, sizeof(uint32_t));
+            cmd->close();
+            device->executeCommandList(cmd);
+            device->waitForIdle();
+            void* mapped = device->mapBuffer(rb, nvrhi::CpuAccessMode::Read);
+            memcpy(&cnt, mapped, sizeof(uint32_t));
+            device->unmapBuffer(rb);
+            rc.destroy(rb);
+            rc.destroy(cmd);
+            ptcl_count = static_cast<int>(cnt);
+        }
+        // Sum mass over the alive slots actually in use. color.w carries
+        // the per-particle density; read raw float bytes (stride 16) so we
+        // don't depend on a host-side float4 typedef.
+        if (ptcl_count > 0 && storage.ptcl_color && storage.ptcl_alive) {
+            int n = std::min(ptcl_count, max_ptcl);
+            constexpr int STRIDE = 4;  // float4 = 16 bytes
+            std::vector<float> cols(n * STRIDE);
+            std::vector<uint32_t> alive(n);
+            auto read_structured = [&](nvrhi::BufferHandle buf,
+                                       int elem_bytes, void* dst) {
+                auto rb = rc.create(nvrhi::BufferDesc{}
+                    .setByteSize(static_cast<size_t>(n) * elem_bytes)
+                    .setCpuAccess(nvrhi::CpuAccessMode::Read)
+                    .setDebugName("ptcl_rb"));
+                auto cmd = rc.create(CommandListDesc{});
+                cmd->open();
+                cmd->copyBuffer(rb, 0, buf, 0,
+                                static_cast<size_t>(n) * elem_bytes);
+                cmd->close();
+                device->executeCommandList(cmd);
+                device->waitForIdle();
+                void* mapped = device->mapBuffer(rb, nvrhi::CpuAccessMode::Read);
+                memcpy(dst, mapped, static_cast<size_t>(n) * elem_bytes);
+                device->unmapBuffer(rb);
+                rc.destroy(rb);
+                rc.destroy(cmd);
+            };
+            read_structured(storage.ptcl_color, sizeof(float) * STRIDE, cols.data());
+            read_structured(storage.ptcl_alive, sizeof(uint32_t), alive.data());
+            for (int i = 0; i < n; ++i)
+                if (alive[i] != 0)
+                    ptcl_mass += cols[i * STRIDE + 3];  // .w component
+        }
+    }
+
+    params.set_output("Max Divergence", max_div);
+    params.set_output("Mean Divergence", mean_div);
+    params.set_output("Total Density", static_cast<float>(tot_density));
+    params.set_output("Total Color R", static_cast<float>(tot_r));
+    params.set_output("Total Color Y", static_cast<float>(tot_y));
+    params.set_output("Total Color B", static_cast<float>(tot_b));
+    params.set_output("Particle Count", ptcl_count);
+    params.set_output("Total Particle Mass", ptcl_mass);
 
     auto [particles, pts] = make_particles();
     std::vector<glm::vec3> out_pts;
