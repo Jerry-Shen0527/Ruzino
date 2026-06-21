@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "GUI/ImGuiFileDialog.h"
+#include "GUI/viewport_events.h"
 #include "GUI/window.h"
 #include "imgui.h"
 #include "pxr/base/gf/matrix4f.h"
@@ -1363,7 +1364,12 @@ void UsdFileViewer::show_right_click_menu()
                 selecting_file_base = selected;
             }
             if (ImGui::MenuItem("Edit")) {
-                stage->create_editor_at_path(selected);
+                // Broadcast an editor-creation request on the event bus so
+                // any subscriber can open the editor (see GUI/viewport_events.h).
+                if (window) {
+                    window->events().emit_any(
+                        ViewportEvents::EDITOR_CREATION, std::any(selected));
+                }
             }
 
             if (ImGui::MenuItem("Delete")) {
@@ -1542,8 +1548,6 @@ void UsdFileViewer::collect_all_materials()
 void UsdFileViewer::open_material_editor(const pxr::SdfPath& material_path)
 {
     // Trigger window callback to create the actual widget
-    // Note: We don't call stage->create_editor_at_path() for materials
-    // because materials don't need geometry editing
     if (window) {
         window->events().emit(
             "material_editor_requested", material_path.GetString());

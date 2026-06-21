@@ -140,7 +140,36 @@ NB_MODULE(stage_py, m)
         .def_rw(
             "current_modifier_index",
             &GeomPayload::current_modifier_index,
-            "Current modifier index in stack");
+            "Current modifier index in stack")
+        // Brush state (viewport brush tool input). brush_point is a glm::vec3;
+        // since glm::vec3 isn't bound in this module, expose it via a property
+        // that accepts/returns a Python tuple (x, y, z).
+        .def_prop_rw(
+            "brush_point",
+            [](const GeomPayload& p) {
+                return nb::make_tuple(
+                    p.brush_point.x, p.brush_point.y, p.brush_point.z);
+            },
+            [](GeomPayload& p, nb::handle value) {
+                auto t = nb::cast<nb::tuple>(value);
+                p.brush_point = glm::vec3(
+                    nb::cast<float>(t[0]),
+                    nb::cast<float>(t[1]),
+                    nb::cast<float>(t[2]));
+            },
+            "Brush world position as (x, y, z)")
+        .def_rw(
+            "brush_time",
+            &GeomPayload::brush_time,
+            "Seconds since brush stroke start")
+        .def_rw(
+            "brush_active",
+            &GeomPayload::brush_active,
+            "Whether the brush pen is currently down")
+        .def_rw(
+            "brush_new_point",
+            &GeomPayload::brush_new_point,
+            "Whether a new brush sample arrived this frame");
 
     // Helper to set modifier layer on payload
     m.def(
@@ -202,6 +231,43 @@ NB_MODULE(stage_py, m)
         nb::arg("output_path"),
         nb::arg("input_path"),
         "Set modifier input/output paths on GeomPayload");
+
+    // Construct a PickEvent (viewport click) and attach it to a GeomPayload.
+    // PickEvent isn't bound as a class (it carries USD paths under
+    // GEOM_USD_EXTENSION that are awkward to expose), so this factory takes
+    // the point+normal as Python tuples. Used by headless tests of pick-driven
+    // nodes (e.g. geom_add_point).
+    m.def(
+        "set_payload_pick_event",
+        [](GeomPayload& payload, nb::tuple point, nb::tuple normal) {
+            glm::vec3 pt(
+                nb::cast<float>(point[0]),
+                nb::cast<float>(point[1]),
+                nb::cast<float>(point[2]));
+            glm::vec3 nrm(
+                nb::cast<float>(normal[0]),
+                nb::cast<float>(normal[1]),
+                nb::cast<float>(normal[2]));
+#ifdef GEOM_USD_EXTENSION
+            payload.pick = std::make_shared<PickEvent>(
+                pt, nrm, pxr::SdfPath(), pxr::SdfPath());
+#else
+            payload.pick = std::make_shared<PickEvent>(pt, nrm);
+#endif
+        },
+        nb::arg("payload"),
+        nb::arg("point"),
+        nb::arg("normal"),
+        "Attach a viewport pick event (point, normal) to a GeomPayload");
+
+    // Clear the pick event on a GeomPayload (set pick to nullptr). Needed
+    // because the nanobind binding of the shared_ptr field doesn't accept
+    // Python None directly.
+    m.def(
+        "clear_payload_pick",
+        [](GeomPayload& payload) { payload.pick = nullptr; },
+        nb::arg("payload"),
+        "Clear the pick event on a GeomPayload");
 
     // Stage class binding
     nb::class_<Stage>(m, "Stage")

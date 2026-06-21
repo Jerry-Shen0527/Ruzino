@@ -14,6 +14,7 @@
 #include <any>
 
 #include "GCore/geom_payload.hpp"
+#include "GUI/viewport_events.h"
 #include "GUI/window.h"
 #include "RHI/Hgi/desc_conversion.hpp"
 #include "RHI/rhi.hpp"
@@ -638,11 +639,12 @@ void UsdviewEngine::OnFrame(float delta_time)
             // Create and store the pick event
 
 #ifdef GEOM_USD_EXTENSION
-            current_pick_event_ = std::make_shared<PickEvent>(
+            auto pick_event = std::make_shared<PickEvent>(
                 glm::vec3(point[0], point[1], point[2]),
                 glm::vec3(normal[0], normal[1], normal[2]),
                 path,
                 instancer);
+            emit_pick_event(pick_event);
 #endif
 
             spdlog::info("Picked prim " + path.GetAsString());
@@ -785,6 +787,7 @@ bool UsdviewEngine::MousePosUpdate(double xpos, double ypos)
             brush_time_ = static_cast<float>(ImGui::GetTime() - stroke_start_time_);
             brush_active_ = true;
             brush_new_point_ = true;
+            emit_brush_state();
         }
     }
 
@@ -835,6 +838,7 @@ bool UsdviewEngine::MouseButtonUpdate(int button, int action, int mods)
             brush_time_ = 0.0f;
             brush_active_ = true;
             brush_new_point_ = true;
+            emit_brush_state();
             return false;
         }
         if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
@@ -842,6 +846,7 @@ bool UsdviewEngine::MouseButtonUpdate(int button, int action, int mods)
                 spdlog::info("Brush pen up at time={:.3f}", brush_time_);
                 brush_active_ = false;
                 brush_new_point_ = true;  // signal pen-up
+                emit_brush_state();
             }
             is_drawing_ = false;
             return false;
@@ -1096,18 +1101,27 @@ void UsdviewEngine::RenderBackBufferResized(float x, float y)
         RHI::calculate_bytes_per_pixel(data_->present_format));
 }
 
-std::shared_ptr<PickEvent> UsdviewEngine::consume_pick_event()
+void UsdviewEngine::emit_brush_state()
 {
-    auto event = current_pick_event_;
-    current_pick_event_ = nullptr;
-    return event;
+    // Broadcast the current brush snapshot to every subscriber. Synchronous,
+    // multi-subscriber: all open editors receive the same event regardless of
+    // registration order, fixing the destroy-on-read starvation bug.
+    if (!window) {
+        return;
+    }
+    ViewportBrushState state{
+        brush_point_, brush_time_, brush_active_, brush_new_point_};
+    window->events().emit_any(
+        ViewportEvents::BRUSH_STATE, std::any(state));
 }
 
-UsdviewEngine::BrushState UsdviewEngine::consume_brush_state()
+void UsdviewEngine::emit_pick_event(const std::shared_ptr<PickEvent>& event)
 {
-    BrushState state{brush_point_, brush_time_, brush_active_, brush_new_point_};
-    brush_new_point_ = false;
-    return state;
+    if (!window) {
+        return;
+    }
+    window->events().emit_any(
+        ViewportEvents::PICK_EVENT, std::any(event));
 }
 
 glm::vec3 UsdviewEngine::pick_world_pos(double screen_x, double screen_y)

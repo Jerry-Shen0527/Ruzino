@@ -18,6 +18,7 @@
 #include "GCore/algorithms/intersection.h"
 #include "GCore/geom_payload.hpp"
 #include "GUI/ImGuiFileDialog.h"
+#include "GUI/viewport_events.h"
 #include "GUI/window.h"
 #include "MCore/MaterialXNodeTree.hpp"
 #include "MCore/MaterialXNodeTreeWidget.h"
@@ -132,8 +133,7 @@ class MaterialXNodeSystem : public NodeSystem {
 static void create_geometry_editor(
     Stage* stage,
     Window* window,
-    const pxr::SdfPath& json_path,
-    const std::shared_ptr<UsdviewEngine*>& render_bare_ptr)
+    const pxr::SdfPath& json_path)
 {
     auto system = create_dynamic_loading_system();
     system->load_configuration("geometry_nodes.json");
@@ -155,12 +155,40 @@ static void create_geometry_editor(
     desc.system = system;
     desc.stage = stage;
 
+    // Per-editor viewport-input buffers. Each editor subscribes to the
+    // broadcast events once and caches the latest snapshot here; the per-frame
+    // callback below reads (and consumes) from this buffer. Because every
+    // editor has its own buffer, there is no cross-editor starvation — this
+    // is the fix for brush_capture failing when multiple editors are open.
+    // See GUI/viewport_events.h.
+    auto brush_buf = std::make_shared<ViewportBrushState>();
+    auto pick_buf = std::make_shared<std::shared_ptr<PickEvent>>();
+
+    window->events().subscribe_any(
+        ViewportEvents::BRUSH_STATE,
+        [brush_buf](const std::any& data) {
+            try {
+                *brush_buf = std::any_cast<ViewportBrushState>(data);
+            }
+            catch (const std::bad_any_cast&) {
+            }
+        });
+    window->events().subscribe_any(
+        ViewportEvents::PICK_EVENT,
+        [pick_buf](const std::any& data) {
+            try {
+                *pick_buf = std::any_cast<std::shared_ptr<PickEvent>>(data);
+            }
+            catch (const std::bad_any_cast&) {
+            }
+        });
+
     std::unique_ptr<IWidget> node_widget =
         std::move(create_node_imgui_widget(desc));
     node_widget->set_editor_info(json_path.GetString(), "geom");
 
     node_widget->SetCallBack(
-        [stage, json_path, system, render_bare_ptr](Window*, IWidget*) {
+        [stage, json_path, system, brush_buf, pick_buf](Window*, IWidget*) {
             GeomPayload geom_global_params;
 #ifdef GEOM_USD_EXTENSION
             geom_global_params.stage = stage->get_usd_stage();
@@ -209,16 +237,17 @@ static void create_geometry_editor(
 
             geom_global_params.has_simulation = false;
 
-            if (*render_bare_ptr) {
-                geom_global_params.pick =
-                    (*render_bare_ptr)->consume_pick_event();
+            // Pull the latest viewport-input snapshots into the payload, then
+            // consume them (clear the per-frame flags) so this editor only
+            // reacts to each event once.
+            geom_global_params.brush_point = brush_buf->point;
+            geom_global_params.brush_time = brush_buf->time;
+            geom_global_params.brush_active = brush_buf->active;
+            geom_global_params.brush_new_point = brush_buf->new_point;
+            geom_global_params.pick = *pick_buf;
 
-                auto brush = (*render_bare_ptr)->consume_brush_state();
-                geom_global_params.brush_point = brush.point;
-                geom_global_params.brush_time = brush.time;
-                geom_global_params.brush_active = brush.active;
-                geom_global_params.brush_new_point = brush.new_point;
-            }
+            brush_buf->new_point = false;
+            pick_buf->reset();
 
             system->set_global_params(geom_global_params);
 
@@ -731,12 +760,17 @@ int main(int argc, char* argv[])
             // This would create a MaterialXDocumentViewer widget
         });
 
-    window->register_function_after_frame(
-        [&stage, render_bare_ptr](Window* window) {
-            pxr::SdfPath json_path;
-            if (stage->consume_editor_creation(json_path)) {
-                create_geometry_editor(
-                    stage.get(), window, json_path, render_bare_ptr);
+    // Open a geometry editor when the viewport requests one (prim
+    // context-menu "Edit"). Broadcast on the event bus, so this subscriber
+    // creates the editor regardless of which widget emitted it.
+    window->events().subscribe_any(
+        ViewportEvents::EDITOR_CREATION,
+        [&stage, window_ptr = window.get()](const std::any& data) {
+            try {
+                auto json_path = std::any_cast<pxr::SdfPath>(data);
+                create_geometry_editor(stage.get(), window_ptr, json_path);
+            }
+            catch (const std::bad_any_cast&) {
             }
         });
 
@@ -770,7 +804,7 @@ int main(int argc, char* argv[])
 
             if (type == "geom") {
                 create_geometry_editor(
-                    stage.get(), window.get(), sdf_path, render_bare_ptr);
+                    stage.get(), window.get(), sdf_path);
             }
             else if (type == "materialx") {
                 create_material_editor(

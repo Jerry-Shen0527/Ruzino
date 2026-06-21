@@ -393,24 +393,6 @@ pxr::UsdStageRefPtr Stage::get_usd_stage() const
     return stage;
 }
 
-void Stage::create_editor_at_path(const pxr::SdfPath& sdf_path)
-{
-    create_editor_pending_paths_.push_back(sdf_path);
-}
-
-bool Stage::consume_editor_creation(pxr::SdfPath& json_path, bool fully_consume)
-{
-    if (create_editor_pending_paths_.empty()) {
-        return false;
-    }
-
-    json_path = create_editor_pending_paths_.front();
-    if (fully_consume) {
-        create_editor_pending_paths_.erase(create_editor_pending_paths_.begin());
-    }
-    return true;
-}
-
 void Stage::save_string_to_usd(
     const pxr::SdfPath& path,
     const std::string& data)

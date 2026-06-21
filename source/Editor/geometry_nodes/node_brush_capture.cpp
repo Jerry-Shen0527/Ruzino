@@ -67,5 +67,11 @@ NODE_EXECUTION_FUNCTION(brush_capture)
 }
 
 NODE_DECLARATION_UI(brush_capture);
+NODE_DECLARATION_ALWAYS_DIRTY(brush_capture);
+// brush_capture must always re-cook: its real input is the live mouse
+// payload (GeomPayload::brush_*), which is not a graph socket and so does
+// not propagate dirty state through the executor. Without ALWAYS_DIRTY the
+// node cooks once (empty), caches that empty result, and never picks up
+// subsequent mouse points — the symptom of "brush capture not working".
 
 NODE_DEF_CLOSE_SCOPE

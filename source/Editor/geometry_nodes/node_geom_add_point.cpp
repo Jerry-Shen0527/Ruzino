@@ -46,4 +46,11 @@ NODE_EXECUTION_FUNCTION(geom_add_point)
 }
 
 NODE_DECLARATION_UI(geom_add_point);
+NODE_DECLARATION_ALWAYS_DIRTY(geom_add_point);
+// geom_add_point must always re-cook, like brush_capture: its real input is
+// the live pick event in GeomPayload, not a graph socket, so it does not
+// propagate dirty state through the executor. Without ALWAYS_DIRTY the node
+// is cooked once and its per-cook storage reset, so only the last pick is
+// kept instead of accumulating.
+
 NODE_DEF_CLOSE_SCOPE

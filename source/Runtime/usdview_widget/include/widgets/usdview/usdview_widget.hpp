@@ -47,22 +47,18 @@ class USDVIEW_WIDGET_API UsdviewEngine final : public IWidget {
         const pxr::VtValue& value);
     void finish_render();
 
-    std::shared_ptr<PickEvent> consume_pick_event();
-
-    struct BrushState {
-        glm::vec3 point;
-        float time;
-        bool active;
-        bool new_point;
-    };
-    BrushState consume_brush_state();
-
    protected:
     ImGuiWindowFlags GetWindowFlag() override;
     const char* GetWindowName() override;
     std::string GetWindowUniqueName() override;
 
    private:
+    // Broadcast the latest brush state / pick event to all subscribers on the
+    // window->events() bus. Called from the mouse callbacks after the state
+    // members are updated. See GUI/viewport_events.h.
+    void emit_brush_state();
+    void emit_pick_event(const std::shared_ptr<PickEvent>& event);
+
     void RenderBackBufferResized(float x, float y);
 
     enum class CamType { First, Third };
@@ -115,8 +111,6 @@ class USDVIEW_WIDGET_API UsdviewEngine final : public IWidget {
     float timecode = 0;
     float time_code_max = 10;
 
-    std::shared_ptr<PickEvent> current_pick_event_;
-
     // Selection highlight support
     bool selection_event_subscribed_ = false;
     void subscribe_to_selection_events();
@@ -142,7 +136,8 @@ class USDVIEW_WIDGET_API UsdviewEngine final : public IWidget {
     bool is_drawing_ = false;
     double stroke_start_time_ = 0.0;
 
-    // Per-frame brush state (consumed by Ruzino.cpp callback)
+    // Brush tool state. Updated by the mouse callbacks and broadcast to
+    // subscribers via emit_brush_state() (see GUI/viewport_events.h).
     glm::vec3 brush_point_ = glm::vec3(0.0f);
     float brush_time_ = 0.0f;
     bool brush_active_ = false;

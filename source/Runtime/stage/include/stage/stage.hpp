@@ -80,10 +80,6 @@ class STAGE_API Stage {
 
     [[nodiscard]] pxr::UsdStageRefPtr get_usd_stage() const;
 
-    void create_editor_at_path(const pxr::SdfPath& sdf_path);
-    bool consume_editor_creation(
-        pxr::SdfPath& json_path,
-        bool fully_consume = true);
     void save_string_to_usd(const pxr::SdfPath& path, const std::string& data);
     std::string load_string_from_usd(const pxr::SdfPath& path);
     void import_usd_as_payload(
@@ -182,7 +178,6 @@ class STAGE_API Stage {
 
     std::string m_stage_path;
     pxr::UsdStageRefPtr stage;
-    std::vector<pxr::SdfPath> create_editor_pending_paths_;
     pxr::UsdTimeCode current_time_code = pxr::UsdTimeCode(0.0f);
     pxr::UsdTimeCode render_time_code = pxr::UsdTimeCode(0.0f);
     template<typename T>
