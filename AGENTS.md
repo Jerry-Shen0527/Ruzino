@@ -214,9 +214,9 @@ The project supports full installation via CMake:
 
 ### Testing Installation
 
-Run tests from installation directory:
+Run tests from the configured build (the test runner reads from `./Binaries/Release/` and `./source/`):
 ```bash
-python scripts/run_all_tests.py --install-dir /path/to/install
+python scripts/run_all_tests.py
 ```
 
 See `INSTALL.md` for detailed installation documentation.
@@ -235,12 +235,7 @@ When making code changes:
 4. **Review test output** carefully - failed tests will show detailed error messages
 5. **Build type matters** - ensure you're building the same type (Release/Debug) as the test runner expects
 6. **Installation support** - Use `scripts/install_deps.py` to copy dependencies to install directory
-7. **Recursive commits** - Use `scripts/format_and_commit_manager.py` pattern for recursive git operations; explicitly skip nvrhi submodule when requested
-   - Recursively commits to all repositories (submodules first, then root)
-   - Depth-first order ensures proper submodule dependency handling
-   - Available scripts: `recursive_commit.sh` and `recursive_commit_push.py`
-   - Implementation includes automatic detection of git repositories and depth-based sorting
-   - Commit message: "Update: recursive commit and push following format_and_commit_manager pattern"
+7. **Recursive commits** - Use `scripts/format_and_commit_manager.py` for recursive git operations; it recursively commits to all repositories (submodules first, then root, depth-first) and explicitly skips the nvrhi submodule. Provides a quick mode (auto-format + only prompt for commit messages) and an interactive mode.
 
 ## Troubleshooting
 

@@ -178,18 +178,23 @@ def install_dependencies(
         print(f"  ⚠ tbb.lib not found at {tbb_lib_src}")
 
     # Copy Python import library (needed for linking)
+    # Glob python3*.lib so 3.10 and 3.11 SDK installs both work.
     print("\n1.3. Installing Python import library...")
-    python_lib_src = project_root / "SDK/python/libs/python311.lib"
-    python_lib_dst = lib_dir / "python311.lib"
-    if python_lib_src.exists():
-        if dry_run:
-            print(f"  [DRY RUN] Would copy python311.lib to {python_lib_dst}")
-        else:
-            lib_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(python_lib_src, python_lib_dst)
-            print(f"  ✓ Copied python311.lib to {python_lib_dst}")
+    python_libs_dir = project_root / "SDK/python/libs"
+    python_libs = sorted(python_libs_dir.glob("python3*.lib")) if python_libs_dir.exists() else []
+    # Skip static runtime stubs like python3.lib (we want the versioned one).
+    python_libs = [p for p in python_libs if p.name not in ("python3.lib",)]
+    if python_libs:
+        for python_lib_src in python_libs:
+            python_lib_dst = lib_dir / python_lib_src.name
+            if dry_run:
+                print(f"  [DRY RUN] Would copy {python_lib_src.name} to {python_lib_dst}")
+            else:
+                lib_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(python_lib_src, python_lib_dst)
+                print(f"  ✓ Copied {python_lib_src.name} to {python_lib_dst}")
     else:
-        print(f"  ⚠ python311.lib not found at {python_lib_src}")
+        print(f"  ⚠ No python3XX.lib found under {python_libs_dir}")
 
     # Copy Slang
     print("\n2. Installing Slang...")
