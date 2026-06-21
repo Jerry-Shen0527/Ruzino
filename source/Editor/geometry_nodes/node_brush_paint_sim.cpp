@@ -22,6 +22,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <fstream>
+#include <iomanip>
 #include <vector>
 
 // ============================================================
@@ -30,6 +33,118 @@
 
 namespace Ruzino {
 namespace {
+
+// ============================================================
+// Stroke recorder — writes the captured stroke to disk so the
+// editor's real input can be replayed by a headless test.
+// Enabled when the env var RUZINO_RECORD_STROKE is set to a path;
+// the LAST execution's full stroke (all accumulated points +
+// timestamps + stroke segmentation) overwrites the file. This
+// lets a frame-by-frame editor run produce one final capture
+// with the complete trajectory.
+// ============================================================
+struct StrokeRecord {
+    std::vector<glm::vec3> points;
+    std::vector<float> timestamps;
+    std::vector<int> stroke_lengths;  // vert count per sub-stroke
+
+    // Snapshot of every brush_paint_sim input that affects the
+    // physics — the test reads these back so its replay uses the
+    // EXACT same parameters the editor run used.
+    int resolution = 0;
+    int resolution_z = 0;
+    float paper_size = 0.0f;
+    float canvas_center_x = 0.0f;
+    float canvas_center_y = 0.0f;
+    float canvas_z = 0.0f;
+    float canvas_height = 0.0f;
+    float brush_radius = 0.0f;
+    float brush_pressure = 0.0f;
+    float ink_amount = 0.0f;
+    float viscosity = 0.0f;
+    float oil_density = 0.0f;
+    float diffusion = 0.0f;
+    float pickup_rate = 0.0f;
+    float drying_rate = 0.0f;
+
+    // brush_input params (color + width + pressure) — captured from the
+    // curve's display_color/width so the replay matches what the editor
+    // actually fed to paint_sim.
+    float ink_r_ryb = 1.0f;
+    float ink_y_ryb = 0.0f;
+    float ink_b_ryb = 0.0f;
+    float brush_width = 0.02f;
+};
+
+bool stroke_recorder_enabled()
+{
+    return std::getenv("RUZINO_RECORD_STROKE") != nullptr;
+}
+
+std::string stroke_recorder_path()
+{
+    const char* p = std::getenv("RUZINO_RECORD_STROKE");
+    if (p && *p) return std::string(p);
+    // Default location: next to the binary, easy to find.
+    return "brush_stroke_capture.json";
+}
+
+void write_stroke_record(const StrokeRecord& rec)
+{
+    std::ofstream f(stroke_recorder_path());
+    if (!f) {
+        spdlog::warn(
+            "brush_paint_sim: stroke recorder could not open '{}'",
+            stroke_recorder_path());
+        return;
+    }
+    f << std::fixed << std::setprecision(6);
+    f << "{\n";
+    f << "  \"points\": [";
+    for (size_t i = 0; i < rec.points.size(); ++i) {
+        if (i) f << ", ";
+        f << "[" << rec.points[i].x << ", " << rec.points[i].y << ", "
+          << rec.points[i].z << "]";
+    }
+    f << "],\n";
+    f << "  \"timestamps\": [";
+    for (size_t i = 0; i < rec.timestamps.size(); ++i) {
+        if (i) f << ", ";
+        f << rec.timestamps[i];
+    }
+    f << "],\n";
+    f << "  \"stroke_lengths\": [";
+    for (size_t i = 0; i < rec.stroke_lengths.size(); ++i) {
+        if (i) f << ", ";
+        f << rec.stroke_lengths[i];
+    }
+    f << "],\n";
+    f << "  \"resolution\": " << rec.resolution << ",\n";
+    f << "  \"resolution_z\": " << rec.resolution_z << ",\n";
+    f << "  \"paper_size\": " << rec.paper_size << ",\n";
+    f << "  \"canvas_center_x\": " << rec.canvas_center_x << ",\n";
+    f << "  \"canvas_center_y\": " << rec.canvas_center_y << ",\n";
+    f << "  \"canvas_z\": " << rec.canvas_z << ",\n";
+    f << "  \"canvas_height\": " << rec.canvas_height << ",\n";
+    f << "  \"brush_radius\": " << rec.brush_radius << ",\n";
+    f << "  \"brush_pressure\": " << rec.brush_pressure << ",\n";
+    f << "  \"ink_amount\": " << rec.ink_amount << ",\n";
+    f << "  \"viscosity\": " << rec.viscosity << ",\n";
+    f << "  \"oil_density\": " << rec.oil_density << ",\n";
+    f << "  \"diffusion\": " << rec.diffusion << ",\n";
+    f << "  \"pickup_rate\": " << rec.pickup_rate << ",\n";
+    f << "  \"drying_rate\": " << rec.drying_rate << ",\n";
+    f << "  \"ink_r_ryb\": " << rec.ink_r_ryb << ",\n";
+    f << "  \"ink_y_ryb\": " << rec.ink_y_ryb << ",\n";
+    f << "  \"ink_b_ryb\": " << rec.ink_b_ryb << ",\n";
+    f << "  \"brush_width\": " << rec.brush_width << "\n";
+    f << "}\n";
+    spdlog::info(
+        "brush_paint_sim: recorded {} pts ({} strokes) to '{}'",
+        rec.points.size(), rec.stroke_lengths.size(),
+        stroke_recorder_path());
+}
+
 
 std::string shader_dir()
 {
@@ -685,6 +800,45 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
 
     int already_deposited = storage.deposited_count;
     int new_count = static_cast<int>(vertices.size()) - already_deposited;
+
+    // ---- Stroke recorder (optional) ----
+    // When RUZINO_RECORD_STROKE is set, dump the FULL stroke (every point
+    // accumulated so far, with timestamps and stroke segmentation) plus all
+    // node inputs to a JSON file. The file is overwritten each cook, so the
+    // final state of the file after a complete editor run holds the whole
+    // trajectory. A headless test can then replay this exact input.
+    if (stroke_recorder_enabled()) {
+        StrokeRecord rec;
+        rec.points = vertices;
+        rec.timestamps = curve->get_vertex_scalar_quantity("timestamp");
+        rec.stroke_lengths = curve->get_vert_count();
+        rec.resolution = resolution;
+        rec.resolution_z = resolution_z;
+        rec.paper_size = paper_size;
+        rec.canvas_center_x = canvas_center_xy.x;
+        rec.canvas_center_y = canvas_center_xy.y;
+        rec.canvas_z = canvas_z_input;
+        rec.canvas_height = canvas_height_input;
+        rec.brush_radius = brush_radius;
+        rec.brush_pressure = brush_pressure;
+        rec.ink_amount = ink_amount;
+        rec.viscosity = viscosity;
+        rec.oil_density = oil_density_in;
+        rec.diffusion = diffusion;
+        rec.pickup_rate = params.get_input<float>("Pickup Rate");
+        rec.drying_rate = drying_rate;
+        // Recover ink color + width from the curve's display_color/width so
+        // the replay uses what the editor actually fed in (these come from
+        // brush_input, which multiplies by ink_amount).
+        if (!colors.empty()) {
+            rec.ink_r_ryb = colors[0].x;
+            rec.ink_y_ryb = colors[0].y;
+            rec.ink_b_ryb = colors[0].z;
+        }
+        auto widths = curve->get_width();
+        if (!widths.empty()) rec.brush_width = widths[0];
+        write_stroke_record(rec);
+    }
 
     // ---- Fixed canvas domain (Wetbrush §4.2: "space ABOVE canvas") ----
     // The grid is anchored to a user-specified AABB and NEVER re-anchors or
@@ -1387,6 +1541,12 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         mc.paper_size = storage.grid_paper;
         mc.ink_amount = ink_amount;
         mc.oil_density_base = oil_density_in;
+        mc.window_origin_x = storage.win_origin_x;
+        mc.window_origin_y = storage.win_origin_y;
+        mc.window_origin_z = 0;
+        mc.window_size_x = WIN_XY;
+        mc.window_size_y = WIN_XY;
+        mc.window_size_z = WIN_Z;
         upload_constant_buffer(rc, device, &mc, sizeof(SimConstants),
                                "merge_cb", merge_cb);
 
@@ -1629,6 +1789,12 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         mc2.paper_size = storage.grid_paper;
         mc2.ink_amount = ink_amount;
         mc2.oil_density_base = oil_density_in;
+        mc2.window_origin_x = storage.win_origin_x;
+        mc2.window_origin_y = storage.win_origin_y;
+        mc2.window_origin_z = 0;
+        mc2.window_size_x = WIN_XY;
+        mc2.window_size_y = WIN_XY;
+        mc2.window_size_z = WIN_Z;
         upload_constant_buffer(rc, device, &mc2, sizeof(SimConstants),
                                "ptcl_merge_cb", merge_cb);
 
@@ -1656,6 +1822,19 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     }
 
     // === DEPOSIT remaining vertices (fallback for non-bristle) ===
+    // DISABLED: this curve-vertex deposit path is not in the Wetbrush paper.
+    // The paper (§4.1 line 118) deposits paint purely via bristle samples
+    // rasterized into the grid ("we rasterize them into a density field").
+    // This curve path was a simplification that caused two problems:
+    //   1. "Zebra" gaps between sparse stroke samples (fixed with path-fill,
+    //      but path-fill is itself non-physical).
+    //   2. Double-deposit when running alongside the bristle rasterize→merge
+    //      path (Steps 5-6 above), which is the physically correct source.
+    // Bristle deposit is now the sole source of paint (per the paper).
+    // Commented out via block comment to preserve the code for reference /
+    // easy re-enable during debugging. If bristle output is insufficient,
+    // re-enable this block and investigate bristle contact density.
+    /*
     if (new_count > 0) {
         std::vector<float> vert_data(new_count * 4);
         std::vector<float> col_data(new_count * 4);
@@ -1760,6 +1939,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
 
         rc.destroy(dep_cb_buf);
     }
+    */
 
     storage.deposited_count = static_cast<int>(vertices.size());
 
