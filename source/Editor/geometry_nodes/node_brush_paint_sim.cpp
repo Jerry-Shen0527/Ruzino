@@ -76,17 +76,25 @@ struct StrokeRecord {
     float brush_width = 0.02f;
 };
 
+// Recorder is ALWAYS on — no env var needed. The capture file lives next
+// to the executable (where Ruzino.exe is), so the user just runs the editor
+// and draws; the file shows up alongside the binary.
 bool stroke_recorder_enabled()
 {
-    return std::getenv("RUZINO_RECORD_STROKE") != nullptr;
+    return true;
 }
 
 std::string stroke_recorder_path()
 {
-    const char* p = std::getenv("RUZINO_RECORD_STROKE");
-    if (p && *p) return std::string(p);
-    // Default location: next to the binary, easy to find.
-    return "brush_stroke_capture.json";
+    // Default location: next to the executable (Ruzino.exe's directory).
+    // This is where the user expects to find it — no CWD ambiguity.
+    try {
+        auto dir = SlangShaderCompiler::get_exe_dir();
+        return (dir / "brush_stroke_capture.json").string();
+    } catch (...) {
+        // Fallback: relative path in the current working directory.
+        return "brush_stroke_capture.json";
+    }
 }
 
 void write_stroke_record(const StrokeRecord& rec)
