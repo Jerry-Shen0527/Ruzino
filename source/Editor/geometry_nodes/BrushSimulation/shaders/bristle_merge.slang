@@ -55,11 +55,17 @@ void main(uint3 tid : SV_DispatchThreadID)
     // density cap of ~3.0 is well above any realistic paint layer but stops
     // the feedback loop. This is also where Wetbrush's own saturation term
     // would kick in (§4.1 density constraint), approximated here as a hard cap.
-    float inv_bd = 1.0 / (bd + 1e-8);
+    //
+    // Velocity: deposit the bristle velocity MASS-WEIGHTED by bd (not divided
+    // by bd). The old `bvx * inv_bd` normalized velocity to per-unit-density,
+    // which blew up to millions when bd was small (thin sweep deposits) — the
+    // huge velocity then drove advection to pile density into window corners.
+    // Mass-weighted deposit keeps velocity bounded: a light deposit adds a
+    // light velocity, matching how bristles impart momentum to paint.
     density[idx] = min(density[idx] + bd * cb.ink_amount, 3.0);
-    vel_x[idx] += bvx * inv_bd;
-    vel_y[idx] += bvy * inv_bd;
-    vel_z[idx] += bvz * inv_bd;
+    vel_x[idx] += bvx * bd;
+    vel_y[idx] += bvy * bd;
+    vel_z[idx] += bvz * bd;
     color_r[idx] = mixed.x;
     color_y[idx] = mixed.y;
     color_b[idx] = mixed.z;

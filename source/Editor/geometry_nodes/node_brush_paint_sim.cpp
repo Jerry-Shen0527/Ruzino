@@ -1272,6 +1272,11 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     glm::vec3 brush_vel_3d(0.0f);
     glm::vec3 brush_accel_3d(0.0f);
     float brush_rotation = 0.0f;
+    // DIAGNOSTIC: disable the particle/liquid-transfer path to isolate
+    // whether the density explosion comes from the particle cycle or from
+    // the bristle deposit path alone. Set RUZINO_NO_PARTICLES=1 in env.
+    static const bool DISABLE_PARTICLES =
+        std::getenv("RUZINO_NO_PARTICLES") != nullptr;
     // Brush rotates about the canvas normal (Z axis); the stroke is planar so
     // ω is dominantly z. x/y components stay 0 unless the canvas tilts.
     glm::vec3 brush_angular_vel(0.0f);
@@ -1646,7 +1651,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         // EMIT: sample → particles (release if over capacity)
         // Uses ping-pong on sample_liquid buffer (in-place for now)
         // ================================================================
-        if (storage.particles_initialized) {
+        if (storage.particles_initialized && !DISABLE_PARTICLES) {
             BristleLiquidConstants blc = {};
             blc.num_bristles = Nb;
             blc.samples_per_bristle = S;
@@ -1720,7 +1725,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     }
 
     // === PARTICLE EMIT + UPDATE ===
-    if (storage.particles_initialized && new_count > 0) {
+    if (storage.particles_initialized && new_count > 0 && !DISABLE_PARTICLES) {
         ParticleConstants pc = {};
         pc.max_particles = max_ptcl;
         pc.dt = 0.016f;
@@ -2345,7 +2350,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     }
 
     // === POST-FLUID: particle maintenance ===
-    if (storage.particles_initialized) {
+    if (storage.particles_initialized && !DISABLE_PARTICLES) {
         ParticleConstants pc = {};
         pc.max_particles = max_ptcl;
         pc.dt = 0.016f;
