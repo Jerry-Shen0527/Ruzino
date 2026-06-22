@@ -1,13 +1,24 @@
 // Bristle rasterization — splat sample density to 3D accumulation grid.
 //
-// ANTI-ZEBRA SWEEP: each sample is splatted along the prev→current brush
-// displacement arc (the brush physically sweeps through the medium, §4.1).
-// Without sweep, fast frame-to-frame brush motion leaves isolated blobs
-// separated by empty gaps (the "zebra stripe" symptom) because the raster
-// only fires at the single contact point of the current frame. With sweep,
-// deposit is continuous along the drag trajectory.
+// ANTI-ZEBRA SWEEP (bristle-driven, paper-faithful):
+// Each bristle sample is splatted along the prev→current brush displacement
+// arc, so contact is continuous along the drag trajectory (the brush
+// physically sweeps through the medium, §4.1). Without this, fast frame-to-
+// frame brush motion leaves isolated blobs separated by empty gaps (the
+// "zebra stripe" symptom).
 //
-// The per-sample prev position is approximated as
+// IMPLEMENTATION: one GPU thread per (sample, sweep-step). The host dispatches
+// Nb*S*sweep_steps threads — so the full swept arc is covered in a SINGLE
+// dispatch, no per-thread loop, no step cap. Each thread computes its own
+// sample index and step index from its global thread id, then deposits at
+// the interpolated position along prev→current.
+//
+// Per-sample deposit mass is divided by sweep_steps so total paint per unit
+// length is frame-rate independent (a fast stroke and a slow stroke lay down
+// the same amount of paint). When sweep_steps==1 (or no prev pos), this
+// degenerates to the original single-point splat.
+//
+// Per-sample prev position is approximated as
 //   sample_pos_prev = sample_pos - (brush_pos - prev_brush_pos)
 // i.e. every sample translates by the brush-center delta. Bristle DEFLECTION
 // relative to the brush center is small versus the sweep length, so this is
@@ -80,43 +91,37 @@ void deposit_point(float3 pos, float4 col, float3 vel,
 [numthreads(256, 1, 1)]
 void main(uint3 tid : SV_DispatchThreadID)
 {
-    int idx = int(tid.x);
-    int total = cb.num_bristles * cb.samples_per_bristle;
-    if (idx >= total) return;
+    int total_samples = cb.num_bristles * cb.samples_per_bristle;
+    int total_threads = total_samples * cb.sweep_steps;
+    if (int(tid.x) >= total_threads) return;
 
-    float3 pos = sample_pos[idx].xyz;
-    float4 col = sample_color[idx];  // r, y, b, density
-    float3 vel = sample_vel[idx].xyz;
+    // Decode (sample_idx, step_idx) from linear thread id.
+    int sample_idx = int(tid.x) / cb.sweep_steps;
+    int step_idx   = int(tid.x) % cb.sweep_steps;
 
-    float deposit = col.w * 0.15;
+    float3 pos = sample_pos[sample_idx].xyz;
+    float4 col = sample_color[sample_idx];  // r, y, b, density
+    float3 vel = sample_vel[sample_idx].xyz;
 
-    // ---- Sweep along prev→current brush motion ----
-    // If we have a valid previous brush position, deposit along the swept
-    // arc. Step size is half a cell so adjacent deposits overlap → no gaps.
-    // If the brush barely moved this frame (or first frame), fall back to a
-    // single-point splat.
-    if (cb.has_prev_brush_pos != 0) {
+    float base_deposit = col.w * 0.15;
+
+    if (cb.has_prev_brush_pos != 0 && cb.sweep_steps > 1) {
         float3 brush_delta = float3(cb.brush_pos_x, cb.brush_pos_y, cb.brush_pos_z)
                            - float3(cb.prev_brush_pos_x, cb.prev_brush_pos_y, cb.prev_brush_pos_z);
-        float sweep_len = length(brush_delta);
-        float step = cb.cell_size * 0.5;
-        // Cap the number of steps to keep warp cost bounded on very fast
-        // strokes; if motion exceeds this, the next frame continues the arc.
-        const int MAX_STEPS = 64;
-        int n_steps = max(1, int(ceil(sweep_len / step)));
-        if (n_steps > MAX_STEPS) n_steps = MAX_STEPS;
-        // Distribute the per-sample deposit mass across the swept steps so
-        // the total deposited paint is independent of frame rate: a fast
-        // stroke (long sweep, many steps) and a slow stroke (short sweep,
-        // few steps) put down the same amount of paint per unit length.
-        float per_step_weight = 1.0 / float(n_steps);
-        for (int s = 0; s < n_steps; s++) {
-            float t = (n_steps == 1) ? 0.0 : float(s) / float(n_steps - 1);
-            float3 p = pos - brush_delta * (1.0 - t);  // prev (t=0) → current (t=1)
-            deposit_point(p, col, vel, deposit, per_step_weight);
-        }
+        // Interpolated position along prev→current.
+        // t=0 at prev, t=1 at current. Step s of [0, sweep_steps) maps to
+        // t = s/(sweep_steps-1); but to avoid degenerate overlap at endpoints
+        // we use t = (s+0.5)/sweep_steps (cell-centered sampling on the arc).
+        float t = (float(step_idx) + 0.5) / float(cb.sweep_steps);
+        float3 p = pos - brush_delta * (1.0 - t);  // prev (t=0) → current (t=1)
+        // Per-step weight keeps total deposit independent of sweep_steps.
+        float per_step_weight = 1.0 / float(cb.sweep_steps);
+        deposit_point(p, col, vel, base_deposit, per_step_weight);
     } else {
-        // First frame: no motion history, splat only at the current point.
-        deposit_point(pos, col, vel, deposit, 1.0);
+        // No sweep (first frame or no motion): splat only at current point.
+        // Only the step_idx==0 thread should fire to avoid double-deposit.
+        if (step_idx == 0) {
+            deposit_point(pos, col, vel, base_deposit, 1.0);
+        }
     }
 }

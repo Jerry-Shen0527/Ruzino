@@ -378,12 +378,16 @@ struct BristleConstants {
     int window_size_z;
     // Brush SWEEP (anti-zebra): previous-frame brush center (grid-relative).
     // bristle_rasterize splats each sample along prev→current so fast drag
-    // still deposits a continuous band instead of isolated blobs per frame.
+    // deposits a continuous band instead of isolated blobs per frame.
     // has_prev_brush_pos != 0 means the prev position is valid (first frame
-    // has no motion to sweep). See bristle_rasterize.slang.
+    // has no motion to sweep). sweep_steps is the number of sub-positions
+    // along the prev→current arc that the rasterize shader will splat at —
+    // the dispatch thread count is Nb*S*sweep_steps, so each (sample, step)
+    // gets its own thread (no per-thread loop, no MAX_STEPS cap).
     float prev_brush_pos_x, prev_brush_pos_y, prev_brush_pos_z;
     int has_prev_brush_pos;
-    float _sweep_pad0, _sweep_pad1, _sweep_pad2;
+    int sweep_steps;  // >=1; 1 means no sweep (single-point splat)
+    float _sweep_pad0, _sweep_pad1;
 };
 
 struct ParticleConstants {
@@ -1463,9 +1467,27 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         bc.prev_brush_pos_y = storage.prev_brush_pos.y;
         bc.prev_brush_pos_z = storage.prev_brush_pos.z;
         bc.has_prev_brush_pos = storage.has_prev_brush_pos ? 1 : 0;
+        // Compute sweep sub-step count: how many sub-positions along
+        // prev→current the rasterize shader will splat at. Step size is
+        // half a cell so adjacent sub-deposits overlap → no gaps. Each
+        // sub-position is a separate GPU thread (Nb*S*sweep_steps), so the
+        // cost scales with arc length, not with a fixed cap.
+        int sweep_steps = 1;
+        if (storage.has_prev_brush_pos) {
+            glm::vec3 delta = brush_pos_3d - storage.prev_brush_pos;
+            float sweep_len = glm::length(delta);
+            float step = cell_sz * 0.5f;
+            sweep_steps = std::max(1, static_cast<int>(std::ceil(sweep_len / step)));
+            // Safety cap to bound dispatch size on pathological teleport
+            // (e.g. brush jumping across the whole canvas). At cell_sz≈0.005
+            // and a 1024-step cap, this covers ~2.5 canvas units of motion
+            // per frame — generous for any real stroke.
+            const int SWEEP_STEP_CAP = 1024;
+            if (sweep_steps > SWEEP_STEP_CAP) sweep_steps = SWEEP_STEP_CAP;
+        }
+        bc.sweep_steps = sweep_steps;
         bc._sweep_pad0 = 0.0f;
         bc._sweep_pad1 = 0.0f;
-        bc._sweep_pad2 = 0.0f;
 
         nvrhi::BufferHandle bristle_cb;
         upload_constant_buffer(rc, device, &bc, sizeof(BristleConstants),
@@ -1573,7 +1595,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
              {"bristle_color_r", storage.bristle_color_r},
              {"bristle_color_y", storage.bristle_color_y},
              {"bristle_color_b", storage.bristle_color_b}},
-            bristle_cb, Nb * S);
+            bristle_cb, Nb * S * sweep_steps);
 
         // Step 6: Merge bristle grids into main simulation grids
         nvrhi::BufferHandle merge_cb;
