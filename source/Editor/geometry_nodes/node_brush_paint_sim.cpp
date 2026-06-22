@@ -819,6 +819,27 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
 
     auto vertices = curve->get_vertices();
     auto colors = curve->get_display_color();
+    auto vert_counts = curve->get_vert_count();  // per-curve-primitive counts
+
+    // Determine whether the latest vertex starts a NEW stroke primitive.
+    // The input Geometry may carry multiple strokes (pen-down/up cycles) as
+    // separate curve primitives, all flattened into `vertices` with `vert_counts`
+    // delimiting each. When a new stroke begins, the brush "lifts" and "lands"
+    // elsewhere — there must be NO paint continuity (no sub-step interpolation,
+    // no velocity inheritance) across that boundary, otherwise the tail of one
+    // stroke gets connected to the head of the next ("ghost line" symptom).
+    auto vertex_is_stroke_start = [&](int vi) -> bool {
+        if (vert_counts.empty()) return vi == 0;  // single-curve fallback
+        // Cumulative offset walk: vertex index `vi` is a stroke start iff it is
+        // the first vertex of some curve primitive (cumulative sum == vi).
+        int acc = 0;
+        for (int c : vert_counts) {
+            if (vi == acc) return true;   // first vertex of this primitive
+            acc += c;
+            if (vi < acc) return false;   // interior vertex of this primitive
+        }
+        return false;
+    };
 
     // Detect stroke reset (node re-evaluated with fewer vertices than before)
     if (static_cast<int>(vertices.size()) < storage.deposited_count) {
@@ -1290,7 +1311,22 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         brush_pos_3d.x -= storage.grid_center.x;
         brush_pos_3d.y -= storage.grid_center.y;
 
-        if (last > 0) {
+        // Stroke-boundary handling: when `last` is the first vertex of a new
+        // stroke primitive, the brush has just landed. There is no valid
+        // motion to inherit from the previous stroke's tail — differencing
+        // across the boundary (vertices[last] - vertices[last-1]) would
+        // produce a spurious teleport, and the sub-step loop would paint a
+        // ghost line connecting the strokes. So: skip velocity/accel/omega
+        // derivation AND mark prev_brush_pos invalid so no sub-step runs.
+        bool new_stroke = vertex_is_stroke_start(last);
+        if (new_stroke) {
+            // Force a fresh start: no inherited brush motion or position.
+            storage.has_prev_brush_pos = false;
+            storage.prev_brush_vel = glm::vec3(0.0f);
+            storage.prev_angular_vel = glm::vec3(0.0f);
+        }
+
+        if (!new_stroke && last > 0) {
             glm::vec3 new_vel = vertices[last] - vertices[last - 1];
             // Frame-origin linear acceleration a_B = Δv/Δt (Eq.2 rectilinear).
             brush_accel_3d = (new_vel - storage.prev_brush_vel) / frame_dt;
@@ -1298,7 +1334,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
 
             // Heading angle in the XY plane
             brush_rotation = atan2(brush_vel_3d.y, brush_vel_3d.x);
-            if (last > 1) {
+            if (last > 1 && !vertex_is_stroke_start(last - 1)) {
                 float prev_rot = atan2(
                     vertices[last-1].y - vertices[last-2].y,
                     vertices[last-1].x - vertices[last-2].x);
@@ -1315,37 +1351,35 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     }
     storage.prev_brush_vel = brush_vel_3d;
     storage.prev_angular_vel = brush_angular_vel;
-    // Record this frame's brush center for next frame's bristle sweep.
-    // Only set has_prev_brush_pos once we actually have a position; the
-    // rasterize shader skips sweep on the first frame.
-    if (!vertices.empty()) {
-        storage.prev_brush_pos = brush_pos_3d;
-        storage.has_prev_brush_pos = true;
-    }
+    // NOTE: prev_brush_pos is updated at the END of the sub-step loop below,
+    // so that the loop can compute frame_disp = ||brush_pos_3d - prev||. Setting
+    // it here (before the loop) would make every frame's delta zero.
 
     // === ACTIVE WINDOW ORIGIN (Wetbrush §4.2) ===
-    // Compute the window origin for THIS frame, centered on the brush and
-    // clamped to the canvas. The 3D buffers are allocated at fixed window size
-    // (WIN_ALLOC_XY × WIN_ALLOC_XY × res_z), so only cells inside the window
-    // are live; everything else lives in the committed 2D canvas layer.
+    // Compute the window origin, centered on the brush and clamped to the
+    // canvas. The 3D buffers are allocated at fixed window size (WIN_ALLOC_XY
+    // × WIN_ALLOC_XY × res_z), so only cells inside the window are live;
+    // everything else lives in the committed 2D canvas layer.
     //
     // Window tracking: when the origin moves, the OLD window region must be
     // committed to the canvas layer and cleared BEFORE moving, otherwise the
-    // paint there is lost (overwritten by the next frame's new region). On the
-    // very first frame (win_origin_set == false) no commit is needed.
+    // paint there is lost (overwritten by the next region). On the very first
+    // frame (win_origin_set == false) no commit is needed.
     const int WIN_XY = std::min(PaintSimStorage::WIN_ALLOC_XY, storage.grid_res);
     const int WIN_Z  = rz;
     const int win_n3d = WIN_XY * WIN_XY * WIN_Z;
-    {
+
+    // Lambda: position the active window at a given brush (grid-local) XY and
+    // commit+clear the old window if it moved. Used once per sub-step below.
+    auto position_window = [&](float bx, float by) {
         float half_p = storage.grid_paper * 0.5f;
-        float bgx = (brush_pos_3d.x - storage.grid_center.x + half_p) / cell_sz;
-        float bgy = (brush_pos_3d.y - storage.grid_center.y + half_p) / cell_sz;
+        float bgx = (bx - storage.grid_center.x + half_p) / cell_sz;
+        float bgy = (by - storage.grid_center.y + half_p) / cell_sz;
         int new_wox = static_cast<int>(bgx) - WIN_XY / 2;
         int new_woy = static_cast<int>(bgy) - WIN_XY / 2;
         new_wox = std::max(0, std::min(new_wox, storage.grid_res - WIN_XY));
         new_woy = std::max(0, std::min(new_woy, storage.grid_res - WIN_XY));
 
-        // If the window moved (or first frame), commit old region then update.
         bool moved = !storage.win_origin_set
                   || new_wox != storage.win_origin_x
                   || new_woy != storage.win_origin_y;
@@ -1408,47 +1442,40 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         storage.win_origin_y = new_woy;
         storage.win_origin_z = 0;
         storage.win_origin_set = true;
-    }
+    };
 
-    // === BRISTLE SIMULATION ===
-    {
-        // Refill the per-sample paint supply reservoir to ink_amount — the
-        // brush is "re-dipped" each frame. ABSORB consumes it (§5.1), so the
-        // supply is finite within a frame and mass is conserved.
-        {
-            std::vector<float> supply(Nb * S, ink_amount);
-            auto cmd = rc.create(CommandListDesc{});
-            cmd->open();
-            cmd->writeBuffer(storage.sample_supply, supply.data(),
-                             supply.size() * sizeof(float));
-            cmd->close();
-            device->executeCommandList(cmd);
-            device->waitForIdle();
-            rc.destroy(cmd);
-        }
-
+    // Lambda: run the full Wetbrush §4.1 bristle deposit pipeline (spring
+    // dynamics → PBF density constraint → resample → rasterize → merge) at a
+    // given sub-step brush pose. Each call is one complete deposit at an
+    // interpolated brush position along the frame's trajectory. This is the
+    // paper's "densely sampled stroke path" (§Limitations): by subdividing a
+    // large frame-to-frame displacement into sub-steps ≤ one brush diameter,
+    // adjacent deposits overlap and the stroke is continuous.
+    auto deposit_at = [&](const glm::vec3& sub_pos, const glm::vec3& sub_vel,
+                          const glm::vec3& sub_accel, float sub_rot,
+                          const glm::vec3& sub_omega, const glm::vec3& sub_omega_dot) {
         BristleConstants bc = {};
         bc.num_bristles = Nb;
         bc.verts_per_bristle = M;
         bc.samples_per_bristle = S;
         bc.beta_B = 0.05f;
         bc.dt = 0.016f;
-        bc.brush_pos_x = brush_pos_3d.x;
-        bc.brush_pos_y = brush_pos_3d.y;
-        bc.brush_pos_z = brush_pos_3d.z;
-        bc.brush_vel_x = brush_vel_3d.x;
-        bc.brush_vel_y = brush_vel_3d.y;
-        bc.brush_vel_z = brush_vel_3d.z;
-        bc.brush_angular_vel_x = brush_angular_vel.x;
-        bc.brush_angular_vel_y = brush_angular_vel.y;
-        bc.brush_angular_vel_z = brush_angular_vel.z;
-        bc.brush_rotation = brush_rotation;
-        bc.brush_accel_x = brush_accel_3d.x;
-        bc.brush_accel_y = brush_accel_3d.y;
-        bc.brush_accel_z = brush_accel_3d.z;
-        bc.brush_angular_accel_x = brush_angular_accel.x;
-        bc.brush_angular_accel_y = brush_angular_accel.y;
-        bc.brush_angular_accel_z = brush_angular_accel.z;
+        bc.brush_pos_x = sub_pos.x;
+        bc.brush_pos_y = sub_pos.y;
+        bc.brush_pos_z = sub_pos.z;
+        bc.brush_vel_x = sub_vel.x;
+        bc.brush_vel_y = sub_vel.y;
+        bc.brush_vel_z = sub_vel.z;
+        bc.brush_angular_vel_x = sub_omega.x;
+        bc.brush_angular_vel_y = sub_omega.y;
+        bc.brush_angular_vel_z = sub_omega.z;
+        bc.brush_rotation = sub_rot;
+        bc.brush_accel_x = sub_accel.x;
+        bc.brush_accel_y = sub_accel.y;
+        bc.brush_accel_z = sub_accel.z;
+        bc.brush_angular_accel_x = sub_omega_dot.x;
+        bc.brush_angular_accel_y = sub_omega_dot.y;
+        bc.brush_angular_accel_z = sub_omega_dot.z;
         bc.brush_pressure = brush_pressure;
         bc.canvas_z = storage.grid_center_z - storage.grid_height * 0.5f;
         bc.brush_radius = brush_radius;
@@ -1467,31 +1494,13 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         bc.window_origin_z = 0;
         bc.window_size_x = WIN_XY;
         bc.window_size_z = WIN_Z;
-        // Sweep (anti-zebra): previous brush center + validity flag.
-        bc.prev_brush_pos_x = storage.prev_brush_pos.x;
-        bc.prev_brush_pos_y = storage.prev_brush_pos.y;
-        bc.prev_brush_pos_z = storage.prev_brush_pos.z;
-        bc.has_prev_brush_pos = storage.has_prev_brush_pos ? 1 : 0;
-        // Compute sweep sub-step count: how many sub-positions along
-        // prev→current the rasterize shader will splat at. Step size is
-        // half a cell so adjacent sub-deposits overlap → no gaps. Each
-        // sub-position is a separate GPU thread (Nb*S*sweep_steps), so the
-        // cost scales with arc length, not with a fixed cap.
-        int sweep_steps = 1;
-        if (storage.has_prev_brush_pos) {
-            glm::vec3 delta = brush_pos_3d - storage.prev_brush_pos;
-            float sweep_len = glm::length(delta);
-            float step = cell_sz * 0.5f;
-            sweep_steps = std::max(1, static_cast<int>(std::ceil(sweep_len / step)));
-            // Safety cap to bound dispatch size on pathological teleport.
-            // With per-step weight 1/sqrt(N), total mass grows as sqrt(N)*base,
-            // so even N=4096 injects only ~64x base mass — manageable with the
-            // density clamp in bristle_merge. This covers ~20 canvas units of
-            // motion per frame, more than any real stroke.
-            const int SWEEP_STEP_CAP = 4096;
-            if (sweep_steps > SWEEP_STEP_CAP) sweep_steps = SWEEP_STEP_CAP;
-        }
-        bc.sweep_steps = sweep_steps;
+        // prev_brush_pos / sweep fields are unused by the rasterize shader
+        // (continuity is via host sub-stepping). Zeroed for ABI cleanliness.
+        bc.prev_brush_pos_x = 0.0f;
+        bc.prev_brush_pos_y = 0.0f;
+        bc.prev_brush_pos_z = 0.0f;
+        bc.has_prev_brush_pos = 0;
+        bc.sweep_steps = 1;
         bc._sweep_pad0 = 0.0f;
         bc._sweep_pad1 = 0.0f;
 
@@ -1506,18 +1515,13 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             bristle_cb, Nb);
 
         // Step 2: Density constraint (PBF, Macklin & Müller 2013)
-        // Paper: "estimate the bristle vertex density at each vertex
-        // using a smoothed kernel function, and then enforce a minimal
-        // density constraint" — iterate 3 times.
         int total_verts = Nb * M;
         for (int dc_iter = 0; dc_iter < 3; dc_iter++) {
-            // Pass 0: compute density and λ
             {
                 ConstraintModeCB mode0 = {0, {0,0,0}};
                 nvrhi::BufferHandle mode0_cb;
                 upload_constant_buffer(rc, device, &mode0, sizeof(ConstraintModeCB),
                                        "dc_mode0_cb", mode0_cb);
-
                 ProgramVars v0(rc, storage.bristle_density_constraint_program);
                 v0["cb"] = bristle_cb.Get();
                 v0["bristle_data"] = storage.bristle_data.Get();
@@ -1529,17 +1533,13 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                 c0.begin();
                 c0.dispatch({}, v0, total_verts, 256);
                 c0.finish();
-
                 rc.destroy(mode0_cb);
             }
-
-            // Pass 1: apply position correction using λ
             {
                 ConstraintModeCB mode1 = {1, {0,0,0}};
                 nvrhi::BufferHandle mode1_cb;
                 upload_constant_buffer(rc, device, &mode1, sizeof(ConstraintModeCB),
                                        "dc_mode1_cb", mode1_cb);
-
                 ProgramVars v1(rc, storage.bristle_density_constraint_program);
                 v1["cb"] = bristle_cb.Get();
                 v1["bristle_data"] = storage.bristle_data.Get();
@@ -1551,7 +1551,6 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                 c1.begin();
                 c1.dispatch({}, v1, total_verts, 256);
                 c1.finish();
-
                 rc.destroy(mode1_cb);
             }
         }
@@ -1589,7 +1588,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             {},
             {{"field", storage.bristle_color_b}}, nullptr, win_n3d);
 
-        // Step 5: Rasterize samples → accumulation grids
+        // Step 5: Rasterize samples → accumulation grids (single-point splat)
         dispatch_raw(rc, storage.bristle_raster_program,
             {{"sample_pos", storage.sample_pos},
              {"sample_color", storage.sample_color},
@@ -1601,7 +1600,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
              {"bristle_color_r", storage.bristle_color_r},
              {"bristle_color_y", storage.bristle_color_y},
              {"bristle_color_b", storage.bristle_color_b}},
-            bristle_cb, Nb * S * sweep_steps);
+            bristle_cb, Nb * S);
 
         // Step 6: Merge bristle grids into main simulation grids
         nvrhi::BufferHandle merge_cb;
@@ -1644,14 +1643,101 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
 
         rc.destroy(bristle_cb);
         rc.destroy(merge_cb);
+    };
 
-        // ================================================================
-        // Step 7: Bristle-particle liquid transfer (Section 5.1)
-        // ABSORB: grid → sample (absorb paint capacity), then
-        // EMIT: sample → particles (release if over capacity)
-        // Uses ping-pong on sample_liquid buffer (in-place for now)
-        // ================================================================
-        if (storage.particles_initialized && !DISABLE_PARTICLES) {
+    // === BRISTLE DEPOSIT VIA SUB-STEPPING (Wetbrush "densely sampled
+    // stroke path", §Limitations) ===
+    // When the frame-to-frame brush displacement exceeds one brush diameter,
+    // subdivide it into N_sub sub-steps and run the full §4.1 deposit pipeline
+    // at each interpolated brush position. This guarantees adjacent deposits
+    // overlap → continuous stroke, with no gaps. Each sub-step centers its own
+    // window on the sub-step brush position, so every deposit lands inside a
+    // live window (the geometric hole that previously caused 断续 is gone).
+    {
+        // Refill the per-sample paint supply reservoir to ink_amount once per
+        // frame — the brush is "re-dipped" each frame. ABSORB consumes it.
+        {
+            std::vector<float> supply(Nb * S, ink_amount);
+            auto cmd = rc.create(CommandListDesc{});
+            cmd->open();
+            cmd->writeBuffer(storage.sample_supply, supply.data(),
+                             supply.size() * sizeof(float));
+            cmd->close();
+            device->executeCommandList(cmd);
+            device->waitForIdle();
+            rc.destroy(cmd);
+        }
+
+        // Number of sub-steps: cover the frame displacement with steps ≤ one
+        // brush diameter so adjacent footprints overlap. Capped to bound cost
+        // on extreme teleport (matches the paper's acknowledgment that very
+        // fast motion cannot always be densely sampled in real time).
+        int n_sub = 1;
+        float frame_disp = 0.0f;
+        if (storage.has_prev_brush_pos) {
+            glm::vec3 delta = brush_pos_3d - storage.prev_brush_pos;
+            frame_disp = glm::length(delta);
+            // One step per brush diameter of travel; minimum 1.
+            float diam = std::max(brush_radius * 2.0f, cell_sz);
+            n_sub = std::max(1, static_cast<int>(std::ceil(frame_disp / diam)));
+            // Cost cap: each sub-step runs the full 6-stage bristle pipeline.
+            // At cap, residual displacement beyond n_sub*diam is accepted as a
+            // physical gap (as in the paper's fast-motion limitations).
+            const int N_SUB_CAP = 128;
+            if (n_sub > N_SUB_CAP) n_sub = N_SUB_CAP;
+        }
+
+        spdlog::info("brush_paint_sim sub-step: n_sub={}, frame_disp={:.4f} "
+                     "(brush_diam={:.4f}), brush_pos=({:.3f},{:.3f})",
+                     n_sub, frame_disp, brush_radius * 2.0f,
+                     brush_pos_3d.x, brush_pos_3d.y);
+
+        for (int s = 0; s < n_sub; s++) {
+            // Interpolated brush pose at this sub-step (cell-centered: t at
+            // the midpoint of the sub-interval so every part of the trajectory
+            // is covered). t=0 → prev_brush_pos, t=1 → brush_pos_3d.
+            float t = (static_cast<float>(s) + 0.5f) / static_cast<float>(n_sub);
+            glm::vec3 sub_pos = storage.has_prev_brush_pos
+                ? glm::mix(storage.prev_brush_pos, brush_pos_3d, t)
+                : brush_pos_3d;
+            // Per-sub-step velocity is the full frame velocity scaled by 1/n_sub
+            // (each sub-step covers 1/n_sub of the frame's displacement in the
+            // frame's dt). Acceleration/omega are carried through unchanged.
+            glm::vec3 sub_vel = brush_vel_3d / static_cast<float>(n_sub);
+            glm::vec3 sub_accel = brush_accel_3d;
+            float sub_rot = brush_rotation;
+            glm::vec3 sub_omega = brush_angular_vel / static_cast<float>(n_sub);
+            glm::vec3 sub_omega_dot = brush_angular_accel;
+
+            // Center the window on this sub-step position (commits+clears the
+            // old window if it moved), then deposit.
+            position_window(sub_pos.x, sub_pos.y);
+            deposit_at(sub_pos, sub_vel, sub_accel, sub_rot,
+                       sub_omega, sub_omega_dot);
+        }
+
+        // First frame has no prev_brush_pos: still deposit once at the current
+        // position (n_sub==1 above, but position_window needs a valid pose).
+        if (!storage.has_prev_brush_pos && n_sub == 1 && !vertices.empty()) {
+            // Already handled by the loop with t=0.5 fallback to brush_pos_3d.
+        }
+
+        // Record this frame's brush center for the NEXT frame's sub-step count
+        // (frame_disp = ||next_brush_pos - this_brush_pos||). Must run after the
+        // loop so the loop sees the previous frame's position.
+        if (!vertices.empty()) {
+            storage.prev_brush_pos = brush_pos_3d;
+            storage.has_prev_brush_pos = true;
+        }
+    }
+
+    // ================================================================
+    // Step 7: Bristle-particle liquid transfer (Section 5.1)
+    // ABSORB: grid → sample (absorb paint capacity), then
+    // EMIT: sample → particles (release if over capacity)
+    // Uses ping-pong on sample_liquid buffer (in-place for now)
+    // ================================================================
+    if (storage.particles_initialized && !DISABLE_PARTICLES) {
             BristleLiquidConstants blc = {};
             blc.num_bristles = Nb;
             blc.samples_per_bristle = S;
@@ -1721,7 +1807,6 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             std::swap(storage.sample_liquid, storage.sample_liquid_b);
 
             rc.destroy(liquid_cb);
-        }
     }
 
     // === PARTICLE EMIT + UPDATE ===

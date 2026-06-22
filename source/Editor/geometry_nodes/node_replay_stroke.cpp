@@ -221,8 +221,26 @@ NODE_EXECUTION_FUNCTION(replay_stroke)
                          : static_cast<float>(i) / 60.0f);
     }
 
+    // Preserve the multi-stroke segmentation from the capture so that
+    // brush_paint_sim can detect stroke boundaries (pen-down/up) and avoid
+    // drawing a ghost line between the tail of one stroke and the head of the
+    // next. Walk the recorded stroke_lengths and clip each primitive at `n`
+    // total points: fully-included primitives keep their count, the partially
+    // included tail primitive gets the remainder.
+    std::vector<int> vert_counts;
+    int remaining = n;
+    for (int sl : data.stroke_lengths) {
+        if (remaining <= 0) break;
+        int take = (sl <= remaining) ? sl : remaining;
+        vert_counts.push_back(take);
+        remaining -= take;
+    }
+    if (vert_counts.empty()) {
+        vert_counts.push_back(n);  // fallback: single curve if no segmentation
+    }
+
     curve->set_vertices(verts);
-    curve->set_vert_count({n});
+    curve->set_vert_count(vert_counts);
     curve->set_display_color(colors);
     curve->set_width(widths);
     curve->add_vertex_scalar_quantity("timestamp", ts);

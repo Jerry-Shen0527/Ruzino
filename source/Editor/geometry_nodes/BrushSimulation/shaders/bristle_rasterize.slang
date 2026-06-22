@@ -1,32 +1,21 @@
 // Bristle rasterization — splat sample density to 3D accumulation grid.
 //
-// ANTI-ZEBRA SWEEP (bristle-driven, paper-faithful):
-// Each bristle sample is splatted along the prev→current brush displacement
-// arc, so contact is continuous along the drag trajectory (the brush
-// physically sweeps through the medium, §4.1). Without this, fast frame-to-
-// frame brush motion leaves isolated blobs separated by empty gaps (the
-// "zebra stripe" symptom).
+// Wetbrush §4.1: "Once we update all the sample positions and their local
+// frames, we rasterize them into a density field and a velocity field."
+// One thread per bristle sample; each sample splats its full payload
+// (density + color + velocity) at its current position into the window-local
+// accumulation grid.
 //
-// IMPLEMENTATION: one GPU thread per (sample, sweep-step). The host dispatches
-// Nb*S*sweep_steps threads — so the full swept arc is covered in a SINGLE
-// dispatch, no per-thread loop, no step cap. Each thread computes its own
-// sample index and step index from its global thread id, then deposits at
-// the interpolated position along prev→current.
-//
-// Each swept sub-position deposits a 1/sweep_steps fraction of the per-sample
-// mass, so total deposit per frame is proportional to CONTACT TIME (frame_dt),
-// not to stroke length. This keeps the fluid sim stable regardless of brush
-// speed: fast strokes inject the same total mass as slow ones, just spread
-// across more cells (each cell gets a thinner layer). The resulting thin
-// deposit is made visible by the render layer (low threshold + width boost),
-// NOT by inflating the injected mass. When sweep_steps==1 (or no prev pos),
-// this degenerates to the original single-point splat.
-//
-// Per-sample prev position is approximated as
-//   sample_pos_prev = sample_pos - (brush_pos - prev_brush_pos)
-// i.e. every sample translates by the brush-center delta. Bristle DEFLECTION
-// relative to the brush center is small versus the sweep length, so this is
-// a faithful approximation of the swept bristle contact.
+// CONTINUITY (anti-zebra) is handled on the HOST, not here. The host runs
+// the full bristle pipeline (sim → rasterize → merge) as a sequence of
+// sub-steps along the prev→current brush trajectory when the frame-to-frame
+// brush displacement exceeds one brush diameter — this is the paper's
+// "densely sampled stroke path" (§Limitations: the paper itself states it
+// relies on small time steps / dense stroke sampling for continuity). Each
+// sub-step is a complete deposit at an interpolated brush position, so the
+// brush footprint overlaps along the trajectory with no gaps. This shader
+// only ever does a single-point splat; the sweep_steps/prev_brush_pos fields
+// in BristleConstants are retained for ABI compatibility but unused.
 
 #include "common.slangh"
 
@@ -96,12 +85,9 @@ void deposit_point(float3 pos, float4 col, float3 vel,
 void main(uint3 tid : SV_DispatchThreadID)
 {
     int total_samples = cb.num_bristles * cb.samples_per_bristle;
-    int total_threads = total_samples * cb.sweep_steps;
-    if (int(tid.x) >= total_threads) return;
+    if (int(tid.x) >= total_samples) return;
 
-    // Decode (sample_idx, step_idx) from linear thread id.
-    int sample_idx = int(tid.x) / cb.sweep_steps;
-    int step_idx   = int(tid.x) % cb.sweep_steps;
+    int sample_idx = int(tid.x);
 
     float3 pos = sample_pos[sample_idx].xyz;
     float4 col = sample_color[sample_idx];  // r, y, b, density
@@ -109,33 +95,8 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     float base_deposit = col.w * 0.15;
 
-    if (cb.has_prev_brush_pos != 0 && cb.sweep_steps > 1) {
-        float3 brush_delta = float3(cb.brush_pos_x, cb.brush_pos_y, cb.brush_pos_z)
-                           - float3(cb.prev_brush_pos_x, cb.prev_brush_pos_y, cb.prev_brush_pos_z);
-        // Interpolated position along prev→current.
-        // t=0 at prev, t=1 at current. Cell-centered sampling on the arc so
-        // adjacent sub-deposits sit at the midpoint of each step interval.
-        float t = (float(step_idx) + 0.5) / float(cb.sweep_steps);
-        float3 p = pos - brush_delta * (1.0 - t);  // prev (t=0) → current (t=1)
-        // Each swept sub-position deposits a fixed fraction of the per-sample
-        // mass. NOT 1/N: that made fast strokes (N=1000+) deposit ~0.0001 per
-        // cell, below the render threshold — invisible. NOT full mass either:
-        // that exploded the fluid sim (millions).
-        //
-        // 1/sqrt(N) is the compromise: scales down for long sweeps (bounded
-        // total mass, sim-stable) but not so far that cells go invisible.
-        //   N=5    → 0.45 per cell (clearly visible, like a slow stroke)
-        //   N=100  → 0.10 per cell (visible, a bit lighter)
-        //   N=1000 → 0.032 per cell (faint but present, not zero)
-        // The merge shader also clamps accumulated density to prevent the
-        // explosion that full-mass deposit caused.
-        float per_step_weight = 1.0 / sqrt(float(cb.sweep_steps));
-        deposit_point(p, col, vel, base_deposit, per_step_weight);
-    } else {
-        // No sweep (first frame or no motion): splat only at current point.
-        // Only the step_idx==0 thread should fire to avoid double-deposit.
-        if (step_idx == 0) {
-            deposit_point(pos, col, vel, base_deposit, 1.0);
-        }
-    }
+    // Single-point splat. Continuity along fast strokes is achieved on the
+    // host via sub-stepping (multiple complete deposits along the trajectory),
+    // not by sweeping a single splat inside this shader.
+    deposit_point(pos, col, vel, base_deposit, 1.0);
 }
