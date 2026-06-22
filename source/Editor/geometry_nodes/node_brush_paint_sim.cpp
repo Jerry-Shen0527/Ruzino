@@ -1453,13 +1453,21 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     // adjacent deposits overlap and the stroke is continuous.
     auto deposit_at = [&](const glm::vec3& sub_pos, const glm::vec3& sub_vel,
                           const glm::vec3& sub_accel, float sub_rot,
-                          const glm::vec3& sub_omega, const glm::vec3& sub_omega_dot) {
+                          const glm::vec3& sub_omega, const glm::vec3& sub_omega_dot,
+                          float dt_sub) {
         BristleConstants bc = {};
         bc.num_bristles = Nb;
         bc.verts_per_bristle = M;
         bc.samples_per_bristle = S;
         bc.beta_B = 0.05f;
-        bc.dt = 0.016f;
+        // Integrate bristle dynamics over THIS sub-step's time slice, not the
+        // whole frame. With n_sub sub-steps the total integration time is
+        // still frame_dt, but each step is smaller → more accurate springs
+        // and correct non-inertial magnitudes. Using the full frame_dt here
+        // would over-integrate the bristle chain by n_sub× and corrupt the
+        // Coriolis/centrifugal/Euler terms (visible as a spinning "横纹"
+        // artifact orbiting the stroke).
+        bc.dt = dt_sub;
         bc.brush_pos_x = sub_pos.x;
         bc.brush_pos_y = sub_pos.y;
         bc.brush_pos_z = sub_pos.z;
@@ -1700,20 +1708,25 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             glm::vec3 sub_pos = storage.has_prev_brush_pos
                 ? glm::mix(storage.prev_brush_pos, brush_pos_3d, t)
                 : brush_pos_3d;
-            // Per-sub-step velocity is the full frame velocity scaled by 1/n_sub
-            // (each sub-step covers 1/n_sub of the frame's displacement in the
-            // frame's dt). Acceleration/omega are carried through unchanged.
-            glm::vec3 sub_vel = brush_vel_3d / static_cast<float>(n_sub);
+            // Brush velocity / angular velocity are INSTANTANEOUS rates
+            // (displacement/dt over the frame). They are NOT divided by
+            // n_sub — the brush is genuinely moving at this speed at every
+            // instant along the sub-step path. What changes per sub-step is
+            // only the integration time dt_sub = frame_dt / n_sub, passed to
+            // deposit_at. Dividing vel/omega by n_sub would make the brush
+            // appear to crawl and corrupt the non-inertial frame terms.
+            glm::vec3 sub_vel = brush_vel_3d;
             glm::vec3 sub_accel = brush_accel_3d;
             float sub_rot = brush_rotation;
-            glm::vec3 sub_omega = brush_angular_vel / static_cast<float>(n_sub);
+            glm::vec3 sub_omega = brush_angular_vel;
             glm::vec3 sub_omega_dot = brush_angular_accel;
+            float dt_sub = frame_dt / static_cast<float>(n_sub);
 
             // Center the window on this sub-step position (commits+clears the
             // old window if it moved), then deposit.
             position_window(sub_pos.x, sub_pos.y);
             deposit_at(sub_pos, sub_vel, sub_accel, sub_rot,
-                       sub_omega, sub_omega_dot);
+                       sub_omega, sub_omega_dot, dt_sub);
         }
 
         // First frame has no prev_brush_pos: still deposit once at the current
