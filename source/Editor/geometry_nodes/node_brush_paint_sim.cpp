@@ -2642,8 +2642,7 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     auto ccy = readback_2d(storage.canvas_color_y);
     auto ccb = readback_2d(storage.canvas_color_b);
 
-    constexpr float threshold = 0.0005f;  // lowered from 0.001 — sweep deposits
-    // are smaller per-cell, so the old threshold hid legitimate paint.
+    constexpr float threshold = 0.001f;  // render cutoff for empty cells
     constexpr float rgb_white_cutoff = 0.9f;
     // Canvas is 2D (height field). One point per painted cell, at the canvas
     // surface Z offset by the accumulated density (paint thickness). step_xy=1
@@ -2672,22 +2671,23 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
 
             float gx = (x + 0.5f) * cell_sz - storage.grid_paper * 0.5f;
             float gy = (y + 0.5f) * cell_sz - storage.grid_paper * 0.5f;
-            // Paint thickness in Z: scale density to a visible height, capped.
-            float gz = canvas_floor_z + std::min(d * cell_sz * 0.5f, cell_sz * 2.0f);
+            // Paint thickness in Z. Density is the integrated paint mass in a
+            // Z-column. Map it to height with a log-ish curve so both light
+            // strokes (d~0.05) and heavy strokes (d~1.0) are visible, instead
+            // of light strokes collapsing to zero height. The scale factor is
+            // tuned so a normal deposit (d≈0.1) sits ~1 cell above the floor.
+            float gz = canvas_floor_z + cell_sz * std::min(std::sqrt(d * 10.0f), 2.0f);
             out_pts.push_back(glm::vec3(
                 gx + storage.grid_center.x,
                 gy + storage.grid_center.y,
                 gz));
             out_colors.push_back(rgb);
-            // Point width: boost low-density cells so they remain visible.
-            // sqrt(density*4) maps density 0.06 → 0.5 (half a cell, visible),
-            // density 0.25 → 1.0 (full cell). Without this boost, a sweep-
-            // deposited cell with density 0.05 renders at 5% of a cell width
-            // — sub-pixel, invisible — even though the paint is actually
-            // there. This makes the debug visualization faithful to what's
-            // simulated, so "断断续续" can be attributed to the right cause.
-            float vis_w = cell_sz * std::min(std::sqrt(d * 4.0f), 1.0f);
-            out_widths.push_back(vis_w);
+            // Fixed cell-sized point width. Density controls HEIGHT and
+            // COLOR, not visibility — a cell either has paint (show it) or
+            // doesn't (skip). This removes the "small-density = sub-pixel
+            // invisible point" artifact that made continuous deposits look
+            // broken up.
+            out_widths.push_back(cell_sz);
         }
     }
 

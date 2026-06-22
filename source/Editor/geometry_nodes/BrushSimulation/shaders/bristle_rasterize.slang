@@ -13,11 +13,14 @@
 // sample index and step index from its global thread id, then deposits at
 // the interpolated position along prev→current.
 //
-// Each swept sub-position deposits the FULL per-sample mass (NOT divided by
-// sweep_steps), giving constant paint depth along the trajectory regardless
-// of brush speed. Total mass scales with stroke length (a longer stroke lays
-// down more paint), matching painter intuition. When sweep_steps==1 (or no
-// prev pos), this degenerates to the original single-point splat.
+// Each swept sub-position deposits a 1/sweep_steps fraction of the per-sample
+// mass, so total deposit per frame is proportional to CONTACT TIME (frame_dt),
+// not to stroke length. This keeps the fluid sim stable regardless of brush
+// speed: fast strokes inject the same total mass as slow ones, just spread
+// across more cells (each cell gets a thinner layer). The resulting thin
+// deposit is made visible by the render layer (low threshold + width boost),
+// NOT by inflating the injected mass. When sweep_steps==1 (or no prev pos),
+// this degenerates to the original single-point splat.
 //
 // Per-sample prev position is approximated as
 //   sample_pos_prev = sample_pos - (brush_pos - prev_brush_pos)
@@ -114,17 +117,16 @@ void main(uint3 tid : SV_DispatchThreadID)
         // adjacent sub-deposits sit at the midpoint of each step interval.
         float t = (float(step_idx) + 0.5) / float(cb.sweep_steps);
         float3 p = pos - brush_delta * (1.0 - t);  // prev (t=0) → current (t=1)
-        // Each swept sub-position deposits the FULL per-sample mass (NOT
-        // divided by sweep_steps). This gives a constant paint depth along
-        // the drag trajectory regardless of frame rate / brush speed:
-        //   - slow stroke (few steps): dense line of normal-depth cells
-        //   - fast stroke (many steps): dense line of normal-depth cells
-        // Both produce a continuous, visible band. Total mass scales with
-        // stroke length (not speed), which matches what a painter expects —
-        // a longer stroke lays down more paint. The paper's bristle model
-        // assumes slow motion so this sub-stepping is an extrapolation; the
-        // constant-depth choice is the most visually faithful one.
-        deposit_point(p, col, vel, base_deposit, 1.0);
+        // Per-step weight keeps total deposit mass proportional to CONTACT
+        // TIME, which is what physics demands: the brush spends frame_dt
+        // total in contact, distributed across sweep_steps sub-positions, so
+        // each sub-position carries frame_dt/sweep_steps of contact → deposit
+        // is divided by sweep_steps. This is what makes the fluid sim stable
+        // (total mass injected per frame is bounded, independent of speed).
+        // The visibility of the resulting thin deposit is handled in the
+        // render layer (threshold + width boost), NOT by inflating mass.
+        float per_step_weight = 1.0 / float(cb.sweep_steps);
+        deposit_point(p, col, vel, base_deposit, per_step_weight);
     } else {
         // No sweep (first frame or no motion): splat only at current point.
         // Only the step_idx==0 thread should fire to avoid double-deposit.
