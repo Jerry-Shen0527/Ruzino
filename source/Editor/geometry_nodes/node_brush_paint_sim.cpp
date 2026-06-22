@@ -1298,6 +1298,14 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     // the bristle deposit path alone. Set RUZINO_NO_PARTICLES=1 in env.
     static const bool DISABLE_PARTICLES =
         std::getenv("RUZINO_NO_PARTICLES") != nullptr;
+    // DIAGNOSTIC: zero out the brush ANGULAR velocity/accel so the
+    // centrifugal / Euler-angular / Coriolis terms (all proportional to ω)
+    // vanish, keeping only the rectilinear (linear-accel) non-inertial term.
+    // Used to confirm/deny that the spinning "横纹" artifact comes from the
+    // frame-differenced ω estimate being pathologically large on under-sampled
+    // or noisy strokes (dθ/dt can hit 135 rad/s = 124°/frame here).
+    static const bool DISABLE_ANGULAR_INERTIA =
+        std::getenv("RUZINO_NO_ANGULAR_INERTIA") != nullptr;
     // Brush rotates about the canvas normal (Z axis); the stroke is planar so
     // ω is dominantly z. x/y components stay 0 unless the canvas tilts.
     glm::vec3 brush_angular_vel(0.0f);
@@ -1354,6 +1362,15 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     // NOTE: prev_brush_pos is updated at the END of the sub-step loop below,
     // so that the loop can compute frame_disp = ||brush_pos_3d - prev||. Setting
     // it here (before the loop) would make every frame's delta zero.
+
+    // DIAGNOSTIC: optionally zero the angular non-inertial terms (see above).
+    if (DISABLE_ANGULAR_INERTIA) {
+        brush_angular_vel = glm::vec3(0.0f);
+        brush_angular_accel = glm::vec3(0.0f);
+        // Keep prev_angular_vel zeroed too so the next frame's Δω doesn't
+        // resurrect a spurious ω̇ from the stored nonzero value.
+        storage.prev_angular_vel = glm::vec3(0.0f);
+    }
 
     // === ACTIVE WINDOW ORIGIN (Wetbrush §4.2) ===
     // Compute the window origin, centered on the brush and clamped to the
@@ -1741,6 +1758,43 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
         if (!vertices.empty()) {
             storage.prev_brush_pos = brush_pos_3d;
             storage.has_prev_brush_pos = true;
+        }
+
+        // DIAGNOSTIC: read back bristle sample positions to see if bristles
+        // are flying off the brush (the "横纹 / orbiting" artifact). Reports
+        // the max perpendicular distance of any sample from the brush XY
+        // center — healthy bristles stay within ~brush_radius*1.5.
+        if (std::getenv("RUZINO_TRACE_BRISTLES") != nullptr) {
+            int n_samples = Nb * S;
+            auto rb = rc.create(nvrhi::BufferDesc{}
+                .setByteSize(n_samples * sizeof(float) * 4)
+                .setCpuAccess(nvrhi::CpuAccessMode::Read)
+                .setDebugName("sample_pos_rb"));
+            auto cmd = rc.create(CommandListDesc{});
+            cmd->open();
+            cmd->copyBuffer(rb, 0, storage.sample_pos, 0, n_samples * sizeof(float) * 4);
+            cmd->close();
+            device->executeCommandList(cmd);
+            device->waitForIdle();
+            void* mapped = device->mapBuffer(rb, nvrhi::CpuAccessMode::Read);
+            auto* f = static_cast<float*>(mapped);
+            float max_r = 0.0f, mean_r = 0.0f;
+            for (int i = 0; i < n_samples; ++i) {
+                float dx = f[i*4+0] - brush_pos_3d.x;
+                float dy = f[i*4+1] - brush_pos_3d.y;
+                float r = std::sqrt(dx*dx + dy*dy);
+                max_r = std::max(max_r, r);
+                mean_r += r;
+            }
+            mean_r /= n_samples;
+            device->unmapBuffer(rb);
+            rc.destroy(rb);
+            rc.destroy(cmd);
+            spdlog::info("brush_paint_sim bristle-trace: brush=({:.3f},{:.3f}) "
+                         "max_r={:.4f} mean_r={:.4f} (brush_radius={:.4f}, "
+                         "healthy max_r < {:.4f})",
+                         brush_pos_3d.x, brush_pos_3d.y, max_r, mean_r,
+                         brush_radius, brush_radius * 1.5f);
         }
     }
 

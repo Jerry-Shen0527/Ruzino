@@ -1,11 +1,22 @@
 // Bristle simulation — Wetbrush Section 4.1, Eq.2 (3D)
-// One thread per bristle. Each bristle is a chain of M vertices driven by
-// spring forces + ALL FOUR non-inertial frame accelerations in full 3D:
-//   1. Rectilinear (Euler):    v_hat^B  (linear accel of brush-frame origin)
-//   2. Centrifugal:            omega^B × (omega^B × x_i^B)
-//   3. Euler acceleration:     omega_dot^B × x_i^B
-//   4. Coriolis:               2 * omega^B × v_i^B
-// After dynamics: inextensible + bending constraints (PBD).
+// One thread per bristle. Each bristle is a chain of M vertices.
+//
+// Pipeline (faithful to the paper):
+//   1. Root vertex (0) is pinned to the brush footprint.
+//   2. Integrate Eq.2 in the brush frame. The external acceleration a_i
+//      contains ONLY true external forces (gravity + grid-liquid drag). It
+//      does NOT contain the structural/shear springs — the paper's bristles
+//      follow the brush via β_B → 0 (small inertia) + PBD constraints, NOT
+//      via spring forces fed into the Newtonian integration. Feeding spring
+//      forces into a_i made them amplify frame-boundary acceleration spikes
+//      (|a_B| up to 48) and fling bristles off the brush (the "横纹 /
+//      orbiting" artifact — bristle tips measured 20-150× brush radius away).
+//   3. Enforce PBD constraints (inextensible + bending + rest-shape restore +
+//      canvas collision) on positions and velocities.
+//
+// β_B ∈ [0, 0.1]: small → bristle follows brush tightly (position-based
+// adhesion). At β_B = 0 the inertial terms vanish and the vertex is carried
+// rigidly with the brush, only reshaped by PBD constraints.
 //
 // Storage: BristleV3 vertices packed as float4 (pos.xyz + pad, vel.xyz + pad)
 // in a RWStructuredBuffer<float4> to avoid the float3 stride hazard.
@@ -62,6 +73,11 @@ void main(uint3 tid : SV_DispatchThreadID)
     // Frame-origin linear acceleration a_B (Eq.2 rectilinear term).
     float3 a_B = float3(cb.brush_accel_x, cb.brush_accel_y, cb.brush_accel_z);
 
+    // Light damping on brush-frame relative velocity so any transient motion
+    // (from β_B > 0) decays smoothly. Acts on v_B (relative to brush), so a
+    // bristle rigidly carried by the brush (v_B ≈ 0) is not damped at all.
+    float damping_B = cb.damping;
+
     // Simulate vertices 1..M-1
     for (int vi = 1; vi < M; vi++) {
         int idx = base + vi;
@@ -75,35 +91,21 @@ void main(uint3 tid : SV_DispatchThreadID)
             pos = root_pos + down_dir * rest_len * float(vi);
         }
 
-        // Structural spring toward previous vertex (i ↔ i−1)
-        float3 diff = load_pos(idx - 1) - pos;
-        float dist = length(diff);
-        float3 structural_f = cb.spring_k * (dist - rest_len) * normalize(diff + 1e-8);
-
-        // Shear spring toward the previous vertex of the previous vertex
-        // (i ↔ i−2): resists shearing between adjacent segments.
-        float3 shear_f = float3(0,0,0);
-        if (vi >= 2) {
-            float3 d2 = load_pos(idx - 2) - pos;
-            float dist2 = length(d2);
-            float rest2 = rest_len * 2.0;
-            shear_f = cb.spring_k * 0.5 * (dist2 - rest2) * normalize(d2 + 1e-8);
-        }
-
         // === Non-inertial brush frame integration (Wetbrush Eq.2) ===
         // Convert into the brush frame, integrate there, convert back. With
         // β_B → 0 the vertex is carried rigidly by the brush (position-based
         // adhesion); β_B = 1 recovers canvas-frame Newton. R_B = I here
-        // (brush frame differs from canvas frame by translation only, since
-        // brush_rotation only rotates the footprint, not the integration
-        // frame), so R_B·a_i = a_i.
+        // (brush frame differs from canvas frame by translation only).
         float3 x_B = pos - brush_pos;     // brush-frame position
         float3 v_B = vel - brush_vel;     // brush-frame velocity
 
-        // External acceleration a_i in the CANVAS frame (springs + damping).
-        // Damping acts on the canvas-frame velocity so that bristles moving
-        // with the brush (v ≈ brush_vel) are not over-damped.
-        float3 external_a = structural_f + shear_f - cb.damping * vel;
+        // External acceleration a_i: per the paper, only TRUE external forces
+        // (gravity + grid-liquid drag). Structural/shear springs are NOT part
+        // of a_i — bristle shape is enforced by PBD constraints below. This
+        // prevents spring forces from being amplified by frame-boundary
+        // acceleration spikes and flinging bristles off the brush. We keep a
+        // small brush-frame velocity damping so β_B-induced transients settle.
+        float3 external_a = -damping_B * v_B;
 
         // === All four non-inertial frame accelerations (Eq.2, 3D) ===
         // 1. Rectilinear: linear acceleration of the frame origin (a_B).
@@ -122,7 +124,7 @@ void main(uint3 tid : SV_DispatchThreadID)
         float3 inertial_sum = euler_rect + centrifugal + euler_angular + coriolis;
         float3 accel_B = external_a - beta_B * inertial_sum;
 
-        // Integrate IN THE BRUSH FRAME.
+        // Integrate IN THE BRUSH FRAME (semi-implicit Euler).
         v_B += accel_B * dt;
         x_B += v_B * dt;
 
@@ -135,32 +137,46 @@ void main(uint3 tid : SV_DispatchThreadID)
     }
 
     // === Constraint enforcement (Position-Based Dynamics) ===
-    // Paper §4.1: "enforce inextensible and bending constraints on vertex
-    // positions AND velocities". We accumulate the per-vertex position
-    // correction Δp across all constraint iterations, then fold Δp/dt into
-    // the velocity (with stiffness-style damping) at the end — the standard
-    // PBD velocity update (Müller et al. 2007, Macklin & Müller 2013).
+    // Paper §4.1: "After explicit time integration of the forces, we enforce
+    // inextensible and bending constraints on vertex positions and velocities
+    // by the position-based method [Müller et al. 2007]."
+    //
+    // These constraints are what hold the bristle chain together and make it
+    // follow the brush. With β_B small the integration barely moves vertices,
+    // and these PBD passes (a) keep segment lengths at rest_len, (b) keep the
+    // chain straight (low bending), and (c) restore each vertex toward its
+    // rest pose relative to the brush root — so the bristle "remembers" its
+    // vertical rest shape and follows the brush.
     float3 delta_pos[64];
     [unroll] for (int zi = 0; zi < 64; zi++) delta_pos[zi] = float3(0,0,0);
 
     for (int iter = 0; iter < 3; iter++) {
-        // Inextensible constraint — enforce max segment length
+        // Inextensible constraint — enforce segment length = rest_len (both
+        // directions: pull apart if compressed, pull together if stretched).
+        // This is a bilateral distance constraint, not just a max-length cap.
         for (int vi = 1; vi < M; vi++) {
             int idx = base + vi;
             float3 diff = load_pos(idx) - load_pos(idx - 1);
-            float d = length(diff);
-            if (d > rest_len * 1.05) {
-                float3 correction = (d - rest_len) * normalize(diff + 1e-8) * 0.5;
+            float d = length(diff) + 1e-8;
+            float3 n = diff / d;
+            // Position-based distance projection: move both endpoints to make
+            // the segment exactly rest_len. Root (vi-1==0) is pinned, so only
+            // the non-root vertex moves in that case.
+            float3 correction = (d - rest_len) * n * 0.5;
+            if (vi == 1) {
+                // Root is pinned: apply the full correction to vertex vi.
+                store_pos(idx, load_pos(idx) - 2.0 * correction);
+                delta_pos[vi] -= 2.0 * correction;
+            } else {
                 store_pos(idx, load_pos(idx) - correction);
                 delta_pos[vi] -= correction;
-                if (vi > 1) {
-                    store_pos(idx - 1, load_pos(idx - 1) + correction);
-                    delta_pos[vi - 1] += correction;
-                }
+                store_pos(idx - 1, load_pos(idx - 1) + correction);
+                delta_pos[vi - 1] += correction;
             }
         }
 
-        // Bending constraint — project tip toward midpoint of neighbors
+        // Bending constraint — project each interior vertex toward the
+        // midpoint of its neighbors (straight-chain rest shape).
         float bend_stiffness = 0.3; // [0, 1]
         for (int vi = 2; vi < M - 1; vi++) {
             int idx = base + vi;
@@ -171,6 +187,22 @@ void main(uint3 tid : SV_DispatchThreadID)
             float3 mid = (p0 + p2) * 0.5;
             float3 correction = (mid - p1) * bend_stiffness;
             store_pos(idx, p1 + correction);
+            delta_pos[vi] += correction;
+        }
+
+        // Rest-shape restore — gently pull each vertex toward its vertical
+        // rest position relative to the brush root. This makes the bristle
+        // follow the brush (the chain "wants" to hang straight down from the
+        // root) and counteracts any drift from β_B > 0. Without this, the
+        // bilateral length + bending constraints alone cannot anchor the
+        // chain to the brush — they only preserve chain shape, not position.
+        float restore_stiffness = 0.5; // [0, 1]
+        for (int vi = 1; vi < M; vi++) {
+            int idx = base + vi;
+            float3 p = load_pos(idx);
+            float3 rest_p = root_pos + down_dir * rest_len * float(vi);
+            float3 correction = (rest_p - p) * restore_stiffness;
+            store_pos(idx, p + correction);
             delta_pos[vi] += correction;
         }
 
