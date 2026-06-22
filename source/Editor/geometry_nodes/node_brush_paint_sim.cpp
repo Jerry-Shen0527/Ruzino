@@ -1478,11 +1478,12 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
             float sweep_len = glm::length(delta);
             float step = cell_sz * 0.5f;
             sweep_steps = std::max(1, static_cast<int>(std::ceil(sweep_len / step)));
-            // Safety cap to bound dispatch size on pathological teleport
-            // (e.g. brush jumping across the whole canvas). At cell_sz≈0.005
-            // and a 1024-step cap, this covers ~2.5 canvas units of motion
-            // per frame — generous for any real stroke.
-            const int SWEEP_STEP_CAP = 1024;
+            // Safety cap to bound dispatch size on pathological teleport.
+            // With per-step weight 1/sqrt(N), total mass grows as sqrt(N)*base,
+            // so even N=4096 injects only ~64x base mass — manageable with the
+            // density clamp in bristle_merge. This covers ~20 canvas units of
+            // motion per frame, more than any real stroke.
+            const int SWEEP_STEP_CAP = 4096;
             if (sweep_steps > SWEEP_STEP_CAP) sweep_steps = SWEEP_STEP_CAP;
         }
         bc.sweep_steps = sweep_steps;

@@ -117,15 +117,19 @@ void main(uint3 tid : SV_DispatchThreadID)
         // adjacent sub-deposits sit at the midpoint of each step interval.
         float t = (float(step_idx) + 0.5) / float(cb.sweep_steps);
         float3 p = pos - brush_delta * (1.0 - t);  // prev (t=0) → current (t=1)
-        // Per-step weight keeps total deposit mass proportional to CONTACT
-        // TIME, which is what physics demands: the brush spends frame_dt
-        // total in contact, distributed across sweep_steps sub-positions, so
-        // each sub-position carries frame_dt/sweep_steps of contact → deposit
-        // is divided by sweep_steps. This is what makes the fluid sim stable
-        // (total mass injected per frame is bounded, independent of speed).
-        // The visibility of the resulting thin deposit is handled in the
-        // render layer (threshold + width boost), NOT by inflating mass.
-        float per_step_weight = 1.0 / float(cb.sweep_steps);
+        // Each swept sub-position deposits a fixed fraction of the per-sample
+        // mass. NOT 1/N: that made fast strokes (N=1000+) deposit ~0.0001 per
+        // cell, below the render threshold — invisible. NOT full mass either:
+        // that exploded the fluid sim (millions).
+        //
+        // 1/sqrt(N) is the compromise: scales down for long sweeps (bounded
+        // total mass, sim-stable) but not so far that cells go invisible.
+        //   N=5    → 0.45 per cell (clearly visible, like a slow stroke)
+        //   N=100  → 0.10 per cell (visible, a bit lighter)
+        //   N=1000 → 0.032 per cell (faint but present, not zero)
+        // The merge shader also clamps accumulated density to prevent the
+        // explosion that full-mass deposit caused.
+        float per_step_weight = 1.0 / sqrt(float(cb.sweep_steps));
         deposit_point(p, col, vel, base_deposit, per_step_weight);
     } else {
         // No sweep (first frame or no motion): splat only at current point.

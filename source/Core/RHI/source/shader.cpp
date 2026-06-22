@@ -72,10 +72,15 @@ class CustomBlob : public ISlangBlob {
 };
 
 std::string ShaderFactory::shader_search_path = "";
+// During brush-sim debugging, force every shader to recompile each run so
+// edits always take effect (the disk-cache staleness check is currently
+// broken: shader_search_path is never set, so it can never locate the
+// source files to compare mtimes and serves stale binaries forever).
+// Flip this back to the #ifdef form once the staleness check is fixed.
 #ifdef _DEBUG
 bool ShaderFactory::cache_enabled = false;
 #else
-bool ShaderFactory::cache_enabled = true;
+bool ShaderFactory::cache_enabled = false;  // was: true
 #endif
 
 ProgramDesc Program::get_desc() const

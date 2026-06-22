@@ -49,9 +49,14 @@ void main(uint3 tid : SV_DispatchThreadID)
     // Brightness-preserving color mix (Algorithm 2)
     float3 mixed = color_mix(new_ryb, old_ryb, new_density, old_density);
 
-    // Update fields
+    // Update fields. Clamp accumulated density to prevent the numerical
+    // explosion seen with large sweep deposit (the fluid advection can
+    // concentrate mass into a few cells, amplifying it exponentially). A
+    // density cap of ~3.0 is well above any realistic paint layer but stops
+    // the feedback loop. This is also where Wetbrush's own saturation term
+    // would kick in (§4.1 density constraint), approximated here as a hard cap.
     float inv_bd = 1.0 / (bd + 1e-8);
-    density[idx] += bd * cb.ink_amount;
+    density[idx] = min(density[idx] + bd * cb.ink_amount, 3.0);
     vel_x[idx] += bvx * inv_bd;
     vel_y[idx] += bvy * inv_bd;
     vel_z[idx] += bvz * inv_bd;
