@@ -2642,7 +2642,8 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
     auto ccy = readback_2d(storage.canvas_color_y);
     auto ccb = readback_2d(storage.canvas_color_b);
 
-    constexpr float threshold = 0.001f;
+    constexpr float threshold = 0.0005f;  // lowered from 0.001 — sweep deposits
+    // are smaller per-cell, so the old threshold hid legitimate paint.
     constexpr float rgb_white_cutoff = 0.9f;
     // Canvas is 2D (height field). One point per painted cell, at the canvas
     // surface Z offset by the accumulated density (paint thickness). step_xy=1
@@ -2678,13 +2679,48 @@ NODE_EXECUTION_FUNCTION(brush_paint_sim)
                 gy + storage.grid_center.y,
                 gz));
             out_colors.push_back(rgb);
-            out_widths.push_back(cell_sz * std::min(d, 1.0f));
+            // Point width: boost low-density cells so they remain visible.
+            // sqrt(density*4) maps density 0.06 → 0.5 (half a cell, visible),
+            // density 0.25 → 1.0 (full cell). Without this boost, a sweep-
+            // deposited cell with density 0.05 renders at 5% of a cell width
+            // — sub-pixel, invisible — even though the paint is actually
+            // there. This makes the debug visualization faithful to what's
+            // simulated, so "断断续续" can be attributed to the right cause.
+            float vis_w = cell_sz * std::min(std::sqrt(d * 4.0f), 1.0f);
+            out_widths.push_back(vis_w);
         }
     }
 
     pts->set_vertices(out_pts);
     pts->set_display_color(out_colors);
     pts->set_width(out_widths);
+
+    // Diagnostic: canvas density distribution. Helps tell whether "断断续续"
+    // is a deposit problem (density actually zero in the gaps) or a rendering
+    // problem (density present but too small to render visibly).
+    {
+        float d_min = 1e30f, d_max = 0.0f, d_sum = 0.0f;
+        int d_count = 0;
+        int d_above_thresh = 0;     // cells that pass the render threshold
+        int d_above_quarter = 0;    // cells with density > 0.25 (clearly visible)
+        for (int i = 0; i < storage.grid_res * storage.grid_res; ++i) {
+            float d = cdensity[i];
+            if (d <= 0.0f) continue;
+            d_count++;
+            d_min = std::min(d_min, d);
+            d_max = std::max(d_max, d);
+            d_sum += d;
+            if (d > threshold) d_above_thresh++;
+            if (d > 0.25f) d_above_quarter++;
+        }
+        spdlog::info(
+            "brush_paint_sim canvas_density: cells_with_paint={}, "
+            "above_render_thresh={}, above_0.25={}, "
+            "density min={:.5f} max={:.4f} mean={:.4f}",
+            d_count, d_above_thresh, d_above_quarter,
+            d_count > 0 ? d_min : 0.0f, d_max,
+            d_count > 0 ? d_sum / d_count : 0.0f);
+    }
 
     spdlog::info("brush_paint_sim: {} new verts, {} substeps, {} particles",
                  new_count,
