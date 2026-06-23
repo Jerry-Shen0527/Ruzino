@@ -772,8 +772,13 @@ bool UsdviewEngine::MousePosUpdate(double xpos, double ypos)
 {
     free_camera_->MousePosUpdate(xpos, ypos);
 
-    // Brush mode: update per-frame brush state during drag
-    if (brush_mode_ && is_drawing_ && is_hovered) {
+    // Brush mode: sample the brush position during a drag (pen down). We do
+    // NOT gate on is_hovered here — ImGui::IsItemHovered() returns false
+    // while the mouse button is held down (ImGui treats it as active/drag,
+    // not hover), so requiring hover would suppress every point after the
+    // initial mouse-down point. is_drawing_ (set on left-press, cleared on
+    // left-release) is the correct pen-down guard.
+    if (brush_mode_ && is_drawing_) {
         auto mouse_pos_rel = ImGui::GetMousePos() - cached_viewport_pos_;
         glm::vec3 world_pos = pick_world_pos(
             mouse_pos_rel.x, mouse_pos_rel.y);

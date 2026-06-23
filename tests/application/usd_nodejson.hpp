@@ -31,10 +31,6 @@ struct UsdBasedNodeWidgetSettings : public Ruzino::NodeWidgetSettings {
 
 inline void UsdBasedNodeStorage::save(const std::string& data)
 {
-    // Workaround: I also want it to write to a file.
-    std::ofstream file("scratch_design.json");
-    file << data;
-    file.close();
     stage_->save_string_to_usd(path_, data);
 }
 
