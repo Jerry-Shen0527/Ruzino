@@ -136,14 +136,26 @@ class HydraRenderer {
             .get();  // Return raw pointer for cross-module compatibility
     }
 
-    // Render one frame synchronously (waits for GPU idle)
+    // Render one frame synchronously (waits for GPU idle). Renders the stage
+    // at time 0. See render(double) to render an animation frame at a specific
+    // time code.
     void render()
+    {
+        render(0.0);
+    }
+
+    // Render one frame synchronously at a given USD time code. This lets the
+    // same in-process HydraRenderer render an animation sequence frame by
+    // frame (used by render_gridbox.py for the box-translate sequence) without
+    // forking rz_render.exe per frame. The time code selects which authored
+    // time sample of the animated primvars (e.g. points) Hydra evaluates.
+    void render(double time_code)
     {
         pxr::UsdImagingGLRenderParams params;
         params.enableLighting = true;
         params.enableSceneMaterials = true;
         params.showRender = true;
-        params.frame = pxr::UsdTimeCode(0);
+        params.frame = pxr::UsdTimeCode(time_code);
         params.drawMode = pxr::UsdImagingGLDrawMode::DRAW_SHADED_SMOOTH;
         params.colorCorrectionMode = pxr::HdxColorCorrectionTokens->disabled;
         params.clearColor = pxr::GfVec4f(0.2f, 0.2f, 0.2f, 1.0f);
@@ -348,7 +360,16 @@ NB_MODULE(hd_RUZINO_py, m)
             &HydraRenderer::get_node_system,
             nb::rv_policy::reference,
             "Get the NodeSystem from the Hydra render delegate")
-        .def("render", &HydraRenderer::render, "Render one frame")
+        .def(
+            "render",
+            static_cast<void (HydraRenderer::*)()>(&HydraRenderer::render),
+            "Render one frame at time 0")
+        .def(
+            "render",
+            static_cast<void (HydraRenderer::*)(double)>(
+                &HydraRenderer::render),
+            nb::arg("time_code"),
+            "Render one frame at a given USD time code (for animation)")
         .def(
             "stop",
             &HydraRenderer::stop,

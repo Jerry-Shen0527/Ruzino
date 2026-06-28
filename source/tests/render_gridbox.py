@@ -40,39 +40,16 @@ os.environ["PATH"] = str(BIN) + os.pathsep + os.environ.get("PATH", "")
 # PATH alone is not enough once any AddDllDirectory() has been called.
 os.add_dll_directory(str(BIN))
 
-# 1. Build + serialize the path-tracing render graph from Python.
-from ruzino_render_graph import RuzinoRenderGraph
-
-g = RuzinoRenderGraph("GridBoxRender")
-g.loadConfiguration(str(BIN / "render_nodes.json"))
-# Build the render graph to match the proven-good test_hydra_renderer.py
-# _build_render_graph: rng_texture + rng_buffer feed the path tracer's random
-# seeds, and ray_gen feeds both Pixel Target and Rays. Without rng_buffer /
-# the Pixel Target link, the path tracer has no random numbers and produces
-# a black image.
-rng = g.createNode("rng_texture", name="RNG")
-ray_gen = g.createNode("node_render_ray_generation", name="RayGen")
-path_trace = g.createNode("path_tracing", name="PathTracer")
-accumulate = g.createNode("accumulate", name="Accumulate")
-rng_buffer = g.createNode("rng_buffer", name="RNGBuffer")
-present = g.createNode("present_color", name="Present")
-g.addEdge(rng, "Random Number", ray_gen, "random seeds")
-g.addEdge(ray_gen, "Pixel Target", path_trace, "Pixel Target")
-g.addEdge(ray_gen, "Rays", path_trace, "Rays")
-g.addEdge(rng_buffer, "Random Number", path_trace, "Random Seeds")
-g.addEdge(path_trace, "Output", accumulate, "Texture")
-g.addEdge(accumulate, "Accumulated", present, "Color")
-g.markOutput(present, "Color")
-# Required parameters (from test_hydra_renderer._build_render_graph).
-g.setSocketDefaults({
-    (ray_gen, "Aperture"): 0.0,
-    (ray_gen, "Focus Distance"): 2.0,
-    (ray_gen, "Scatter Rays"): False,
-    (accumulate, "Max Samples"): 8,
-})
-graph_json = BIN / "gridbox_render_graph.json"
-graph_json.write_text(g.serialize(), encoding="utf-8")
-print(f"[render] graph: {len(g.nodes)} nodes, {len(g.links)} links")
+# Locate the render-node config the HydraRenderer's node system loads. Mirrors
+# test_hydra_renderer._locate_config.
+def _locate_render_cfg():
+    primary = BIN / "render_nodes.json"
+    if primary.exists():
+        return primary
+    fallback = ROOT / "Assets" / "Hd_RUZINO_RendererPlugin" / "render_nodes_save.json"
+    if fallback.exists():
+        return fallback
+    sys.exit("render node config not found (render_nodes.json)")
 
 # 2. Render scene: reference the sim output, add camera + light.
 #
@@ -112,48 +89,50 @@ if scene.exists():
     scene.unlink()
 stage = Usd.Stage.CreateNew(str(scene))
 from pxr import Gf, Vt, UsdShade
+import numpy as np
 
-# Bake the composed sim geometry into a self-contained mesh. Hd_RUZINO_Mesh
-# triangulates quad faces itself via HdMeshUtil::ComputeTriangleIndices, so we
-# copy the topology verbatim (no manual fan-triangulation). Sampling frame 0
-# (rz_render renders time=0).
+# Bake the composed sim geometry into a self-contained mesh, preserving the
+# ANIMATION. The sim authored the box's `points` as 60 time samples (box
+# translates X: 0.1 -> 6.0 over 60 frames). write_geometry_as_over_spec
+# (node_write_usd) now writes CORRECT flat per-face normals (faceVarying) for
+# every frame right at the source, so we just copy points + normals verbatim
+# from the composed stage -- no per-frame recompute here. Hd_RUZINO_Mesh
+# triangulates quad faces itself via HdMeshUtil::ComputeTriangleIndices.
 _composed_stage = Usd.Stage.Open(str(composed))
 _src = UsdGeom.Mesh(_composed_stage.GetPrimAtPath("/Grid"))
-_t0 = Usd.TimeCode(0.0)
-_src_pts = _src.GetPointsAttr().Get(_t0)
-_src_fvc = _src.GetFaceVertexCountsAttr().Get(_t0)
-_src_fvi = _src.GetFaceVertexIndicesAttr().Get(_t0)
+_src_pts_attr = _src.GetPointsAttr()
+_src_nrm_attr = _src.GetNormalsAttr()
+_frame_times = _src_pts_attr.GetTimeSamples()
+if not _frame_times:
+    sys.exit("composed /Grid points has no time samples -- run test_sim_gridbox")
+print(f"[render] anim: {len(_frame_times)} time samples "
+      f"(t={_frame_times[0]:.4f}..{_frame_times[-1]:.4f})")
 
-# Author FLAT per-face normals (faceVarying interpolation). The source grid is
-# a faceted box (48 quad faces, 27 shared verts). Without authored normals
-# Hd_RUZINO_Mesh computes SMOOTH normals by averaging adjacent face normals at
-# each shared vertex, which blends to a near-tangential direction along the
-# sharp edges. Those blended grazing normals then drive the MaterialX BSDF at
-# grazing angles and sporadically evaluate to NaN/Inf, which the path tracer
-# flags with its red debug color (path_tracing.slang, the throughput-isValid
-# check). Giving every vertex of a face that face's own geometric normal --
-# so normalW == faceNormalW everywhere -- removes the blended grazing normals
-# at the edges and is the physically correct shading for a hard-edged box.
-_flat_nrm = []
-_idx = 0
-for _count in _src_fvc:
-    _fv = list(_src_fvi[_idx:_idx + _count])
-    _idx += _count
-    _p0 = Gf.Vec3f(_src_pts[_fv[0]])
-    _p1 = Gf.Vec3f(_src_pts[_fv[1]])
-    _p2 = Gf.Vec3f(_src_pts[_fv[2]])
-    _n = (_p1 - _p0).GetCross(_p2 - _p0)
-    _n.Normalize()
-    _flat_nrm.extend([_n] * _count)  # one normal per face-vertex
+# Topology is constant; sample it once at t0.
+_src_fvc = _src.GetFaceVertexCountsAttr().Get(_frame_times[0])
+_src_fvi = _src.GetFaceVertexIndicesAttr().Get(_frame_times[0])
 
 mesh = UsdGeom.Mesh.Define(stage, "/Grid")
-mesh.CreatePointsAttr().Set(_src_pts)
 mesh.CreateFaceVertexCountsAttr().Set(_src_fvc)
 mesh.CreateFaceVertexIndicesAttr().Set(_src_fvi)
 mesh.CreateSubdivisionSchemeAttr().Set(UsdGeom.Tokens.none)
-_nrm_attr = mesh.CreateNormalsAttr()
-_nrm_attr.Set(_flat_nrm)
+# Sanity-check: the source normals must be faceVarying (authored by
+# write_geometry_as_over_spec). If they aren't, the renderer falls back to
+# smooth shading and the red-NaN artifacts return -- fail loudly here.
+_interp = _src.GetNormalsInterpolation()
+if _interp != UsdGeom.Tokens.faceVarying:
+    sys.exit(f"source normals interpolation is '{_interp}', expected "
+             f"'faceVarying' -- rebuild the sim so write_usd authors flat normals")
 mesh.SetNormalsInterpolation(UsdGeom.Tokens.faceVarying)
+# Author points AND the source's flat normals at every animated time sample.
+for _t in _frame_times:
+    mesh.GetPointsAttr().Set(_src_pts_attr.Get(_t), _t)
+    mesh.GetNormalsAttr().Set(_src_nrm_attr.Get(_t), _t)
+# Stage time range so Hydra knows the full anim span.
+stage.SetStartTimeCode(_frame_times[0])
+stage.SetEndTimeCode(_frame_times[-1])
+stage.SetTimeCodesPerSecond(
+    _composed_stage.GetTimeCodesPerSecond() or 60.0)
 grid = mesh.GetPrim()
 
 # The path tracer returns black for geometry without a material (no BRDF to
@@ -175,20 +154,20 @@ cam.GetFocalLengthAttr().Set(50.0)
 cam.GetHorizontalApertureAttr().Set(36.0)
 cam.GetVerticalApertureAttr().Set(20.25)
 cam.GetClippingRangeAttr().Set((0.1, 100.0))
-# rz_render renders time=0 (frame 0), where the box sits near the origin
-# (center ~0.1,0,0). A 3/4 view shows three faces (+X, +Y, +Z) at once, which
-# reads as an unambiguous 3D box rather than a flat square. We build a
-# world-space LookAt (eye -> target) and set it as the camera transform.
-# USD cameras look down their local -Z with +Y up, so the world transform's
-# rows are (right, up, -forward, translation).
-import numpy as _np
-_eye = _np.array([3.0, 2.5, 3.5])
-_target = _np.array([0.0, 0.0, 0.0])
-_up = _np.array([0.0, 1.0, 0.0])
+# The box translates along X from 0.1 to 6.0, so frame the FULL travel path:
+# aim the camera at the path midpoint (X~3) and pull back so both ends are
+# in view. A 3/4 view shows three faces (+X, +Y, +Z) at once, which reads as
+# an unambiguous 3D box rather than a flat square. We build a world-space
+# LookAt (eye -> target) and set it as the camera transform. USD cameras look
+# down their local -Z with +Y up, so the world transform's rows are
+# (right, up, -forward, translation).
+_eye = np.array([3.0, 4.5, 7.5])      # above the path midpoint, pulled back
+_target = np.array([3.0, 0.0, 0.0])   # box path midpoint (X: 0.1 -> 6.0)
+_up = np.array([0.0, 1.0, 0.0])
 _fwd = _target - _eye
-_fwd = _fwd / _np.linalg.norm(_fwd)
-_right = _np.cross(_fwd, _up); _right = _right / _np.linalg.norm(_right)
-_up2 = _np.cross(_right, _fwd)
+_fwd = _fwd / np.linalg.norm(_fwd)
+_right = np.cross(_fwd, _up); _right = _right / np.linalg.norm(_right)
+_up2 = np.cross(_right, _fwd)
 m = Gf.Matrix4d()
 m.SetIdentity()
 m.SetRow(0, Gf.Vec4d(*_right.tolist(),  0.0))
@@ -219,16 +198,76 @@ sun = UsdLux.DistantLight.Get(stage, "/Sun")
 sun.CreateIntensityAttr().Set(3.0)
 UsdGeom.Xformable(sun).AddTransformOp().Set(light_xf)
 stage.GetRootLayer().Save()
-print(f"[render] scene: {scene.name}")
+print(f"[render] scene: {scene.name} ({len(_frame_times)} animated frames)")
 
-# 3. Invoke the renderer.
-out_png = BIN / "gridbox_render.png"
-cmd = [str(BIN / "rz_render.exe"),
-       "-u", str(scene), "-j", str(graph_json), "-o", str(out_png),
-       "-w", "800", "-h", "600", "-s", "32", "-c", "/Camera"]
-print("[render] running rz_render.exe")
-r = subprocess.run(cmd, cwd=str(BIN), capture_output=True, text=True)
-print(r.stdout[-1500:])
-if r.returncode != 0:
-    print("STDERR:", r.stderr[-1500:])
-print(f"[render] exit {r.returncode}, {out_png.name} exists: {out_png.exists()}")
+# 3. Render the animation IN-PROCESS with the HydraRenderer. We do NOT shell
+# out to rz_render.exe: the stage is loaded once, the render graph is built
+# once, and each frame is rendered by passing a different time code to
+# HydraRenderer.render(time_code). Hydra then incrementally updates only the
+# animated primvars (points/normals) rather than rebuilding the scene, and the
+# render delegate / GPU pipeline persist across frames.
+import hd_RUZINO_py as renderer
+
+WIDTH, HEIGHT, SPP = 640, 480, 32
+out_dir = BIN / "box_sequence"
+out_dir.mkdir(exist_ok=True)
+# Clear any previous sequence so a partial run can't mix frames.
+for _old in out_dir.glob("frame_*.png"):
+    _old.unlink()
+
+hydra = renderer.HydraRenderer(str(scene), WIDTH, HEIGHT)
+
+# Build the same path-tracing render graph the subprocess build used, but
+# in-process via the HydraRenderer's node system (matches
+# test_hydra_renderer._build_render_graph).
+import nodes_core_py as core
+node_system = hydra.get_node_system()
+node_system.load_configuration(str(_locate_render_cfg()))
+node_system.init()
+tree = node_system.get_node_tree()
+executor = node_system.get_node_tree_executor()
+rng = tree.add_node("rng_texture"); rng.ui_name = "RNG"
+ray_gen = tree.add_node("node_render_ray_generation"); ray_gen.ui_name = "RayGen"
+path_trace = tree.add_node("path_tracing"); path_trace.ui_name = "PathTracer"
+accumulate = tree.add_node("accumulate"); accumulate.ui_name = "Accumulate"
+rng_buffer = tree.add_node("rng_buffer"); rng_buffer.ui_name = "RNGBuffer"
+present = tree.add_node("present_color"); present.ui_name = "Present"
+tree.add_link(rng.get_output_socket("Random Number"), ray_gen.get_input_socket("random seeds"))
+tree.add_link(ray_gen.get_output_socket("Pixel Target"), path_trace.get_input_socket("Pixel Target"))
+tree.add_link(ray_gen.get_output_socket("Rays"), path_trace.get_input_socket("Rays"))
+tree.add_link(rng_buffer.get_output_socket("Random Number"), path_trace.get_input_socket("Random Seeds"))
+tree.add_link(path_trace.get_output_socket("Output"), accumulate.get_input_socket("Texture"))
+tree.add_link(accumulate.get_output_socket("Accumulated"), present.get_input_socket("Color"))
+executor.reset_allocator()
+executor.prepare_tree(tree, present)
+# Required parameters (from test_hydra_renderer._build_render_graph).
+for (node, socket_name), value in {
+    (ray_gen, "Aperture"): 0.0,
+    (ray_gen, "Focus Distance"): 2.0,
+    (ray_gen, "Scatter Rays"): False,
+    (accumulate, "Max Samples"): SPP,
+}.items():
+    socket = node.get_input_socket(socket_name)
+    executor.sync_node_from_external_storage(socket, core.to_meta_any(value))
+
+from PIL import Image
+
+print(f"[render] rendering {len(_frame_times)} frames "
+      f"({WIDTH}x{HEIGHT}, {SPP} spp) in-process -> {out_dir.name}/")
+for i, t in enumerate(_frame_times):
+    for _ in range(SPP):           # accumulate SPP samples for this frame
+        hydra.render(float(t))
+    tex = hydra.get_output_texture()
+    if not tex or len(tex) != WIDTH * HEIGHT * 4:
+        print(f"  [warn] frame {i} (t={t:.4f}): bad texture len {len(tex) if tex else 0}")
+        continue
+    img = np.asarray(tex, dtype=np.float32).reshape(HEIGHT, WIDTH, 4)
+    rgb = np.clip(img[:, :, :3], 0.0, 1.0)
+    rgb = (rgb * 255).astype(np.uint8)
+    rgb = np.flipud(rgb)            # USD/Hydra is bottom-row-first
+    Image.fromarray(rgb).save(out_dir / f"frame_{i:04d}.png")
+    print(f"  frame {i:3d}/{len(_frame_times)-1} (t={t:.4f}) saved "
+          f"lit={float(rgb.max(axis=2).mean()/255)*100:4.1f}%")
+
+hydra.stop()
+print(f"[render] done: {len(list(out_dir.glob('frame_*.png')))} frames in {out_dir}")
