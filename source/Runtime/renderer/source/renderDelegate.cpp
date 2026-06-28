@@ -167,8 +167,7 @@ void Hd_RUZINO_RenderDelegate::_Initialize()
                 auto abs_path = std::filesystem::absolute(path).string();
                 node_system->load_configuration(abs_path);
                 config_loaded = true;
-                spdlog::info(
-                    "Loaded render_nodes.json from: {}", abs_path);
+                spdlog::info("Loaded render_nodes.json from: {}", abs_path);
                 break;
             }
             catch (const std::exception& e) {
@@ -322,7 +321,6 @@ HdRprim* Hd_RUZINO_RenderDelegate::CreateRprim(
 {
     if (typeId == HdPrimTypeTokens->mesh) {
         auto mesh = new Hd_RUZINO_Mesh(rprimId);
-        // spdlog::info(("Create Rprim id=" + rprimId.GetString()).c_str());
 
         meshes.push_back(mesh);
         return mesh;

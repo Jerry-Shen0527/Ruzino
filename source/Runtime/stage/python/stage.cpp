@@ -338,7 +338,41 @@ NB_MODULE(stage_py, m)
                 return stage.traverse_stage(max_depth);
             },
             nb::arg("max_depth") = -1,
-            "Traverse stage and return prim information for debugging");
+            "Traverse stage and return prim information for debugging")
+
+        // ---- Simulation driving (headless tick loop) ----
+        // Advance the stage by one simulation step: runs the animation system
+        // and, for every prim with `Animatable=true`, cooks its modifier node
+        // graph once. is_simulating flips after the first tick. See
+        // docs/simulation_mechanism.md.
+        .def(
+            "tick",
+            &Stage::tick,
+            nb::arg("delta_time"),
+            "Advance simulation by one tick (delta_time in seconds).")
+        .def(
+            "finish_tick",
+            &Stage::finish_tick,
+            "Finalize a tick (currently a no-op, kept for symmetry with C++).")
+        // Time must be kept >= accumulated simulation time, or
+        // WithDynamicLogicPrim::should_simulate() short-circuits execution.
+        .def(
+            "set_render_time",
+            [](Stage& stage, float time) {
+                stage.set_render_time(pxr::UsdTimeCode(time));
+            },
+            nb::arg("time"),
+            "Set render time (seconds). Must stay ahead of accumulated "
+            "simulation time so should_simulate() stays true.")
+        .def(
+            "get_render_time",
+            [](Stage& stage) { return stage.get_render_time().GetValue(); },
+            "Get current render time in seconds.")
+        .def(
+            "should_simulate",
+            &Stage::should_simulate,
+            "Whether the stage still wants more ticks (render_time >= "
+            "current_time).");
 
     // USD Stage interoperability functions
 

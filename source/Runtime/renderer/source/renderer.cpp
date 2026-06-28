@@ -1,14 +1,16 @@
 #include "renderer.h"
 
+#include <spdlog/spdlog.h>
+
 #include "camera.h"
 #include "material/material.h"
 #include "node_exec_eager_render.hpp"
+#include "nodes/core/api.hpp"
 #include "nodes/system/node_system.hpp"
 #include "pxr/imaging/hd/renderBuffer.h"
 #include "pxr/imaging/hd/tokens.h"
 #include "renderBuffer.h"
 #include "renderParam.h"
-#include <spdlog/spdlog.h>
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
@@ -199,13 +201,44 @@ void Hd_RUZINO_Renderer::Render(HdRenderThread* renderThread)
                 ->sync_node_to_external_storage(output_socket, data);
 
             if (!data) {
-                spdlog::warn("Present node '{}' input socket has no data", node->ui_name);
+                spdlog::warn(
+                    "Present node '{}' input socket has no data",
+                    node->ui_name);
                 continue;  // Skip nodes with no data
             }
 
-            nvrhi::TextureHandle texture = data.cast<nvrhi::TextureHandle>();
+            // The present node's input holds an nvrhi::TextureHandle
+            // (nvrhi::RefCountPtr<nvrhi::ITexture>) produced by upstream render
+            // nodes. entt's meta_any::cast<T>() / try_cast route through the
+            // meta node table, which is resolved per-DLL; when the value was
+            // produced by a different render-node DLL (e.g. path_tracing.dll),
+            // that lookup fails even though data holds a valid texture of the
+            // exact concrete type. The present node's single input is declared
+            // as TextureHandle, so extract it directly via data() after
+            // confirming the held type's RTTI name matches
+            // RefCountPtr<ITexture>.
+            nvrhi::TextureHandle texture;
+            bool extracted = false;
+            if (auto dt = data.type()) {
+                std::string tname(dt.info().name());
+                if (tname.find("RefCountPtr") != std::string::npos &&
+                    tname.find("ITexture") != std::string::npos) {
+                    texture =
+                        *static_cast<const nvrhi::TextureHandle*>(data.data());
+                    extracted = true;
+                }
+            }
+            if (!extracted) {
+                spdlog::warn(
+                    "Present node '{}' data is not a TextureHandle",
+                    node->ui_name);
+                continue;  // Skip invalid textures
+            }
             if (!texture) {
-                spdlog::warn("Present node '{}' data is not a TextureHandle", node->ui_name);
+                spdlog::warn(
+                    "Present node '{}' extracted texture is null (upstream "
+                    "render produced empty output)",
+                    node->ui_name);
                 continue;  // Skip invalid textures
             }
 

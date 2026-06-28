@@ -12,6 +12,25 @@
 #if RUZINO_WITH_OPENUSD
 #include "pxr/imaging/garch/glApi.h"
 #endif
+
+#ifdef _WIN32
+#include <gl/GL.h>
+#include <windows.h>
+// WGL_ARB_create_context entry point + attribute tokens (defined locally so we
+// don't depend on GL/wglext.h, which isn't in every Windows SDK).
+#ifndef WGL_CONTEXT_MAJOR_VERSION_ARB
+#define WGL_CONTEXT_MAJOR_VERSION_ARB 0x2091
+#endif
+#ifndef WGL_CONTEXT_MINOR_VERSION_ARB
+#define WGL_CONTEXT_MINOR_VERSION_ARB 0x2092
+#endif
+#ifndef WGL_CONTEXT_PROFILE_MASK_ARB
+#define WGL_CONTEXT_PROFILE_MASK_ARB 0x9126
+#endif
+#ifndef WGL_CONTEXT_CORE_PROFILE_BIT_ARB
+#define WGL_CONTEXT_CORE_PROFILE_BIT_ARB 0x00000001
+#endif
+#endif
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 #include <iostream>
 
@@ -114,7 +133,8 @@ nvrhi::IDevice* get_device()
     if (!device_manager) {
         init();
         // Compensate for the init()'s reference_count++ so that
-        // the auto-init doesn't leak a reference that shutdown() won't clean up.
+        // the auto-init doesn't leak a reference that shutdown() won't clean
+        // up.
         reference_count--;
     }
     return device_manager->GetDevice();
@@ -303,6 +323,121 @@ nvrhi::TextureHandle load_ogl_texture(
 DeviceManager* internal::get_device_manager()
 {
     return device_manager.get();
+}
+
+bool ensure_gl_driver_loaded()
+{
+#if RUZINO_WITH_OPENUSD
+    // Hydra's HgiGL requires a current OpenGL 4.5 context. The naive headless
+    // approach — wglCreateContext on the console window — only yields
+    // Microsoft's software GL 1.1, which HgiGL rejects ("minimum OpenGL
+    // requirements not met").
+    //
+    // The robust fix (the same one the interactive RuzinoEngine path uses) is:
+    //   1. create a dedicated (non-console) window so the GPU driver
+    //      participates in pixel-format selection,
+    //   2. bootstrap a legacy context to obtain wglCreateContextAttribsARB,
+    //   3. create a real 4.5 core context (falling back 4.4..4.0) and make it
+    //      current on this thread.
+    // The window/context live for the process so the context stays current for
+    // downstream HgiGL/UsdImagingGL. Idempotent.
+    static bool initialized = false;
+    static bool ok = false;
+    if (initialized)
+        return ok;
+    initialized = true;
+
+#ifdef _WIN32
+    WNDCLASSA wc = {};
+    wc.lpfnWndProc = DefWindowProcA;
+    wc.hInstance = GetModuleHandle(nullptr);
+    wc.lpszClassName = "RuzinoGLContext";
+    RegisterClassA(&wc);
+
+    HWND hwnd = CreateWindowExA(
+        0,
+        "RuzinoGLContext",
+        "",
+        0,
+        0,
+        0,
+        1,
+        1,
+        nullptr,
+        nullptr,
+        GetModuleHandle(nullptr),
+        nullptr);
+    if (!hwnd) {
+        if (auto logger = cached_logger.lock())
+            logger->error("ensure_gl_driver_loaded: CreateWindowEx failed");
+        return ok = false;
+    }
+    HDC hdc = GetDC(hwnd);
+
+    PIXELFORMATDESCRIPTOR pfd = {};
+    pfd.nSize = sizeof(pfd);
+    pfd.nVersion = 1;
+    pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
+    pfd.iPixelType = PFD_TYPE_RGBA;
+    pfd.cColorBits = 32;
+    pfd.cDepthBits = 24;
+    pfd.cStencilBits = 8;
+
+    int pixelFormat = ChoosePixelFormat(hdc, &pfd);
+    SetPixelFormat(hdc, pixelFormat, &pfd);
+
+    // Bootstrap a legacy context to obtain the modern-context creation entry
+    // point (wglGetProcAddress only works with a current context).
+    HGLRC legacyCtx = wglCreateContext(hdc);
+    if (!legacyCtx) {
+        if (auto logger = cached_logger.lock())
+            logger->error(
+                "ensure_gl_driver_loaded: legacy wglCreateContext failed");
+        return ok = false;
+    }
+    wglMakeCurrent(hdc, legacyCtx);
+
+    using PFNWGLCREATECONTEXTATTRIBSARB =
+        HGLRC(WINAPI*)(HDC, HGLRC, const int*);
+    auto wglCreateContextAttribsARB =
+        (PFNWGLCREATECONTEXTATTRIBSARB)wglGetProcAddress(
+            "wglCreateContextAttribsARB");
+
+    if (wglCreateContextAttribsARB) {
+        int attribs[] = { WGL_CONTEXT_MAJOR_VERSION_ARB,
+                          4,
+                          WGL_CONTEXT_MINOR_VERSION_ARB,
+                          5,
+                          WGL_CONTEXT_PROFILE_MASK_ARB,
+                          WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
+                          0 };
+        HGLRC modernCtx = nullptr;
+        for (int minor = 5; minor >= 0 && !modernCtx; --minor) {
+            attribs[3] = minor;
+            modernCtx = wglCreateContextAttribsARB(hdc, nullptr, attribs);
+        }
+        if (modernCtx) {
+            wglMakeCurrent(hdc, modernCtx);
+            wglDeleteContext(legacyCtx);
+            if (auto logger = cached_logger.lock())
+                logger->info(
+                    "ensure_gl_driver_loaded: created modern GL context");
+            return ok = true;
+        }
+    }
+
+    // Stuck with the legacy context — HgiGL will likely reject it.
+    if (auto logger = cached_logger.lock())
+        logger->warn(
+            "ensure_gl_driver_loaded: could not create a modern GL context; "
+            "HgiGL may reject the legacy context");
+    return ok = true;  // leave the legacy context current; let HgiGL decide
+#else
+    return ok = false;
+#endif
+#else
+    return false;
+#endif
 }
 
 int shutdown()

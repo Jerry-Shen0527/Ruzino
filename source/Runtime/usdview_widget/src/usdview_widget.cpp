@@ -3,11 +3,6 @@
 #endif
 #include "widgets/usdview/usdview_widget.hpp"
 
-#ifndef _WIN32
-#include <EGL/egl.h>
-#include <EGL/eglext.h>
-#endif
-
 #include <pxr/imaging/hd/driver.h>
 #include <spdlog/spdlog.h>
 
@@ -79,8 +74,7 @@ UsdviewEngine::UsdviewEngine(Stage* stage) : stage_(stage)
     hdDriver.driver = pxr::VtValue(hgi.get());
     params.driver = hdDriver;
 
-    renderer_ = std::make_unique<RuzinoEngine>(params,
-                                                 stage_->get_usd_stage());
+    renderer_ = std::make_unique<RuzinoEngine>(params, stage_->get_usd_stage());
 
     renderer_->SetEnablePresentation(false);
     free_camera_ = std::make_unique<ThirdPersonCamera>();
@@ -780,16 +774,16 @@ bool UsdviewEngine::MousePosUpdate(double xpos, double ypos)
     // left-release) is the correct pen-down guard.
     if (brush_mode_ && is_drawing_) {
         auto mouse_pos_rel = ImGui::GetMousePos() - cached_viewport_pos_;
-        glm::vec3 world_pos = pick_world_pos(
-            mouse_pos_rel.x, mouse_pos_rel.y);
+        glm::vec3 world_pos = pick_world_pos(mouse_pos_rel.x, mouse_pos_rel.y);
 
         // Only signal new point if it moved enough
-        float dist = glm::length(glm::vec2(
-            world_pos.x - brush_point_.x,
-            world_pos.y - brush_point_.y));
+        float dist = glm::length(
+            glm::vec2(
+                world_pos.x - brush_point_.x, world_pos.y - brush_point_.y));
         if (dist > 0.001f) {
             brush_point_ = world_pos;
-            brush_time_ = static_cast<float>(ImGui::GetTime() - stroke_start_time_);
+            brush_time_ =
+                static_cast<float>(ImGui::GetTime() - stroke_start_time_);
             brush_active_ = true;
             brush_new_point_ = true;
             emit_brush_state();
@@ -837,8 +831,7 @@ bool UsdviewEngine::MouseButtonUpdate(int button, int action, int mods)
             stroke_start_time_ = ImGui::GetTime();
 
             // First point
-            auto mouse_pos_rel =
-                ImGui::GetMousePos() - cached_viewport_pos_;
+            auto mouse_pos_rel = ImGui::GetMousePos() - cached_viewport_pos_;
             brush_point_ = pick_world_pos(mouse_pos_rel.x, mouse_pos_rel.y);
             brush_time_ = 0.0f;
             brush_active_ = true;
@@ -907,63 +900,17 @@ void UsdviewEngine::Animate(float elapsed_time_seconds)
 
 void UsdviewEngine::CreateGLContext()
 {
-#ifdef _WIN32
-    HDC hdc = GetDC(GetConsoleWindow());
-    PIXELFORMATDESCRIPTOR pfd;
-    ZeroMemory(&pfd, sizeof(pfd));
-    pfd.nSize = sizeof(pfd);
-    pfd.nVersion = 1;
-    pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
-    pfd.iPixelType = PFD_TYPE_RGBA;
-    pfd.cColorBits = 24;
-
-    int pixelFormat = ChoosePixelFormat(hdc, &pfd);
-    SetPixelFormat(hdc, pixelFormat, &pfd);
-
-    HGLRC hglrc = wglCreateContext(hdc);
-    wglMakeCurrent(hdc, hglrc);
-#else
-    EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-    eglInitialize(display, nullptr, nullptr);
-    EGLint configAttrs[] = { EGL_SURFACE_TYPE,
-                             EGL_PBUFFER_BIT,
-                             EGL_RENDERABLE_TYPE,
-                             EGL_OPENGL_BIT,
-
-                             EGL_RED_SIZE,
-                             8,
-                             EGL_BLUE_SIZE,
-                             8,
-                             EGL_GREEN_SIZE,
-                             8,
-                             EGL_ALPHA_SIZE,
-                             8,
-
-                             EGL_DEPTH_SIZE,
-                             24,
-                             EGL_STENCIL_SIZE,
-                             8,
-                             EGL_NONE };
-    EGLConfig config;
-    EGLint numConfigs;
-    eglChooseConfig(display, configAttrs, &config, 1, &numConfigs);
-    eglBindAPI(EGL_OPENGL_API);
-    EGLint ctxAttribs[] = { EGL_CONTEXT_MAJOR_VERSION,
-                            4,
-                            EGL_CONTEXT_MINOR_VERSION,
-                            5,
-                            EGL_CONTEXT_OPENGL_PROFILE_MASK,
-                            EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT,
-                            EGL_CONTEXT_FLAGS_KHR,
-                            EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR,
-                            EGL_NONE };
-    EGLContext context =
-        eglCreateContext(display, config, EGL_NO_CONTEXT, ctxAttribs);
-    EGLint surfaceAttribs[] = { EGL_WIDTH, 800, EGL_HEIGHT, 600, EGL_NONE };
-    EGLSurface surface =
-        eglCreatePbufferSurface(display, config, surfaceAttribs);
-    eglMakeCurrent(display, surface, surface, context);
-#endif
+    // Delegate to the canonical RHI helper. HgiGL reads glGetString(GL_VERSION)
+    // when UsdImagingGLEngine is constructed (called right after this in the
+    // ctor), so a hardware-accelerated 4.5 context must be current first.
+    // The old GetConsoleWindow()+wglCreateContext path had no 4.5 upgrade and
+    // only worked incidentally because Ruzino.exe had already brought up a GLFW
+    // window; this is the robust, shared implementation.
+    if (!RHI::ensure_gl_driver_loaded()) {
+        spdlog::error(
+            "UsdviewEngine::CreateGLContext: failed to create OpenGL 4.5 "
+            "context");
+    }
 }
 
 UsdviewEngine::~UsdviewEngine()
@@ -1115,9 +1062,9 @@ void UsdviewEngine::emit_brush_state()
         return;
     }
     ViewportBrushState state{
-        brush_point_, brush_time_, brush_active_, brush_new_point_};
-    window->events().emit_any(
-        ViewportEvents::BRUSH_STATE, std::any(state));
+        brush_point_, brush_time_, brush_active_, brush_new_point_
+    };
+    window->events().emit_any(ViewportEvents::BRUSH_STATE, std::any(state));
 }
 
 void UsdviewEngine::emit_pick_event(const std::shared_ptr<PickEvent>& event)
@@ -1125,8 +1072,7 @@ void UsdviewEngine::emit_pick_event(const std::shared_ptr<PickEvent>& event)
     if (!window) {
         return;
     }
-    window->events().emit_any(
-        ViewportEvents::PICK_EVENT, std::any(event));
+    window->events().emit_any(ViewportEvents::PICK_EVENT, std::any(event));
 }
 
 glm::vec3 UsdviewEngine::pick_world_pos(double screen_x, double screen_y)
@@ -1138,17 +1084,17 @@ glm::vec3 UsdviewEngine::pick_world_pos(double screen_x, double screen_y)
         return screen_to_world(screen_x, screen_y);
 
     // Normalize to [0, 1] then to NDC
-    float ndc_x = static_cast<float>(
-        (screen_x / render_buffer_size_[0]) * 2.0 - 1.0);
-    float ndc_y = static_cast<float>(
-        1.0 - (screen_y / render_buffer_size_[1]) * 2.0);
+    float ndc_x =
+        static_cast<float>((screen_x / render_buffer_size_[0]) * 2.0 - 1.0);
+    float ndc_y =
+        static_cast<float>(1.0 - (screen_y / render_buffer_size_[1]) * 2.0);
 
     // Use the cached frustum (aspect-ratio-corrected) — same as picking
     GfFrustum frustum = cached_frustum_;
 
     auto narrowed = frustum.ComputeNarrowedFrustum(
-        {ndc_x, ndc_y},
-        {1.0 / render_buffer_size_[0], 1.0 / render_buffer_size_[1]});
+        { ndc_x, ndc_y },
+        { 1.0 / render_buffer_size_[0], 1.0 / render_buffer_size_[1] });
 
     UsdPrim root = stage_->get_usd_stage()->GetPseudoRoot();
     GfVec3d point, normal;
@@ -1185,10 +1131,10 @@ glm::vec3 UsdviewEngine::screen_to_world(double screen_x, double screen_y)
         return glm::vec3(0.0f);
 
     // Screen → NDC
-    float ndc_x = static_cast<float>(
-        (screen_x / render_buffer_size_[0]) * 2.0 - 1.0);
-    float ndc_y = static_cast<float>(
-        1.0 - (screen_y / render_buffer_size_[1]) * 2.0);
+    float ndc_x =
+        static_cast<float>((screen_x / render_buffer_size_[0]) * 2.0 - 1.0);
+    float ndc_y =
+        static_cast<float>(1.0 - (screen_y / render_buffer_size_[1]) * 2.0);
 
     // Use cached frustum (aspect-ratio-corrected)
     GfFrustum frustum = cached_frustum_;
@@ -1207,8 +1153,7 @@ glm::vec3 UsdviewEngine::screen_to_world(double screen_x, double screen_y)
     // Ray from near to far
     GfVec3d origin(near_h[0], near_h[1], near_h[2]);
     GfVec3d dir(
-        far_h[0] - near_h[0], far_h[1] - near_h[1],
-        far_h[2] - near_h[2]);
+        far_h[0] - near_h[0], far_h[1] - near_h[1], far_h[2] - near_h[2]);
 
     // Intersect with Z=0 plane (paper plane)
     if (std::abs(dir[2]) > 1e-8) {

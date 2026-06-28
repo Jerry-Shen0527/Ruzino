@@ -109,22 +109,59 @@ NODE_EXECUTION_FUNCTION(simulation_out) {
 - `simulation_out` 永远干两件事：把区内的输出转发出去，**同时**存进自己的
   `SimulationStorage::data`，供下一帧的 `simulation_in` 用。
 
-### 2.4 ⚠️ 一个重要的坑：storage 是 per-node 的
+### 2.4 跨帧闭环：executor 自动把 `simulation_out` 的 storage 回灌给 `simulation_in`
 
-`Node::storage`（`node.hpp:61`，`entt::meta_any`）是**每个 Node 实例独有**
-的。`simulation_in` 和 `simulation_out` 是两个不同的节点，它们的
-`SimulationStorage::data` **互不相通**，框架不会自动把它们同步。
+`Node::storage`（`node.hpp:61`）是每个 Node 实例独有的，`simulation_in`
+和 `simulation_out` 是两个不同节点。那 `simulation_out` 存进去的数据，
+下一帧 `simulation_in` 怎么拿到？答案在 **executor** 里，不在 zone 节点里：
 
-那 `simulation_out` 存的数据，`simulation_in` 下一帧怎么拿到？
+```cpp
+// node_exec_eager.cpp:354-357（每个节点 cook 完后调用）
+if (node->typeinfo->id_name == "simulation_out") {
+    auto simulation_in = node->paired_node;
+    simulation_in->storage = std::move(node->storage);   // 自动回灌
+}
+```
 
-按代码字面，推进帧的 `simulation_in` 读的是**它自己 storage**，而不是
-`simulation_out` storage 传过来的线。要让这套闭环真正工作，要么靠框架在
-帧间做了 storage 拷贝（目前代码里**没有**看到这个拷贝），要么靠
-`simulation_out` 的输出线在下一帧物理上连回了 `simulation_in` 的输入。
+也就是说，`simulation_out` 一旦执行完，eager executor 会把它**整个
+`storage`**（里面就是 `SimulationStorage::data`，即 `simulation_out`
+这一帧的输入）`std::move` 给**配对的** `simulation_in`。下一帧推进时
+（`is_simulating = true`），`simulation_in` 读的正是这份回灌过来的
+storage（`simulation_zone.cpp:40`）：
 
-**实务结论**：不要假设 `simulation_in.storage == simulation_out.storage`。
-仿真区内部的节点如果要可靠的跨帧状态，应该用**自己的 `Node::storage`**，
-不要依赖 zone 的 `SimulationStorage::data`。
+```cpp
+// simulation_in 推进帧分支
+auto& outputs = params.get_storage<SimulationStorage&>().data;
+params.set_output_group("Simulation Out", (outputs));
+```
+
+这就是仿真区的**跨帧反馈闭环**：`out` 的输出每帧自动变成下一帧 `in` 的
+输入。`transform_geom` 这种固定增量（`Translate X = 0.1`）放进仿真区里，
+每帧叠加在上一帧回灌的几何上，累积位移就是这么来的——节点本身无需任何
+累加逻辑，闭环由框架保证。
+
+#### `paired_node` 怎么建立
+
+配对（`Node::paired_node`，`node.hpp:137`）在三处建立：
+
+| 场景 | 位置 | 方式 |
+|------|------|------|
+| UI 里新建仿真区 | `ui_imgui.cpp:325-328` | `add_node` 建 sim_in/out 后双向赋值 |
+| JSON 反序列化 | `node.cpp:559-566` | 读 `"paired_node"` 字段，`find_node` 后双向赋值 |
+| **Python API 建图** | `ruzino_graph.py` `createSimulationZone()` | 封装建节点 + 组同步 + 设 paired_node |
+
+⚠️ **纯 `createNode` 不会建立配对**。直接 `g.createNode("simulation_in")`
+和 `g.createNode("simulation_out")` 出来的两个节点 `paired_node` 是 `nullptr`，
+回灌分支里 `simulation_in = node->paired_node` 会是空，闭环断掉，仿真不累积。
+从 Python 建仿真区必须用 `createSimulationZone()`（它复刻了 `ui_imgui.cpp`
+的完整逻辑：建两个节点 + 四个 socket group 两两 `add_sync_group` + 设
+`paired_node`）。
+
+#### 节点自己的 `Node::storage` 仍是主力
+
+闭环回灌的是**仿真区边界上**的数据（整组 socket 的值）。仿真区**内部**
+的节点（如 `transform_geom`）如果想存自己的跨帧状态，仍然应该用自己的
+`Node::storage`（见 §3），与 zone 的回灌机制互不干扰。
 
 ### 2.5 `ALWAYS_DIRTY` 是必须的
 
@@ -229,7 +266,7 @@ set_storage → serialize() → storage_info
 | 机制 | 通道 | 跨帧 | 跨进程重启 | 用在哪 |
 |------|------|------|-----------|--------|
 | **`Node::storage`** | `get_storage`/`set_storage` | ✅（Node 复用） | ❌（除非 has_storage=true 且 JSON 通路修好，目前是坏的） | 仿真节点的主力状态 |
-| **`SimulationStorage::data`** | socket group 线 + `simulation_in/out` storage | ✅（设计意图，见 §2.4 的坑） | ❌ | 仿真区边界的数据接力 |
+| **`SimulationStorage::data`** | socket group 线 + executor 自动回灌（§2.4） | ✅（executor 把 out.storage move 给 in.paired_node） | ❌ | 仿真区边界的数据接力 |
 | 全局 payload | `get_global_payload` | ❌（每帧重写） | ❌ | 帧级触发量（dt、is_simulating 等） |
 
 ---
@@ -243,8 +280,10 @@ set_storage → serialize() → storage_info
       在 payload 里，不靠 socket 传播 dirty。
 - [ ] init 帧 / 推进帧的分支判断：用 `payload.is_simulating`。init 帧
       （第一帧）做分配/初始化，推进帧跑物理。
-- [ ] 跨帧状态走**自己的 `Node::storage`**，不要依赖 zone 的
-      `SimulationStorage::data`（见 §2.4）。
+- [ ] 仿真区**边界**的跨帧数据走 `SimulationStorage::data`（由 executor 自动
+      回灌，见 §2.4）；仿真区**内部**节点的私有跨帧状态走自己的 `Node::storage`。
+- [ ] **Python 建仿真区必须用 `RuzinoGraph.createSimulationZone()`**，不能
+      裸 `createNode`（否则 `paired_node` 为空，回灌闭环断裂，仿真不累积）。
 
 ---
 
@@ -253,8 +292,14 @@ set_storage → serialize() → storage_info
 | 文件 | 内容 |
 |------|------|
 | `source/Editor/geometry_nodes/simulation_zone.cpp` | `simulation_in` / `simulation_out` 实现 |
+| `source/Core/rznode/core/node_exec_eager.cpp` | **executor 自动回灌**（`simulation_out` → `paired_node` storage，§2.4） |
 | `source/Core/rznode/core/include/nodes/core/node_exec.hpp` | `get_storage` / `set_storage` / `get_input_group` / `set_output_group` |
-| `source/Core/rznode/core/include/nodes/core/node.hpp` | `Node::storage` / `Node::storage_info` 字段定义 |
-| `source/Core/rznode/core/node.cpp` | `Node::serialize`（注意：不写 storage_info，见 §3.4） |
-| `source/Runtime/stage/source/animation.cpp` | `is_simulating` 翻转、`delta_time` 注入、图重载时重置 |
+| `source/Core/rznode/core/include/nodes/core/node.hpp` | `Node::storage` / `Node::storage_info` / `Node::paired_node` 字段 |
+| `source/Core/rznode/core/node.cpp` | `Node::serialize`（不写 storage_info，见 §3.4）；deserialize 时恢复 `paired_node`（§2.4） |
+| `source/Core/rznode/ui_imgui/source/ui_imgui.cpp` | UI 建仿真区的配对逻辑（`add_node`，§2.4 的蓝本） |
+| `source/Core/rznode/python/ruzino_graph.py` | `RuzinoGraph.createSimulationZone()` —— Python 建仿真区的封装（§2.4） |
+| `source/Core/rznode/core/python/nodes_core.cpp` | `paired_node` / `find_socket_group` / `SocketGroup.add_sync_group` 的 Python 绑定 |
+| `source/Runtime/stage/source/animation.cpp` | `is_simulating` 翻转、`delta_time` 注入、图重载时重置、`should_simulate` 门 |
+| `source/Runtime/stage/python/stage.cpp` | `stage_py` 绑定：`tick` / `set_render_time` / `should_simulate`（headless 仿真驱动） |
 | `source/Editor/geometry/include/GCore/geom_payload.hpp` | `GeomPayload`（is_simulating / has_simulation / delta_time） |
+| `source/tests/test_sim_gridbox.py` | 端到端 headless 仿真测试（Python 建仿真区 + 60 帧 tick + 验证累积） |

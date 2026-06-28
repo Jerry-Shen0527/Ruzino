@@ -29,12 +29,8 @@
 #include "pxr/usdImaging/usdImagingGL/engine.h"
 #include "spdlog/spdlog.h"
 
-#ifdef _WIN32
-#include <windows.h>
-#elif defined(__linux__)
-#include <EGL/egl.h>
-#include <GL/gl.h>
-#endif
+// windows.h / EGL/egl.h were only needed by the now-removed inline WGL/EGL
+// context-creation code; RHI::ensure_gl_driver_loaded owns all of that.
 
 #if RUZINO_WITH_CUDA
 #include <cuda_runtime.h>
@@ -46,167 +42,21 @@
 namespace nb = nanobind;
 using namespace Ruzino;
 
-// OpenGL 4.5+ context creation
-// Windows: Two-step WGL process (legacy context -> wglCreateContextAttribsARB)
-// Linux: EGL headless context (no X server required)
-
-#ifdef _WIN32
-// WGL_ARB_create_context constants (not in standard Windows headers)
-#ifndef WGL_CONTEXT_MAJOR_VERSION_ARB
-#define WGL_CONTEXT_MAJOR_VERSION_ARB 0x2091
-#endif
-#ifndef WGL_CONTEXT_MINOR_VERSION_ARB
-#define WGL_CONTEXT_MINOR_VERSION_ARB 0x2092
-#endif
-#ifndef WGL_CONTEXT_PROFILE_MASK_ARB
-#define WGL_CONTEXT_PROFILE_MASK_ARB 0x9126
-#endif
-#ifndef WGL_CONTEXT_CORE_PROFILE_BIT_ARB
-#define WGL_CONTEXT_CORE_PROFILE_BIT_ARB 0x00000001
-#endif
-
-typedef HGLRC(WINAPI* PFNWGLCREATECONTEXTATTRIBSARB)(
-    HDC, HGLRC, const int*);
-#endif
-
-// Track GL context resources for cleanup
-#ifdef _WIN32
-static HWND g_glHwnd = nullptr;
-static HDC g_glHdc = nullptr;
-#endif
-
+// Create an OpenGL 4.5+ context current on this thread.
+//
+// HgiGL reads glGetString(GL_VERSION) when it is constructed (which happens
+// lazily inside UsdImagingGLEngine::SetRendererPlugin via
+// _InitializeHgiIfNecessary), so a hardware GL context MUST be current on this
+// thread *before* any Hgi/Storm object is built, or Hydra rejects it with
+// "HgiGL minimum OpenGL requirements not met". RHI::ensure_gl_driver_loaded is
+// the single canonical implementation of that (dedicated window -> legacy ctx
+// -> wglCreateContextAttribsARB 4.5..4.0 / EGL on Linux); this thin wrapper
+// keeps the per-call-site name so callers read naturally.
 static void CreateGLContext()
 {
-#ifdef _WIN32
-    // Create a dedicated window for GL context (console window may not work
-    // well with pixel format selection on some GPU drivers)
-    WNDCLASSA wc = {};
-    wc.lpfnWndProc = DefWindowProcA;
-    wc.hInstance = GetModuleHandle(nullptr);
-    wc.lpszClassName = "RuzinoGLContext";
-    RegisterClassA(&wc);
-
-    g_glHwnd = CreateWindowExA(
-        0, "RuzinoGLContext", "", 0, 0, 0, 1, 1,
-        nullptr, nullptr, GetModuleHandle(nullptr), nullptr);
-    g_glHdc = GetDC(g_glHwnd);
-
-    PIXELFORMATDESCRIPTOR pfd = {};
-    pfd.nSize = sizeof(pfd);
-    pfd.nVersion = 1;
-    pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
-    pfd.iPixelType = PFD_TYPE_RGBA;
-    pfd.cColorBits = 32;
-    pfd.cDepthBits = 24;
-    pfd.cStencilBits = 8;
-
-    int pixelFormat = ChoosePixelFormat(g_glHdc, &pfd);
-    SetPixelFormat(g_glHdc, pixelFormat, &pfd);
-
-    // Step 1: Create legacy context to bootstrap extensions
-    HGLRC legacyCtx = wglCreateContext(g_glHdc);
-    wglMakeCurrent(g_glHdc, legacyCtx);
-
-    // Step 2: Get wglCreateContextAttribsARB
-    auto wglCreateContextAttribsARB =
-        (PFNWGLCREATECONTEXTATTRIBSARB)wglGetProcAddress(
-            "wglCreateContextAttribsARB");
-
-    if (wglCreateContextAttribsARB) {
-        // Step 3: Create OpenGL 4.5 core profile context
-        int attribs[] = {
-            WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
-            WGL_CONTEXT_MINOR_VERSION_ARB, 5,
-            WGL_CONTEXT_PROFILE_MASK_ARB,  WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
-            0};
-        HGLRC modernCtx = wglCreateContextAttribsARB(g_glHdc, nullptr, attribs);
-        if (modernCtx) {
-            wglMakeCurrent(g_glHdc, modernCtx);
-            wglDeleteContext(legacyCtx);
-            return;
-        }
-        // Fallback: try 4.4, 4.3, 4.2, 4.1, 4.0
-        for (int minor = 4; minor >= 0; minor--) {
-            attribs[3] = minor;
-            modernCtx = wglCreateContextAttribsARB(g_glHdc, nullptr, attribs);
-            if (modernCtx) {
-                wglMakeCurrent(g_glHdc, modernCtx);
-                wglDeleteContext(legacyCtx);
-                return;
-            }
-        }
+    if (!RHI::ensure_gl_driver_loaded()) {
+        spdlog::error("CreateGLContext: failed to create OpenGL 4.5 context");
     }
-
-    // If we get here, we're stuck with the legacy context (may not work with
-    // HgiGL)
-#elif defined(__linux__)
-    EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-    if (display == EGL_NO_DISPLAY) {
-        spdlog::error("Failed to get EGL display");
-        return;
-    }
-
-    if (!eglInitialize(display, nullptr, nullptr)) {
-        spdlog::error("Failed to initialize EGL");
-        return;
-    }
-
-    EGLint config_attribs[] = {
-        EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
-        EGL_SURFACE_TYPE,    EGL_PBUFFER_BIT,
-        EGL_RED_SIZE,        8,
-        EGL_GREEN_SIZE,      8,
-        EGL_BLUE_SIZE,       8,
-        EGL_ALPHA_SIZE,      8,
-        EGL_DEPTH_SIZE,      24,
-        EGL_STENCIL_SIZE,    8,
-        EGL_NONE
-    };
-
-    EGLConfig config;
-    EGLint num_config;
-    if (!eglChooseConfig(display, config_attribs, &config, 1, &num_config) ||
-        num_config == 0) {
-        spdlog::error("Failed to choose EGL config");
-        eglTerminate(display);
-        return;
-    }
-
-    eglBindAPI(EGL_OPENGL_API);
-
-    EGLint context_attribs[] = {
-        EGL_CONTEXT_MAJOR_VERSION,       4,
-        EGL_CONTEXT_MINOR_VERSION,       5,
-        EGL_CONTEXT_OPENGL_PROFILE_MASK, EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT,
-        EGL_NONE
-    };
-
-    EGLContext context =
-        eglCreateContext(display, config, EGL_NO_CONTEXT, context_attribs);
-    if (!context) {
-        for (int minor = 4; minor >= 0; minor--) {
-            context_attribs[3] = minor;
-            context =
-                eglCreateContext(display, config, EGL_NO_CONTEXT, context_attribs);
-            if (context) break;
-        }
-    }
-
-    if (!context) {
-        spdlog::error("Failed to create EGL OpenGL context");
-        eglTerminate(display);
-        return;
-    }
-
-    EGLint pbuffer_attribs[] = { EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE };
-    EGLSurface surface =
-        eglCreatePbufferSurface(display, config, pbuffer_attribs);
-    if (surface == EGL_NO_SURFACE) {
-        spdlog::warn("Failed to create EGL pbuffer, trying without surface");
-    }
-
-    eglMakeCurrent(display, surface, surface, context);
-#endif
 }
 
 // Wrapper class for USD Imaging rendering with node system access
@@ -308,7 +158,10 @@ class HydraRenderer {
     }
 
     // Stop the render thread and wait for completion
-    void stop() { engine_->StopRenderer(); }
+    void stop()
+    {
+        engine_->StopRenderer();
+    }
 
     // Get output texture data (legacy CPU copy)
     // name: optional texture name (uses default if empty)
@@ -353,7 +206,8 @@ class HydraRenderer {
         auto staging_texture = RHI::get_device()->createStagingTexture(
             staging_desc, nvrhi::CpuAccessMode::Read);
 
-        // Flush all pending GPU work before copying (ensures render commands complete)
+        // Flush all pending GPU work before copying (ensures render commands
+        // complete)
         RHI::get_device()->waitForIdle();
 
         auto cmd_list = RHI::get_device()->createCommandList();
@@ -362,7 +216,8 @@ class HydraRenderer {
         cmd_list->close();
         RHI::get_device()->executeCommandList(cmd_list.Get());
 
-        RHI::get_device()->setEventQuery(event_query_.Get(), nvrhi::CommandQueue::Graphics);
+        RHI::get_device()->setEventQuery(
+            event_query_.Get(), nvrhi::CommandQueue::Graphics);
         RHI::get_device()->waitEventQuery(event_query_.Get());
 
         // Read data
@@ -455,14 +310,10 @@ class HydraRenderer {
     {
         engine_.reset();
         hgi_.reset();
-#ifdef _WIN32
-        if (g_glHwnd) {
-            if (g_glHdc) ReleaseDC(g_glHwnd, g_glHdc);
-            DestroyWindow(g_glHwnd);
-            g_glHwnd = nullptr;
-            g_glHdc = nullptr;
-        }
-#endif
+        // Note: the GL context/window created by RHI::ensure_gl_driver_loaded
+        // intentionally outlive this object (their lifetime is process-scoped
+        // via statics in RHI), matching the process-scoped caching of HgiGL
+        // capabilities. Do not tear them down here.
     }
 
    private:
@@ -486,19 +337,22 @@ NB_MODULE(hd_RUZINO_py, m)
 
     // HydraRenderer class - provides USD + Hydra + Node System integration
     nb::class_<HydraRenderer>(m, "HydraRenderer")
-        .def(nb::init<const char*, int, int>(),
-             nb::arg("usd_file"),
-             nb::arg("width") = 1920,
-             nb::arg("height") = 1080,
-             "Create a Hydra renderer for a USD stage")
+        .def(
+            nb::init<const char*, int, int>(),
+            nb::arg("usd_file"),
+            nb::arg("width") = 1920,
+            nb::arg("height") = 1080,
+            "Create a Hydra renderer for a USD stage")
         .def(
             "get_node_system",
             &HydraRenderer::get_node_system,
             nb::rv_policy::reference,
             "Get the NodeSystem from the Hydra render delegate")
         .def("render", &HydraRenderer::render, "Render one frame")
-        .def("stop", &HydraRenderer::stop,
-             "Stop the render thread and wait for completion")
+        .def(
+            "stop",
+            &HydraRenderer::stop,
+            "Stop the render thread and wait for completion")
         .def(
             "get_output_texture",
             [](HydraRenderer& self) -> std::vector<float> {
@@ -507,9 +361,8 @@ NB_MODULE(hd_RUZINO_py, m)
             "Get the rendered texture as a float array (RGBA, row-major).")
         .def(
             "get_output_texture",
-            [](HydraRenderer& self, const std::string& name) -> std::vector<float> {
-                return self.get_output_texture(name);
-            },
+            [](HydraRenderer& self, const std::string& name)
+                -> std::vector<float> { return self.get_output_texture(name); },
             nb::arg("name"),
             "Get a named texture from present nodes as a float array.")
 #if RUZINO_WITH_CUDA
@@ -521,7 +374,8 @@ NB_MODULE(hd_RUZINO_py, m)
             "Get the rendered texture as CUDA buffer (GPU memory, zero-copy).")
         .def(
             "get_output_cuda_buffer",
-            [](HydraRenderer& self, const std::string& name) -> Ruzino::cuda::CUDALinearBufferHandle {
+            [](HydraRenderer& self, const std::string& name)
+                -> Ruzino::cuda::CUDALinearBufferHandle {
                 return self.get_output_cuda_buffer(name);
             },
             nb::arg("name"),

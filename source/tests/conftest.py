@@ -18,9 +18,26 @@ os.environ["PXR_USD_WINDOWS_DLL_PATH"] = binary_dir
 
 sys.path.insert(0, binary_dir)
 
+# Put binary_dir on PATH and register it as a DLL search directory. Node
+# plugins (e.g. GPU_sph.dll) are loaded by C++ LoadLibrary(<name>) during
+# load_configuration, which only searches the process PATH / app dir — not the
+# cwd that os.chdir points at below — so PATH is required for them to resolve.
+os.environ["PATH"] = binary_dir + os.pathsep + os.environ.get("PATH", "")
+
+if platform.system() == "Windows":
+    os.add_dll_directory(binary_dir)
+    for sub in ("SDK\\python", "SDK\\OpenUSD\\Release\\lib"):
+        dll_dir = os.path.join(project_root, sub)
+        if os.path.isdir(dll_dir):
+            os.add_dll_directory(dll_dir)
+
 rznode_python = os.path.join(project_root, "source", "Core", "rznode", "python")
 if os.path.exists(rznode_python):
     sys.path.insert(0, rznode_python)
+
+renderer_python = os.path.join(project_root, "source", "Runtime", "renderer", "python")
+if os.path.exists(renderer_python):
+    sys.path.insert(0, renderer_python)
 
 if platform.system() != "Windows":
     usd_python_path = os.path.join(project_root, "SDK", "OpenUSD", "Debug", "lib", "python")

@@ -22,6 +22,23 @@ RHI_API int init(bool with_window = false, bool use_dx12 = false);
 #endif
 RHI_API int shutdown();
 
+// Activate the GPU's OpenGL driver in the current process.
+//
+// Headless callers that build an OpenGL context directly on the console window
+// (e.g. rz_render / headless_render) need the GPU ICD to be loaded, otherwise
+// ChoosePixelFormat/wglCreateContext only get Microsoft's software GL 1.1 and
+// Hydra rejects the context with "HgiGL minimum OpenGL requirements not met".
+//
+// RHI::init(with_window=true) does this implicitly via GLFW inside
+// CreateWindowDeviceAndSwapChain, but the headless path (CreateHeadlessDevice)
+// skips glfwInit. This call makes up for it: it runs glfwInit() once
+// (idempotent) so the driver is associated with the process. Safe to call
+// multiple times and alongside init(with_window=true) (which will have already
+// done it).
+RHI_API bool ensure_gl_driver_loaded();
+
+RHI_API nvrhi::IDevice* get_device();
+
 RHI_API nvrhi::IDevice* get_device();
 RHI_API nvrhi::GraphicsAPI get_backend();
 RHI_API size_t calculate_bytes_per_pixel(nvrhi::Format format);

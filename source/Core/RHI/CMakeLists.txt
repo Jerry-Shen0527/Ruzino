@@ -38,6 +38,10 @@ if(SLANG_FOUND)
         target_compile_definitions(RHI PUBLIC RUZINO_WITH_DX12=1)
         target_compile_definitions(RHI PUBLIC RUZINO_WITH_VULKAN=0)
         target_link_libraries(RHI PUBLIC d3d12 dxgi)
+        # opengl32 provides wglCreateContext/wglMakeCurrent/wglGetProcAddress,
+        # used by RHI::ensure_gl_driver_loaded to build a modern GL context for
+        # headless Hydra (HgiGL) rendering.
+        target_link_libraries(RHI PRIVATE opengl32)
     else()
         target_compile_definitions(RHI PUBLIC RUZINO_WITH_DX12=0)
         target_compile_definitions(RHI PUBLIC RUZINO_WITH_VULKAN=1)

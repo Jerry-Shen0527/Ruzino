@@ -112,21 +112,13 @@ UsdGeomCamera GetCamera(
 // Graphics context initialization
 void CreateGLContext()
 {
-#ifdef _WIN32
-    HDC hdc = GetDC(GetConsoleWindow());
-    PIXELFORMATDESCRIPTOR pfd = {};
-    pfd.nSize = sizeof(pfd);
-    pfd.nVersion = 1;
-    pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
-    pfd.iPixelType = PFD_TYPE_RGBA;
-    pfd.cColorBits = 24;
-
-    int pixelFormat = ChoosePixelFormat(hdc, &pfd);
-    SetPixelFormat(hdc, pixelFormat, &pfd);
-
-    HGLRC hglrc = wglCreateContext(hdc);
-    wglMakeCurrent(hdc, hglrc);
-#endif
+    // Create a hardware-accelerated OpenGL 4.5 context via GLFW and make it
+    // current. (The old wglCreateContext-on-the-console-window approach only
+    // yields software GL 1.1, which Hydra rejects.) GarchGLApiLoad must run
+    // after a context is current to bind the GL function pointers.
+    if (!RHI::ensure_gl_driver_loaded()) {
+        std::cerr << "Error: failed to create OpenGL 4.5 context" << std::endl;
+    }
 }
 
 // Image utilities

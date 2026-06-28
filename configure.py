@@ -399,6 +399,13 @@ def copy_cuda_runtime_dlls_to_binaries(targets, dry_run=False):
             "cudart64_13.dll",
             "nvrtc64_130_0.dll",
             "nvrtc-builtins64_130.dll",
+            # Math/runtime libs transitively required by solver & GPU plugins
+            # (e.g. RZSolver.dll imports cublas64_13 -> cublasLt64_13, and
+            # cusparse64_12). Without these, LoadLibrary of node_set_value/
+            # GPU_sph fails with a misleading "Failed to load library".
+            "cublas64_13.dll",
+            "cublasLt64_13.dll",
+            "cusparse64_12.dll",
         ]
         lib_dirs = [
             os.path.join(cuda_path, "bin"),

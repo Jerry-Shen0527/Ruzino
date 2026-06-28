@@ -120,6 +120,18 @@ python scripts/format_and_commit_manager.py
 6. **Installation deps** — run `install_deps.py` after `cmake --install` to copy SDK runtime libraries.
 7. **Recursive commits** — use `format_and_commit_manager.py`; it skips the nvrhi submodule.
 
+## Simulation (headless node-graph sim)
+
+Per-frame accumulation across ticks is driven by the **simulation-zone feedback loop**, not by per-node logic. Full mechanism in `docs/simulation_mechanism.md`. Key facts:
+
+- `simulation_out`'s storage is auto-moved into its paired `simulation_in` after each cook (`node_exec_eager.cpp`), so frame N's geometry feeds frame N+1. A fixed-increment node (e.g. `transform_geom` Translate X=0.1) inside the zone therefore accumulates automatically.
+- **Python**: build a zone with `RuzinoGraph.createSimulationZone()` — bare `createNode` leaves `paired_node` null and the loop silently does not accumulate.
+- **Three gates** a headless `Stage.tick()` loop must open, or the graph never cooks:
+  1. `stage_py.tick(dt)` / `set_render_time(t)` bindings exist (source/Runtime/stage/python/stage.cpp).
+  2. The prim carries `Animatable=true` (`animation.cpp::is_animatable`); set it from Python after `apply_to_stage`.
+  3. `render_time` must stay `>=` accumulated sim time each tick, or `should_simulate()` short-circuits `execute()` after frame 1.
+- Reference end-to-end test: `source/tests/test_sim_gridbox.py` (Python-built zone → 60 ticks → asserts accumulated translate ≈ 6.0). Run it like other tests but from `Binaries/Release` so node-plugin DLLs (e.g. `GPU_sph.dll`) resolve.
+
 ## Troubleshooting
 
 ### Build Issues
