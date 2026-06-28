@@ -39,8 +39,8 @@ inline std::string brush_shader_dir()
 // ============================================================
 // Buffer factories
 // ============================================================
-inline nvrhi::BufferHandle brush_create_field_buffer(
-    ResourceAllocator& rc, int n, const char* debug_name)
+inline nvrhi::BufferHandle
+brush_create_field_buffer(ResourceAllocator& rc, int n, const char* debug_name)
 {
     return rc.create(
         nvrhi::BufferDesc{}
@@ -54,7 +54,10 @@ inline nvrhi::BufferHandle brush_create_field_buffer(
 }
 
 inline nvrhi::BufferHandle brush_create_typed_buffer(
-    ResourceAllocator& rc, int count, int stride, const char* debug_name)
+    ResourceAllocator& rc,
+    int count,
+    int stride,
+    const char* debug_name)
 {
     return rc.create(
         nvrhi::BufferDesc{}
@@ -68,7 +71,9 @@ inline nvrhi::BufferHandle brush_create_typed_buffer(
 }
 
 inline nvrhi::BufferHandle brush_create_byte_buffer(
-    ResourceAllocator& rc, int size_bytes, const char* debug_name)
+    ResourceAllocator& rc,
+    int size_bytes,
+    const char* debug_name)
 {
     return rc.create(
         nvrhi::BufferDesc{}
@@ -83,7 +88,8 @@ inline nvrhi::BufferHandle brush_create_byte_buffer(
 // Shader compile + dispatch
 // ============================================================
 inline ProgramHandle brush_compile_shader(
-    ResourceAllocator& rc, const std::string& filename)
+    ResourceAllocator& rc,
+    const std::string& filename)
 {
     ProgramDesc desc;
     desc.shaderType = nvrhi::ShaderType::Compute;
@@ -325,10 +331,10 @@ struct ConstraintModeCB {
 // on first use, the same way Geometry / Eigen::MatrixXd socket types work.
 // ============================================================
 struct BrushPoint {
-    glm::vec3 pos{0.0f};         // world position of the brush
-    float time = 0.0f;           // stroke-local time (seconds since pen-down)
-    bool active = false;         // pen is currently down
-    bool stroke_start = false;   // first point of a new stroke (pen-down edge)
+    glm::vec3 pos{ 0.0f };      // world position of the brush
+    float time = 0.0f;          // stroke-local time (seconds since pen-down)
+    bool active = false;        // pen is currently down
+    bool stroke_start = false;  // first point of a new stroke (pen-down edge)
 };
 
 // ============================================================
@@ -667,5 +673,107 @@ struct WetbrushState {
 // Alias retained so existing call sites that say `PaintSimStorage` can keep
 // working after the migration to the shared header.
 using PaintSimStorage = WetbrushState;
+
+// ============================================================
+// WetbrushSimState — the SHARED cross-node state for the streaming
+// simulation-zone brush chain (brush_wb_deposit -> brush_wb_bristle ->
+// brush_wb_fluid -> brush_wb_commit).
+//
+// Inclusion rule (docs + approved plan): a field lives here IFF it is accessed
+// by >=3 of the four sub-step nodes, OR it is persistent across the whole
+// stroke (canvas layer). Everything else is either:
+//   * node-local and created via the resource allocator every cook (velocity,
+//     pressure, divergence, *_tmp, particle fields, bristle raster grids) —
+//     the executor recycles those automatically;
+//   * or a 2-node field carried as a regular socket value (bristle sample
+//     outputs, height_field) — see BristleSampleOutputs below.
+//
+// This struct is passed between the four wb nodes as a
+// shared_ptr<WetbrushSimState> socket value (zero-copy: GPU handles are
+// refcounted shared_ptrs). Because the framework auto-registers socket types,
+// no manual entt::meta registration is needed. canvas_* are shared_ptrs so the
+// same GPU buffers persist across nodes AND across frames (the simulation_out
+// boundary feeds them back).
+//
+// NOTE: WetbrushState above (used by the legacy monolith brush_paint_sim) is
+// left UNCHANGED — it carries the full buffer set for that node. This struct is
+// the lean subset for the decomposed chain. Keeping them separate avoids
+// regenerating the monolith.
+// ============================================================
+struct WetbrushSimState {
+    static constexpr bool has_storage = false;
+
+    // --- Live fields accessed by >=3 sub-step nodes ---
+    // deposit writes, bristle merge reads, fluid advects, commit flushes to
+    // canvas.
+    nvrhi::BufferHandle density;
+    nvrhi::BufferHandle color_r, color_y, color_b;
+    // deposit ctx, bristle merge/transfer, fluid damp/dry+Jacobi, commit read.
+    nvrhi::BufferHandle wetness;
+    // deposit alloc, bristle merge, fluid diffuse (3 nodes).
+    nvrhi::BufferHandle oil_density;
+
+    // --- Persistent 2D canvas layer (commit-only, but accumulates across the
+    // whole stroke, so it must persist frame-to-frame) ---
+    nvrhi::BufferHandle canvas_density;
+    nvrhi::BufferHandle canvas_color_r;
+    nvrhi::BufferHandle canvas_color_y;
+    nvrhi::BufferHandle canvas_color_b;
+    nvrhi::BufferHandle canvas_wetness;
+
+    // --- Control / grid bookkeeping (read by all nodes to set shader CBs) ---
+    int grid_res = 0;
+    int grid_res_z = 0;
+    float grid_paper = 0.0f;
+    float grid_height = 0.0f;
+    glm::vec2 grid_center = glm::vec2(0.0f);
+    float grid_center_z = 0.0f;
+    bool center_initialized = false;
+
+    static constexpr int WIN_ALLOC_XY = 128;
+    int win_alloc_z = 0;
+    int win_origin_x = 0;
+    int win_origin_y = 0;
+    int win_origin_z = 0;
+    bool win_origin_set = false;
+
+    // --- Per-frame brush kinematics (finite-differenced frame-to-frame) ---
+    int deposited_count = 0;
+    float last_sim_time = -1.0f;
+    glm::vec3 prev_brush_vel = glm::vec3(0.0f);
+    glm::vec3 prev_angular_vel = glm::vec3(0.0f);
+    glm::vec3 prev_brush_pos = glm::vec3(0.0f);
+    bool has_prev_brush_pos = false;
+
+    bool bristles_initialized = false;
+    bool particles_initialized = false;
+
+    ~WetbrushSimState()
+    {
+        auto release = [](auto& h) { h = nullptr; };
+        release(density);
+        release(color_r);
+        release(color_y);
+        release(color_b);
+        release(wetness);
+        release(oil_density);
+        release(canvas_density);
+        release(canvas_color_r);
+        release(canvas_color_y);
+        release(canvas_color_b);
+        release(canvas_wetness);
+    }
+};
+
+// BristleSampleOutputs — 2-node field (written by brush_wb_bristle, read by
+// brush_wb_fluid's particle emit/update). Carried as a regular socket value so
+// it does not bloat WetbrushSimState (only 2 of 4 nodes touch it).
+struct BristleSampleOutputs {
+    nvrhi::BufferHandle sample_pos;    // bristle sample positions (Nb*S)
+    nvrhi::BufferHandle sample_color;  // bristle sample RYB color
+    nvrhi::BufferHandle sample_frame;  // bristle Bishop frame (packed float4)
+
+    static constexpr bool has_storage = false;
+};
 
 }  // namespace Ruzino
