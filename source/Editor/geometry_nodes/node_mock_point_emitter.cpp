@@ -16,6 +16,8 @@
 // emitted BrushPoint carries stroke_start=true so downstream nodes can
 // re-initialize (treat as a brand-new pen-down).
 
+#include <cmath>
+
 #include "GCore/Components/CurveComponent.h"
 #include "GCore/GOP.h"
 #include "GCore/geom_payload.hpp"
@@ -23,10 +25,7 @@
 #include "geom_node_base.h"
 #include "spdlog/spdlog.h"
 
-#include <cmath>
-
 NODE_DEF_OPEN_SCOPE
-
 
 // Per-instance playback cursor. Persists across frames via Node::storage.
 // Not serialized (has_storage=false): playback always restarts from the
@@ -36,7 +35,8 @@ struct EmitterStorage {
     static constexpr bool has_storage = false;
 
     // Flattened trajectory cache, rebuilt whenever the input curve changes.
-    // Stroke k occupies vertices [stroke_start[k], stroke_start[k]+stroke_len[k]).
+    // Stroke k occupies vertices [stroke_start[k],
+    // stroke_start[k]+stroke_len[k]).
     std::vector<glm::vec3> points;
     std::vector<float> times;           // per-point stroke-local time
     std::vector<int> stroke_start_idx;  // first flat index of each stroke
@@ -47,9 +47,9 @@ struct EmitterStorage {
 
     // Playback cursor (in flat point index space, float for sub-point interp).
     bool playback_started = false;
-    float cursor = 0.0f;          // flat index into points[], fractional
-    int cur_stroke = 0;           // which stroke the cursor is in
-    glm::vec3 last_pos{0.0f};     // last emitted pos (for done-detection)
+    float cursor = 0.0f;         // flat index into points[], fractional
+    int cur_stroke = 0;          // which stroke the cursor is in
+    glm::vec3 last_pos{ 0.0f };  // last emitted pos (for done-detection)
 };
 
 // Forward declarations — helpers are defined after node_execution below.
@@ -58,7 +58,13 @@ static void sample_trajectory(const EmitterStorage& s, BrushPoint& out);
 
 NODE_DECLARATION_FUNCTION(mock_point_emitter)
 {
-    b.add_input<Geometry>("Stroke Curves");
+    // Optional: in a standalone (non-zone) graph this carries the captured
+    // stroke curves directly. Inside a Wetbrush simulation zone the boundary
+    // is single-typed (WetbrushFrame), so the curves arrive via the "Frame"
+    // input below instead -- making this optional avoids MISSING_INPUT in the
+    // zone path.
+    b.add_input<Geometry>("Stroke Curves").optional(true);
+    b.add_input<Ruzino::WetbrushFrame>("Frame").optional(true);
     b.add_input<float>("Replay Speed").default_val(1.0f).min(0.01f).max(10.0f);
     b.add_output<BrushPoint>("Current Point");
 }
@@ -74,8 +80,12 @@ NODE_EXECUTION_FUNCTION(mock_point_emitter)
 
     // Refresh the trajectory cache from the input curve. Rebuild only when
     // the input signature changes (cheap: vertex count + stroke count) to
-    // avoid re-parsing every frame.
-    auto stroke_curves = params.get_input<Geometry>("Stroke Curves");
+    // avoid re-parsing every frame. Prefer the WetbrushFrame.stroke_curves
+    // (zone path) if wired, else the raw "Stroke Curves" socket.
+    Geometry stroke_curves =
+        params.has_input("Frame")
+            ? params.get_input<Ruzino::WetbrushFrame>("Frame").stroke_curves
+            : params.get_input<Geometry>("Stroke Curves");
     auto curve = stroke_curves.get_component<CurveComponent>();
     if (curve) {
         auto verts = curve->get_vertices();
@@ -162,8 +172,8 @@ NODE_EXECUTION_FUNCTION(mock_point_emitter)
             out.stroke_start = true;
             storage.last_pos = out.pos;
             // Advance cursor by one frame's worth of time.
-            float dt = payload.delta_time > 0.0f ? payload.delta_time
-                                                 : (1.0f / 60.0f);
+            float dt =
+                payload.delta_time > 0.0f ? payload.delta_time : (1.0f / 60.0f);
             // Map elapsed sim time back into trajectory index space: use
             // the local time spacing of the current stroke.
             advance_cursor(storage, dt * replay_speed);
@@ -178,8 +188,8 @@ NODE_EXECUTION_FUNCTION(mock_point_emitter)
             else {
                 sample_trajectory(storage, out);
             }
-            float dt = payload.delta_time > 0.0f ? payload.delta_time
-                                                 : (1.0f / 60.0f);
+            float dt =
+                payload.delta_time > 0.0f ? payload.delta_time : (1.0f / 60.0f);
             advance_cursor(storage, dt * replay_speed);
         }
     }
@@ -196,7 +206,8 @@ NODE_EXECUTION_FUNCTION(mock_point_emitter)
 // boundaries by jumping the cursor to the next stroke's start.
 static void advance_cursor(EmitterStorage& s, float elapsed)
 {
-    if (s.total_strokes <= 0) return;
+    if (s.total_strokes <= 0)
+        return;
     // Clamp current stroke.
     if (s.cur_stroke >= s.total_strokes) {
         s.cursor = static_cast<float>(s.total_points);
@@ -221,15 +232,18 @@ static void advance_cursor(EmitterStorage& s, float elapsed)
     int end = s0 + len;
     if (!s.times.empty() && end - 1 < static_cast<int>(s.times.size()) &&
         s.times[end - 1] > s.times[s0]) {
-        t_per_pt = (s.times[end - 1] - s.times[s0]) / static_cast<float>(len - 1);
-        if (t_per_pt <= 0.0f) t_per_pt = 1.0f / 60.0f;
+        t_per_pt =
+            (s.times[end - 1] - s.times[s0]) / static_cast<float>(len - 1);
+        if (t_per_pt <= 0.0f)
+            t_per_pt = 1.0f / 60.0f;
     }
     float idx_advance = elapsed / t_per_pt;
     s.cursor += idx_advance;
     // Cross stroke boundaries if needed.
     while (s.cur_stroke < s.total_strokes &&
-           s.cursor >= static_cast<float>(s.stroke_start_idx[s.cur_stroke] +
-                                          s.stroke_len[s.cur_stroke])) {
+           s.cursor >= static_cast<float>(
+                           s.stroke_start_idx[s.cur_stroke] +
+                           s.stroke_len[s.cur_stroke])) {
         s.cur_stroke++;
     }
 }
@@ -242,7 +256,8 @@ static void sample_trajectory(const EmitterStorage& s, BrushPoint& out)
     int i0 = static_cast<int>(std::floor(c));
     int i1 = i0 + 1;
     float frac = c - static_cast<float>(i0);
-    if (i0 < 0) i0 = 0;
+    if (i0 < 0)
+        i0 = 0;
     if (i0 >= s.total_points) {
         out.active = false;
         return;
@@ -261,7 +276,8 @@ static void sample_trajectory(const EmitterStorage& s, BrushPoint& out)
     out.active = true;
     // stroke_start on the first point of whichever stroke the cursor is in.
     int eff_stroke = s.cur_stroke;
-    if (eff_stroke >= s.total_strokes) eff_stroke = s.total_strokes - 1;
+    if (eff_stroke >= s.total_strokes)
+        eff_stroke = s.total_strokes - 1;
     int stroke_first = s.stroke_start_idx[eff_stroke];
     out.stroke_start = (i0 == stroke_first && frac < 0.5f);
 }

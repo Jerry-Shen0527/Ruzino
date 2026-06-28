@@ -724,6 +724,10 @@ struct WetbrushSimState {
     // --- Control / grid bookkeeping (read by all nodes to set shader CBs) ---
     int grid_res = 0;
     int grid_res_z = 0;
+    // grid_alloc_* track the resolution the buffers were allocated for, so a
+    // resolution change triggers realloc (mirrors brush_paint_sim).
+    int grid_alloc_res = 0;
+    int grid_alloc_res_z = 0;
     float grid_paper = 0.0f;
     float grid_height = 0.0f;
     glm::vec2 grid_center = glm::vec2(0.0f);
@@ -772,6 +776,37 @@ struct BristleSampleOutputs {
     nvrhi::BufferHandle sample_pos;    // bristle sample positions (Nb*S)
     nvrhi::BufferHandle sample_color;  // bristle sample RYB color
     nvrhi::BufferHandle sample_frame;  // bristle Bishop frame (packed float4)
+
+    static constexpr bool has_storage = false;
+};
+
+// WetbrushFrame — the SINGLE value carried by the simulation zone boundary.
+//
+// Constraint: the simulation zone (createSimulationZone + add_sync_group)
+// forces all four boundary groups (sim_in in/out, sim_out in/out) to carry the
+// SAME typed slots. So both the upstream INPUT and the fed-back value must be
+// the same type. Connecting a Geometry (Stroke Curves) input and a
+// WetbrushFrame feedback breaks the sync and the wb nodes never cook
+// (MISSING_INPUT).
+//
+// To keep ONE typed boundary slot, WetbrushFrame bundles everything that must
+// cross the boundary:
+//   * stroke_curves -- the input stroke Geometry (set once on the init frame by
+//     a thin wrapper; the emitter caches it internally and ignores it later)
+//   * bp            -- the per-frame brush sample (produced inside the zone by
+//     the emitter each frame)
+//   * state         -- the shared WetbrushSimState (fed back; carries the
+//     persistent canvas + live fields)
+//
+// On the init frame the upstream wrapper packs stroke_curves into a fresh
+// WetbrushFrame. On advance frames sim_out feeds the (bp-updated,
+// canvas-committed) frame back. The emitter reads stroke_curves on first sight
+// (caches it), then advances its cursor each frame to produce bp.
+struct WetbrushFrame {
+    Geometry stroke_curves;  // input stroke (init-frame only)
+    BrushPoint bp{};         // per-frame brush sample
+    std::shared_ptr<WetbrushSimState>
+        state;  // shared cross-node + cross-frame state
 
     static constexpr bool has_storage = false;
 };

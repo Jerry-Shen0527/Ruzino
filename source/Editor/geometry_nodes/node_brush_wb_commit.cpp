@@ -1,29 +1,23 @@
 // node_brush_wb_commit — Wetbrush COMMIT + OUTPUT sub-step (streaming zone
 // chain).
 //
-// Receives the final SimState from brush_wb_fluid and:
+// Receives the final WetbrushFrame from brush_wb_fluid and:
 //   - commits the live 3D window into the persistent 2D canvas layer
 //     (canvas_commit shader, brush_paint_sim ~2712)
-//   - reads back fidelity statistics (Max Divergence, Total Density/Color,
-//     Particle Count) into the debug output ports (~2568)
+//   - reads back fidelity statistics into the debug output ports (~2568)
 //   - emits the Paint Particles geometry (one point per painted canvas cell,
 //     ~2762) so downstream consumers (write_usd, render) see the paint.
 //
-// The canvas layer is the one persistent exception in SimState (only this node
-// touches it within a frame, but it accumulates across the whole stroke and
-// must survive frame-to-frame), so it rides SimState like the >=3-node fields.
-//
-// STATUS: skeleton. Emits empty Paint Particles + zeroed debug ports (matching
-// brush_wetbrush_step / brush_paint_sim's empty-output shape) so downstream
-// always sees every output port set. Stage 3 lifts the commit + readback +
-// output.
+// The frame's SimState (carrying the canvas layer) is forwarded on the "Frame"
+// output so the zone feeds it back simulation_out -> simulation_in for the
+// next frame.
 
 #include <memory>
 
 #include "GCore/Components/PointsComponent.h"
 #include "GCore/GOP.h"
 #include "GCore/geom_payload.hpp"
-#include "brush_sim_common.hpp"  // BrushPoint, WetbrushSimState
+#include "brush_sim_common.hpp"  // BrushPoint, WetbrushSimState, WetbrushFrame
 #include "geom_node_base.h"
 #include "spdlog/spdlog.h"
 
@@ -31,16 +25,11 @@ NODE_DEF_OPEN_SCOPE
 
 NODE_DECLARATION_FUNCTION(brush_wb_commit)
 {
-    b.add_input<Ruzino::BrushPoint>("Brush Point");
-    b.add_input<std::shared_ptr<Ruzino::WetbrushSimState>>("SimState");
+    b.add_input<Ruzino::WetbrushFrame>("Frame");
 
     // Outputs mirror brush_paint_sim / brush_wetbrush_step so the existing
     // fidelity-test harness (read 8 debug ports) works unchanged.
     b.add_output<Geometry>("Paint Particles");
-    // SimState pass-through: commit is the terminal wb node, so its (updated,
-    // canvas-committed) SimState is what feeds back to simulation_out for the
-    // next frame. The persistent canvas layer survives via this socket.
-    b.add_output<std::shared_ptr<Ruzino::WetbrushSimState>>("SimState");
     b.add_output<float>("Max Divergence");
     b.add_output<float>("Mean Divergence");
     b.add_output<float>("Total Density");
@@ -49,13 +38,16 @@ NODE_DECLARATION_FUNCTION(brush_wb_commit)
     b.add_output<float>("Total Color B");
     b.add_output<int>("Particle Count");
     b.add_output<float>("Total Particle Mass");
+    // Frame forwarded for zone feedback (carries the persistent canvas).
+    b.add_output<Ruzino::WetbrushFrame>("Frame");
 }
 
 NODE_EXECUTION_FUNCTION(brush_wb_commit)
 {
-    auto simstate =
-        params.get_input<std::shared_ptr<Ruzino::WetbrushSimState>>("SimState");
-    Ruzino::BrushPoint bp = params.get_input<Ruzino::BrushPoint>("Brush Point");
+    Ruzino::WetbrushFrame frame =
+        params.get_input<Ruzino::WetbrushFrame>("Frame");
+    auto& simstate = frame.state;
+    const auto& bp = frame.bp;
 
     auto payload = params.get_global_payload<GeomPayload>();
 
@@ -75,14 +67,10 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
     };
 
     if (!simstate) {
-        spdlog::warn(
-            "brush_wb_commit: no SimState from fluid (graph mis-wired)");
-        emit_empty();
-        params.set_output("SimState", simstate);  // null, but set every port
-        return true;
+        spdlog::warn("brush_wb_commit: no SimState in frame (graph mis-wired)");
     }
 
-    if (payload.is_simulating && bp.active) {
+    if (payload.is_simulating && bp.active && simstate) {
         spdlog::info(
             "brush_wb_commit: advance pos=({:.3f},{:.3f},{:.3f}) "
             "(canvas commit + readback + output TODO)",
@@ -93,9 +81,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
 
     // Stage 3 TODO: canvas_commit + readback + Paint Particles output.
     emit_empty();
-    // Pass the (unchanged, stub) SimState through so the zone feedback loop
-    // keeps the persistent canvas + live fields alive across frames.
-    params.set_output("SimState", simstate);
+    params.set_output("Frame", frame);
     return true;
 }
 

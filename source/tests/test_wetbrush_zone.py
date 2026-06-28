@@ -46,16 +46,27 @@ DT = 1.0 / FPS
 
 
 def _build_streaming_graph():
-    """Build mock_stroke -> emitter -> zone(deposit->bristle->fluid->commit).
+    """Build the streaming Wetbrush zone graph.
 
-    The simulation zone carries TWO values across the boundary frame-to-frame:
-      * BrushPoint  -- the per-frame brush sample (emitter -> sim_in; fresh
-                       each frame, not fed back)
-      * SimState    -- the shared WetbrushSimState (fed back sim_out -> sim_in;
-                       deposit allocates it on the init frame, the wb chain
-                       mutates it, commit writes it out for next-frame feedback)
+    The simulation zone carries ONE typed value across the boundary:
+    WetbrushFrame (bundles the per-frame BrushPoint + the shared
+    WetbrushSimState). Carrying two different-typed slots (BrushPoint +
+    shared_ptr<WetbrushSimState>) broke the zone's slot matching and the wb
+    nodes never cooked (MISSING_INPUT); bundling into one aggregate fixes it.
 
-    Returns (graph, sim_in, sim_out, mock, emitter, commit) for assertions.
+    Topology:
+      mock_stroke --Stroke Curves--> [ simulation_in ]
+      [ simulation_in ] --Stroke Curves--> mock_point_emitter   (zone interior;
+          the curve is forwarded into the zone on the init frame and fed back
+          on advance frames -- emitter caches it internally so re-reading the
+          same curve is fine)
+      mock_point_emitter --BrushPoint--> brush_wb_deposit "Brush Point"
+      brush_wb_deposit --Frame--> brush_wb_bristle --Frame--> brush_wb_fluid
+        --Frame--> brush_wb_commit
+      brush_wb_commit --Frame--> [ simulation_out ]   (fed back as WetbrushFrame)
+      [ simulation_out ] --Frame--> write_usd
+
+    Returns (graph, sim_in, sim_out, mock, emitter, commit).
     """
     from ruzino_graph import RuzinoGraph
 
@@ -63,48 +74,48 @@ def _build_streaming_graph():
     g.loadConfiguration(str(BINARY_DIR / "geometry_nodes.json"))
 
     mock = g.createNode("mock_stroke", name="MockStroke")
-    emitter = g.createNode("mock_point_emitter", name="Emitter")
+    entry = g.createNode("brush_wb_entry", name="Entry")  # Geometry -> WetbrushFrame
     sim_in, sim_out = g.createSimulationZone()
+    emitter = g.createNode("mock_point_emitter", name="Emitter")
     deposit = g.createNode("brush_wb_deposit", name="Deposit")
     bristle = g.createNode("brush_wb_bristle", name="Bristle")
     fluid = g.createNode("brush_wb_fluid", name="Fluid")
     commit = g.createNode("brush_wb_commit", name="Commit")
+    # write_usd lives INSIDE the zone (after commit) so Paint Particles flows
+    # commit -> write_usd directly, NOT through the boundary. This keeps the
+    # zone boundary single-typed: only WetbrushFrame is fed back.
     write = g.createNode("write_usd", name="Output")
 
-    # mock_stroke -> emitter (programmatic stroke trajectory).
-    g.addEdge(mock, "Stroke Curves", emitter, "Stroke Curves")
-    # emitter -> simulation_in: BrushPoint enters the zone each frame. The zone
-    # carries it on "Simulation Out" to the wb chain.
-    g.addEdge(emitter, "Current Point", sim_in, "Simulation In")
-
-    # Inside the zone, sim_in's "Simulation Out" provides BOTH the BrushPoint
-    # and the fed-back SimState (the zone forwards every materialized slot).
-    # Connect both to deposit's "Brush Point" and "SimState" inputs. On the
-    # init frame the SimState slot is absent/empty, so deposit allocates it.
-    g.addEdge(sim_in, "Simulation Out", deposit, "Brush Point")
-    g.addEdge(sim_in, "Simulation Out", deposit, "SimState")
-    # The wb chain: each forwards SimState + the 2-node socket fields.
-    g.addEdge(deposit, "SimState", bristle, "SimState")
+    # mock_stroke -> entry: pack Stroke Curves into a WetbrushFrame so the zone
+    # boundary stays single-typed (input == feedback type).
+    g.addEdge(mock, "Stroke Curves", entry, "Stroke Curves")
+    # entry -> simulation_in: WetbrushFrame enters the zone (and is fed back on
+    # advance frames carrying the canvas + state).
+    g.addEdge(entry, "Frame", sim_in, "Simulation In")
+    # sim_in's "Simulation Out" carries the WetbrushFrame to the emitter
+    # (interior). The emitter reads stroke_curves from it and advances its
+    # cursor every frame via payload.delta_time.
+    g.addEdge(sim_in, "Simulation Out", emitter, "Frame")
+    # emitter -> deposit: the fresh per-frame BrushPoint (interior edge).
+    g.addEdge(emitter, "Current Point", deposit, "Brush Point")
+    # sim_in -> deposit: the fed-back WetbrushFrame (init: entry's frame with
+    # stroke_curves; advance: commit's frame with canvas+state). The same
+    # boundary slot feeds both the emitter (reads stroke_curves) and deposit
+    # (reads/allocates state).
+    g.addEdge(sim_in, "Simulation Out", deposit, "Frame")
+    # The wb chain: WetbrushFrame flows deposit -> bristle -> fluid -> commit.
+    g.addEdge(deposit, "Frame", bristle, "Frame")
     g.addEdge(deposit, "Height Field", bristle, "Height Field")
-    g.addEdge(bristle, "SimState", fluid, "SimState")
+    g.addEdge(bristle, "Frame", fluid, "Frame")
     g.addEdge(bristle, "Bristle Samples", fluid, "Bristle Samples")
-    g.addEdge(fluid, "SimState", commit, "SimState")
-    # BrushPoint also reaches bristle/fluid/commit (they read it for logging /
-    # kinematics in the stub; Stage 3 uses it for physics).
-    g.addEdge(sim_in, "Simulation Out", bristle, "Brush Point")
-    g.addEdge(sim_in, "Simulation Out", fluid, "Brush Point")
-    g.addEdge(sim_in, "Simulation Out", commit, "Brush Point")
+    g.addEdge(fluid, "Frame", commit, "Frame")
+    # commit -> write_usd (interior): Paint Particles reaches write_usd without
+    # crossing the boundary, so the zone feedback stays single-typed.
+    g.addEdge(commit, "Paint Particles", write, "Geometry")
+    # commit -> simulation_out: ONLY the WetbrushFrame is fed back (carries the
+    # persistent canvas + live fields). Single typed boundary slot.
+    g.addEdge(commit, "Frame", sim_out, "Simulation In")
 
-    # FEEDBACK: commit's SimState -> simulation_out "Simulation In", so the
-    # zone feeds the (canvas + live fields + control) SimState back to sim_in
-    # for the next frame. This is what makes the persistent canvas survive.
-    g.addEdge(commit, "SimState", sim_out, "Simulation In")
-    # Paint Particles leaves the zone (one-shot output each frame, not fed back).
-    g.addEdge(commit, "Paint Particles", sim_out, "Simulation In")
-    # simulation_out -> write_usd.
-    g.addEdge(sim_out, "Simulation Out", write, "Geometry")
-
-    # Brush/material params via socket defaults.
     g.setSocketDefaults({
         (mock, "Num Points"): 30,
         (mock, "Amplitude"): 0.05,
@@ -114,8 +125,6 @@ def _build_streaming_graph():
         (deposit, "Brush Radius"): 0.02,
         (deposit, "Brush Pressure"): 1.0,
         (deposit, "Ink Amount"): 0.8,
-        # NOTE: "Ink Color" (vec3) has no default_val support (see node.hpp
-        # ValueTrait); deposit/bristle apply a red fallback when it is unset.
         (bristle, "Viscosity"): 0.5,
         (bristle, "Brush Radius"): 0.02,
         (fluid, "Viscosity"): 0.5,
@@ -133,14 +142,13 @@ def test_streaming_graph_builds():
     g, sim_in, sim_out, mock, emitter, commit = _build_streaming_graph()
 
     labels = [n.name for n in g.nodes]
-    for needed in ("MockStroke", "Emitter", "SimulationIn", "Deposit",
+    for needed in ("MockStroke", "SimulationIn", "Emitter", "Deposit",
                    "Bristle", "Fluid", "Commit", "SimulationOut", "Output"):
         assert needed in labels, f"missing node {needed}: {labels}"
 
     assert sim_in.paired_node is sim_out
     assert sim_out.paired_node is sim_in
-    # The wb chain + dual boundary slots + feedback + output are all wired.
-    assert len(g.links) >= 14, f"expected >=14 links, got {len(g.links)}"
+    assert len(g.links) >= 10, f"expected >=10 links, got {len(g.links)}"
 
 
 def test_streaming_simulation_runs():
@@ -168,7 +176,16 @@ def test_streaming_simulation_runs():
     prim_path = "/Brush"
     UsdGeom.Mesh.Define(stage.get_pxr_stage(), prim_path)
 
+    print("MARKER: before apply_to_stage", flush=True)
+    # Serialize the graph ourselves to see if THAT is where it breaks.
+    try:
+        j = g.serialize()
+        print(f"MARKER: serialize OK, len={len(j)}", flush=True)
+    except Exception as e:
+        print(f"MARKER: serialize FAILED: {e}", flush=True)
+        raise
     g.apply_to_stage(stage, prim_path)
+    print("MARKER: after apply_to_stage", flush=True)
 
     # GATE 1: prim must carry Animatable=true or Stage.tick never cooks it.
     prim = stage.get_pxr_stage().GetPrimAtPath(Sdf.Path(prim_path))
@@ -177,9 +194,11 @@ def test_streaming_simulation_runs():
     # GATE 2: render_time must stay >= accumulated sim time, else
     # should_simulate() short-circuits after frame 1.
     for i in range(NUM_FRAMES):
+        print(f"MARKER: before tick {i}", flush=True)
         stage.set_render_time((i + 1) * DT)
         stage.tick(DT)
         stage.finish_tick()
+        print(f"MARKER: after tick {i}", flush=True)
 
     stage.save()
     print(f"  streaming wetbrush: {NUM_FRAMES} frames cooked, "
