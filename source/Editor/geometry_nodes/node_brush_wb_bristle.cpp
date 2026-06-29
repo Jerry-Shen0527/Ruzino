@@ -1,20 +1,21 @@
-// node_brush_wb_bristle — Wetbrush BRISTLE sub-step (streaming zone chain).
+// node_brush_wb_bristle — Wetbrush BRISTLE liquid-transfer sub-step.
 //
-// Receives a WetbrushFrame (BrushPoint + shared SimState) from
-// brush_wb_deposit, runs the bristle dynamics + paint transfer stage, and
-// forwards the updated frame. The zone carries WetbrushFrame as its single
-// typed boundary value.
+// Receives the paint field from brush_wb_deposit (which just ran the bristle
+// deposit: spring -> constraint -> resample -> raster -> merge). This node owns
+// the §5.1 bristle<->particle liquid transfer lifted 1:1 from brush_paint_sim
+// ~1525-1612:
+//   Pass 0 ABSORB: grid paint capacity -> sample_liquid (ping-pong _b out).
+//   Pass 1 EMIT:   over-capacity sample liquid -> FLIP particles.
 //
-// Physics (Stage 3 TODO, lifted from brush_paint_sim):
-//   bristle_simulate -> density_constraint (PBD) -> resample -> rasterize ->
-//   merge (reads grid density/color/wetness/oil_density) ->
-//   bristle<->particle liquid transfer/emit (reads grid color).
+// The field is forwarded to brush_wb_fluid, which runs the particle cycle +
+// fluid solve. The BristleSampleOutputs output carries handles to the same
+// sample buffers for any readback consumer.
 
 #include <memory>
 
 #include "GCore/GOP.h"
 #include "GCore/geom_payload.hpp"
-#include "brush_sim_common.hpp"  // BrushPoint, WetbrushSimState, WetbrushFrame, BristleSampleOutputs
+#include "brush_sim_common.hpp"  // WetbrushSimState, WetbrushZoneState, BristleSampleOutputs, brush_* helpers
 #include "geom_node_base.h"
 #include "spdlog/spdlog.h"
 
@@ -22,49 +23,141 @@ NODE_DEF_OPEN_SCOPE
 
 NODE_DECLARATION_FUNCTION(brush_wb_bristle)
 {
-    b.add_input<Ruzino::WetbrushFrame>("Frame");
-    // 2-node field: height written by deposit, read here for bristle vars.
-    b.add_input<nvrhi::BufferHandle>("Height Field");
+    b.add_input<Ruzino::WetbrushZoneState>("State");
     b.add_input<float>("Brush Radius").default_val(0.02f).min(0.001f).max(0.5f);
-    b.add_input<float>("Brush Pressure").default_val(1.0f).min(0.0f).max(4.0f);
-    b.add_input<float>("Viscosity").default_val(0.5f).min(0.0f).max(10.0f);
-    b.add_input<float>("Oil Density").default_val(0.5f).min(0.0f).max(1.0f);
-    // Optional: vec3 sockets can't carry a default_val; exec falls back to red.
-    b.add_input<glm::vec3>("Ink Color").optional(true);
 
-    b.add_output<Ruzino::WetbrushFrame>("Frame");
-    // 2-node field: written here, read by brush_wb_fluid (particle
-    // emit/update).
+    b.add_output<Ruzino::WetbrushZoneState>("State");
+    // Carries handles to the same sample buffers for readback consumers.
     b.add_output<Ruzino::BristleSampleOutputs>("Bristle Samples");
 }
 
 NODE_EXECUTION_FUNCTION(brush_wb_bristle)
 {
-    Ruzino::WetbrushFrame frame =
-        params.get_input<Ruzino::WetbrushFrame>("Frame");
-    auto& simstate = frame.state;
-    const auto& bp = frame.bp;
+    using Ruzino::WetbrushSimState;
+    using Ruzino::WetbrushZoneState;
 
+    WetbrushZoneState zs = params.get_input<WetbrushZoneState>("State");
+    auto& field = zs.state;
+    float brush_radius = params.get_input<float>("Brush Radius");
+
+    auto& rc = get_resource_allocator();
+    auto device = RHI::get_device();
     auto payload = params.get_global_payload<GeomPayload>();
-    float dt = payload.delta_time > 0.0f ? payload.delta_time : (1.0f / 60.0f);
 
-    if (!simstate) {
-        spdlog::warn(
-            "brush_wb_bristle: no SimState in frame (graph mis-wired)");
+    Ruzino::BristleSampleOutputs samples{};
+    if (field) {
+        samples.sample_pos = field->sample_pos;
+        samples.sample_color = field->sample_color;
+        samples.sample_frame = field->sample_frame;
     }
 
-    if (payload.is_simulating && bp.active && simstate) {
-        spdlog::info(
-            "brush_wb_bristle: advance pos=({:.3f},{:.3f},{:.3f}) dt={:.4f} "
-            "(bristle physics TODO)",
-            bp.pos.x,
-            bp.pos.y,
-            bp.pos.z,
-            dt);
+    if (!field || !payload.is_simulating || !field->particles_initialized) {
+        params.set_output("State", zs);
+        params.set_output("Bristle Samples", samples);
+        return true;
     }
 
-    params.set_output("Frame", frame);
-    params.set_output("Bristle Samples", Ruzino::BristleSampleOutputs{});
+    const int WIN_XY =
+        std::min(WetbrushSimState::WIN_ALLOC_XY, field->grid_res);
+    const int WIN_Z = field->grid_res_z;
+    const float cell_sz =
+        field->grid_paper / static_cast<float>(field->grid_res);
+    const int Nb = WetbrushSimState::NUM_BRISTLES;
+    const int S = WetbrushSimState::SAMPLES_PER_BRISTLE;
+    const int max_ptcl = WetbrushSimState::MAX_PARTICLES;
+
+    // ======================================================================
+    // §5.1 Bristle-particle liquid transfer (brush_paint_sim ~1531-1612).
+    // ABSORB (paint supply -> sample using Eq.12/13 capacity) then EMIT
+    // (sample -> particles). Ping-pong on sample_liquid.
+    // ======================================================================
+    Ruzino::BristleLiquidConstants blc = {};
+    blc.num_bristles = Nb;
+    blc.samples_per_bristle = S;
+    blc.mu = 0.5f;
+    blc.M_max = 2.0f;
+    blc.M_min = 0.1f;
+    blc.rho_0 = 1e3f;
+    blc.eps_emit = 0.1f;
+    blc.max_emit_per_step = 10;
+    blc.grid_res = field->grid_res;
+    blc.grid_res_z = WIN_Z;
+    blc.height_extent = field->grid_height;
+    blc.grid_center_z = field->grid_center_z;
+    blc.cell_size = cell_sz;
+    blc.paper_size = field->grid_paper;
+    blc.grid_center_x = field->grid_center.x;
+    blc.grid_center_y = field->grid_center.y;
+    blc.D0 = brush_radius * 3.0f;
+    blc.max_particles = max_ptcl;
+    blc.window_origin_x = field->win_origin_x;
+    blc.window_origin_y = field->win_origin_y;
+    blc.window_origin_z = 0;
+    blc.window_size_x = WIN_XY;
+    blc.window_size_z = WIN_Z;
+
+    nvrhi::BufferHandle liquid_cb;
+    Ruzino::brush_upload_cb(
+        rc, device, &blc, sizeof(blc), "wb_liquid_cb", liquid_cb);
+
+    // Lazily compile the liquid shaders (they live in the field).
+    if (!field->bri_liquid_transfer_program)
+        field->bri_liquid_transfer_program =
+            Ruzino::brush_compile_shader(rc, "bristle_liquid_transfer.slang");
+    if (!field->bri_liquid_emit_program)
+        field->bri_liquid_emit_program =
+            Ruzino::brush_compile_shader(rc, "bristle_liquid_emit.slang");
+
+    // Pass 0: ABSORB (sample_liquid SRV -> sample_liquid_b UAV)
+    Ruzino::brush_dispatch(
+        rc,
+        field->bri_liquid_transfer_program,
+        { { "sample_pos", field->sample_pos },
+          { "sample_color", field->sample_color },
+          { "sample_liquid_in", field->sample_liquid },
+          { "bristle_psi", field->bristle_density },
+          { "grid_density", field->density },
+          { "grid_color_r", field->color_r },
+          { "grid_color_y", field->color_y },
+          { "grid_color_b", field->color_b } },
+        { { "sample_liquid_out", field->sample_liquid_b },
+          { "sample_supply", field->sample_supply } },
+        liquid_cb,
+        Nb * S);
+    std::swap(field->sample_liquid, field->sample_liquid_b);
+
+    // Pass 1: EMIT (sample -> particles, hemisphere pattern)
+    Ruzino::brush_reset_counter(rc, device, field->ptcl_counter);
+    Ruzino::brush_dispatch(
+        rc,
+        field->bri_liquid_emit_program,
+        { { "sample_pos", field->sample_pos },
+          { "sample_color", field->sample_color },
+          { "sample_vel", field->sample_vel },
+          { "sample_liquid_in", field->sample_liquid },
+          { "bristle_psi", field->bristle_density },
+          { "grid_density", field->density },
+          { "grid_color_r", field->color_r },
+          { "grid_color_y", field->color_y },
+          { "grid_color_b", field->color_b } },
+        { { "sample_liquid_out", field->sample_liquid_b },
+          { "sample_supply", field->sample_supply },
+          { "ptcl_counter", field->ptcl_counter },
+          { "ptcl_pos_out", field->ptcl_pos },
+          { "ptcl_vel_out", field->ptcl_vel },
+          { "ptcl_color_out", field->ptcl_color },
+          { "ptcl_alive_out", field->ptcl_alive } },
+        liquid_cb,
+        Nb * S);
+    std::swap(field->sample_liquid, field->sample_liquid_b);
+
+    rc.destroy(liquid_cb);
+
+    samples.sample_pos = field->sample_pos;
+    samples.sample_color = field->sample_color;
+    samples.sample_frame = field->sample_frame;
+    params.set_output("State", zs);
+    params.set_output("Bristle Samples", samples);
     return true;
 }
 

@@ -675,51 +675,124 @@ struct WetbrushState {
 using PaintSimStorage = WetbrushState;
 
 // ============================================================
-// WetbrushSimState — the SHARED cross-node state for the streaming
-// simulation-zone brush chain (brush_wb_deposit -> brush_wb_bristle ->
-// brush_wb_fluid -> brush_wb_commit).
+// WetbrushSimState — the SHARED cross-node + cross-frame state for the
+// streaming simulation-zone brush chain (brush_wb_deposit ->
+// brush_wb_bristle -> brush_wb_fluid -> brush_wb_commit).
 //
-// Inclusion rule (docs + approved plan): a field lives here IFF it is accessed
-// by >=3 of the four sub-step nodes, OR it is persistent across the whole
-// stroke (canvas layer). Everything else is either:
-//   * node-local and created via the resource allocator every cook (velocity,
-//     pressure, divergence, *_tmp, particle fields, bristle raster grids) —
-//     the executor recycles those automatically;
-//   * or a 2-node field carried as a regular socket value (bristle sample
-//     outputs, height_field) — see BristleSampleOutputs below.
+// FIDELITY NOTE: this struct carries the FULL persistent buffer set, mirroring
+// the monolith's WetbrushState field-for-field. The earlier "lean subset" idea
+// (only density/color/wetness/oil_density/canvas) was physically wrong: the
+// Stable Fluids solver's velocity field, the bristle spring positions, and the
+// FLIP/PIC particles MUST persist frame-to-frame, otherwise momentum, bristle
+// dynamics and particle mass reset every tick and the result bears no
+// resemblance to the monolith. "node-local + auto-recycled" cannot work for
+// state that accumulates across the whole stroke. Fix it at the source: carry
+// everything, 1:1 with the monolith.
 //
-// This struct is passed between the four wb nodes as a
-// shared_ptr<WetbrushSimState> socket value (zero-copy: GPU handles are
-// refcounted shared_ptrs). Because the framework auto-registers socket types,
-// no manual entt::meta registration is needed. canvas_* are shared_ptrs so the
-// same GPU buffers persist across nodes AND across frames (the simulation_out
-// boundary feeds them back).
-//
-// NOTE: WetbrushState above (used by the legacy monolith brush_paint_sim) is
-// left UNCHANGED — it carries the full buffer set for that node. This struct is
-// the lean subset for the decomposed chain. Keeping them separate avoids
-// regenerating the monolith.
+// What differs from the monolith's WetbrushState is purely the SHARING model:
+// here it travels as a shared_ptr<WetbrushSimState> socket value across the 4
+// sub-step nodes (zero-copy: GPU handles are refcounted shared_ptrs) and is fed
+// back through simulation_out -> simulation_in, instead of living in a single
+// Node::storage. Because the framework auto-registers socket types, no manual
+// entt::meta registration is needed.
 // ============================================================
 struct WetbrushSimState {
     static constexpr bool has_storage = false;
 
-    // --- Live fields accessed by >=3 sub-step nodes ---
-    // deposit writes, bristle merge reads, fluid advects, commit flushes to
-    // canvas.
-    nvrhi::BufferHandle density;
-    nvrhi::BufferHandle color_r, color_y, color_b;
-    // deposit ctx, bristle merge/transfer, fluid damp/dry+Jacobi, commit read.
-    nvrhi::BufferHandle wetness;
-    // deposit alloc, bristle merge, fluid diffuse (3 nodes).
-    nvrhi::BufferHandle oil_density;
+    // --- 3D fluid window fields (allocated at WIN_ALLOC_XY × WIN_ALLOC_XY ×
+    // grid_res_z, mirroring brush_paint_sim's window scheme) ---
+    nvrhi::BufferHandle density, density_tmp;
+    nvrhi::BufferHandle color_r, color_y, color_b, color_tmp;
+    nvrhi::BufferHandle vel_x, vel_x_tmp;
+    nvrhi::BufferHandle vel_y, vel_y_tmp;
+    nvrhi::BufferHandle vel_z, vel_z_tmp;
+    nvrhi::BufferHandle wetness, wetness_tmp;
+    nvrhi::BufferHandle oil_density, oil_density_tmp;
+    nvrhi::BufferHandle height_field;
+    nvrhi::BufferHandle pressure_a, pressure_b;
+    nvrhi::BufferHandle divergence_buf;
 
-    // --- Persistent 2D canvas layer (commit-only, but accumulates across the
-    // whole stroke, so it must persist frame-to-frame) ---
+    // --- Persistent 2D canvas layer (accumulates across the whole stroke) ---
     nvrhi::BufferHandle canvas_density;
     nvrhi::BufferHandle canvas_color_r;
     nvrhi::BufferHandle canvas_color_y;
     nvrhi::BufferHandle canvas_color_b;
     nvrhi::BufferHandle canvas_wetness;
+
+    // --- Bristle chain state (spring positions + samples + liquid) ---
+    static constexpr int NUM_BRISTLES = 80;
+    static constexpr int VERTS_PER_BRISTLE = 10;
+    static constexpr int SAMPLES_PER_BRISTLE = 128;
+    static constexpr int BRISTLE_VERTEX_STRIDE = sizeof(float) * 4 * 2;
+
+    nvrhi::BufferHandle bristle_data;
+    nvrhi::BufferHandle sample_pos;
+    nvrhi::BufferHandle sample_vel;
+    nvrhi::BufferHandle sample_color;
+    nvrhi::BufferHandle sample_frame;
+    nvrhi::BufferHandle lambda_buf;
+    nvrhi::BufferHandle sample_liquid;
+    nvrhi::BufferHandle sample_liquid_b;
+    nvrhi::BufferHandle sample_supply;
+    nvrhi::BufferHandle bristle_input_color_buf;
+
+    // --- Bristle/particle accumulation grids (window-sized, reused as scratch
+    // each sub-step, same as the monolith) ---
+    nvrhi::BufferHandle bristle_density;
+    nvrhi::BufferHandle bristle_vel_x;
+    nvrhi::BufferHandle bristle_vel_y;
+    nvrhi::BufferHandle bristle_vel_z;
+    nvrhi::BufferHandle bristle_color_r;
+    nvrhi::BufferHandle bristle_color_y;
+    nvrhi::BufferHandle bristle_color_b;
+
+    // --- FLIP/PIC particle buffers ---
+    static constexpr int MAX_PARTICLES = 262144;
+
+    nvrhi::BufferHandle ptcl_pos;
+    nvrhi::BufferHandle ptcl_vel;
+    nvrhi::BufferHandle ptcl_color;
+    nvrhi::BufferHandle ptcl_alive;
+    nvrhi::BufferHandle ptcl_counter;
+    nvrhi::BufferHandle ptcl_density;
+    nvrhi::BufferHandle ptcl_vel_x;
+    nvrhi::BufferHandle ptcl_vel_y;
+    nvrhi::BufferHandle ptcl_vel_z;
+    nvrhi::BufferHandle ptcl_rast_r;
+    nvrhi::BufferHandle ptcl_rast_y;
+    nvrhi::BufferHandle ptcl_rast_b;
+    nvrhi::BufferHandle vel_x_old;
+    nvrhi::BufferHandle vel_y_old;
+    nvrhi::BufferHandle vel_z_old;
+    nvrhi::BufferHandle ptcl_pos_b;
+    nvrhi::BufferHandle ptcl_vel_b;
+    nvrhi::BufferHandle ptcl_color_b;
+    nvrhi::BufferHandle ptcl_alive_b;
+
+    // --- Compiled shader programs (lazily built on first use; persist so we
+    // don't recompile every frame) ---
+    ProgramHandle deposit_program;
+    ProgramHandle advect_program;
+    ProgramHandle jacobi_program;
+    ProgramHandle divergence_program;
+    ProgramHandle gradient_program;
+    ProgramHandle damp_dry_program;
+    ProgramHandle bristle_sim_program;
+    ProgramHandle bristle_density_constraint_program;
+    ProgramHandle bristle_resample_program;
+    ProgramHandle bristle_raster_program;
+    ProgramHandle bristle_merge_program;
+    ProgramHandle bri_liquid_transfer_program;
+    ProgramHandle bri_liquid_emit_program;
+    ProgramHandle field_clear_program;
+    ProgramHandle ptcl_emit_program;
+    ProgramHandle ptcl_update_program;
+    ProgramHandle ptcl_raster_program;
+    ProgramHandle ptcl_flip_pic_program;
+    ProgramHandle ptcl_compact_program;
+    ProgramHandle ptcl_to_grid_program;
+    ProgramHandle grid_to_ptcl_program;
+    ProgramHandle canvas_commit_program;
 
     // --- Control / grid bookkeeping (read by all nodes to set shader CBs) ---
     int grid_res = 0;
@@ -754,24 +827,177 @@ struct WetbrushSimState {
 
     ~WetbrushSimState()
     {
-        auto release = [](auto& h) { h = nullptr; };
-        release(density);
-        release(color_r);
-        release(color_y);
-        release(color_b);
-        release(wetness);
-        release(oil_density);
-        release(canvas_density);
-        release(canvas_color_r);
-        release(canvas_color_y);
-        release(canvas_color_b);
-        release(canvas_wetness);
+        if (!is_gpu_alive()) {
+            auto release = [&](auto& h) { h = nullptr; };
+            release(density);
+            release(density_tmp);
+            release(color_r);
+            release(color_y);
+            release(color_b);
+            release(color_tmp);
+            release(vel_x);
+            release(vel_x_tmp);
+            release(vel_y);
+            release(vel_y_tmp);
+            release(vel_z);
+            release(vel_z_tmp);
+            release(wetness);
+            release(wetness_tmp);
+            release(oil_density);
+            release(oil_density_tmp);
+            release(height_field);
+            release(pressure_a);
+            release(pressure_b);
+            release(divergence_buf);
+            release(canvas_density);
+            release(canvas_color_r);
+            release(canvas_color_y);
+            release(canvas_color_b);
+            release(canvas_wetness);
+            release(bristle_data);
+            release(sample_pos);
+            release(sample_vel);
+            release(sample_color);
+            release(sample_frame);
+            release(lambda_buf);
+            release(sample_liquid);
+            release(sample_liquid_b);
+            release(sample_supply);
+            release(bristle_input_color_buf);
+            release(bristle_density);
+            release(bristle_vel_x);
+            release(bristle_vel_y);
+            release(bristle_vel_z);
+            release(bristle_color_r);
+            release(bristle_color_y);
+            release(bristle_color_b);
+            release(ptcl_pos);
+            release(ptcl_vel);
+            release(ptcl_color);
+            release(ptcl_alive);
+            release(ptcl_counter);
+            release(ptcl_density);
+            release(ptcl_vel_x);
+            release(ptcl_vel_y);
+            release(ptcl_vel_z);
+            release(ptcl_rast_r);
+            release(ptcl_rast_y);
+            release(ptcl_rast_b);
+            release(vel_x_old);
+            release(vel_y_old);
+            release(vel_z_old);
+            release(ptcl_pos_b);
+            release(ptcl_vel_b);
+            release(ptcl_color_b);
+            release(ptcl_alive_b);
+            return;
+        }
+
+        auto& rc = get_resource_allocator();
+        auto destroy_buf = [&](nvrhi::BufferHandle& h) {
+            if (h) {
+                rc.destroy(h);
+                h = nullptr;
+            }
+        };
+        destroy_buf(density);
+        destroy_buf(density_tmp);
+        destroy_buf(color_r);
+        destroy_buf(color_y);
+        destroy_buf(color_b);
+        destroy_buf(color_tmp);
+        destroy_buf(vel_x);
+        destroy_buf(vel_x_tmp);
+        destroy_buf(vel_y);
+        destroy_buf(vel_y_tmp);
+        destroy_buf(vel_z);
+        destroy_buf(vel_z_tmp);
+        destroy_buf(wetness);
+        destroy_buf(wetness_tmp);
+        destroy_buf(oil_density);
+        destroy_buf(oil_density_tmp);
+        destroy_buf(height_field);
+        destroy_buf(pressure_a);
+        destroy_buf(pressure_b);
+        destroy_buf(divergence_buf);
+        destroy_buf(canvas_density);
+        destroy_buf(canvas_color_r);
+        destroy_buf(canvas_color_y);
+        destroy_buf(canvas_color_b);
+        destroy_buf(canvas_wetness);
+        destroy_buf(bristle_data);
+        destroy_buf(sample_pos);
+        destroy_buf(sample_vel);
+        destroy_buf(sample_color);
+        destroy_buf(sample_frame);
+        destroy_buf(lambda_buf);
+        destroy_buf(sample_liquid);
+        destroy_buf(sample_liquid_b);
+        destroy_buf(sample_supply);
+        destroy_buf(bristle_input_color_buf);
+        destroy_buf(bristle_density);
+        destroy_buf(bristle_vel_x);
+        destroy_buf(bristle_vel_y);
+        destroy_buf(bristle_vel_z);
+        destroy_buf(bristle_color_r);
+        destroy_buf(bristle_color_y);
+        destroy_buf(bristle_color_b);
+        destroy_buf(ptcl_pos);
+        destroy_buf(ptcl_vel);
+        destroy_buf(ptcl_color);
+        destroy_buf(ptcl_alive);
+        destroy_buf(ptcl_counter);
+        destroy_buf(ptcl_density);
+        destroy_buf(ptcl_vel_x);
+        destroy_buf(ptcl_vel_y);
+        destroy_buf(ptcl_vel_z);
+        destroy_buf(ptcl_rast_r);
+        destroy_buf(ptcl_rast_y);
+        destroy_buf(ptcl_rast_b);
+        destroy_buf(vel_x_old);
+        destroy_buf(vel_y_old);
+        destroy_buf(vel_z_old);
+        destroy_buf(ptcl_pos_b);
+        destroy_buf(ptcl_vel_b);
+        destroy_buf(ptcl_color_b);
+        destroy_buf(ptcl_alive_b);
+
+        auto destroy_prog = [&](ProgramHandle& h) {
+            if (h) {
+                rc.destroy(h);
+                h = nullptr;
+            }
+        };
+        destroy_prog(deposit_program);
+        destroy_prog(advect_program);
+        destroy_prog(jacobi_program);
+        destroy_prog(divergence_program);
+        destroy_prog(gradient_program);
+        destroy_prog(damp_dry_program);
+        destroy_prog(bristle_sim_program);
+        destroy_prog(bristle_density_constraint_program);
+        destroy_prog(bristle_resample_program);
+        destroy_prog(bristle_raster_program);
+        destroy_prog(bristle_merge_program);
+        destroy_prog(bri_liquid_transfer_program);
+        destroy_prog(bri_liquid_emit_program);
+        destroy_prog(field_clear_program);
+        destroy_prog(ptcl_emit_program);
+        destroy_prog(ptcl_update_program);
+        destroy_prog(ptcl_raster_program);
+        destroy_prog(ptcl_flip_pic_program);
+        destroy_prog(ptcl_compact_program);
+        destroy_prog(ptcl_to_grid_program);
+        destroy_prog(grid_to_ptcl_program);
+        destroy_prog(canvas_commit_program);
     }
 };
 
 // BristleSampleOutputs — 2-node field (written by brush_wb_bristle, read by
 // brush_wb_fluid's particle emit/update). Carried as a regular socket value so
-// it does not bloat WetbrushSimState (only 2 of 4 nodes touch it).
+// callers that only want the samples (e.g. a readback node) don't have to
+// unpack the whole WetbrushSimState. The authoritative buffers still live in
+// WetbrushSimState; this carries handles to the same GPU memory.
 struct BristleSampleOutputs {
     nvrhi::BufferHandle sample_pos;    // bristle sample positions (Nb*S)
     nvrhi::BufferHandle sample_color;  // bristle sample RYB color
@@ -780,33 +1006,28 @@ struct BristleSampleOutputs {
     static constexpr bool has_storage = false;
 };
 
-// WetbrushFrame — the SINGLE value carried by the simulation zone boundary.
+// ============================================================
+// WetbrushZoneState — the SINGLE typed value that crosses the simulation-zone
+// boundary (simulation_in/out group slot) and is fed back frame-to-frame.
 //
-// Constraint: the simulation zone (createSimulationZone + add_sync_group)
-// forces all four boundary groups (sim_in in/out, sim_out in/out) to carry the
-// SAME typed slots. So both the upstream INPUT and the fed-back value must be
-// the same type. Connecting a Geometry (Stroke Curves) input and a
-// WetbrushFrame feedback breaks the sync and the wb nodes never cook
-// (MISSING_INPUT).
+// Why this and not the old WetbrushFrame bundle: the zone boundary supports
+// multiple typed slots, but the ONLY thing that must ride the feedback loop
+// (simulation_out -> simulation_in, moved by the eager executor after each
+// cook) is the accumulated paint FIELD. The per-frame BrushPoint is produced
+// INSIDE the zone every frame by mock_point_emitter and reaches deposit via an
+// ordinary interior socket — it never crosses the boundary. The input stroke
+// Geometry is static and enters the zone through its own simulation_in input
+// slot — it does not ride feedback either. Bundling them (the old
+// WetbrushFrame{stroke_curves, bp, state}) mixed a per-frame ephemeral input
+// with cross-frame accumulated state; the clean design keeps only the field on
+// the boundary.
 //
-// To keep ONE typed boundary slot, WetbrushFrame bundles everything that must
-// cross the boundary:
-//   * stroke_curves -- the input stroke Geometry (set once on the init frame by
-//     a thin wrapper; the emitter caches it internally and ignores it later)
-//   * bp            -- the per-frame brush sample (produced inside the zone by
-//     the emitter each frame)
-//   * state         -- the shared WetbrushSimState (fed back; carries the
-//     persistent canvas + live fields)
-//
-// On the init frame the upstream wrapper packs stroke_curves into a fresh
-// WetbrushFrame. On advance frames sim_out feeds the (bp-updated,
-// canvas-committed) frame back. The emitter reads stroke_curves on first sight
-// (caches it), then advances its cursor each frame to produce bp.
-struct WetbrushFrame {
-    Geometry stroke_curves;  // input stroke (init-frame only)
-    BrushPoint bp{};         // per-frame brush sample
-    std::shared_ptr<WetbrushSimState>
-        state;  // shared cross-node + cross-frame state
+// Carried as shared_ptr<WetbrushSimState> so the same GPU buffers persist
+// across nodes AND across frames (zero-copy: nvrhi handles are refcounted
+// shared_ptrs under the hood). The framework auto-registers socket types, so
+// no manual entt::meta registration is needed.
+struct WetbrushZoneState {
+    std::shared_ptr<WetbrushSimState> state;  // the paint field (null on init)
 
     static constexpr bool has_storage = false;
 };

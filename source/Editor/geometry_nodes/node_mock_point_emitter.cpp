@@ -58,13 +58,10 @@ static void sample_trajectory(const EmitterStorage& s, BrushPoint& out);
 
 NODE_DECLARATION_FUNCTION(mock_point_emitter)
 {
-    // Optional: in a standalone (non-zone) graph this carries the captured
-    // stroke curves directly. Inside a Wetbrush simulation zone the boundary
-    // is single-typed (WetbrushFrame), so the curves arrive via the "Frame"
-    // input below instead -- making this optional avoids MISSING_INPUT in the
-    // zone path.
-    b.add_input<Geometry>("Stroke Curves").optional(true);
-    b.add_input<Ruzino::WetbrushFrame>("Frame").optional(true);
+    // The captured stroke curves. In the Wetbrush zone this arrives from the
+    // simulation_in input slot (mock_stroke -> sim_in -> interior); outside a
+    // zone it is wired directly. Required in the zone path.
+    b.add_input<Geometry>("Stroke Curves");
     b.add_input<float>("Replay Speed").default_val(1.0f).min(0.01f).max(10.0f);
     b.add_output<BrushPoint>("Current Point");
 }
@@ -80,12 +77,8 @@ NODE_EXECUTION_FUNCTION(mock_point_emitter)
 
     // Refresh the trajectory cache from the input curve. Rebuild only when
     // the input signature changes (cheap: vertex count + stroke count) to
-    // avoid re-parsing every frame. Prefer the WetbrushFrame.stroke_curves
-    // (zone path) if wired, else the raw "Stroke Curves" socket.
-    Geometry stroke_curves =
-        params.has_input("Frame")
-            ? params.get_input<Ruzino::WetbrushFrame>("Frame").stroke_curves
-            : params.get_input<Geometry>("Stroke Curves");
+    // avoid re-parsing every frame.
+    Geometry stroke_curves = params.get_input<Geometry>("Stroke Curves");
     auto curve = stroke_curves.get_component<CurveComponent>();
     if (curve) {
         auto verts = curve->get_vertices();
