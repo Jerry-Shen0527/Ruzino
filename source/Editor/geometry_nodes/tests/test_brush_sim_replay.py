@@ -74,7 +74,19 @@ def _load_capture():
             f"RUZINO_RECORD_STROKE set, then re-run."
         )
     with open(path, "r") as f:
-        return json.load(f), path
+        capture = json.load(f)
+    # A capture needs at least two trajectory points to exercise the
+    # frame-by-frame replay / zebra-coverage analysis meaningfully. A stale or
+    # degenerate file (e.g. a single mouse-down point left from a smoke test)
+    # has no inter-point gaps to analyse and would trip the zebra harness; skip
+    # rather than assert on input that can't validate the simulator.
+    n_pts = len(capture.get("points", []))
+    if n_pts < 2:
+        pytest.skip(
+            f"Capture at '{path}' has only {n_pts} trajectory point(s); need >= 2 "
+            f"to replay. Record a real stroke in the editor, then re-run."
+        )
+    return capture, path
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +173,16 @@ def _analyze_gaps(capture_pts, brush_radius):
     single deposit (the editor's frame rate places them that far apart), and
     you get zebra stripes."""
     if len(capture_pts) < 2:
-        return {"max_gap": 0.0, "mean_gap": 0.0, "n": len(capture_pts)}
+        # Degenerate input (single point / empty): no gaps to measure. Return
+        # the full key set including brush_diameter so downstream indexing
+        # (e.g. traj["brush_diameter"]) never raises KeyError.
+        return {
+            "max_gap": 0.0,
+            "mean_gap": 0.0,
+            "median_gap": 0.0,
+            "n": len(capture_pts),
+            "brush_diameter": brush_radius * 2.0,
+        }
     gaps = [
         math.dist(capture_pts[i], capture_pts[i + 1])
         for i in range(len(capture_pts) - 1)

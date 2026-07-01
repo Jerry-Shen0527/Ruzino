@@ -36,6 +36,31 @@ def get_binary_dir():
             "..", "..", "..", "..", "Binaries", "Release"))
 
 
+@pytest.fixture(autouse=True)
+def _clean_capture_cache():
+    """Start every test from an empty brush_capture node.
+
+    brush_capture persists its accumulated trajectory to
+    brush_capture_cache.bin on every cook (binary-persistence workaround for
+    the broken storage_info JSON path) and reloads that file on the first cook
+    of a session. Because the file outlives a single graph, points captured by
+    one test leak into the next via the disk cache — e.g. without this, a fresh
+    test_multi_point_stroke node would boot with the single point that
+    test_single_point_capture wrote and end up with 5 vertices instead of 4.
+
+    The node writes relative to the process CWD; tests run from
+    Binaries/Release (per AGENTS.md), but clear both CWD and the resolved
+    binary dir to be robust against being launched elsewhere.
+    """
+    for path in (
+        os.path.join(os.getcwd(), "brush_capture_cache.bin"),
+        os.path.join(get_binary_dir(), "brush_capture_cache.bin"),
+    ):
+        if os.path.isfile(path):
+            os.remove(path)
+    yield
+
+
 def _build_graph():
     """Create a graph with a single brush_capture node and mark its output."""
     binary_dir = get_binary_dir()
