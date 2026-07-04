@@ -13,7 +13,7 @@ It is a quick reference for AI agents; see `INSTALL.md` for the full installatio
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/build_devshell.ps1` | Windows incremental build inside VS DevShell (fastest dev loop) |
+| `scripts/build_devshell.ps1` | Windows incremental build inside VS DevShell (fastest dev loop). Supports `-LogFile <path>` to tee ninja output to a log file and `-MachineReadable` to print a `BUILDEXIT=<code>` line — together these replace the old root-level `_build_one.bat` for headless/CI/agent use. |
 | `scripts/build_and_install.py` | Full SDK-style configure → build → install → deps → test |
 | `scripts/install_deps.py` | Copy runtime deps (DLLs, Python, USD, CUDA) to an install dir; called by `build_and_install.py` |
 | `scripts/run_all_tests.py` | Find and run pytest + C++ tests under `source/` and `Binaries/Release/` |

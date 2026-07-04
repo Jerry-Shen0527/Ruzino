@@ -4,13 +4,18 @@
 #   pwsh -File scripts/build_devshell.ps1 -Reconfigure   # 重新 cmake 配置
 #   pwsh -File scripts/build_devshell.ps1 -Target <name> # 只构建指定目标
 #   pwsh -File scripts/build_devshell.ps1 -Clean         # Clean 后重建
+#   pwsh -File scripts/build_devshell.ps1 -Target node_brush_capture -LogFile build\_build_out.txt -MachineReadable
+#       # 日志落盘 + 打印机器可读的 BUILDEXIT=<code>，等价于旧 _build_one.bat 的行为，
+#       # 用于无头/CI/agent 场景。
 
 param(
     [switch]$Reconfigure,
     [switch]$Clean,
     [string]$Target = "",
     [string]$BuildDir = "build",
-    [string]$BuildType = "Release"
+    [string]$BuildType = "Release",
+    [string]$LogFile = "",
+    [switch]$MachineReadable
 )
 
 $ErrorActionPreference = "Stop"
@@ -68,10 +73,34 @@ if ($Clean) {
 }
 
 Write-Host "✓ 构建中..." -ForegroundColor Cyan
-if ($Target) {
-    ninja $Target
-} else {
-    ninja
+# 若指定了 -LogFile，把 ninja 输出同时写入终端和日志文件（合并 stdout/stderr）。
+# 这样既保留交互式可见性，又满足无头场景的日志落盘需求（取代旧 _build_one.bat）。
+# 注意：本脚本顶部设了 $ErrorActionPreference = "Stop"，而 ninja 即使在构建成功时
+# 也会向 stderr 写警告/进度，PowerShell 会把 native command 的 stderr 当作 ErrorRecord，
+# 在 Stop 偏好下会触发终止性错误。因此这里临时切到 Continue，调完再恢复。
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    if ($LogFile) {
+        $LogFileAbs = if ([System.IO.Path]::IsPathRooted($LogFile)) { $LogFile } else { Join-Path $RootDir $LogFile }
+        $LogFileDir = Split-Path -Parent $LogFileAbs
+        if ($LogFileDir -and -not (Test-Path $LogFileDir)) {
+            New-Item -ItemType Directory -Path $LogFileDir -Force | Out-Null
+        }
+        if ($Target) {
+            ninja $Target 2>&1 | Tee-Object -FilePath $LogFileAbs
+        } else {
+            ninja 2>&1 | Tee-Object -FilePath $LogFileAbs
+        }
+    } else {
+        if ($Target) {
+            ninja $Target
+        } else {
+            ninja
+        }
+    }
+} finally {
+    $ErrorActionPreference = $prevEAP
 }
 
 $buildResult = $LASTEXITCODE
@@ -81,6 +110,12 @@ if ($buildResult -eq 0) {
     Write-Host "`n✓ 构建成功!" -ForegroundColor Green
 } else {
     Write-Host "`n✗ 构建失败 (exit code: $buildResult)" -ForegroundColor Red
+}
+
+# 机器可读退出码：与根目录 .bat 系列使用相同的 BUILDEXIT=<code> token，
+# 便于 CI/agent 解析。仅在 -MachineReadable 时输出，避免污染交互式输出。
+if ($MachineReadable) {
+    Write-Host "BUILDEXIT=$buildResult"
 }
 
 exit $buildResult
