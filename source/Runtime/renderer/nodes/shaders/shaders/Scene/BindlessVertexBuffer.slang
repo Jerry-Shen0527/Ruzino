@@ -7,6 +7,7 @@ ByteAddressBuffer t_BindlessBuffers[] : register(t0, space1);
 
 StructuredBuffer<GeometryInstanceData> instanceDescBuffer;
 StructuredBuffer<MeshDesc> meshDescBuffer;
+StructuredBuffer<VolumeDesc> volumeDescBuffer;
 
 // Load vertex without barrier - barrier should be called once before loading multiple vertices
 StaticVertexData load_vertex(MeshDesc mesh_data, uint vertex_id, ByteAddressBuffer vertex_buffer)

@@ -38,6 +38,7 @@
 #include "geometries/mesh.h"
 #include "geometries/points.h"
 #include "geometries/volume.h"
+#include "geometries/wetbrush_volume.h"
 #include "gpu_compute.h"
 #include "hd_RUZINO/render_global_payload.hpp"
 #include "instancer.h"
@@ -326,8 +327,13 @@ HdRprim* Hd_RUZINO_RenderDelegate::CreateRprim(
         return mesh;
     }
     else if (typeId == HdPrimTypeTokens->volume) {
-        auto volume = new Hd_RUZINO_Volume(rprimId);
-        spdlog::info("Created volume: {}", rprimId.GetText());
+        // Hd_RUZINO_WetbrushVolume: a raymarchable density-slab rprim carrying
+        // the Wetbrush 2D canvas layer, registered with the volume hit groups
+        // (4/5). The legacy Hd_RUZINO_Volume (VDB loader) remains available
+        // for OpenVDB asset prims; this one takes the `volume` token so the
+        // render_wetbrush.py scene reaches the raymarch path.
+        auto volume = new Hd_RUZINO_WetbrushVolume(rprimId);
+        spdlog::info("Created WetbrushVolume: {}", rprimId.GetText());
         return volume;
     }
     else if (typeId == HdPrimTypeTokens->points) {

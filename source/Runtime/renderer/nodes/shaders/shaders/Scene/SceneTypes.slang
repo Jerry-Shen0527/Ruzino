@@ -150,6 +150,32 @@ struct GeometryInstanceData {
     }
 };
 
+/** Volume descriptor for a raymarchable 3D density grid (Wetbrush paper §6).
+
+  Carries everything the volume intersection / closest-hit shaders need to
+  sample the paint density + color: the bindless index of a Float4 buffer
+  storing per-voxel (density, r, g, b) -- one entry per voxel of a
+  gridResX x gridResY x gridResZ grid, laid out (z*gridResY + y)*gridResX + x --
+  plus the grid's world-space origin (gridMin) and voxel size (cellSize).
+
+  The grid is the paper's 3D density field (the brush-local active window,
+  accumulated by the render driver across frames into one large field). The
+  renderer raymarches the grid's world AABB, sampling the density every quarter
+  of cellSize (paper §6).
+*/
+struct VolumeDesc {
+    uint bindlessIndex;  ///< Index into t_BindlessBuffers for the Float4
+                         ///< (density, r, g, b) per-voxel array.
+    uint gridResX;       ///< Grid resolution in X.
+    uint gridResY;       ///< Grid resolution in Y.
+    uint gridResZ;       ///< Grid resolution in Z.
+    float cellSize;      ///< World-space size of one voxel.
+    float3 gridMin;      ///< World-space min corner of the grid (voxel 0,0,0).
+    float3 boundsMin;    ///< World-space grid AABB min (for intersection).
+    float3 boundsMax;    ///< World-space grid AABB max.
+    uint padding;        ///< Keep the struct 16-byte aligned for the pool.
+};
+
 enum class MeshFlags : uint32_t {
     None = 0x0,
     Use16BitIndices =

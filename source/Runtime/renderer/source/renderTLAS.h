@@ -31,6 +31,7 @@ class HD_RUZINO_API Hd_RUZINO_RenderInstanceCollection {
     DeviceMemoryPool<GeometryInstanceData> instance_pool;
     DeviceMemoryPool<nvrhi::rt::InstanceDesc> rt_instance_pool;
     DeviceMemoryPool<MeshDesc> mesh_pool;
+    DeviceMemoryPool<VolumeDesc> volume_pool;
     DeviceMemoryPool<MaterialDataBlob> material_pool;
     DeviceMemoryPool<MaterialHeader> material_header_pool;
     DeviceMemoryPool<nvrhi::DrawIndirectArguments> draw_indirect_pool;
