@@ -46,5 +46,9 @@ shader_cache/
 # Test output artifacts
 source/tests/data/output/
 **/tests/output/
+**/tests/data/output/
 *.test_output.png
+
+# Local agent scratch (session plans). .zcode/skills/ stays tracked.
+.zcode/plans/
 build-debug/
