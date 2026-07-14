@@ -18,11 +18,19 @@ project_root = os.path.abspath(
 
 sys.path.append(binary_dir)
 if sys.platform == "win32":
+    os.add_dll_directory(binary_dir)
     os.add_dll_directory(project_root + r"\SDK\python")
     os.add_dll_directory(project_root + r"\SDK\OpenUSD\Release\lib")
 
 # Set PXR_USD_WINDOWS_DLL_PATH so USD can find its DLLs
 os.environ["PXR_USD_WINDOWS_DLL_PATH"] = binary_dir
+
+# Put binary_dir on PATH so node plugins (e.g. GPU_sph.dll), loaded by the
+# C++ LoadLibrary(<name>) call inside load_configuration, can resolve. C++
+# LoadLibrary searches the process PATH / app dir, NOT the cwd that
+# os.chdir points at below nor the Python os.add_dll_directory entries —
+# so PATH is required. (Mirrors source/tests/conftest.py.)
+os.environ["PATH"] = binary_dir + os.pathsep + os.environ.get("PATH", "")
 
 # Add to Python path
 sys.path.insert(0, binary_dir)

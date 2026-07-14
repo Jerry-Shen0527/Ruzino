@@ -21,7 +21,7 @@
 #include "GCore/Components/CurveComponent.h"
 #include "GCore/GOP.h"
 #include "GCore/geom_payload.hpp"
-#include "brush_sim_common.hpp"  // BrushPoint (shared with wetbrush_step)
+#include "brush_sim_common.hpp"  // BrushPoint
 #include "geom_node_base.h"
 #include "spdlog/spdlog.h"
 
