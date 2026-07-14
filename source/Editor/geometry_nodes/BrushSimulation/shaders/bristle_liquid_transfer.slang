@@ -79,18 +79,13 @@ bool in_grid(int ix, int iy, int iz)
         && iz >= 0 && iz < cb.grid_res_z;
 }
 
-// Convert a GLOBAL grid cell to a WINDOW-LOCAL linear index.
-// Returns false if the cell is outside the active window — callers treat
-// out-of-window cells as empty (their paint is committed to the canvas layer).
+// Convert a GLOBAL grid cell to a GLOBAL linear index (buffers are global-sized).
+// Returns false if the cell is outside the global grid bounds.
 bool window_gi(int gx, int gy, int gz, out uint gi)
 {
-    int lx = gx - cb.window_origin_x;
-    int ly = gy - cb.window_origin_y;
-    int lz = gz - cb.window_origin_z;
-    int WSX = cb.window_size_x, WSZ = cb.window_size_z;
-    if (lx < 0 || lx >= WSX || ly < 0 || ly >= WSX || lz < 0 || lz >= WSZ)
+    if (!in_grid(gx, gy, gz))
         return false;
-    gi = grid_idx_3d(uint(lx), uint(ly), uint(lz), WSX, WSZ);
+    gi = grid_idx_3d(uint(gx), uint(gy), uint(gz), cb.grid_res, cb.grid_res_z);
     return true;
 }
 

@@ -3,7 +3,8 @@
 // are converted into particles via stratified sampling (3×3×3 = 27 candidates).
 // After creating particles, REDUCES grid density by Eq.15:
 //   ρ_c^new = max(ρ_c - m_k * Σ_k W(p_k - x_c, h), 0)
-// Dispatched with res*res*res_z threads, one per 3D cell.
+// Dispatched over the active window (win_n3d threads). Buffer indexing is
+// GLOBAL (buffers are global-sized).
 
 #include "common.slangh"
 
@@ -29,8 +30,8 @@ void main(uint3 tid : SV_DispatchThreadID)
     int idx = int(tid.x);
     int res = cb.grid_res;
     int res_z = cb.grid_res_z;
-    // Window-relative: dispatch over the active window. Map tid → window-local
-    // (lx,ly,lz), then to global (x,y,z) via window_origin for world coords.
+    // Dispatch over the active window. Map tid → window-local (lx,ly,lz),
+    // then to global (x,y,z) via window_origin for world coords + global index.
     int WSX = cb.window_size_x, WSZ = cb.window_size_z;
     int total = WSX * WSX * WSZ;
     if (idx >= total) return;
@@ -44,11 +45,11 @@ void main(uint3 tid : SV_DispatchThreadID)
     int z = lz + cb.window_origin_z;
     if (x < 0 || x >= res || y < 0 || y >= res || z < 0 || z >= res_z) return;
 
-    // Read from window-local buffer index.
-    uint widx = grid_idx_3d(uint(lx), uint(ly), uint(lz), WSX, WSZ);
-    float cell_density = density[widx];
+    // Global buffer index.
+    uint gidx = grid_idx_3d(uint(x), uint(y), uint(z), res, res_z);
+    float cell_density = density[gidx];
     if (cell_density < 0.15) {
-        density_out[widx] = cell_density;
+        density_out[gidx] = cell_density;
         return;
     }
 
@@ -65,7 +66,7 @@ void main(uint3 tid : SV_DispatchThreadID)
     float2 dxy = cell_center.xy - float2(cb.brush_pos_x, cb.brush_pos_y);
     float d_to_brush = length(dxy);
     if (d_to_brush > cb.D0) {
-        density_out[widx] = cell_density;
+        density_out[gidx] = cell_density;
         return;
     }
 
@@ -99,17 +100,13 @@ void main(uint3 tid : SV_DispatchThreadID)
                     for (int dx = -1; dx <= 1; dx++) {
                         int nx = cx + dx, ny = cy + dy, nz = cz + dz;
                         if (nx < 0 || nx >= res || ny < 0 || ny >= res || nz < 0 || nz >= res_z) continue;
-                        // Window-local index for the density read.
-                        int nlx = nx - cb.window_origin_x;
-                        int nly = ny - cb.window_origin_y;
-                        int nlz = nz - cb.window_origin_z;
-                        if (nlx < 0 || nlx >= WSX || nly < 0 || nly >= WSX || nlz < 0 || nlz >= WSZ) continue;
+                        // Global index for the density read.
                         float3 npos = float3(
                             (float(nx) + 0.5) * cell_sz - half_p + cb.grid_center_x,
                             (float(ny) + 0.5) * cell_sz - half_p + cb.grid_center_y,
                             (float(nz) + 0.5) * cell_z  - half_h + cb.grid_center_z);
                         float w = W_smooth_3d(candidate - npos, h);
-                        uint gi = grid_idx_3d(uint(nlx), uint(nly), uint(nlz), WSX, WSZ);
+                        uint gi = grid_idx_3d(uint(nx), uint(ny), uint(nz), res, res_z);
                         interp_density += density[gi] * w;
                     }
                 }
@@ -125,19 +122,17 @@ void main(uint3 tid : SV_DispatchThreadID)
             float m_k = min(mass_per_candidate, 0.5);
 
             // Eq.15 density subtraction: accumulate Σ(m_k · W(p_k - x_c, h)).
-            // (Must be the sum of per-particle mass×weight, NOT the product
-            // of the two sums — that was the previous bug.)
             density_removed += m_k * W_smooth_3d(candidate - cell_center, h);
             num_emitted++;
 
             ptcl_pos[slot] = float4(candidate, 0.0);
-            ptcl_vel[slot] = float4(vel_x[widx], vel_y[widx], vel_z[widx], 0.0);
-            ptcl_color[slot] = float4(color_r[widx], color_y[widx], color_b[widx], m_k);
+            ptcl_vel[slot] = float4(vel_x[gidx], vel_y[gidx], vel_z[gidx], 0.0);
+            ptcl_color[slot] = float4(color_r[gidx], color_y[gidx], color_b[gidx], m_k);
             ptcl_alive[slot] = 1;
         }
       }
     }
 
     // Eq.15: ρ_c^new = max(ρ_c - Σ_k(m_k · W(p_k - x_c, h)), 0)
-    density_out[widx] = max(cell_density - density_removed, 0.0);
+    density_out[gidx] = max(cell_density - density_removed, 0.0);
 }

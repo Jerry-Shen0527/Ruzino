@@ -2,7 +2,7 @@
 // Wetbrush Algorithm 1: "u ← u - ∇P"
 // 3D: subtract ∂P/∂x, ∂P/∂y, ∂P/∂z from vel_x, vel_y, vel_z
 //
-// Window-relative: neighbor access uses window-local coords/strides.
+// Global grid: neighbor access uses global coords/strides (res, res_z).
 
 #include "common.slangh"
 
@@ -25,13 +25,13 @@ bool is_solid(uint idx)
 [numthreads(256, 1, 1)]
 void main(uint3 dtid : SV_DispatchThreadID)
 {
-    int WIN  = cb.window_size_x;
-    int WINZ = cb.window_size_z;
-    uint WNN = (uint)(WIN * WIN);
+    int RES  = cb.res;
+    int RESZ = cb.res_z;
+    uint RNN = (uint)(RES * RES);
 
     WindowCell c;
     if (!window_map(cb, dtid.x, c)) return;
-    uint lx = c.lx, ly = c.ly, lz = c.lz;
+    uint gx = c.x, gy = c.y, gz = c.z;
     uint idx = c.idx;
 
     // Solid cells keep zero velocity (no update).
@@ -43,28 +43,28 @@ void main(uint3 dtid : SV_DispatchThreadID)
     }
 
     // ∂P/∂x
-    if (lx > 0 && lx < (uint)WIN - 1)
+    if (gx > 0 && gx < (uint)RES - 1)
         vel_x[idx] -= 0.5f * (pressure[idx + 1] - pressure[idx - 1]);
-    else if (lx == 0)
+    else if (gx == 0)
         vel_x[idx] -= 0.5f * pressure[idx + 1];
     else
         vel_x[idx] += 0.5f * pressure[idx - 1];
 
     // ∂P/∂y
-    if (ly > 0 && ly < (uint)WIN - 1)
-        vel_y[idx] -= 0.5f * (pressure[idx + (uint)WIN] - pressure[idx - (uint)WIN]);
-    else if (ly == 0)
-        vel_y[idx] -= 0.5f * pressure[idx + (uint)WIN];
+    if (gy > 0 && gy < (uint)RES - 1)
+        vel_y[idx] -= 0.5f * (pressure[idx + (uint)RES] - pressure[idx - (uint)RES]);
+    else if (gy == 0)
+        vel_y[idx] -= 0.5f * pressure[idx + (uint)RES];
     else
-        vel_y[idx] += 0.5f * pressure[idx - (uint)WIN];
+        vel_y[idx] += 0.5f * pressure[idx - (uint)RES];
 
     // ∂P/∂z
-    if (WINZ > 1) {
-        if (lz > 0 && lz < (uint)WINZ - 1)
-            vel_z[idx] -= 0.5f * (pressure[idx + WNN] - pressure[idx - WNN]);
-        else if (lz == 0)
-            vel_z[idx] -= 0.5f * pressure[idx + WNN];
+    if (RESZ > 1) {
+        if (gz > 0 && gz < (uint)RESZ - 1)
+            vel_z[idx] -= 0.5f * (pressure[idx + RNN] - pressure[idx - RNN]);
+        else if (gz == 0)
+            vel_z[idx] -= 0.5f * pressure[idx + RNN];
         else
-            vel_z[idx] += 0.5f * pressure[idx - WNN];
+            vel_z[idx] += 0.5f * pressure[idx - RNN];
     }
 }

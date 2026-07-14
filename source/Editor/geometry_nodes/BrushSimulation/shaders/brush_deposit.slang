@@ -41,7 +41,6 @@ void deposit_at(float3 wpos, float4 col, float2 vel_inject)
     float cell_z = cb.height_extent / float(D);
     int spread_xy = max(1, (int)ceil(cb.effective_radius / cb.cell_size));
     int spread_z = max(1, (int)ceil(cb.effective_radius / cell_z));
-    int WSX = cb.window_size_x, WSZ = cb.window_size_z;
 
     float gx = (wpos.x - cb.center_x + half_paper) / cb.cell_size;
     float gy = (wpos.y - cb.center_y + half_paper) / cb.cell_size;
@@ -69,15 +68,7 @@ void deposit_at(float3 wpos, float4 col, float2 vel_inject)
                 if (px < 0 || px >= N || py < 0 || py >= N || pz < 0 || pz >= D)
                     continue;
 
-                // Map GLOBAL cell to WINDOW-LOCAL index. The brush is centered
-                // in the window so deposits normally land inside; out-of-window
-                // cells are skipped (committed canvas owns them).
-                int lx = px - cb.window_origin_x;
-                int ly = py - cb.window_origin_y;
-                int lz = pz - cb.window_origin_z;
-                if (lx < 0 || lx >= WSX || ly < 0 || ly >= WSX ||
-                    lz < 0 || lz >= WSZ) continue;
-
+                // Global grid index (buffers are global-sized).
                 float dist_xy = sqrt((float)(dx*dx + dy*dy)) * cb.cell_size;
                 float dist_z = (float)dz * cell_z;
                 float dist = sqrt(dist_xy * dist_xy + dist_z * dist_z);
@@ -85,7 +76,7 @@ void deposit_at(float3 wpos, float4 col, float2 vel_inject)
 
                 float w = 1.0f - dist * inv_r;
                 w *= w;
-                uint idx = grid_idx_3d((uint)lx, (uint)ly, (uint)lz, WSX, WSZ);
+                uint idx = grid_idx_3d((uint)px, (uint)py, (uint)pz, N, D);
 
                 // Always deposit paint (density + color + wetness + oil + height).
                 float dep = cb.ink_amount * 0.1f * w;

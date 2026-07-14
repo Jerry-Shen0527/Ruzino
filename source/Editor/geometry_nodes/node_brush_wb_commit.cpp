@@ -1,14 +1,16 @@
-// node_brush_wb_commit — Wetbrush COMMIT + OUTPUT sub-step.
+// node_brush_wb_commit — Wetbrush OUTPUT sub-step.
 //
 // Receives the final field from brush_wb_fluid and:
-//   - commits the live 3D window into the persistent 2D canvas layer
-//     (canvas_commit shader, brush_paint_sim ~2712-2760);
-//   - reads back fidelity statistics into the debug output ports (~2568-2710);
-//   - emits the Paint Particles geometry (one point per painted canvas cell,
-//     ~2762-2855) so downstream consumers (write_usd, render) see the paint.
+//   - reads back fidelity statistics into the debug output ports;
+//   - emits the Paint Field 3D geometry (one point per painted 3D voxel of the
+//     active window, in world space) so downstream consumers see the paint.
 //
-// The field (carrying the committed canvas) is forwarded on the "State" output
-// so the zone feeds it back simulation_out -> simulation_in for the next frame.
+// Paper §4.2: the 3D grid is global and persistent — no commit step. The 2D
+// canvas layer has been removed (footnote 1 rejects height-field/2D). The
+// "Paint Particles" port is kept empty for socket compatibility.
+//
+// The field is forwarded on the "State" output so the zone feeds it back
+// simulation_out -> simulation_in for the next frame.
 
 #include <memory>
 
@@ -36,6 +38,13 @@ NODE_DECLARATION_FUNCTION(brush_wb_commit)
     // Outputs mirror brush_paint_sim so the existing fidelity-test harness
     // (read 8 debug ports) works unchanged.
     b.add_output<Geometry>("Paint Particles");
+    // The global 3D density grid as a point cloud: one point per painted 3D
+    // voxel of the global grid (field->density, grid_res³), in world space.
+    // This is the paper §6 render target — the 3D density grid. Widths carry
+    // the instantaneous density (bounded, conserved). render_wetbrush.py
+    // accumulates these across frames into one large 3D field for the volume
+    // renderer.
+    b.add_output<Geometry>("Paint Field 3D");
     b.add_output<float>("Max Divergence");
     b.add_output<float>("Mean Divergence");
     b.add_output<float>("Total Density");
@@ -72,6 +81,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
     auto emit_empty = [&]() {
         auto [geom, pts] = make_particles();
         params.set_output("Paint Particles", std::move(geom));
+        auto [geom3d, pts3d] = make_particles();
+        params.set_output("Paint Field 3D", std::move(geom3d));
         params.set_output("Max Divergence", 0.0f);
         params.set_output("Mean Divergence", 0.0f);
         params.set_output("Total Density", 0.0f);
@@ -90,72 +101,16 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
         return true;
     }
 
-    const int WIN_XY =
-        std::min(WetbrushSimState::WIN_ALLOC_XY, field->grid_res);
-    const int WIN_Z = field->grid_res_z;
-    const int win_n3d = WIN_XY * WIN_XY * WIN_Z;
+    // Global grid total (the buffers are now global-sized, not window-sized).
+    const int grid_n3d = field->grid_res * field->grid_res * field->grid_res_z;
     const float cell_sz =
         field->grid_paper / static_cast<float>(field->grid_res);
     const int max_ptcl = WetbrushSimState::MAX_PARTICLES;
 
-    // Ensure the canvas_commit shader exists (deposit usually compiles it
-    // first, but commit may run before any deposit on a pen-up-only sequence).
-    if (!field->canvas_commit_program)
-        field->canvas_commit_program =
-            Ruzino::brush_compile_shader(rc, "canvas_commit.slang");
-
     // ======================================================================
-    // FINAL COMMIT: flush the live 3D window into the 2D canvas layer
-    // (brush_paint_sim ~2718-2760). Every frame bakes the current window so
-    // the output reflects ALL painted regions, not just the live brush window.
-    // ======================================================================
-    {
-        Ruzino::SimConstants commit_cb = {};
-        commit_cb.res = field->grid_res;
-        commit_cb.cell_size = cell_sz;
-        commit_cb.paper_size = field->grid_paper;
-        commit_cb.res_z = WIN_Z;
-        commit_cb.height_extent = field->grid_height;
-        commit_cb.grid_center_z = field->grid_center_z;
-        commit_cb.window_origin_x = field->win_origin_x;
-        commit_cb.window_origin_y = field->win_origin_y;
-        commit_cb.window_origin_z = 0;
-        commit_cb.window_size_x = WIN_XY;
-        commit_cb.window_size_y = WIN_XY;
-        commit_cb.window_size_z = WIN_Z;
-
-        nvrhi::BufferHandle commit_cb_buf;
-        Ruzino::brush_upload_cb(
-            rc,
-            device,
-            &commit_cb,
-            sizeof(commit_cb),
-            "wb_final_commit_cb",
-            commit_cb_buf);
-        ProgramVars cv(rc, field->canvas_commit_program);
-        cv["cb"] = commit_cb_buf.Get();
-        cv["density"] = field->density.Get();
-        cv["color_r"] = field->color_r.Get();
-        cv["color_y"] = field->color_y.Get();
-        cv["color_b"] = field->color_b.Get();
-        cv["wetness"] = field->wetness.Get();
-        cv["canvas_density"] = field->canvas_density.Get();
-        cv["canvas_color_r"] = field->canvas_color_r.Get();
-        cv["canvas_color_y"] = field->canvas_color_y.Get();
-        cv["canvas_color_b"] = field->canvas_color_b.Get();
-        cv["canvas_wetness"] = field->canvas_wetness.Get();
-        cv.finish_setting_vars();
-        ComputeContext cctx(rc, cv);
-        cctx.finish_setting_pso();
-        cctx.begin();
-        cctx.dispatch({}, cv, WIN_XY * WIN_XY, 256);
-        cctx.finish();
-        rc.destroy(commit_cb_buf);
-    }
-
-    // ======================================================================
-    // READBACK: window field totals + divergence stats + particle count/mass
-    // (brush_paint_sim ~2568-2710).
+    // READBACK: the full global 3D grid. The grid is now global and persistent
+    // (paper §4.2) — no commit step. We read the entire grid so stats and the
+    // Paint Field 3D output reflect ALL painted cells, not just the window.
     // ======================================================================
     auto readback = [&](nvrhi::BufferHandle buf, int n) -> std::vector<float> {
         std::vector<float> data(n);
@@ -178,17 +133,17 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
         return data;
     };
 
-    auto density_cpu = readback(field->density, win_n3d);
-    auto cr_cpu = readback(field->color_r, win_n3d);
-    auto cy_cpu = readback(field->color_y, win_n3d);
-    auto cb_cpu = readback(field->color_b, win_n3d);
+    auto density_cpu = readback(field->density, grid_n3d);
+    auto cr_cpu = readback(field->color_r, grid_n3d);
+    auto cy_cpu = readback(field->color_y, grid_n3d);
+    auto cb_cpu = readback(field->color_b, grid_n3d);
 
     float max_div = 0.0f, mean_div = 0.0f;
     {
-        auto div_cpu = readback(field->divergence_buf, win_n3d);
+        auto div_cpu = readback(field->divergence_buf, grid_n3d);
         double div_sum = 0.0;
         int div_count = 0;
-        for (int i = 0; i < win_n3d; ++i) {
+        for (int i = 0; i < grid_n3d; ++i) {
             float ad = std::fabs(div_cpu[i]);
             max_div = std::max(max_div, ad);
             div_sum += ad;
@@ -199,12 +154,19 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
     }
 
     double tot_density = 0.0, tot_r = 0.0, tot_y = 0.0, tot_b = 0.0;
-    for (int i = 0; i < win_n3d; ++i) {
+    float max_density = 0.0f;
+    for (int i = 0; i < grid_n3d; ++i) {
         tot_density += density_cpu[i];
+        max_density = std::max(max_density, density_cpu[i]);
         tot_r += cr_cpu[i];
         tot_y += cy_cpu[i];
         tot_b += cb_cpu[i];
     }
+    spdlog::info(
+        "brush_wb_commit: grid {}x{}x{}={}, tot_density={:.1f}, max_density={:.4f}, "
+        "particles={}",
+        field->grid_res, field->grid_res, field->grid_res_z, grid_n3d,
+        tot_density, max_density, field->particles_initialized ? 1 : 0);
 
     int ptcl_count = 0;
     float ptcl_mass = 0.0f;
@@ -273,67 +235,81 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
     params.set_output("Total Particle Mass", ptcl_mass);
 
     // ======================================================================
-    // OUTPUT: read the 2D canvas layer and emit a point per painted cell
-    // (brush_paint_sim ~2762-2855).
+    // OUTPUT: "Paint Particles" — the 2D canvas layer is gone (paper §4.2 uses
+    // a pure 3D density grid; footnote 1 rejects height-field/2D). This port
+    // is kept for socket compatibility but emits empty geometry. The real
+    // paint data is the 3D field, output below as "Paint Field 3D".
     // ======================================================================
-    int n2d = field->grid_res * field->grid_res;
-    auto readback_2d = [&](nvrhi::BufferHandle buf) -> std::vector<float> {
-        return readback(buf, n2d);
-    };
-    auto cdensity = readback_2d(field->canvas_density);
-    auto ccr = readback_2d(field->canvas_color_r);
-    auto ccy = readback_2d(field->canvas_color_y);
-    auto ccb = readback_2d(field->canvas_color_b);
-
-    auto [particles, pts] = make_particles();
-    std::vector<glm::vec3> out_pts;
-    std::vector<glm::vec3> out_colors;
-    std::vector<float> out_widths;
-
-    constexpr float threshold = 0.001f;
-    constexpr float rgb_white_cutoff = 0.9f;
-    float canvas_floor_z = field->grid_center_z - field->grid_height * 0.5f;
-    for (int y = 0; y < field->grid_res; ++y) {
-        for (int x = 0; x < field->grid_res; ++x) {
-            int gi = y * field->grid_res + x;
-            if (cdensity[gi] <= threshold)
-                continue;
-            float d = cdensity[gi];
-            float r = ccr[gi] / (d + 1e-8f);
-            float yy = ccy[gi] / (d + 1e-8f);
-            float b = ccb[gi] / (d + 1e-8f);
-            r = std::min(std::max(r, 0.0f), 1.0f);
-            yy = std::min(std::max(yy, 0.0f), 1.0f);
-            b = std::min(std::max(b, 0.0f), 1.0f);
-            float rm = 1 - r, ym = 1 - yy, bm = 1 - b;
-            glm::vec3 rgb = rm * ym * bm * glm::vec3(1, 1, 1) +
-                            r * ym * bm * glm::vec3(1, 0, 0) +
-                            rm * yy * bm * glm::vec3(1, 1, 0) +
-                            rm * ym * b * glm::vec3(0.163f, 0.373f, 0.6f) +
-                            r * yy * bm * glm::vec3(1, 0.5f, 0) +
-                            r * ym * b * glm::vec3(0.5f, 0, 0.5f) +
-                            rm * yy * b * glm::vec3(0, 0.66f, 0.2f) +
-                            r * yy * b * glm::vec3(0.2f, 0.094f, 0.029f);
-            if (std::min({ rgb.r, rgb.g, rgb.b }) >= rgb_white_cutoff)
-                continue;
-
-            float gx = (x + 0.5f) * cell_sz - field->grid_paper * 0.5f;
-            float gy = (y + 0.5f) * cell_sz - field->grid_paper * 0.5f;
-            float gz =
-                canvas_floor_z + cell_sz * std::min(std::sqrt(d * 10.0f), 2.0f);
-            out_pts.push_back(
-                glm::vec3(
-                    gx + field->grid_center.x, gy + field->grid_center.y, gz));
-            out_colors.push_back(rgb);
-            out_widths.push_back(cell_sz);
-        }
+    {
+        auto [particles, pts] = make_particles();
+        std::vector<glm::vec3> empty;
+        pts->set_vertices(empty);
+        pts->set_display_color(empty);
+        std::vector<float> empty_w;
+        pts->set_width(empty_w);
+        params.set_output("Paint Particles", std::move(particles));
     }
 
-    pts->set_vertices(out_pts);
-    pts->set_display_color(out_colors);
-    pts->set_width(out_widths);
+    // ======================================================================
+    // OUTPUT: the global 3D density grid (paper §6 render target). Emit one
+    // point per painted 3D voxel of the GLOBAL grid, in world space. Widths
+    // carry the instantaneous density (bounded, conserved). The render driver
+    // accumulates these per-frame into one large 3D field. Color is the
+    // per-voxel RYB->RGB mix (same cube model as above).
+    // ======================================================================
+    {
+        auto [field3d_geom, field3d_pts] = make_particles();
+        std::vector<glm::vec3> f3d_pts_vec;
+        std::vector<glm::vec3> f3d_colors_vec;
+        std::vector<float> f3d_widths_vec;
+        const float cell_sz_f = cell_sz;
+        const int N = field->grid_res;
+        const int D = field->grid_res_z;
+        constexpr float threshold = 0.001f;
+        constexpr float rgb_white_cutoff = 0.9f;
+        float canvas_floor_z = field->grid_center_z - field->grid_height * 0.5f;
+        float cell_z = field->grid_height / static_cast<float>(D);
+        for (int z = 0; z < D; ++z) {
+            for (int y = 0; y < N; ++y) {
+                for (int x = 0; x < N; ++x) {
+                    // Global grid index (matches shader grid_idx_3d).
+                    int gi = (z * N + y) * N + x;
+                    float d = density_cpu[gi];
+                    if (d <= threshold)
+                        continue;
+                    // Premultiplied color -> normalized RYB.
+                    float r = std::min(std::max(cr_cpu[gi] / (d + 1e-8f), 0.0f), 1.0f);
+                    float yy = std::min(std::max(cy_cpu[gi] / (d + 1e-8f), 0.0f), 1.0f);
+                    float b = std::min(std::max(cb_cpu[gi] / (d + 1e-8f), 0.0f), 1.0f);
+                    float rm = 1 - r, ym = 1 - yy, bm = 1 - b;
+                    glm::vec3 rgb = rm * ym * bm * glm::vec3(1, 1, 1) +
+                                    r * ym * bm * glm::vec3(1, 0, 0) +
+                                    rm * yy * bm * glm::vec3(1, 1, 0) +
+                                    rm * ym * b * glm::vec3(0.163f, 0.373f, 0.6f) +
+                                    r * yy * bm * glm::vec3(1, 0.5f, 0) +
+                                    r * ym * b * glm::vec3(0.5f, 0, 0.5f) +
+                                    rm * yy * b * glm::vec3(0, 0.66f, 0.2f) +
+                                    r * yy * b * glm::vec3(0.2f, 0.094f, 0.029f);
+                    if (std::min({ rgb.r, rgb.g, rgb.b }) >= rgb_white_cutoff)
+                        continue;
+                    // World position: global cell (x,y,z) center.
+                    float wx = (x + 0.5f) * cell_sz_f -
+                               field->grid_paper * 0.5f + field->grid_center.x;
+                    float wy = (y + 0.5f) * cell_sz_f -
+                               field->grid_paper * 0.5f + field->grid_center.y;
+                    float wz = (z + 0.5f) * cell_z + canvas_floor_z;
+                    f3d_pts_vec.emplace_back(wx, wy, wz);
+                    f3d_colors_vec.push_back(rgb);
+                    f3d_widths_vec.push_back(d);
+                }
+            }
+        }
+        field3d_pts->set_vertices(f3d_pts_vec);
+        field3d_pts->set_display_color(f3d_colors_vec);
+        field3d_pts->set_width(f3d_widths_vec);
+        params.set_output("Paint Field 3D", std::move(field3d_geom));
+    }
 
-    params.set_output("Paint Particles", std::move(particles));
     params.set_output("State", zs);
     params.set_output("Stroke Curves", stroke);
     return true;

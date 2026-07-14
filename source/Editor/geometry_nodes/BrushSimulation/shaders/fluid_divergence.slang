@@ -1,9 +1,9 @@
 // Compute velocity divergence for pressure projection — 3D version
 // Wetbrush Section 4.2 + Algorithm 1: "D = ∇·u"
 // 3D: div = ∂u/∂x + ∂v/∂y + ∂w/∂z
-// Uses central differences with Neumann BC at boundaries.
+// Uses central differences with Neumann BC at global grid boundaries.
 //
-// Window-relative: neighbor access uses window-local coords/strides.
+// Global grid: neighbor access uses global coords/strides (res, res_z).
 
 #include "common.slangh"
 
@@ -30,14 +30,14 @@ bool is_solid(uint idx)
 [numthreads(256, 1, 1)]
 void main(uint3 dtid : SV_DispatchThreadID)
 {
-    int WIN  = cb.window_size_x;
-    int WINZ = cb.window_size_z;
+    int RES  = cb.res;
+    int RESZ = cb.res_z;
 
     WindowCell c;
     if (!window_map(cb, dtid.x, c)) return;
-    uint lx = c.lx, ly = c.ly, lz = c.lz;
+    uint gx = c.x, gy = c.y, gz = c.z;
     uint idx = c.idx;
-    uint WNN = (uint)(WIN * WIN);
+    uint RNN = (uint)(RES * RES);
 
     if (is_solid(idx)) {
         // Solid cell: no divergence contribution (acts as wall).
@@ -48,34 +48,34 @@ void main(uint3 dtid : SV_DispatchThreadID)
     float div = 0.0f;
 
     // ∂u/∂x — skip solid neighbors (no-flux across solid interfaces)
-    if (lx > 0 && lx < (uint)WIN - 1) {
+    if (gx > 0 && gx < (uint)RES - 1) {
         if (!is_solid(idx - 1)) div += vel_x[idx] - vel_x[idx - 1];
         if (!is_solid(idx + 1)) div += vel_x[idx + 1] - vel_x[idx];
-    } else if (lx == 0) {
+    } else if (gx == 0) {
         if (!is_solid(idx + 1)) div += vel_x[idx + 1] - vel_x[idx];
     } else {
         if (!is_solid(idx - 1)) div += vel_x[idx] - vel_x[idx - 1];
     }
 
     // ∂v/∂y
-    if (ly > 0 && ly < (uint)WIN - 1) {
-        if (!is_solid(idx - (uint)WIN)) div += vel_y[idx] - vel_y[idx - (uint)WIN];
-        if (!is_solid(idx + (uint)WIN)) div += vel_y[idx + (uint)WIN] - vel_y[idx];
-    } else if (ly == 0) {
-        if (!is_solid(idx + (uint)WIN)) div += vel_y[idx + (uint)WIN] - vel_y[idx];
+    if (gy > 0 && gy < (uint)RES - 1) {
+        if (!is_solid(idx - (uint)RES)) div += vel_y[idx] - vel_y[idx - (uint)RES];
+        if (!is_solid(idx + (uint)RES)) div += vel_y[idx + (uint)RES] - vel_y[idx];
+    } else if (gy == 0) {
+        if (!is_solid(idx + (uint)RES)) div += vel_y[idx + (uint)RES] - vel_y[idx];
     } else {
-        if (!is_solid(idx - (uint)WIN)) div += vel_y[idx] - vel_y[idx - (uint)WIN];
+        if (!is_solid(idx - (uint)RES)) div += vel_y[idx] - vel_y[idx - (uint)RES];
     }
 
     // ∂w/∂z
-    if (WINZ > 1) {
-        if (lz > 0 && lz < (uint)WINZ - 1) {
-            if (!is_solid(idx - WNN)) div += vel_z[idx] - vel_z[idx - WNN];
-            if (!is_solid(idx + WNN)) div += vel_z[idx + WNN] - vel_z[idx];
-        } else if (lz == 0) {
-            if (!is_solid(idx + WNN)) div += vel_z[idx + WNN] - vel_z[idx];
+    if (RESZ > 1) {
+        if (gz > 0 && gz < (uint)RESZ - 1) {
+            if (!is_solid(idx - RNN)) div += vel_z[idx] - vel_z[idx - RNN];
+            if (!is_solid(idx + RNN)) div += vel_z[idx + RNN] - vel_z[idx];
+        } else if (gz == 0) {
+            if (!is_solid(idx + RNN)) div += vel_z[idx + RNN] - vel_z[idx];
         } else {
-            if (!is_solid(idx - WNN)) div += vel_z[idx] - vel_z[idx - WNN];
+            if (!is_solid(idx - RNN)) div += vel_z[idx] - vel_z[idx - RNN];
         }
     }
 

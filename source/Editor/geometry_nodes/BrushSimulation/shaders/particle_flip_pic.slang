@@ -35,21 +35,14 @@ float sample_grid_3d(StructuredBuffer<float> field, float3 pos)
     float c000 = 0.0, c100 = 0.0, c010 = 0.0, c110 = 0.0;
     float c001 = 0.0, c101 = 0.0, c011 = 0.0, c111 = 0.0;
     int res = cb.grid_res, res_z = cb.grid_res_z;
-    int WSX = cb.window_size_x, WSZ = cb.window_size_z;
     [unroll] for (int dz = 0; dz <= 1; dz++) {
         [unroll] for (int dy = 0; dy <= 1; dy++) {
             [unroll] for (int dx = 0; dx <= 1; dx++) {
                 int nx = ix + dx, ny = iy + dy, nz = iz + dz;
                 if (nx < 0 || nx >= res || ny < 0 || ny >= res || nz < 0 || nz >= res_z)
                     continue;
-                // Window-local index; out-of-window reads contribute 0 (treated
-                // as empty — particles outside the window keep their velocity).
-                int lx = nx - cb.window_origin_x;
-                int ly = ny - cb.window_origin_y;
-                int lz = nz - cb.window_origin_z;
-                if (lx < 0 || lx >= WSX || ly < 0 || ly >= WSX || lz < 0 || lz >= WSZ)
-                    continue;
-                uint gi = grid_idx_3d(uint(lx), uint(ly), uint(lz), WSX, WSZ);
+                // Global grid index (buffers are global-sized).
+                uint gi = grid_idx_3d(uint(nx), uint(ny), uint(nz), res, res_z);
                 float v = field[gi];
                 if (dz == 0 && dy == 0 && dx == 0) c000 = v;
                 else if (dz == 0 && dy == 0 && dx == 1) c100 = v;

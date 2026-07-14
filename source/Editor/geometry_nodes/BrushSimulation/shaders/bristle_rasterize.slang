@@ -23,7 +23,7 @@ ConstantBuffer<BristleConstants> cb : register(b0);
 StructuredBuffer<float4> sample_pos : register(t0);     // Nb * S (.xyz = 3D pos)
 StructuredBuffer<float4> sample_color : register(t1);   // Nb * S
 StructuredBuffer<float4> sample_vel : register(t2);     // Nb * S (.xyz = 3D vel)
-// 3D accumulation grids — window-sized (window_size_x × window_size_x × window_size_z)
+// 3D accumulation grids — global-sized (grid_res × grid_res × grid_res_z)
 RWStructuredBuffer<float> bristle_density : register(u0);
 RWStructuredBuffer<float> bristle_vel_x : register(u1);
 RWStructuredBuffer<float> bristle_vel_y : register(u2);
@@ -56,7 +56,6 @@ void deposit_point(float3 pos, float4 col, float3 vel,
     int z_spread = min(3, D);
     if (ix < 0 || ix >= N || iy < 0 || iy >= N) return;
 
-    int WSX = cb.window_size_x, WSZ = cb.window_size_z;
     for (int dz = 0; dz < z_spread; dz++) {
         int iz = iz_center + dz - 1;  // centered on the sample's Z cell
         if (iz < 0 || iz >= D) continue;
@@ -64,12 +63,8 @@ void deposit_point(float3 pos, float4 col, float3 vel,
         // Vertical falloff: strongest at center, weaker above/below.
         float z_weight = (1.0 - 0.3 * abs(float(dz - 1))) * z_weight_at_center;
 
-        int lx = ix - cb.window_origin_x;
-        int ly = iy - cb.window_origin_y;
-        int lz = iz - cb.window_origin_z;
-        if (lx < 0 || lx >= WSX || ly < 0 || ly >= WSX || lz < 0 || lz >= WSZ)
-            continue;
-        uint gi = grid_idx_3d((uint)lx, (uint)ly, (uint)lz, WSX, WSZ);
+        // Global grid index (buffers are global-sized).
+        uint gi = grid_idx_3d((uint)ix, (uint)iy, (uint)iz, N, D);
 
         bristle_density[gi] += deposit * z_weight;
         bristle_vel_x[gi] += vel.x * deposit * z_weight;

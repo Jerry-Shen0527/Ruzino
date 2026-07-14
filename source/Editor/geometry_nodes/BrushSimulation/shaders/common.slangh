@@ -35,10 +35,12 @@ struct SimConstants {
     float grid_center_z;    // Override center_z for 3D (same as center_z usually)
 
     // --- Active window (Wetbrush §4.2) ---
-    // Fluid simulation only runs inside this brush-centered sub-volume.
-    // Dispatch threads index the window [0,window_size); the shader adds
-    // window_origin to map to global (x,y,z) cells. Cells outside the
-    // window keep their previous values (read on advect trace-back).
+    // The 3D buffers are now GLOBAL (res × res × res_z). The window defines
+    // only the dispatch range — which cells get computed each frame. Cells
+    // outside the window keep their previous values (paper §4.2: "a large 3D
+    // grid stores all cells; simulation runs only inside the active window").
+    // Buffer indexing is GLOBAL (idx = z*res*res + y*res + x), never
+    // window-local.
     int window_origin_x;
     int window_origin_y;
     int window_origin_z;
@@ -72,13 +74,14 @@ uint grid_idx(uint x, uint y, int res)
 // ============================================================
 // Active-window thread mapping (Wetbrush §4.2)
 // Dispatch threads index the window [0,window_size). This maps a window
-// thread index to its global (x,y,z) cell and global linear index.
-// Returns false if the thread is outside the window (caller should return).
+// thread index to its global (x,y,z) cell and GLOBAL linear index into
+// the global-sized buffer (res × res × res_z). Returns false if the thread
+// maps outside the global grid (caller should return).
 // ============================================================
 struct WindowCell {
     uint x, y, z;     // global cell coordinates
     uint lx, ly, lz;  // window-local cell coordinates [0,WIN)
-    uint idx;         // window-local linear index into the window-sized buffer
+    uint idx;         // GLOBAL linear index into the global-sized buffer
 };
 
 bool window_map(SimConstants cb, uint window_idx, out WindowCell c)
@@ -102,32 +105,27 @@ bool window_map(SimConstants cb, uint window_idx, out WindowCell c)
     // Clamp to global grid (window_origin may place edges past the grid)
     if (c.x >= (uint)N || c.y >= (uint)N || c.z >= (uint)D) return false;
 
-    // Window-local coords and index. 3D buffers are allocated at window size
-    // (WIN_ALLOC_XY × WIN_ALLOC_XY × WIN_ALLOC_Z), so all buffer access uses
-    // LOCAL indices, never global. This is the key to resolution-independent
-    // 3D memory: the buffer is always window-sized regardless of canvas res.
+    // Window-local coords (kept for trace-back / boundary checks in advect).
     c.lx = wx;
     c.ly = wy;
     c.lz = wz;
-    c.idx = grid_idx_3d(c.lx, c.ly, c.lz, wsx, wsz);
+    // GLOBAL index: buffers are now global-sized (res × res × res_z).
+    c.idx = grid_idx_3d(c.x, c.y, c.z, N, D);
     return true;
 }
 
-// Convert a GLOBAL grid cell (x,y,z) to a window-LOCAL linear index.
-// Returns false if the cell is outside the current active window — callers
-// must skip such cells (they belong to the committed 2D canvas layer, not
-// the live 3D window). Used by deposit/bristle/particle shaders that compute
-// global coords from world space then need to write into the window buffer.
+// Convert a GLOBAL grid cell (x,y,z) to a GLOBAL linear index.
+// Buffers are global-sized, so any in-grid cell has a valid index. Returns
+// false only if the cell is outside the global grid bounds. Used by
+// deposit/bristle/particle shaders that compute global coords from world
+// space then need to index into the global buffer.
 bool window_local_idx(SimConstants cb, int gx, int gy, int gz, out uint lidx)
 {
-    lidx = 0;
-    int lx = gx - cb.window_origin_x;
-    int ly = gy - cb.window_origin_y;
-    int lz = gz - cb.window_origin_z;
-    int wsx = cb.window_size_x, wsz = cb.window_size_z;
-    if (lx < 0 || lx >= wsx || ly < 0 || ly >= wsx || lz < 0 || lz >= wsz)
+    int N = cb.res;
+    int D = cb.res_z;
+    if (gx < 0 || gx >= N || gy < 0 || gy >= N || gz < 0 || gz >= D)
         return false;
-    lidx = grid_idx_3d((uint)lx, (uint)ly, (uint)lz, wsx, wsz);
+    lidx = grid_idx_3d((uint)gx, (uint)gy, (uint)gz, N, D);
     return true;
 }
 

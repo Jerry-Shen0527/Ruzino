@@ -155,9 +155,10 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         field->bristles_initialized = false;
         field->particles_initialized = false;
 
-        int win_xy = std::min(WetbrushSimState::WIN_ALLOC_XY, resolution);
-        int alloc_win_n3d = win_xy * win_xy * rz;
-        int n2d = resolution * resolution;
+        // Global grid size: all 3D buffers are now global (res × res × res_z),
+        // not window-sized. Paper §4.2: a large 3D grid is the persistent
+        // paint store; the window is only a dispatch range.
+        int alloc_win_n3d = resolution * resolution * rz;
 
         auto safe_destroy = [&](nvrhi::BufferHandle& h) {
             if (h) {
@@ -211,18 +212,10 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
             field->ptcl_rast_b,
             field->vel_x_old,
             field->vel_y_old,
-            field->vel_z_old,
-            field->canvas_density,
-            field->canvas_color_r,
-            field->canvas_color_y,
-            field->canvas_color_b,
-            field->canvas_wetness);
+            field->vel_z_old);
 
         auto make_buf = [&](const char* name) {
             return Ruzino::brush_create_field_buffer(rc, alloc_win_n3d, name);
-        };
-        auto make_canvas = [&](const char* name) {
-            return Ruzino::brush_create_field_buffer(rc, n2d, name);
         };
 
         field->density = make_buf("wb_density");
@@ -262,16 +255,10 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         field->vel_x_old = make_buf("wb_vel_x_old");
         field->vel_y_old = make_buf("wb_vel_y_old");
         field->vel_z_old = make_buf("wb_vel_z_old");
-        field->canvas_density = make_canvas("wb_canvas_density");
-        field->canvas_color_r = make_canvas("wb_canvas_color_r");
-        field->canvas_color_y = make_canvas("wb_canvas_color_y");
-        field->canvas_color_b = make_canvas("wb_canvas_color_b");
-        field->canvas_wetness = make_canvas("wb_canvas_wetness");
 
         // Zero-init everything. Variadic write (same MSVC init-list reason
         // as destroy_buffers above).
         std::vector<float> zeros3d(alloc_win_n3d, 0.0f);
-        std::vector<float> zeros2d(n2d, 0.0f);
         auto cmd = rc.create(CommandListDesc{});
         cmd->open();
         auto write_3d = [&](auto&... bufs) {
@@ -317,28 +304,16 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
             field->vel_x_old,
             field->vel_y_old,
             field->vel_z_old);
-        auto write_2d = [&](auto&... bufs) {
-            (cmd->writeBuffer(bufs, zeros2d.data(), n2d * sizeof(float)), ...);
-        };
-        write_2d(
-            field->canvas_density,
-            field->canvas_color_r,
-            field->canvas_color_y,
-            field->canvas_color_b,
-            field->canvas_wetness);
         cmd->close();
         device->executeCommandList(cmd);
         device->waitForIdle();
         rc.destroy(cmd);
 
         spdlog::info(
-            "brush_wb_deposit: allocated field {}x{}x{} (win {}x{}x{}), "
+            "brush_wb_deposit: allocated global 3D grid {}x{}x{}, "
             "paper={:.3f}, height={:.3f}",
             resolution,
             resolution,
-            rz,
-            win_xy,
-            win_xy,
             rz,
             paper_size,
             height);
@@ -527,7 +502,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
             slot = Ruzino::brush_compile_shader(rc, fn);
     };
     ensure_prog(field->field_clear_program, "field_clear.slang");
-    ensure_prog(field->canvas_commit_program, "canvas_commit.slang");
     ensure_prog(field->bristle_sim_program, "bristle_simulate.slang");
     ensure_prog(
         field->bristle_density_constraint_program,
@@ -588,8 +562,10 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
     }
 
     // ======================================================================
-    // position_window — center the active window on a brush XY, committing +
-    // clearing the OLD window if it moved (brush_paint_sim ~1017-1106).
+    // position_window — center the active window's dispatch range on a brush XY.
+    // Paper §4.2: the 3D grid is global and persistent; the window is only the
+    // per-frame compute region. Moving the window no longer commits/clears
+    // anything — the old cells keep their values in the global grid.
     // ======================================================================
     auto position_window = [&](float bx, float by) {
         float half_p = field->grid_paper * 0.5f;
@@ -600,74 +576,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         new_wox = std::max(0, std::min(new_wox, field->grid_res - WIN_XY));
         new_woy = std::max(0, std::min(new_woy, field->grid_res - WIN_XY));
 
-        bool moved = !field->win_origin_set || new_wox != field->win_origin_x ||
-                     new_woy != field->win_origin_y;
-        if (moved && field->win_origin_set) {
-            // Commit the OLD window's Z-columns into the 2D canvas layer.
-            Ruzino::SimConstants commit_cb = {};
-            commit_cb.res = field->grid_res;
-            commit_cb.cell_size = cell_sz;
-            commit_cb.paper_size = field->grid_paper;
-            commit_cb.res_z = WIN_Z;
-            commit_cb.height_extent = field->grid_height;
-            commit_cb.grid_center_z = field->grid_center_z;
-            commit_cb.window_origin_x = field->win_origin_x;
-            commit_cb.window_origin_y = field->win_origin_y;
-            commit_cb.window_origin_z = 0;
-            commit_cb.window_size_x = WIN_XY;
-            commit_cb.window_size_y = WIN_XY;
-            commit_cb.window_size_z = WIN_Z;
-
-            nvrhi::BufferHandle commit_cb_buf;
-            Ruzino::brush_upload_cb(
-                rc,
-                device,
-                &commit_cb,
-                sizeof(commit_cb),
-                "wb_commit_cb",
-                commit_cb_buf);
-            ProgramVars cv(rc, field->canvas_commit_program);
-            cv["cb"] = commit_cb_buf.Get();
-            cv["density"] = field->density.Get();
-            cv["color_r"] = field->color_r.Get();
-            cv["color_y"] = field->color_y.Get();
-            cv["color_b"] = field->color_b.Get();
-            cv["wetness"] = field->wetness.Get();
-            cv["canvas_density"] = field->canvas_density.Get();
-            cv["canvas_color_r"] = field->canvas_color_r.Get();
-            cv["canvas_color_y"] = field->canvas_color_y.Get();
-            cv["canvas_color_b"] = field->canvas_color_b.Get();
-            cv["canvas_wetness"] = field->canvas_wetness.Get();
-            cv.finish_setting_vars();
-            ComputeContext cctx(rc, cv);
-            cctx.finish_setting_pso();
-            cctx.begin();
-            cctx.dispatch({}, cv, WIN_XY * WIN_XY, 256);
-            cctx.finish();
-            rc.destroy(commit_cb_buf);
-
-            // Clear the 3D window fields (GPU compute clear, one thread/float).
-            auto clear_field = [&](auto& buf) {
-                Ruzino::brush_dispatch(
-                    rc,
-                    field->field_clear_program,
-                    {},
-                    { { "field", buf } },
-                    nullptr,
-                    win_n3d);
-            };
-            clear_field(field->density);
-            clear_field(field->color_r);
-            clear_field(field->color_y);
-            clear_field(field->color_b);
-            clear_field(field->wetness);
-            clear_field(field->oil_density);
-            clear_field(field->height_field);
-            clear_field(field->vel_x);
-            clear_field(field->vel_y);
-            clear_field(field->vel_z);
-            device->waitForIdle();
-        }
         field->win_origin_x = new_wox;
         field->win_origin_y = new_woy;
         field->win_origin_z = 0;

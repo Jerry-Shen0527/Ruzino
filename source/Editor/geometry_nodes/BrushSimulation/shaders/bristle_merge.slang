@@ -49,20 +49,16 @@ void main(uint3 tid : SV_DispatchThreadID)
     // Brightness-preserving color mix (Algorithm 2)
     float3 mixed = color_mix(new_ryb, old_ryb, new_density, old_density);
 
-    // Update fields. Clamp accumulated density to prevent the numerical
-    // explosion seen with large sweep deposit (the fluid advection can
-    // concentrate mass into a few cells, amplifying it exponentially). A
-    // density cap of ~3.0 is well above any realistic paint layer but stops
-    // the feedback loop. This is also where Wetbrush's own saturation term
-    // would kick in (§4.1 density constraint), approximated here as a hard cap.
+    // Update fields.
     //
-    // Velocity: deposit the bristle velocity MASS-WEIGHTED by bd (not divided
-    // by bd). The old `bvx * inv_bd` normalized velocity to per-unit-density,
-    // which blew up to millions when bd was small (thin sweep deposits) — the
-    // huge velocity then drove advection to pile density into window corners.
-    // Mass-weighted deposit keeps velocity bounded: a light deposit adds a
-    // light velocity, matching how bristles impart momentum to paint.
-    density[idx] = min(density[idx] + bd * cb.ink_amount, 3.0);
+    // Density: paper §5.2 Eq.16 is ρ_c += m_k·ΣW. `bd` (bristle_density) is
+    // already the rasterized, mass-weighted density accumulation from
+    // particles — it IS the m_k·ΣW term. Adding it directly is the conserved
+    // transfer. (The previous `bd * cb.ink_amount` was a net-injection bug:
+    // it multiplied the already-mass-weighted value by a user knob, breaking
+    // conservation and driving unbounded growth. ink_amount's correct role is
+    // the per-frame supply refill in deposit.cpp, the paint source.)
+    density[idx] = density[idx] + bd;
     vel_x[idx] += bvx * bd;
     vel_y[idx] += bvy * bd;
     vel_z[idx] += bvz * bd;
