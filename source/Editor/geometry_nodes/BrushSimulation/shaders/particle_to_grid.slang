@@ -68,11 +68,16 @@ void main(uint3 tid : SV_DispatchThreadID)
             // Global grid index (buffers are global-sized).
             uint gi = grid_idx_3d(uint(ix), uint(iy), uint(iz), res, res_z);
 
-            // Eq.16: ρ_c += m_k * W(p_k - x_c, h). Color accumulated as
-            // weighted RYB; brightness-preserving mixing is deferred to the
-            // merge step. Plain += races (see particle_rasterize note) but
-            // collisions are rare for sparse far-from-brush particles.
-            float w_new = col.w * w;
+            // Eq.16: ρ_c += m_k * W(p_k - x_c, h) * dV. W is a normalized SPH
+            // kernel (per unit volume); multiply by the cell volume dV to get
+            // the cell-density contribution. Without dV the kernel value at
+            // r≈0 is ~1/(h³·(2π)^1.5) ≈ 317000 for cell-size h, causing
+            // runaway density. Color accumulated as weighted RYB; brightness-
+            // preserving mixing is deferred to the merge step. Plain += races
+            // (see particle_rasterize note) but collisions are rare for sparse
+            // far-from-brush particles.
+            float dV = cb.cell_size * cb.cell_size * cell_z;
+            float w_new = col.w * w * dV;
             density[gi] += w_new;
             color_r[gi] += col.x * w_new;
             color_y[gi] += col.y * w_new;

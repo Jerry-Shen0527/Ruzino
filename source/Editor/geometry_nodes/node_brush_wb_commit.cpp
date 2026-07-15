@@ -154,19 +154,12 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
     }
 
     double tot_density = 0.0, tot_r = 0.0, tot_y = 0.0, tot_b = 0.0;
-    float max_density = 0.0f;
     for (int i = 0; i < grid_n3d; ++i) {
         tot_density += density_cpu[i];
-        max_density = std::max(max_density, density_cpu[i]);
         tot_r += cr_cpu[i];
         tot_y += cy_cpu[i];
         tot_b += cb_cpu[i];
     }
-    spdlog::info(
-        "brush_wb_commit: grid {}x{}x{}={}, tot_density={:.1f}, max_density={:.4f}, "
-        "particles={}",
-        field->grid_res, field->grid_res, field->grid_res_z, grid_n3d,
-        tot_density, max_density, field->particles_initialized ? 1 : 0);
 
     int ptcl_count = 0;
     float ptcl_mass = 0.0f;
@@ -278,18 +271,22 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
                     if (d <= threshold)
                         continue;
                     // Premultiplied color -> normalized RYB.
-                    float r = std::min(std::max(cr_cpu[gi] / (d + 1e-8f), 0.0f), 1.0f);
-                    float yy = std::min(std::max(cy_cpu[gi] / (d + 1e-8f), 0.0f), 1.0f);
-                    float b = std::min(std::max(cb_cpu[gi] / (d + 1e-8f), 0.0f), 1.0f);
+                    float r = std::min(
+                        std::max(cr_cpu[gi] / (d + 1e-8f), 0.0f), 1.0f);
+                    float yy = std::min(
+                        std::max(cy_cpu[gi] / (d + 1e-8f), 0.0f), 1.0f);
+                    float b = std::min(
+                        std::max(cb_cpu[gi] / (d + 1e-8f), 0.0f), 1.0f);
                     float rm = 1 - r, ym = 1 - yy, bm = 1 - b;
-                    glm::vec3 rgb = rm * ym * bm * glm::vec3(1, 1, 1) +
-                                    r * ym * bm * glm::vec3(1, 0, 0) +
-                                    rm * yy * bm * glm::vec3(1, 1, 0) +
-                                    rm * ym * b * glm::vec3(0.163f, 0.373f, 0.6f) +
-                                    r * yy * bm * glm::vec3(1, 0.5f, 0) +
-                                    r * ym * b * glm::vec3(0.5f, 0, 0.5f) +
-                                    rm * yy * b * glm::vec3(0, 0.66f, 0.2f) +
-                                    r * yy * b * glm::vec3(0.2f, 0.094f, 0.029f);
+                    glm::vec3 rgb =
+                        rm * ym * bm * glm::vec3(1, 1, 1) +
+                        r * ym * bm * glm::vec3(1, 0, 0) +
+                        rm * yy * bm * glm::vec3(1, 1, 0) +
+                        rm * ym * b * glm::vec3(0.163f, 0.373f, 0.6f) +
+                        r * yy * bm * glm::vec3(1, 0.5f, 0) +
+                        r * ym * b * glm::vec3(0.5f, 0, 0.5f) +
+                        rm * yy * b * glm::vec3(0, 0.66f, 0.2f) +
+                        r * yy * b * glm::vec3(0.2f, 0.094f, 0.029f);
                     if (std::min({ rgb.r, rgb.g, rgb.b }) >= rgb_white_cutoff)
                         continue;
                     // World position: global cell (x,y,z) center.

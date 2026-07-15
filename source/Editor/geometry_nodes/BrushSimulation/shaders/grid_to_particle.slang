@@ -107,7 +107,8 @@ void main(uint3 tid : SV_DispatchThreadID)
                             (float(nz) + 0.5) * cell_z  - half_h + cb.grid_center_z);
                         float w = W_smooth_3d(candidate - npos, h);
                         uint gi = grid_idx_3d(uint(nx), uint(ny), uint(nz), res, res_z);
-                        interp_density += density[gi] * w;
+                        float dV_interp = cell_sz * cell_sz * cell_z;
+                        interp_density += density[gi] * w * dV_interp;
                     }
                 }
             }
@@ -121,8 +122,12 @@ void main(uint3 tid : SV_DispatchThreadID)
 
             float m_k = min(mass_per_candidate, 0.5);
 
-            // Eq.15 density subtraction: accumulate Σ(m_k · W(p_k - x_c, h)).
-            density_removed += m_k * W_smooth_3d(candidate - cell_center, h);
+            // Eq.15 density subtraction: accumulate Σ(m_k · W(p_k - x_c, h) · dV).
+            // The dV (cell volume) factor matches particle_to_grid's Eq.16 so the
+            // transfer is conservative (without dV, W at r≈0 is ~317000 for
+            // cell-size h, causing runaway density).
+            float dV = cell_sz * cell_sz * cell_z;
+            density_removed += m_k * W_smooth_3d(candidate - cell_center, h) * dV;
             num_emitted++;
 
             ptcl_pos[slot] = float4(candidate, 0.0);
