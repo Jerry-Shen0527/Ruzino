@@ -694,7 +694,7 @@ float ambientOcclusion(VolumeDesc vd, float3 p, float3 n, uint seed)
 {
     // Paper §6: "shooting 64 rays around the intersection point".
     const uint N = 64;
-    const float aoRadius = vd.gridPaper * 0.04;  // "short distance" ~= a few cells
+    const float aoRadius = vd.cellSize * 10.0;  // "short distance" ~= a few cells
     const int aoSteps = 6;             // samples per AO ray within aoRadius
     const float aoStepLen = aoRadius / float(aoSteps);
 
@@ -744,19 +744,25 @@ void VolumeIntersection()
 [shader("closesthit")]
 void VolumeClosestHit(inout RayPayload payload, in VolumeHitAttributes attr)
 {
-    // Paper §6 "Liquid rendering": "we sample the density value every one
-    // quarter of the density grid size. ... To produce transparency effects,
-    // we use the oil density to calculate a penetration distance and we allow
-    // more pigment samples to be collected along the ray into the surface
-    // within that distance. We blend all of the pigment samples together to
-    // determine the final color of the ray."
+    // Paper §6 "Liquid rendering", first-cross + penetration blend:
+    //   "we sample the density value every one quarter of the density grid
+    //    size ... [find] the first sample along the ray that exceeds the
+    //    surface threshold ... To produce transparency effects, we use the oil
+    //    density to calculate a penetration distance and we allow more pigment
+    //    samples to be collected along the ray into the surface within that
+    //    distance. We blend all of the pigment samples together to determine
+    //    the final color of the ray."
     //
-    // Implementation: raymarch the slab segment at 1/4-cell steps, accumulate
-    // the paint color via Beer-Lambert extinction (the paper's transmission
-    // model). Per-cell pigment color contributes weighted by (1 - transmittance
-    // step); transmittance decays by exp(-sigma_t * ds). The density field
-    // drives both opacity (extinction) and color (emission). No gamma, no
-    // brightness hacks -- strict emission/absorption.
+    // This is NOT a Beer-Lambert extinction integral (that was the previous
+    // implementation, which produced near-zero radiance for thin paint layers:
+    // density 0.1 × 3 Z-cells accumulates <0.003 extinction → invisible).
+    // Instead: march at 1/4-cell steps until the FIRST cell whose density
+    // exceeds the surface threshold; that is the "first cross". From there,
+    // continue marching a penetration depth proportional to the oil density,
+    // averaging the pigment color of every cell touched. The blended pigment
+    // IS the radiance (RayGen composites volume hits as pure emission). The
+    // surface normal (density gradient) modulates simple Lambertian shading;
+    // paper §6 AO darkens crevices.
     payload.hit = true;
     payload.isVolume = true;
     payload.volumeColor = float3(0.0);
@@ -765,7 +771,7 @@ void VolumeClosestHit(inout RayPayload payload, in VolumeHitAttributes attr)
     VolumeDesc vd = volumeDescBuffer[vol_id];
     float3 origin = WorldRayOrigin();
     float3 dir = WorldRayDirection();
-    float cell_sz = vd.gridPaper / float(vd.gridRes);
+    float cell_sz = vd.cellSize;
     // Paper: sample "every one quarter of the density grid size".
     float step = cell_sz * 0.25;
     float segLen = attr.tExit - attr.tEnter;
@@ -773,69 +779,95 @@ void VolumeClosestHit(inout RayPayload payload, in VolumeHitAttributes attr)
     int steps = min(maxSteps, int(ceil(segLen / step)));
     float actualStep = segLen / float(max(1, steps));
 
-    // Beer-Lambert front-to-back integration. sigmaScale converts the
-    // (unitless) density to an extinction coefficient per world distance; the
-    // paper ties this to oil density, which we approximate with the cell
-    // density directly.
-    const float sigmaScale = 8.0;
-    float transmittance = 1.0;
-    float3 accumColor = float3(0.0);
-    float maxDensity = 0.0;
-    float3 maxDensityP = float3(0, 0, 0);
+    // Phase 1: first-cross. March until the first cell with density above the
+    // surface threshold. Record its world position; that is the surface point.
+    float tCross = -1.0;
+    float densityAtCross = 0.0;
     for (int i = 0; i < steps; ++i) {
         float t = attr.tEnter + (float(i) + 0.5) * actualStep;
+        float3 p = origin + t * dir;
+        float d = sampleDensity(vd, p);
+        if (d > kDensitySurface) {
+            tCross = t;
+            densityAtCross = d;
+            break;
+        }
+    }
+    // No paint along this ray segment: the AABB was hit but the ray passed
+    // through empty grid cells. Treat as a miss so RayGen shows the background
+    // (otherwise the whole grid AABB would render as an opaque black box).
+    if (tCross < 0.0) {
+        payload.hit = false;
+        payload.isVolume = false;
+        return;
+    }
+
+    // Phase 2: penetration blend. Continue from the first-cross point for a
+    // depth proportional to the oil density (denser paint = deeper collect),
+    // averaging the pigment color of every cell touched. Paper: "we allow more
+    // pigment samples to be collected along the ray into the surface within
+    // [the penetration] distance."
+    float penDepth = max(cell_sz, densityAtCross * cell_sz * 4.0);
+    float tPenEnd = min(tCross + penDepth, attr.tExit);
+    float3 colorSum = float3(0.0);
+    float weightSum = 0.0;
+    for (int j = 0; j < steps; ++j) {
+        float t = tCross + (float(j) + 0.5) * actualStep;
+        if (t > tPenEnd)
+            break;
         float3 p = origin + t * dir;
         float4 cell = samplePaintField(vd, p);
         float d = cell.x;
         if (d <= 0.0)
             continue;
-        if (d > maxDensity) {
-            maxDensity = d;
-            maxDensityP = p;
-        }
-        float sigma_t = d * sigmaScale;
-        float stepAlpha = 1.0 - exp(-sigma_t * actualStep);
-        float3 paint = float3(cell.y, cell.z, cell.w);
-        accumColor += transmittance * stepAlpha * paint;
-        transmittance *= (1.0 - stepAlpha);
-        if (transmittance < 0.01)
-            break;
+        // Weight each sample by its density: denser pigment dominates the blend.
+        float w = d;
+        colorSum += w * float3(cell.y, cell.z, cell.w);
+        weightSum += w;
     }
-    if (maxDensity > 0.0) {
-        // Paper §6 ambient occlusion: "shooting 64 rays around the intersection
-        // point and collecting the maximum density values these rays can reach
-        // within a short distance." Darken the accumulated color by the
-        // occlusion at the densest point along the ray.
-        float3 nrm = float3(0, 0, 1);  // canvas up
-        float ao = ambientOcclusion(vd, maxDensityP, nrm, payload.seed);
-        payload.volumeColor = accumColor * (1.0 - ao);
-    } else {
-        payload.volumeColor = accumColor;
-    }
+    float3 paintColor = (weightSum > 0.0) ? colorSum / weightSum : float3(0.0);
+
+    // Surface normal from the density gradient at the first-cross point.
+    float3 surfP = origin + tCross * dir;
+    float3 nrm = surfaceNormal(vd, surfP);
+
+    // Simple Lambertian facing term: paint facing the incoming ray direction
+    // is brightest; grazing paint darkens. dir points INTO the surface, so the
+    // facing term uses -dir (the view direction).
+    float facing = max(0.0, dot(nrm, -dir));
+    float shade = 0.4 + 0.6 * facing;  // ambient floor + Lambertian
+
+    // Paper §6 ambient occlusion at the surface point: 64-ray hemisphere
+    // sampling darkens crevices and dense pigment pockets.
+    float ao = ambientOcclusion(vd, surfP, nrm, payload.seed);
+
+    payload.volumeColor = paintColor * shade * (1.0 - ao);
 }
 
 [shader("closesthit")]
 void VolumeShadowHit(inout ShadowPayload payload, in VolumeHitAttributes attr)
 {
+    // Paper §6 shadow handling for the paint surface: a shadow ray that first
+    // crosses a cell above the surface threshold is blocked (the paint surface
+    // occludes the light). This mirrors VolumeClosestHit's first-cross test
+    // rather than the previous Beer-Lambert integral, which never reached
+    // sufficient extinction to block light for thin paint layers.
     uint instance_id = InstanceID();
     uint vol_id = instanceDescBuffer[instance_id].geometryID;
     VolumeDesc vd = volumeDescBuffer[vol_id];
     float3 origin = WorldRayOrigin();
     float3 dir = WorldRayDirection();
-    float cell_sz = vd.gridPaper / float(vd.gridRes);
-    float step = cell_sz * 0.5;
+    float cell_sz = vd.cellSize;
+    float step = cell_sz * 0.25;  // 1/4 cell, same cadence as the closest hit
     float segLen = attr.tExit - attr.tEnter;
     int maxSteps = 256;
     int steps = min(maxSteps, int(ceil(segLen / step)));
     float actualStep = segLen / float(max(1, steps));
-    const float sigmaScale = 20.0;
-    float transmittance = 1.0;
     for (int i = 0; i < steps; ++i) {
         float t = attr.tEnter + (float(i) + 0.5) * actualStep;
         float3 p = origin + t * dir;
-        float d = samplePaintField(vd, p).x;
-        transmittance *= exp(-d * sigmaScale * actualStep);
-        if (transmittance < 0.05) {
+        float d = sampleDensity(vd, p);
+        if (d > kDensitySurface) {
             payload.isVisible = false;
             return;
         }

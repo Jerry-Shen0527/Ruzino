@@ -212,7 +212,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
             field->ptcl_rast_b,
             field->vel_x_old,
             field->vel_y_old,
-            field->vel_z_old);
+            field->vel_z_old,
+            field->packed_paint);
 
         auto make_buf = [&](const char* name) {
             return Ruzino::brush_create_field_buffer(rc, alloc_win_n3d, name);
@@ -255,6 +256,10 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         field->vel_x_old = make_buf("wb_vel_x_old");
         field->vel_y_old = make_buf("wb_vel_y_old");
         field->vel_z_old = make_buf("wb_vel_z_old");
+        // Float4 packed paint field (density,r,g,b) — global grid sized, for
+        // the shared GPU buffer registry (zero-copy sim→render).
+        field->packed_paint = Ruzino::brush_create_typed_buffer(
+            rc, alloc_win_n3d, sizeof(float) * 4, "wb_packed_paint");
 
         // Zero-init everything. Variadic write (same MSVC init-list reason
         // as destroy_buffers above).
@@ -502,6 +507,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
             slot = Ruzino::brush_compile_shader(rc, fn);
     };
     ensure_prog(field->field_clear_program, "field_clear.slang");
+    ensure_prog(field->pack_program, "pack_float4.slang");
     ensure_prog(field->bristle_sim_program, "bristle_simulate.slang");
     ensure_prog(
         field->bristle_density_constraint_program,

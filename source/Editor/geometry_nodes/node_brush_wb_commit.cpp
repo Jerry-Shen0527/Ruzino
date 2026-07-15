@@ -19,6 +19,7 @@
 #include "GCore/geom_payload.hpp"
 #include "GPUContext/compute_context.hpp"  // CommandListDesc
 #include "RHI/ResourceManager/resource_allocator.hpp"
+#include "RHI/shared_buffer_registry.hpp"
 #include "brush_sim_common.hpp"  // WetbrushSimState, WetbrushZoneState, brush_* helpers
 #include "geom_node_base.h"
 #include "spdlog/spdlog.h"
@@ -106,6 +107,61 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
     const float cell_sz =
         field->grid_paper / static_cast<float>(field->grid_res);
     const int max_ptcl = WetbrushSimState::MAX_PARTICLES;
+
+    // ======================================================================
+    // PACK + REGISTER: pack density/color into a Float4 buffer and register it
+    // in the shared GPU buffer registry. The render rprim looks this up by key
+    // to consume the paint field with zero copy (no CPU readback / USD primvar
+    // round-trip). Falls back to primvar if the rprim can't find the key.
+    // ======================================================================
+    {
+        // Ensure the pack shader is compiled (deposit usually does this first).
+        if (!field->pack_program)
+            field->pack_program =
+                Ruzino::brush_compile_shader(rc, "pack_float4.slang");
+
+        Ruzino::SimConstants pack_cb = {};
+        pack_cb.res = field->grid_res;
+        pack_cb.res_z = field->grid_res_z;
+        nvrhi::BufferHandle pack_cb_buf;
+        Ruzino::brush_upload_cb(
+            rc, device, &pack_cb, sizeof(pack_cb), "wb_pack_cb", pack_cb_buf);
+        Ruzino::brush_dispatch(
+            rc,
+            field->pack_program,
+            { { "density", field->density },
+              { "color_r", field->color_r },
+              { "color_y", field->color_y },
+              { "color_b", field->color_b } },
+            { { "packed_out", field->packed_paint } },
+            pack_cb_buf,
+            grid_n3d);
+        rc.destroy(pack_cb_buf);
+
+        // Register the packed buffer for zero-copy render consumption.
+        // The metadata blob carries the grid geometry so the render rprim can
+        // build its AABB without reading USD primvars (both sides agree on this
+        // POD layout out-of-band — the registry treats it as opaque bytes).
+        struct PaintFieldMeta {
+            uint32_t resX, resY, resZ;
+            float cellSize;
+            float gridMinX, gridMinY, gridMinZ;
+        };
+        PaintFieldMeta meta;
+        meta.resX = static_cast<uint32_t>(field->grid_res);
+        meta.resY = static_cast<uint32_t>(field->grid_res);
+        meta.resZ = static_cast<uint32_t>(field->grid_res_z);
+        meta.cellSize = cell_sz;
+        meta.gridMinX = -field->grid_paper * 0.5f + field->grid_center.x;
+        meta.gridMinY = -field->grid_paper * 0.5f + field->grid_center.y;
+        meta.gridMinZ = field->grid_center_z - field->grid_height * 0.5f;
+
+        Ruzino::SharedGPUBufferRegistry::get().register_buffer(
+            "wetbrush_paint_field",
+            field->packed_paint,
+            static_cast<size_t>(grid_n3d) * sizeof(float) * 4,
+            &meta, sizeof(meta));
+    }
 
     // ======================================================================
     // READBACK: the full global 3D grid. The grid is now global and persistent

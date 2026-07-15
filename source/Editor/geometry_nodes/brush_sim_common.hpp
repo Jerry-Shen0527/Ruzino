@@ -426,6 +426,13 @@ struct WetbrushSimState {
     nvrhi::BufferHandle ptcl_color_b;
     nvrhi::BufferHandle ptcl_alive_b;
 
+    // --- Float4 packed paint field (density,r,g,b interleaved). Produced by
+    // the pack_float4 shader each frame in the commit node, registered into
+    // SharedGPUBufferRegistry for zero-copy render consumption. Global grid
+    // sized (res³). ---
+    nvrhi::BufferHandle packed_paint;
+    ProgramHandle pack_program;
+
     // --- Compiled shader programs (lazily built on first use; persist so we
     // don't recompile every frame) ---
     ProgramHandle deposit_program;
@@ -541,6 +548,7 @@ struct WetbrushSimState {
             release(ptcl_vel_b);
             release(ptcl_color_b);
             release(ptcl_alive_b);
+            release(packed_paint);
             return;
         }
 
@@ -607,6 +615,7 @@ struct WetbrushSimState {
         destroy_buf(ptcl_vel_b);
         destroy_buf(ptcl_color_b);
         destroy_buf(ptcl_alive_b);
+        destroy_buf(packed_paint);
 
         auto destroy_prog = [&](ProgramHandle& h) {
             if (h) {
@@ -635,6 +644,7 @@ struct WetbrushSimState {
         destroy_prog(ptcl_compact_program);
         destroy_prog(ptcl_to_grid_program);
         destroy_prog(grid_to_ptcl_program);
+        destroy_prog(pack_program);
     }
 };
 

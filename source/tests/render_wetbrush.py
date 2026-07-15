@@ -153,7 +153,7 @@ def run_streaming_zone(out_usd: Path):
     _final = _pts_attr.Get(_pts_ts[-1])
     print(f"[render] stage 1: composed {len(_pts_ts)} time samples "
           f"({len(_final) if _final else 0} pts at final frame)")
-    return composed_stage, prim_path
+    return composed_stage, prim_path, g  # keep g alive so sim GPU buffers survive
 
 
 # ---------------------------------------------------------------------------
@@ -472,7 +472,7 @@ def main():
     sim_usd.parent.mkdir(parents=True, exist_ok=True)
     print("[render] stage 1: running streaming zone for "
           f"{NUM_FRAMES} frames -> {sim_usd.name}")
-    sim_stage, prim_path = run_streaming_zone(sim_usd)
+    sim_stage, prim_path, _sim_graph = run_streaming_zone(sim_usd)
 
     scene = BIN / "wetbrush_render.usdc"
     print(f"[render] stage 2: baking render scene -> {scene.name}")

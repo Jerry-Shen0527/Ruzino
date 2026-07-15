@@ -81,8 +81,14 @@ class HD_RUZINO_API Hd_RUZINO_WetbrushVolume final : public HdVolume {
     float cellSize = 0.0f;
     GfVec3f gridMin = GfVec3f(0.0f);
     // Per-voxel paint data (gridResX*gridResY*gridResZ Float4: density,r,g,b).
+    // Only used when falling back to the primvar path (registry miss).
     std::vector<GfVec4f> paintField;
     bool _valid = false;
+
+    // Shared-registry two-phase lookup state. When the sim registers a packed
+    // Float4 buffer under "wetbrush_paint_field", we use it directly (zero copy)
+    // instead of creating our own buffer from the primvar data.
+    uint64_t registryVersion = 0;   // last-seen registry version for the buffer
 
     void create_gpu_resources(Hd_RUZINO_RenderParam* render_param);
     void updateTLAS(

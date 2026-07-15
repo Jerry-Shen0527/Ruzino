@@ -14,6 +14,7 @@
 
 #include "../instancer.h"
 #include "../renderParam.h"
+#include "RHI/shared_buffer_registry.hpp"
 #include "Scene/SceneTypes.slang"
 #include "material/material.h"
 #include "nvrhi/utils.h"
@@ -57,48 +58,109 @@ void Hd_RUZINO_WetbrushVolume::create_gpu_resources(
     if (!copy_commandlist)
         copy_commandlist = device->createCommandList();
 
-    const size_t cell_count = static_cast<size_t>(gridResX) * gridResY * gridResZ;
-    if (cell_count == 0 || paintField.size() != cell_count) {
+    size_t cell_count = static_cast<size_t>(gridResX) * gridResY * gridResZ;
+
+    // ------------------------------------------------------------------
+    // Phase 1: check the shared GPU buffer registry for a zero-copy buffer
+    // produced by the simulation. If hit, use it directly (skip createBuffer +
+    // writeBuffer entirely). The metadata blob carries the grid geometry.
+    //
+    // DISABLED: the zero-copy registry path currently produces near-black
+    // output (frame 0 ~0.3% lit, frame 1+ 0%). The sim's packed_paint buffer
+    // is created with UAV/TypedView flags (brush_create_typed_buffer) but the
+    // renderer binds it as a RawBuffer (ByteAddressBuffer) SRV -- the view
+    // mismatch plus a missing UA→ShaderResource state transition after the
+    // sim's pack_float4 dispatch leave the shader reading zeroes. Falling back
+    // to the primvar path (Phase 2) renders correctly. Re-enable once the
+    // buffer flags + post-dispatch barrier are fixed. See SESSION_CONTEXT.md.
+    // ------------------------------------------------------------------
+    nvrhi::BufferHandle ext_buf;
+    size_t ext_bytes = 0;
+    uint64_t ext_version = 0;
+    const void* ext_meta_ptr = nullptr;
+    size_t ext_meta_bytes = 0;
+    bool registry_hit = false;  // SharedGPUBufferRegistry path disabled (see above)
+    (void)ext_buf; (void)ext_bytes; (void)ext_version;
+    (void)ext_meta_ptr; (void)ext_meta_bytes;
+
+    if (registry_hit && ext_buf && ext_meta_bytes >= 7 * sizeof(float)) {
+        // Pull grid geometry from the registry metadata (agreed POD layout:
+        // uint32 resX, resY, resZ; float cellSize, gridMinX, gridMinY, gridMinZ).
+        struct PaintFieldMeta {
+            uint32_t resX, resY, resZ;
+            float cellSize;
+            float gridMinX, gridMinY, gridMinZ;
+        };
+        auto* meta = static_cast<const PaintFieldMeta*>(ext_meta_ptr);
+        gridResX = meta->resX;
+        gridResY = meta->resY;
+        gridResZ = meta->resZ;
+        cellSize = meta->cellSize;
+        gridMin = GfVec3f(meta->gridMinX, meta->gridMinY, meta->gridMinZ);
+        cell_count = static_cast<size_t>(gridResX) * gridResY * gridResZ;
+
+        // Use the external buffer. Only (re)register the bindless descriptor
+        // when the buffer handle or version changes (first time, or sim
+        // reallocated the buffer).
+        if (!densityDescriptorHandle.Get() ||
+            densityBuffer.Get() != ext_buf.Get() ||
+            registryVersion != ext_version) {
+            densityBuffer = ext_buf;
+            registryVersion = ext_version;
+            auto descriptor_table =
+                render_param->InstanceCollection->get_buffer_descriptor_table();
+            densityDescriptorHandle = descriptor_table->CreateDescriptorHandle(
+                nvrhi::BindingSetItem::RawBuffer_SRV(0, densityBuffer));
+            spdlog::info(
+                "WetbrushVolume {}: registry hit (v{}, {}x{}x{}, {} bytes, "
+                "bindless={})",
+                GetId().GetText(), ext_version,
+                gridResX, gridResY, gridResZ, ext_bytes,
+                densityDescriptorHandle.Get());
+        }
+    } else if (cell_count == 0 || paintField.size() != cell_count) {
+        // Phase 2 fallback requires primvar data — if it's missing/empty, skip.
         spdlog::warn(
-            "WetbrushVolume {}: paint field size mismatch ({}x{}x{} voxels, "
-            "{} entries) -- skipping GPU resources",
+            "WetbrushVolume {}: no registry buffer and paint field mismatch "
+            "({}x{}x{} voxels, {} entries) -- skipping GPU resources",
             GetId().GetText(), gridResX, gridResY, gridResZ,
             paintField.size());
         _valid = false;
         return;
-    }
+    } else {
+        // ------------------------------------------------------------------
+        // Phase 2 fallback: create our own buffer from the primvar data
+        // (Float4 per voxel: density, r, g, b).
+        // ------------------------------------------------------------------
+        const size_t density_bytes = cell_count * sizeof(GfVec4f);
+        if (!densityBuffer ||
+            densityBuffer->getDesc().byteSize != density_bytes) {
+            nvrhi::BufferDesc desc =
+                nvrhi::BufferDesc{}
+                    .setCanHaveRawViews(true)
+                    .setByteSize(density_bytes)
+                    .setStructStride(sizeof(GfVec4f))
+                    .setInitialState(nvrhi::ResourceStates::ShaderResource)
+                    .setCpuAccess(nvrhi::CpuAccessMode::None)
+                    .setKeepInitialState(true)
+                    .setDebugName("wetbrushDensityBuffer");
+            densityBuffer = device->createBuffer(desc);
 
-    // ------------------------------------------------------------------
-    // Density+color buffer (Float4 per voxel): density, r, g, b. Bindless.
-    // ------------------------------------------------------------------
-    const size_t density_bytes = cell_count * sizeof(GfVec4f);
-    if (!densityBuffer ||
-        densityBuffer->getDesc().byteSize != density_bytes) {
-        nvrhi::BufferDesc desc =
-            nvrhi::BufferDesc{}
-                .setCanHaveRawViews(true)
-                .setByteSize(density_bytes)
-                .setStructStride(sizeof(GfVec4f))
-                .setInitialState(nvrhi::ResourceStates::ShaderResource)
-                .setCpuAccess(nvrhi::CpuAccessMode::None)
-                .setKeepInitialState(true)
-                .setDebugName("wetbrushDensityBuffer");
-        densityBuffer = device->createBuffer(desc);
+            auto descriptor_table =
+                render_param->InstanceCollection->get_buffer_descriptor_table();
+            densityDescriptorHandle = descriptor_table->CreateDescriptorHandle(
+                nvrhi::BindingSetItem::RawBuffer_SRV(0, densityBuffer));
+        }
 
-        auto descriptor_table =
-            render_param->InstanceCollection->get_buffer_descriptor_table();
-        densityDescriptorHandle = descriptor_table->CreateDescriptorHandle(
-            nvrhi::BindingSetItem::RawBuffer_SRV(0, densityBuffer));
-    }
-
-    // Upload the per-voxel (density, r, g, b) data.
-    copy_commandlist->open();
-    copy_commandlist->writeBuffer(
-        densityBuffer, paintField.data(), density_bytes);
-    copy_commandlist->close();
-    {
-        std::lock_guard lock(execution_launch_mutex);
-        device->executeCommandList(copy_commandlist);
+        // Upload the per-voxel (density, r, g, b) data.
+        copy_commandlist->open();
+        copy_commandlist->writeBuffer(
+            densityBuffer, paintField.data(), density_bytes);
+        copy_commandlist->close();
+        {
+            std::lock_guard lock(execution_launch_mutex);
+            device->executeCommandList(copy_commandlist);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -314,6 +376,19 @@ void Hd_RUZINO_WetbrushVolume::Sync(
             gridResZ = new_rz;
             cellSize = new_cs;
             gridMin = new_gm;
+            update_gpu_resources = true;
+        }
+
+        // Check if the shared-registry buffer has a new version (sim updated
+        // the paint field this frame). The bindless SRV auto-tracks content
+        // changes, so we only need to re-run create_gpu_resources when the
+        // version bumps (buffer handle may have changed).
+        nvrhi::BufferHandle _dummy;
+        size_t _dummy_bytes;
+        uint64_t reg_ver;
+        if (SharedGPUBufferRegistry::get().lookup(
+                "wetbrush_paint_field", _dummy, _dummy_bytes, reg_ver) &&
+            reg_ver != registryVersion) {
             update_gpu_resources = true;
         }
 

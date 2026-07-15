@@ -42,6 +42,29 @@ float4 samplePaintField(VolumeDesc vd, float3 p)
     return asfloat(t_BindlessBuffers[vd.bindlessIndex].Load4(idx * 16));
 }
 
+// Density channel only (paper §6 first-cross + penetration only read the
+// oil/paint density to drive surface detection and the penetration distance).
+float sampleDensity(VolumeDesc vd, float3 p)
+{
+    return samplePaintField(vd, p).x;
+}
+
+// Paint surface normal from the density gradient (paper §6). The gradient
+// points toward increasing density; the outward-facing surface normal is its
+// negation. Estimated by central differences over one cell.
+float3 surfaceNormal(VolumeDesc vd, float3 p)
+{
+    float h = vd.cellSize;
+    float dx = sampleDensity(vd, p + float3(h, 0, 0)) - sampleDensity(vd, p - float3(h, 0, 0));
+    float dy = sampleDensity(vd, p + float3(0, h, 0)) - sampleDensity(vd, p - float3(0, h, 0));
+    float dz = sampleDensity(vd, p + float3(0, 0, h)) - sampleDensity(vd, p - float3(0, 0, h));
+    float3 g = float3(dx, dy, dz);
+    float len = length(g);
+    if (len < 1e-8)
+        return float3(0, 0, 1);  // degenerate: canvas up
+    return -g / len;  // outward
+}
+
 // Slab AABB ray test in world space. Returns true on hit and writes the entry
 // and exit ray parameters (within [RayTMin, RayTCurrent]).
 bool intersectSlab(VolumeDesc vd, out float tEnter, out float tExit)
