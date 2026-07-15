@@ -50,6 +50,20 @@ void main(uint3 tid : SV_DispatchThreadID)
     int cy = int(floor((pos.y - cb.grid_center_y + half_p) / cb.cell_size));
     int cz = int(floor((pos.z - cb.grid_center_z + half_h) / cell_z));
 
+    // 3. AND whose target cell falls inside the active window. grid_to_particle
+    // (the conservation partner, Eq.15) only runs inside the window, so a
+    // particle→grid transfer OUTSIDE the window would inject mass/color that
+    // nothing subtracts back — breaking conservation and, when particles drift
+    // slightly frame to frame, making the injected mix oscillate (the
+    // post-stroke red/blue flicker). Keep such particles alive until the window
+    // moves over them.
+    if (cx < cb.window_origin_x || cx >= cb.window_origin_x + cb.window_size_x ||
+        cy < cb.window_origin_y || cy >= cb.window_origin_y + cb.window_size_x ||
+        cz < cb.window_origin_z || cz >= cb.window_origin_z + cb.window_size_z) {
+        ptcl_alive_out[idx] = 1;
+        return;
+    }
+
     // 3×3×3 neighborhood with kernel weights (Eq.16)
     [unroll] for (int dz = -1; dz <= 1; dz++) {
       [unroll] for (int dy = -1; dy <= 1; dy++) {

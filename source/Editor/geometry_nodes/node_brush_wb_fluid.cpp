@@ -492,9 +492,9 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                 std::swap(f, tmp);
             };
             advect_scalar(field->density, field->density_tmp);
-            advect_scalar(field->color_r, field->color_tmp);
-            advect_scalar(field->color_y, field->color_tmp);
-            advect_scalar(field->color_b, field->color_tmp);
+            advect_scalar(field->color_r, field->color_r_tmp);
+            advect_scalar(field->color_y, field->color_y_tmp);
+            advect_scalar(field->color_b, field->color_b_tmp);
             advect_scalar(field->wetness, field->wetness_tmp);
             advect_scalar(field->oil_density, field->oil_density_tmp);
 
@@ -523,9 +523,9 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                 };
                 diffuse(field->density, field->density_tmp);
                 diffuse(field->wetness, field->wetness_tmp);
-                diffuse(field->color_r, field->color_tmp);
-                diffuse(field->color_y, field->color_tmp);
-                diffuse(field->color_b, field->color_tmp);
+                diffuse(field->color_r, field->color_r_tmp);
+                diffuse(field->color_y, field->color_y_tmp);
+                diffuse(field->color_b, field->color_b_tmp);
                 rc.destroy(dcb);
             }
 

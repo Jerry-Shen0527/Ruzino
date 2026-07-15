@@ -181,7 +181,9 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
             field->color_r,
             field->color_y,
             field->color_b,
-            field->color_tmp,
+            field->color_r_tmp,
+            field->color_y_tmp,
+            field->color_b_tmp,
             field->vel_x,
             field->vel_x_tmp,
             field->vel_y,
@@ -224,7 +226,9 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         field->color_r = make_buf("wb_color_r");
         field->color_y = make_buf("wb_color_y");
         field->color_b = make_buf("wb_color_b");
-        field->color_tmp = make_buf("wb_color_tmp");
+        field->color_r_tmp = make_buf("wb_color_r_tmp");
+        field->color_y_tmp = make_buf("wb_color_y_tmp");
+        field->color_b_tmp = make_buf("wb_color_b_tmp");
         field->vel_x = make_buf("wb_vel_x");
         field->vel_x_tmp = make_buf("wb_vel_x_tmp");
         field->vel_y = make_buf("wb_vel_y");
@@ -277,7 +281,9 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
             field->color_r,
             field->color_y,
             field->color_b,
-            field->color_tmp,
+            field->color_r_tmp,
+            field->color_y_tmp,
+            field->color_b_tmp,
             field->vel_x,
             field->vel_x_tmp,
             field->vel_y,

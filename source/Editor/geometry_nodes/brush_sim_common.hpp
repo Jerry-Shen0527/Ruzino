@@ -366,7 +366,13 @@ struct WetbrushSimState {
     // cells; simulation runs only inside a brush-centered active window, the
     // rest of the cells keep their values) ---
     nvrhi::BufferHandle density, density_tmp;
-    nvrhi::BufferHandle color_r, color_y, color_b, color_tmp;
+    nvrhi::BufferHandle color_r, color_y, color_b;
+    // Each color channel needs its OWN ping-pong tmp: advect/diffuse swap
+    // (f, tmp) per channel, and a shared tmp aliases the channels' buffers
+    // across frames (the physical buffer behind color_r rotates each frame),
+    // which at low-density edge cells produces a perfect even/odd-frame color
+    // flip (the post-stroke red/blue flicker).
+    nvrhi::BufferHandle color_r_tmp, color_y_tmp, color_b_tmp;
     nvrhi::BufferHandle vel_x, vel_x_tmp;
     nvrhi::BufferHandle vel_y, vel_y_tmp;
     nvrhi::BufferHandle vel_z, vel_z_tmp;
@@ -497,7 +503,9 @@ struct WetbrushSimState {
             release(color_r);
             release(color_y);
             release(color_b);
-            release(color_tmp);
+            release(color_r_tmp);
+            release(color_y_tmp);
+            release(color_b_tmp);
             release(vel_x);
             release(vel_x_tmp);
             release(vel_y);
@@ -564,7 +572,9 @@ struct WetbrushSimState {
         destroy_buf(color_r);
         destroy_buf(color_y);
         destroy_buf(color_b);
-        destroy_buf(color_tmp);
+        destroy_buf(color_r_tmp);
+        destroy_buf(color_y_tmp);
+        destroy_buf(color_b_tmp);
         destroy_buf(vel_x);
         destroy_buf(vel_x_tmp);
         destroy_buf(vel_y);
