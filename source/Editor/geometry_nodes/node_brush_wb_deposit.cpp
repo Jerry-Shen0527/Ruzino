@@ -109,9 +109,15 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
     float brush_pressure = params.get_input<float>("Brush Pressure");
     float ink_amount = params.get_input<float>("Ink Amount");
     float oil_density_in = params.get_input<float>("Oil Density");
+    // Ink color: prefer the BrushPoint's trajectory color (enables multi-color
+    // strokes where each point carries its own RYB); fall back to the static
+    // "Ink Color" socket when the emitter didn't supply one (single-color).
     glm::vec3 ink_color = params.has_input("Ink Color")
                               ? params.get_input<glm::vec3>("Ink Color")
                               : glm::vec3(1.0f, 0.0f, 0.0f);
+    if (bp.active) {
+        ink_color = bp.color;
+    }
 
     auto& rc = get_resource_allocator();
     auto device = RHI::get_device();
@@ -427,6 +433,24 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         rc.destroy(cmd);
 
         field->bristles_initialized = true;
+    }
+
+    // Refresh the bristle ink color EVERY active frame (not just on alloc):
+    // the BrushPoint's color can change mid-simulation (multi-color strokes),
+    // so the init-block write above (which only runs once) would leave a stale
+    // color. This write is cheap (4 floats) and runs only when the pen is down.
+    if (field->bristles_initialized && bp.active) {
+        float input_color[4] = {
+            ink_color.r, ink_color.g, ink_color.b, ink_amount
+        };
+        auto color_cmd = rc.create(CommandListDesc{});
+        color_cmd->open();
+        color_cmd->writeBuffer(
+            field->bristle_input_color_buf, input_color, sizeof(float) * 4);
+        color_cmd->close();
+        device->executeCommandList(color_cmd);
+        device->waitForIdle();
+        rc.destroy(color_cmd);
     }
 
     if (!field->particles_initialized) {

@@ -335,6 +335,7 @@ struct BrushPoint {
     float time = 0.0f;          // stroke-local time (seconds since pen-down)
     bool active = false;        // pen is currently down
     bool stroke_start = false;  // first point of a new stroke (pen-down edge)
+    glm::vec3 color{ 1.0f, 0.0f, 0.0f };  // RYB ink color (from the trajectory)
 };
 
 // ============================================================

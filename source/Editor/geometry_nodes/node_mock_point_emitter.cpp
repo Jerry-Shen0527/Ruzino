@@ -38,6 +38,7 @@ struct EmitterStorage {
     // Stroke k occupies vertices [stroke_start[k],
     // stroke_start[k]+stroke_len[k]).
     std::vector<glm::vec3> points;
+    std::vector<glm::vec3> colors;       // per-point RYB display color
     std::vector<float> times;           // per-point stroke-local time
     std::vector<int> stroke_start_idx;  // first flat index of each stroke
     std::vector<int> stroke_len;        // vertex count per stroke
@@ -89,6 +90,14 @@ NODE_EXECUTION_FUNCTION(mock_point_emitter)
             storage.input_signature = sig;
             storage.points = verts;
             storage.total_points = static_cast<int>(verts.size());
+
+            // Per-vertex RYB display color (carried through to BrushPoint so
+            // the deposit node paints with the trajectory's own color, not a
+            // single static Ink Color — needed for multi-color strokes).
+            storage.colors = curve->get_display_color();
+            if (storage.colors.size() != verts.size()) {
+                storage.colors.assign(verts.size(), glm::vec3(1.0f, 0.0f, 0.0f));
+            }
 
             // Timestamps (optional — stroke-local time per point).
             std::vector<float> ts;
@@ -161,6 +170,8 @@ NODE_EXECUTION_FUNCTION(mock_point_emitter)
             // Emit the very first point as a stroke_start.
             out.pos = storage.points[0];
             out.time = storage.times.empty() ? 0.0f : storage.times[0];
+            out.color = storage.colors.empty() ? glm::vec3(1.0f, 0.0f, 0.0f)
+                                                : storage.colors[0];
             out.active = true;
             out.stroke_start = true;
             storage.last_pos = out.pos;
@@ -265,6 +276,12 @@ static void sample_trajectory(const EmitterStorage& s, BrushPoint& out)
     }
     else {
         out.time = 0.0f;
+    }
+    if (!s.colors.empty() && i1 < static_cast<int>(s.colors.size())) {
+        out.color = glm::mix(s.colors[i0], s.colors[i1], frac);
+    }
+    else {
+        out.color = glm::vec3(1.0f, 0.0f, 0.0f);
     }
     out.active = true;
     // stroke_start on the first point of whichever stroke the cursor is in.
