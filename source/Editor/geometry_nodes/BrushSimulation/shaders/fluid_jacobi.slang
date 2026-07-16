@@ -41,8 +41,14 @@ void main(uint3 dtid : SV_DispatchThreadID)
     float center = field_in[idx];
 
     if (cb.jacobi_mode == 1) {
-        // Pressure solve. Solid cells keep pressure = 0 (Dirichlet); fluid
-        // cells average only their fluid neighbors (divisor = fluid count).
+        // Pressure solve with Neumann BC at solid interfaces: solid cells do
+        // not participate (their pressure is never read by fluid cells, which
+        // skip solid neighbors below). Fluid cells average only their fluid
+        // neighbors and divide by the fluid-neighbor count. This is equivalent
+        // to mirroring the fluid cell's own pressure at solid boundaries
+        // (∂P/∂n = 0), so the fluid is blocked by solid cells rather than
+        // sucked toward them. See fluid_gradient.slang for the matching BC in
+        // the pressure-gradient step.
         if (is_solid(idx)) { field_out[idx] = 0.0f; return; }
 
         float sum = 0.0f;

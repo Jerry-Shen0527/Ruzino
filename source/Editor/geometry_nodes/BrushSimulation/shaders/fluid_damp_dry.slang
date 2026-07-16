@@ -18,9 +18,14 @@ RWStructuredBuffer<float> wetness : register(u3);
 [numthreads(256, 1, 1)]
 void main(uint3 dtid : SV_DispatchThreadID)
 {
-    WindowCell c;
-    if (!window_map(cb, dtid.x, c)) return;
-    uint idx = c.idx;
+    // Dispatched over the FULL grid (not just the active window), so drying
+    // affects paint left behind by a moving brush. Index directly into the
+    // global buffer; no window mapping needed.
+    int N = cb.res;
+    int D = cb.res_z;
+    uint total = (uint)N * (uint)N * (uint)D;
+    if (dtid.x >= total) return;
+    uint idx = dtid.x;
 
     // Oil-density-modulated viscous drag (§6). Low oil density → thick →
     // strong drag (factor → 0.9); high oil density → thin → weak drag

@@ -79,6 +79,11 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
     const int WIN_Z = field->grid_res_z;
     const int win_n3d = WIN_XY * WIN_XY * WIN_Z;
     const int window_total = win_n3d;
+    // Full-grid cell count for global drying (§4.2: "increase the dryness of
+    // EVERY grid cell"). Drying must be global so paint that the active window
+    // has moved past still dries — otherwise previously painted strokes never
+    // harden and can't act as solid cells that deflect later strokes.
+    const int global_n3d = field->grid_res * field->grid_res * WIN_Z;
     const float cell_sz =
         field->grid_paper / static_cast<float>(field->grid_res);
     const int Nb = WetbrushSimState::NUM_BRISTLES;
@@ -529,7 +534,10 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                 rc.destroy(dcb);
             }
 
-            // Damp + dry
+            // Damp + dry. Dispatched over the FULL grid (not just the active
+            // window) so that paint left behind by a moving brush still dries
+            // (§4.2: "increase the dryness of every grid cell"). Velocity damp
+            // on empty cells is a no-op (their velocity is already zero).
             Ruzino::brush_dispatch(
                 rc,
                 field->damp_dry_program,
@@ -539,7 +547,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                   { "vel_z", field->vel_z },
                   { "wetness", field->wetness } },
                 cb_buf,
-                window_total);
+                global_n3d);
 
             // FLIP/PIC velocity update for particles
             if (field->particles_initialized) {

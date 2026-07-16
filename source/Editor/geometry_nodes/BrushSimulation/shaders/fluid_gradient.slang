@@ -42,29 +42,25 @@ void main(uint3 dtid : SV_DispatchThreadID)
         return;
     }
 
-    // ∂P/∂x
-    if (gx > 0 && gx < (uint)RES - 1)
-        vel_x[idx] -= 0.5f * (pressure[idx + 1] - pressure[idx - 1]);
-    else if (gx == 0)
-        vel_x[idx] -= 0.5f * pressure[idx + 1];
-    else
-        vel_x[idx] += 0.5f * pressure[idx - 1];
+    // ∂P/∂x — Neumann BC at solid interfaces: a solid neighbor contributes
+    // pressure[idx] (mirror), so the gradient across a solid boundary is zero.
+    // This prevents the fluid from being sucked toward solid cells (which had
+    // pressure pinned low) — instead the fluid is simply blocked, the way a
+    // wall deflects incoming liquid. Without this, dry paint acted like a
+    // vacuum pulling new paint IN rather than pushing it up/aside.
+    float px_lo = (gx > 0)             ? (is_solid(idx - 1)    ? pressure[idx] : pressure[idx - 1])    : pressure[idx];
+    float px_hi = (gx < (uint)RES - 1) ? (is_solid(idx + 1)    ? pressure[idx] : pressure[idx + 1])    : pressure[idx];
+    vel_x[idx] -= 0.5f * (px_hi - px_lo);
 
     // ∂P/∂y
-    if (gy > 0 && gy < (uint)RES - 1)
-        vel_y[idx] -= 0.5f * (pressure[idx + (uint)RES] - pressure[idx - (uint)RES]);
-    else if (gy == 0)
-        vel_y[idx] -= 0.5f * pressure[idx + (uint)RES];
-    else
-        vel_y[idx] += 0.5f * pressure[idx - (uint)RES];
+    float py_lo = (gy > 0)             ? (is_solid(idx - (uint)RES) ? pressure[idx] : pressure[idx - (uint)RES]) : pressure[idx];
+    float py_hi = (gy < (uint)RES - 1) ? (is_solid(idx + (uint)RES) ? pressure[idx] : pressure[idx + (uint)RES]) : pressure[idx];
+    vel_y[idx] -= 0.5f * (py_hi - py_lo);
 
     // ∂P/∂z
     if (RESZ > 1) {
-        if (gz > 0 && gz < (uint)RESZ - 1)
-            vel_z[idx] -= 0.5f * (pressure[idx + RNN] - pressure[idx - RNN]);
-        else if (gz == 0)
-            vel_z[idx] -= 0.5f * pressure[idx + RNN];
-        else
-            vel_z[idx] += 0.5f * pressure[idx - RNN];
+        float pz_lo = (gz > 0)             ? (is_solid(idx - RNN) ? pressure[idx] : pressure[idx - RNN]) : pressure[idx];
+        float pz_hi = (gz < (uint)RESZ - 1) ? (is_solid(idx + RNN) ? pressure[idx] : pressure[idx + RNN]) : pressure[idx];
+        vel_z[idx] -= 0.5f * (pz_hi - pz_lo);
     }
 }

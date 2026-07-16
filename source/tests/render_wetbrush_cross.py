@@ -83,7 +83,11 @@ def run_streaming_zone_cross(out_usd: Path):
         (deposit, "Ink Amount"): 0.8,
         (bristle, "Brush Radius"): 0.02,
         (fluid, "Viscosity"): 0.5, (fluid, "Diffusion Rate"): 0.0001,
-        (fluid, "Drying Rate"): 0.1, (fluid, "Brush Radius"): 0.02,
+        # Drying rate tuned so stroke 0 (drawn frames 0-30) has dried to solid
+        # (wetness < 0.01) by the time stroke 1 begins at frame ~30. This makes
+        # the red paint act as a solid wall that deflects the blue stroke
+        # upward, producing coverage instead of in-place mixing.
+        (fluid, "Drying Rate"): 2.0, (fluid, "Brush Radius"): 0.02,
     })
     assert sim_in.paired_node is sim_out, "zone pairing not established"
 
