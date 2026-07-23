@@ -681,11 +681,15 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         Ruzino::brush_upload_cb(
             rc, device, &bc, sizeof(bc), "wb_bristle_cb", bristle_cb);
 
-        // Step 1: Bristle spring dynamics
+        // Step 1: Bristle spring dynamics. Pass the grid velocity field so
+        // bristles feel the grid-liquid drag (paper §4.1 Eq.2: a_i includes
+        // "drag force due to the grid-based liquid flow").
         Ruzino::brush_dispatch(
             rc,
             field->bristle_sim_program,
-            {},
+            { { "grid_vel_x", field->vel_x },
+              { "grid_vel_y", field->vel_y },
+              { "grid_vel_z", field->vel_z } },
             { { "bristle_data", field->bristle_data } },
             bristle_cb,
             Nb);
@@ -744,15 +748,18 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         clear_bristle_grid(field->bristle_color_y);
         clear_bristle_grid(field->bristle_color_b);
 
-        // Step 5: Rasterize samples -> accumulation grids
+        // Step 5: Rasterize samples -> accumulation grids.
+        // Paper §4.2: dried cells are solid in PRESSURE PROJECTION (fluid
+        // divergence/Jacobi/gradient), not here. The rasterize shader splats
+        // each sample at its actual position; the fluid solve deflects new
+        // paint around/above dried cells. (Earlier "deposit climbs above
+        // solid" SRVs removed — that hack broke strokes at higher grid res.)
         Ruzino::brush_dispatch(
             rc,
             field->bristle_raster_program,
             { { "sample_pos", field->sample_pos },
               { "sample_color", field->sample_color },
-              { "sample_vel", field->sample_vel },
-              { "grid_wetness", field->wetness },
-              { "grid_density", field->density } },
+              { "sample_vel", field->sample_vel } },
             { { "bristle_density", field->bristle_density },
               { "bristle_vel_x", field->bristle_vel_x },
               { "bristle_vel_y", field->bristle_vel_y },

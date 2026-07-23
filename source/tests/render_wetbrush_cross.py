@@ -78,7 +78,11 @@ def run_streaming_zone_cross(out_usd: Path):
     g.setSocketDefaults({
         (mock, "Num Points"): 30, (mock, "Length"): 0.3,
         (mock, "Stroke 0 Duration"): 0.5, (mock, "Stroke 1 Start"): 0.5,
-        (deposit, "Resolution"): 256, (deposit, "Paper Size"): 1.0,
+        # Resolution 512 — matches render_wetbrush.py. Paper §4.2 uses 4096;
+        # we step up from 256 first to test whether the discrete "growing
+        # bumps" are a resolution artifact. At 256 the brush radius covered
+        # only ~10 cells, so bristle splats landed in single XY columns.
+        (deposit, "Resolution"): 512, (deposit, "Paper Size"): 1.0,
         (deposit, "Brush Radius"): 0.02, (deposit, "Brush Pressure"): 1.0,
         (deposit, "Ink Amount"): 0.8,
         (bristle, "Brush Radius"): 0.02,

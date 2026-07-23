@@ -23,12 +23,6 @@ ConstantBuffer<BristleConstants> cb : register(b0);
 StructuredBuffer<float4> sample_pos : register(t0);     // Nb * S (.xyz = 3D pos)
 StructuredBuffer<float4> sample_color : register(t1);   // Nb * S
 StructuredBuffer<float4> sample_vel : register(t2);     // Nb * S (.xyz = 3D vel)
-// Main-grid wetness + density (read-only) to detect dried (solid) cells.
-// Bristle paint must NOT be deposited into a solid cell — it piles up on top
-// instead, so a new stroke covers a dried stroke rather than mixing into it
-// in-place.
-StructuredBuffer<float> grid_wetness : register(t3);
-StructuredBuffer<float> grid_density : register(t4);
 // 3D accumulation grids — global-sized (grid_res × grid_res × grid_res_z)
 RWStructuredBuffer<float> bristle_density : register(u0);
 RWStructuredBuffer<float> bristle_vel_x : register(u1);
@@ -66,30 +60,20 @@ void deposit_point(float3 pos, float4 col, float3 vel,
         int iz = iz_center + dz - 1;  // centered on the sample's Z cell
         if (iz < 0 || iz >= D) continue;
 
-        // Coverage: a cell that carries dried paint (density > 0 AND
-        // wetness < threshold) is solid — new paint cannot enter it. Walk
-        // upward from iz to find the first non-solid cell and deposit there
-        // instead. This makes a new stroke pile on TOP of a dried stroke
-        // (coverage) rather than mixing into it in-place. Empty cells
-        // (density == 0) are NOT solid, even when wetness is 0 — paint can
-        // always be laid on bare canvas. Wet paint cells accept new paint
-        // normally, allowing wet-in-wet blending.
-        int iz_target = iz;
-        for (int step = 0; step < D; ++step) {
-            if (iz_target >= D) break;
-            uint gi_test = grid_idx_3d((uint)ix, (uint)iy, (uint)iz_target, N, D);
-            bool solid = grid_density[gi_test] > 1e-6f &&
-                         grid_wetness[gi_test] < 0.01f;
-            if (!solid) break;  // empty or wet: deposit here
-            iz_target++;  // solid dried paint: keep climbing
-        }
-        if (iz_target >= D) continue;  // solid all the way up: nowhere to put it
+        // Paper §4.2: dried cells become solid in PRESSURE PROJECTION, not
+        // here. The bristle→grid rasterize splats the sample at its actual
+        // position; the fluid solve (divergence + Jacobi + gradient) treats
+        // dry cells as solid walls and deflects the new paint around/above
+        // them. A previous "climb to first non-solid cell" hack here was
+        // resolution-dependent (at 512 it climbed through the entire dried
+        // stroke and dropped the deposit, breaking the second stroke), so it
+        // was removed per the paper.
 
         // Vertical falloff: strongest at center, weaker above/below.
         float z_weight = (1.0 - 0.3 * abs(float(dz - 1))) * z_weight_at_center;
 
         // Global grid index (buffers are global-sized).
-        uint gi = grid_idx_3d((uint)ix, (uint)iy, (uint)iz_target, N, D);
+        uint gi = grid_idx_3d((uint)ix, (uint)iy, (uint)iz, N, D);
 
         bristle_density[gi] += deposit * z_weight;
         bristle_vel_x[gi] += vel.x * deposit * z_weight;

@@ -103,7 +103,14 @@ def run_streaming_zone(out_usd: Path):
     g.setSocketDefaults({
         (mock, "Num Points"): 30, (mock, "Amplitude"): 0.05,
         (mock, "Length"): 0.3,
-        (deposit, "Resolution"): 256, (deposit, "Paper Size"): 1.0,
+        # Resolution 512 (paper §4.2 uses 4096; we step up from 256 first to
+        # test whether the discrete "growing bumps" are a resolution artifact).
+        # At 256 a brush radius of 0.02 covered only ~10 cells, so each bristle
+        # splat landed in a single XY column. 512 makes the footprint ~20 cells
+        # across — enough to tell if the bumps fade. 1024 is possible but bake
+        # stage 2 spends ~3 min in the Vt.Vec4fArray pack loop; revisit once
+        # the renderer's zero-copy registry path is enabled (plan Part B).
+        (deposit, "Resolution"): 512, (deposit, "Paper Size"): 1.0,
         (deposit, "Brush Radius"): 0.02, (deposit, "Brush Pressure"): 1.0,
         (deposit, "Ink Amount"): 0.8,
         (bristle, "Brush Radius"): 0.02,
@@ -230,7 +237,10 @@ def bake_render_scene(sim_stage, prim_path: str, scene_path: Path):
                          pmax[2] + margin_z], dtype=np.float32)
     # Use the sim's actual cell size so the render grid matches the data
     # resolution (no up/downsampling): cell_sz = grid_paper / grid_res.
-    SIM_RES = 256; SIM_PAPER = 1.0
+    # MUST match the deposit node's Resolution / Paper Size (see
+    # run_streaming_zone), otherwise the baked render grid is misaligned
+    # with the sim voxels and the stroke smears/fragments.
+    SIM_RES = 512; SIM_PAPER = 1.0
     cell_sz = SIM_PAPER / SIM_RES  # ~0.0039, the source voxel size
     GRID_X = int(np.ceil((grid_max[0] - grid_min[0]) / cell_sz))
     GRID_Y = int(np.ceil((grid_max[1] - grid_min[1]) / cell_sz))
@@ -269,31 +279,39 @@ def bake_render_scene(sim_stage, prim_path: str, scene_path: Path):
     # current state of those cells (the sim's global grid is now persistent,
     # paper §4.2). Non-zero points overwrite; zero points are skipped so they
     # don't erase previously painted cells that the window has moved past.
+    #
+    # VECTORIZED: the original per-point raster + per-cell Gf.Vec4f pack was
+    # O(GRID_TOTAL) Python ops per frame. At res 512+ that is millions of ops
+    # × 60 frames and stage 2 stalls for minutes. Both loops are now numpy:
+    #   - raster: fancy-index into accum_*, one vectorized write per frame
+    #   - pack:   build a (GRID_TOTAL,4) float32 ndarray, hand the list-of-
+    #             lists to Vt.Vec4fArray (its fastest construction path,
+    #             ~2s for a 2.3M-cell grid vs 200s+ for per-element Gf.Vec4f).
     GRID_TOTAL = GRID_X * GRID_Y * GRID_Z
     accum_density = np.zeros(GRID_TOTAL, dtype=np.float32)
     accum_color = np.zeros((GRID_TOTAL, 3), dtype=np.float32)
     for fi, t in enumerate(frame_times):
         pa = all_pts[fi]; da = all_density[fi]; ca = all_color[fi]
-        for i in range(len(pa)):
-            if da[i] <= 0:
-                continue
-            ix = int((pa[i, 0] - grid_min[0]) / cell_sz)
-            iy = int((pa[i, 1] - grid_min[1]) / cell_sz)
-            iz = int((pa[i, 2] - grid_min[2]) / cell_sz)
-            if (ix < 0 or iy < 0 or iz < 0 or
-                    ix >= GRID_X or iy >= GRID_Y or iz >= GRID_Z):
-                continue
-            idx = (iz * GRID_Y + iy) * GRID_X + ix
-            accum_density[idx] = da[i]
-            accum_color[idx] = ca[i]
+        if len(pa) > 0:
+            mask = da > 0
+            pa = pa[mask]; da = da[mask]; ca = ca[mask]
+            if len(pa) > 0:
+                ix = ((pa[:, 0] - grid_min[0]) / cell_sz).astype(np.int64)
+                iy = ((pa[:, 1] - grid_min[1]) / cell_sz).astype(np.int64)
+                iz = ((pa[:, 2] - grid_min[2]) / cell_sz).astype(np.int64)
+                inb = ((ix >= 0) & (ix < GRID_X) &
+                       (iy >= 0) & (iy < GRID_Y) &
+                       (iz >= 0) & (iz < GRID_Z))
+                ix = ix[inb]; iy = iy[inb]; iz = iz[inb]
+                da = da[inb]; ca = ca[inb]
+                idx = (iz * GRID_Y + iy) * GRID_X + ix
+                accum_density[idx] = da
+                accum_color[idx] = ca
         # Pack the accumulated field into the primvar at this frame's time.
-        vt_arr = Vt.Vec4fArray(GRID_TOTAL)
-        for k in range(GRID_TOTAL):
-            vt_arr[k] = Gf.Vec4f(
-                float(accum_density[k]),
-                float(accum_color[k, 0]),
-                float(accum_color[k, 1]),
-                float(accum_color[k, 2]))
+        packed = np.empty((GRID_TOTAL, 4), dtype=np.float32)
+        packed[:, 0] = accum_density
+        packed[:, 1:4] = accum_color
+        vt_arr = Vt.Vec4fArray(packed.tolist())
         paint_primvar.Set(vt_arr, t)
 
     stage.SetStartTimeCode(frame_times[0])

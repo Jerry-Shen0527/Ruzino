@@ -28,11 +28,75 @@
 
 ConstantBuffer<BristleConstants> cb : register(b0);
 RWStructuredBuffer<float4> bristle_data : register(u0);  // Nb * M * 2
+// Grid-based liquid velocity field (paper §4.1 Eq.2: a_i includes "drag force
+// due to the grid-based liquid flow"). Read-only SRVs so bristles feel the
+// surrounding liquid motion. Velocity is stored normalized to the grid: a unit
+// velocity moves one XY cell per (dt·N), one Z cell per (dt·D).
+StructuredBuffer<float> grid_vel_x : register(t0);
+StructuredBuffer<float> grid_vel_y : register(t1);
+StructuredBuffer<float> grid_vel_z : register(t2);
 
 float3 load_pos(int idx) { return bristle_data[idx * BRV_STRIDE].xyz; }
 float3 load_vel(int idx) { return bristle_data[idx * BRV_STRIDE + 1].xyz; }
 void store_pos(int idx, float3 p) { bristle_data[idx * BRV_STRIDE] = float4(p, 0.0); }
 void store_vel(int idx, float3 v) { bristle_data[idx * BRV_STRIDE + 1] = float4(v, 0.0); }
+
+// Trilinear sample of a single scalar grid channel at fractional cell coords.
+// Cell indices + weights are precomputed by the caller; this just does the 8-
+// corner fetch + 3-axis lerp.
+float sample_channel(StructuredBuffer<float> buf,
+                     int x0,int x1,int y0,int y1,int z0,int z1,
+                     float sx,float sy,float sz,int N,int D)
+{
+    float v000 = buf[grid_idx_3d((uint)x0,(uint)y0,(uint)z0,N,D)];
+    float v100 = buf[grid_idx_3d((uint)x1,(uint)y0,(uint)z0,N,D)];
+    float v010 = buf[grid_idx_3d((uint)x0,(uint)y1,(uint)z0,N,D)];
+    float v110 = buf[grid_idx_3d((uint)x1,(uint)y1,(uint)z0,N,D)];
+    float v001 = buf[grid_idx_3d((uint)x0,(uint)y0,(uint)z1,N,D)];
+    float v101 = buf[grid_idx_3d((uint)x1,(uint)y0,(uint)z1,N,D)];
+    float v011 = buf[grid_idx_3d((uint)x0,(uint)y1,(uint)z1,N,D)];
+    float v111 = buf[grid_idx_3d((uint)x1,(uint)y1,(uint)z1,N,D)];
+    float v00 = lerp(v000,v100,sx), v10 = lerp(v010,v110,sx);
+    float v01 = lerp(v001,v101,sx), v11 = lerp(v011,v111,sx);
+    float v0 = lerp(v00,v10,sy),   v1 = lerp(v01,v11,sy);
+    return lerp(v0, v1, sz);
+}
+
+// Trilinearly sample the grid velocity field at a world-space point (paper
+// §4.1: the drag uses the liquid velocity AT the bristle vertex). Returns the
+// grid-normalized velocity (same convention as fluid_advect.slang). Out of
+// bounds or in empty cells → zero (no drag).
+float3 sample_grid_vel(float3 world_pos)
+{
+    int N = cb.grid_res;
+    int D = cb.grid_res_z;
+    if (N <= 0 || D <= 0) return float3(0.0, 0.0, 0.0);
+
+    float half_p = cb.paper_size * 0.5;
+    float half_h = cb.height_extent * 0.5;
+    float cell_z = cb.height_extent / float(D);
+
+    float gx = (world_pos.x - cb.grid_center_x + half_p) / cb.cell_size;
+    float gy = (world_pos.y - cb.grid_center_y + half_p) / cb.cell_size;
+    float gz = (world_pos.z - cb.grid_center_z + half_h) / cell_z;
+
+    // Outside the grid → no liquid → no drag.
+    if (gx < 0.5 || gy < 0.5 || gz < 0.5) return float3(0.0, 0.0, 0.0);
+    float max_xy = float(N) - 1.5;
+    float max_z = float(D) - 1.5;
+    if (gx > max_xy || gy > max_xy || gz > max_z) return float3(0.0, 0.0, 0.0);
+
+    int x0 = int(gx), y0 = int(gy), z0 = int(gz);
+    int x1 = min(x0 + 1, N - 1);
+    int y1 = min(y0 + 1, N - 1);
+    int z1 = min(z0 + 1, D - 1);
+    float sx = gx - float(x0), sy = gy - float(y0), sz = gz - float(z0);
+
+    return float3(
+        sample_channel(grid_vel_x, x0,x1,y0,y1,z0,z1, sx,sy,sz, N,D),
+        sample_channel(grid_vel_y, x0,x1,y0,y1,z0,z1, sx,sy,sz, N,D),
+        sample_channel(grid_vel_z, x0,x1,y0,y1,z0,z1, sx,sy,sz, N,D));
+}
 
 [numthreads(256, 1, 1)]
 void main(uint3 tid : SV_DispatchThreadID)
@@ -106,6 +170,16 @@ void main(uint3 tid : SV_DispatchThreadID)
         // acceleration spikes and flinging bristles off the brush. We keep a
         // small brush-frame velocity damping so β_B-induced transients settle.
         float3 external_a = -damping_B * v_B;
+
+        // Grid-liquid drag (paper §4.1 Eq.2: a_i includes "drag force due to
+        // the grid-based liquid flow"; §4.3: "velocity field provides the drag
+        // force used for brush simulation"). The surrounding liquid velocity
+        // drags the bristle toward the flow. drag_coeff reuses cb.damping; the
+        // grid velocity is grid-normalized, so this is a gentle pull (a unit
+        // grid velocity crossing the brush in one frame applies one damping
+        // unit of accel). No drag where there's no liquid (empty cells = 0).
+        float3 gvel = sample_grid_vel(pos);
+        external_a += damping_B * (gvel - vel);
 
         // === All four non-inertial frame accelerations (Eq.2, 3D) ===
         // 1. Rectilinear: linear acceleration of the frame origin (a_B).

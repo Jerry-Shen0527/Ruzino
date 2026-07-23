@@ -13,16 +13,21 @@ ConstantBuffer<SimConstants> cb : register(b0);
 
 StructuredBuffer<float> field_in : register(t0);
 StructuredBuffer<float> rhs     : register(t1);
-// Boundary-condition field for pressure projection (Wetbrush §4.2):
-// solid cells get a fixed (Dirichlet) pressure of 0.
+// Boundary-condition fields for pressure projection (Wetbrush §4.2):
+// solid cells (bristle-occupied OR dried-paint) are excluded from the
+// pressure average — equivalent to a Neumann BC (∂P/∂n = 0) at solid
+// interfaces. Empty cells (no paint) are NOT solid even though their
+// wetness is 0 by initialization; the density gate enforces that.
 StructuredBuffer<float> bristle_psi : register(t2);
 StructuredBuffer<float> wetness    : register(t3);
+StructuredBuffer<float> density    : register(t4);
 
 RWStructuredBuffer<float> field_out : register(u0);
 
 bool is_solid(uint idx)
 {
-    return bristle_psi[idx] > 0.5 || wetness[idx] < 0.01;
+    return bristle_psi[idx] > 0.5 ||
+           (density[idx] > 1e-6f && wetness[idx] < 0.01f);
 }
 
 [numthreads(256, 1, 1)]

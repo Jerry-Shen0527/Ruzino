@@ -9,9 +9,14 @@
 ConstantBuffer<SimConstants> cb : register(b0);
 
 StructuredBuffer<float> pressure : register(t0);
-// Boundary-condition fields (Wetbrush §4.2): solid cells keep zero velocity.
+// Boundary-condition fields (Wetbrush §4.2): solid cells (bristle-occupied
+// OR dried-paint) keep zero velocity and mirror pressure at their interface
+// (Neumann BC). Empty cells are NOT solid even though their wetness is 0;
+// the density gate enforces that (see fluid_jacobi.slang for the matching
+// definition).
 StructuredBuffer<float> bristle_psi : register(t1);
 StructuredBuffer<float> wetness    : register(t2);
+StructuredBuffer<float> density    : register(t3);
 
 RWStructuredBuffer<float> vel_x : register(u0);
 RWStructuredBuffer<float> vel_y : register(u1);
@@ -19,7 +24,8 @@ RWStructuredBuffer<float> vel_z : register(u2);
 
 bool is_solid(uint idx)
 {
-    return bristle_psi[idx] > 0.5 || wetness[idx] < 0.01;
+    return bristle_psi[idx] > 0.5 ||
+           (density[idx] > 1e-6f && wetness[idx] < 0.01f);
 }
 
 [numthreads(256, 1, 1)]

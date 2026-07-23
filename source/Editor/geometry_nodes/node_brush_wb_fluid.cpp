@@ -397,7 +397,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                         { { "field_in", *pair.first },
                           { "rhs", *pair.first },
                           { "bristle_psi", field->bristle_density },
-                          { "wetness", field->wetness } },
+                          { "wetness", field->wetness },
+                          { "density", field->density } },
                         { { "field_out", *pair.second } },
                         jcb,
                         window_total);
@@ -416,7 +417,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                           { "vel_y", field->vel_y },
                           { "vel_z", field->vel_z },
                           { "bristle_psi", field->bristle_density },
-                          { "wetness", field->wetness } },
+                          { "wetness", field->wetness },
+                          { "density", field->density } },
                         { { "div_out", field->divergence_buf } },
                         cb_buf,
                         window_total);
@@ -437,7 +439,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                             { { "field_in", field->pressure_a },
                               { "rhs", field->divergence_buf },
                               { "bristle_psi", field->bristle_density },
-                              { "wetness", field->wetness } },
+                              { "wetness", field->wetness },
+                              { "density", field->density } },
                             { { "field_out", field->pressure_b } },
                             pcb,
                             window_total);
@@ -450,7 +453,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                         field->gradient_program,
                         { { "pressure", field->pressure_a },
                           { "bristle_psi", field->bristle_density },
-                          { "wetness", field->wetness } },
+                          { "wetness", field->wetness },
+                          { "density", field->density } },
                         { { "vel_x", field->vel_x },
                           { "vel_y", field->vel_y },
                           { "vel_z", field->vel_z } },
@@ -503,36 +507,14 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
             advect_scalar(field->wetness, field->wetness_tmp);
             advect_scalar(field->oil_density, field->oil_density_tmp);
 
-            // Diffuse scalars (Jacobi, mode 0)
-            fluid_cb.jacobi_mode = 0;
-            fluid_cb.jacobi_alpha =
-                sub_dt * diffusion *
-                static_cast<float>(field->grid_res * field->grid_res);
-            {
-                nvrhi::BufferHandle dcb;
-                Ruzino::brush_upload_cb(
-                    rc, device, &fluid_cb, sizeof(fluid_cb), "wb_diff_cb", dcb);
-                auto diffuse = [&](nvrhi::BufferHandle& f,
-                                   nvrhi::BufferHandle& tmp) {
-                    Ruzino::brush_dispatch(
-                        rc,
-                        field->jacobi_program,
-                        { { "field_in", f },
-                          { "rhs", f },
-                          { "bristle_psi", field->bristle_density },
-                          { "wetness", field->wetness } },
-                        { { "field_out", tmp } },
-                        dcb,
-                        window_total);
-                    std::swap(f, tmp);
-                };
-                diffuse(field->density, field->density_tmp);
-                diffuse(field->wetness, field->wetness_tmp);
-                diffuse(field->color_r, field->color_r_tmp);
-                diffuse(field->color_y, field->color_y_tmp);
-                diffuse(field->color_b, field->color_b_tmp);
-                rc.destroy(dcb);
-            }
+            // NOTE: no scalar diffusion step here. Paper §4.2/§5.1 line 209
+            // applies viscosity to the VELOCITY field only (done in
+            // fluid_damp_dry.slang as per-cell drag), NOT to density/color/
+            // wetness scalars. A previous Jacobi-mode-0 diffusion of the
+            // scalars (alpha = dt*diffusion*N² ≈ 26 at res 512) was eroding
+            // stroke edges below the render threshold every frame, which
+            // looked like the finished stroke contracting/shrinking over
+            // time. Removing it matches the paper and eliminates the shrink.
 
             // Damp + dry. Dispatched over the FULL grid (not just the active
             // window) so that paint left behind by a moving brush still dries
