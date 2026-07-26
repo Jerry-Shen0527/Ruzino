@@ -53,28 +53,30 @@ void deposit_point(float3 pos, float4 col, float3 vel,
     int iz_center = int(floor(gz));
 
     // Spread over ~3 cells in Z around the sample to create a paint blob.
+    // XY is a single cell (no spatial kernel): bristle_rasterize only runs
+    // over the CURRENT frame's samples (the accumulation grid is cleared and
+    // rebuilt each sub-step), so an XY kernel here would smooth only the
+    // freshly-deposited region — producing a visible disc that follows the
+    // brush tip, with a hard edge where old (un-smoothed) paint begins.
+    // Paper §5.2's smoothing kernel is for particle→grid transfer applied
+    // to the whole field, not a per-sample splat. Smoothness here comes
+    // from dense bristle sampling (80 bristles × 128 samples) + sub-stepping.
     int z_spread = min(3, D);
     if (ix < 0 || ix >= N || iy < 0 || iy >= N) return;
 
     for (int dz = 0; dz < z_spread; dz++) {
-        int iz = iz_center + dz - 1;  // centered on the sample's Z cell
+        int iz = iz_center + dz - 1;
         if (iz < 0 || iz >= D) continue;
 
         // Paper §4.2: dried cells become solid in PRESSURE PROJECTION, not
         // here. The bristle→grid rasterize splats the sample at its actual
-        // position; the fluid solve (divergence + Jacobi + gradient) treats
-        // dry cells as solid walls and deflects the new paint around/above
-        // them. A previous "climb to first non-solid cell" hack here was
-        // resolution-dependent (at 512 it climbed through the entire dried
-        // stroke and dropped the deposit, breaking the second stroke), so it
-        // was removed per the paper.
+        // position; the fluid solve treats dry cells as solid walls. No
+        // deposit-climbing hack (it was resolution-dependent and broke
+        // strokes at 512).
 
-        // Vertical falloff: strongest at center, weaker above/below.
         float z_weight = (1.0 - 0.3 * abs(float(dz - 1))) * z_weight_at_center;
 
-        // Global grid index (buffers are global-sized).
         uint gi = grid_idx_3d((uint)ix, (uint)iy, (uint)iz, N, D);
-
         bristle_density[gi] += deposit * z_weight;
         bristle_vel_x[gi] += vel.x * deposit * z_weight;
         bristle_vel_y[gi] += vel.y * deposit * z_weight;
@@ -99,8 +101,9 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     float base_deposit = col.w * 0.15;
 
-    // Single-point splat. Continuity along fast strokes is achieved on the
-    // host via sub-stepping (multiple complete deposits along the trajectory),
-    // not by sweeping a single splat inside this shader.
+    // Single-point XY splat with Z spread. Smoothness comes from dense
+    // bristle sampling + host sub-stepping, not a per-sample XY kernel (an
+    // XY kernel here would smooth only the current frame's deposit region,
+    // producing a visible disc following the brush tip).
     deposit_point(pos, col, vel, base_deposit, 1.0);
 }

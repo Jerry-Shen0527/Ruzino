@@ -24,22 +24,41 @@ struct VolumeHitAttributes {
 // Density above which a cell counts as "paint surface".
 static const float kDensitySurface = 0.02;
 
-// Sample the per-cell (density, r, g, b) field at world-space position p.
-// Returns the Float4 voxel value at world position p; voxels outside the
-// grid return (0,0,0,0). Nearest-voxel (floor) sampling -- the paper §6
-// raymarch samples the density grid directly ("every one quarter of the
-// density grid size"), no smoothing.
-float4 samplePaintField(VolumeDesc vd, float3 p)
+// Fetch one Float4 voxel, returning (0,0,0,0) outside the grid.
+float4 fetchVoxel(VolumeDesc vd, int ix, int iy, int iz)
 {
-    float3 rel = (p - vd.gridMin) / vd.cellSize;
-    int ix = int(floor(rel.x));
-    int iy = int(floor(rel.y));
-    int iz = int(floor(rel.z));
     if (ix < 0 || iy < 0 || iz < 0 ||
         ix >= int(vd.gridResX) || iy >= int(vd.gridResY) || iz >= int(vd.gridResZ))
         return float4(0, 0, 0, 0);
     uint idx = uint((iz * int(vd.gridResY) + iy) * int(vd.gridResX) + ix);
     return asfloat(t_BindlessBuffers[vd.bindlessIndex].Load4(idx * 16));
+}
+
+// Sample the per-cell (density, r, g, b) field at world-space position p.
+// Trilinear interpolation across the 8 surrounding voxels — the paper §6
+// raymarch samples "every one quarter of the density grid size"; sub-cell
+// trilinear filtering is what turns the discrete voxel field into a smooth
+// surface for the first-cross test. Nearest-voxel sampling left cell-aligned
+// stairsteps on the paint surface (top-edge roughness ~65px at res 512).
+float4 samplePaintField(VolumeDesc vd, float3 p)
+{
+    float3 rel = (p - vd.gridMin) / vd.cellSize - 0.5;
+    int x0 = int(floor(rel.x));
+    int y0 = int(floor(rel.y));
+    int z0 = int(floor(rel.z));
+    int x1 = x0 + 1, y1 = y0 + 1, z1 = z0 + 1;
+    float sx = rel.x - float(x0);
+    float sy = rel.y - float(y0);
+    float sz = rel.z - float(z0);
+
+    float4 c000 = fetchVoxel(vd,x0,y0,z0), c100 = fetchVoxel(vd,x1,y0,z0);
+    float4 c010 = fetchVoxel(vd,x0,y1,z0), c110 = fetchVoxel(vd,x1,y1,z0);
+    float4 c001 = fetchVoxel(vd,x0,y0,z1), c101 = fetchVoxel(vd,x1,y0,z1);
+    float4 c011 = fetchVoxel(vd,x0,y1,z1), c111 = fetchVoxel(vd,x1,y1,z1);
+    float4 c00 = lerp(c000,c100,sx), c10 = lerp(c010,c110,sx);
+    float4 c01 = lerp(c001,c101,sx), c11 = lerp(c011,c111,sx);
+    float4 c0 = lerp(c00,c10,sy), c1 = lerp(c01,c11,sy);
+    return lerp(c0, c1, sz);
 }
 
 // Density channel only (paper §6 first-cross + penetration only read the
@@ -51,10 +70,14 @@ float sampleDensity(VolumeDesc vd, float3 p)
 
 // Paint surface normal from the density gradient (paper §6). The gradient
 // points toward increasing density; the outward-facing surface normal is its
-// negation. Estimated by central differences over one cell.
+// negation. Central differences over 2 cells: paper's grid is pixel-level so
+// a 1-cell stencil is sub-pixel and smooth, but at our coarser res (512) a
+// 1-cell stencil rides cell-level density noise and makes the Lambertian
+// shading (0.4+0.6*facing) flicker across the stroke. A 2-cell stencil
+// averages over the noise. Paper does not specify the stencil radius.
 float3 surfaceNormal(VolumeDesc vd, float3 p)
 {
-    float h = vd.cellSize;
+    float h = vd.cellSize * 2.0;
     float dx = sampleDensity(vd, p + float3(h, 0, 0)) - sampleDensity(vd, p - float3(h, 0, 0));
     float dy = sampleDensity(vd, p + float3(0, h, 0)) - sampleDensity(vd, p - float3(0, h, 0));
     float dz = sampleDensity(vd, p + float3(0, 0, h)) - sampleDensity(vd, p - float3(0, 0, h));

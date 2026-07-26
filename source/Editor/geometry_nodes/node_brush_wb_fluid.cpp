@@ -160,8 +160,12 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         Ruzino::brush_upload_cb(
             rc, device, &pc, sizeof(pc), "wb_ptcl_cb", ptcl_cb);
 
-        Ruzino::brush_reset_counter(rc, device, field->ptcl_counter);
-
+        // Do NOT reset the counter here. Particles are PERSISTENT (paper §4.3:
+        // 200K-1M particles survive across frames). The counter carries the
+        // alive-particle count from last frame's compact step; emit appends
+        // past it via InterlockedAdd, wrapping into the dead slots that
+        // compact freed. Resetting here made every frame's emit overwrite
+        // slot 0 and destroy the survivors.
         // Emit mode 0 (from bristle samples)
         pc.emit_mode = 0;
         nvrhi::BufferHandle emit0_cb;
@@ -627,8 +631,9 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
             max_ptcl);
         std::swap(field->ptcl_alive, field->ptcl_alive_b);
 
-        // Grid to particle (emit near brush, Eq.15 density subtraction)
-        Ruzino::brush_reset_counter(rc, device, field->ptcl_counter);
+        // Grid to particle (emit near brush, Eq.15 density subtraction).
+        // No counter reset: append past the survivors (compact left them at
+        // [0, counter), so InterlockedAdd writes into freed dead slots).
         Ruzino::brush_dispatch(
             rc,
             field->grid_to_ptcl_program,

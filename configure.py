@@ -209,7 +209,7 @@ def _find_system_python():
     if is_windows():
         py_launcher = shutil.which("py")
         if py_launcher:
-            for ver in ("3.11", "3.10"):
+            for ver in ("3.13", "3.12", "3.11", "3.10"):
                 try:
                     exe = subprocess.check_output(
                         [py_launcher, f"-{ver}", "-c",
@@ -220,6 +220,19 @@ def _find_system_python():
                     continue
                 if exe:
                     candidates.append(os.path.dirname(exe))
+
+    # 1b. Scoop shimmed installs — preferred over a bare PATH lookup because
+    # scoop apps/pythonXYZ/current resolves to a fixed base install (not a
+    # venv) and the reverse-sorted listing naturally prefers the newest
+    # Python (313 > 312 > 311). The PATH lookup below can otherwise latch
+    # onto an older python that happens to sort earlier on PATH.
+    if is_windows():
+        scoop = os.environ.get("SCOOP", r"C:\Users\%USERNAME%\scoop")
+        scoop_apps = os.path.join(os.path.expandvars(scoop), "apps")
+        if os.path.isdir(scoop_apps):
+            for name in sorted(os.listdir(scoop_apps), reverse=True):
+                if name.lower().startswith("python"):
+                    candidates.append(os.path.join(scoop_apps, name, "current"))
 
     # 2. PATH lookup — may resolve to a venv, filtered below.
     for cmd in ("python3", "python"):
@@ -240,13 +253,6 @@ def _find_system_python():
             if os.path.isdir(root):
                 for name in sorted(os.listdir(root), reverse=True):
                     candidates.append(os.path.join(root, name))
-        # scoop shimmed installs
-        scoop = os.environ.get("SCOOP", r"C:\Users\%USERNAME%\scoop")
-        scoop_apps = os.path.join(os.path.expandvars(scoop), "apps")
-        if os.path.isdir(scoop_apps):
-            for name in sorted(os.listdir(scoop_apps), reverse=True):
-                if name.lower().startswith("python"):
-                    candidates.append(os.path.join(scoop_apps, name, "current"))
 
     # Deduplicate while preserving order, then keep the first real + complete one.
     seen = set()
@@ -398,7 +404,10 @@ def copy_cuda_runtime_dlls_to_binaries(targets, dry_run=False):
             "nvrtc64_120_0.dll",
             "cudart64_13.dll",
             "nvrtc64_130_0.dll",
+            # nvrtc-builtins ships as _130 on CUDA 12.x/13.0 and _133 on 13.3;
+            # list both so the JIT backend runtime resolves on either install.
             "nvrtc-builtins64_130.dll",
+            "nvrtc-builtins64_133.dll",
             # Math/runtime libs transitively required by solver & GPU plugins
             # (e.g. RZSolver.dll imports cublas64_13 -> cublasLt64_13, and
             # cusparse64_12). Without these, LoadLibrary of node_set_value/
@@ -468,6 +477,28 @@ def copy_cuda_runtime_dlls_to_binaries(targets, dry_run=False):
                     print(f"  ✓ Copied {lib_name} ({file_size_mb:.2f} MB) to Binaries/{target}/")
                 except Exception as e:
                     print(f"  ✗ Failed to copy {lib_name}: {e}")
+
+
+def _copy_runtime_bin_dlls_to_binaries(targets, dry_run=False):
+    """Always copy prebuilt third-party runtime DLLs (slang/dxc/embree/d3d12)
+    into Binaries/{target}/.
+
+    These come from upstream prebuilt archives (no compile step), so the copy
+    is fast and idempotent. Running it unconditionally — independent of which
+    ``--library`` was selected — ensures a plain ``--library openusd`` run
+    still yields a runnable Binaries dir instead of missing slang/dxc/d3d12/
+    embree DLLs. Source SDK subdirs that don't exist yet are skipped.
+    """
+    # Mirror the `folders` mapping used in main()'s per-library branches.
+    runtime_bins = ["slang/bin", "dxc/bin/x64", "embree/bin"]
+    if is_windows():
+        runtime_bins.append("d3d12/bin")
+    for folder in runtime_bins:
+        src_path = os.path.join(os.path.dirname(__file__), "SDK", folder)
+        if not os.path.isdir(src_path):
+            continue  # not extracted yet (run --library <lib> or --all first)
+        for target in targets:
+            copytree_common_to_binaries(folder, target=target, dry_run=dry_run)
 
 
 def download_with_progress(url, zip_path, dry_run=False):
@@ -685,6 +716,64 @@ def _rmtree_readonly(top):
         os.chmod(path, stat.S_IWRITE)
         func(path)
     shutil.rmtree(top, onerror=on_ro)
+
+
+def _patch_oiiio_fmt_msvc_debug(src_dir, dry_run=False):
+    """Patch OpenImageIO's vendored fmt 10.0 to build under MSVC Debug.
+
+    fmt 10.0's ``#if defined(_SECURE_SCL) && _SECURE_SCL`` branch aliases
+    ``checked_ptr`` to the now-deprecated ``stdext::checked_array_iterator``.
+    Under MSVC 19.x Debug (``_ITERATOR_DEBUG_LEVEL != 0``) this alias fails
+    to resolve and the trailing return types below it error out (fmt issue
+    #3540). The STL no longer emits the "copying to a raw pointer" warnings
+    this code existed to silence, so we force the plain-pointer branch —
+    the same fix fmt itself shipped in later versions.
+
+    Idempotent: matched by a marker comment so re-runs are a no-op.
+    """
+    fmt_h = os.path.join(
+        src_dir, "ext", "fmt", "include", "fmt", "format.h"
+    )
+    if not os.path.isfile(fmt_h) or dry_run:
+        return
+    with open(fmt_h, "r", encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    marker = "fmt 10.0: force the T* branch"
+    if marker in text:
+        return  # already patched
+    old = (
+        "#if defined(_SECURE_SCL) && _SECURE_SCL\n"
+        "// Make a checked iterator to avoid MSVC warnings.\n"
+        "template <typename T> using checked_ptr = stdext::checked_array_iterator<T*>;\n"
+        "template <typename T>\n"
+        "constexpr auto make_checked(T* p, size_t size) -> checked_ptr<T> {\n"
+        "  return {p, size};\n"
+        "}\n"
+        "#else\n"
+        "template <typename T> using checked_ptr = T*;\n"
+        "template <typename T> constexpr auto make_checked(T* p, size_t) -> T* {\n"
+        "  return p;\n"
+        "}\n"
+        "#endif"
+    )
+    new = (
+        "// " + marker + ". The _SECURE_SCL / checked_array_iterator\n"
+        "// path breaks under MSVC 19.x Debug (fmt issue #3540).\n"
+        "template <typename T> using checked_ptr = T*;\n"
+        "template <typename T> constexpr auto make_checked(T* p, size_t) -> T* {\n"
+        "  return p;\n"
+        "}"
+    )
+    if old not in text:
+        print(
+            "  ⚠ OpenImageIO fmt patch anchor not found (fmt version changed?); "
+            "leaving format.h unchanged."
+        )
+        return
+    text = text.replace(old, new, 1)
+    with open(fmt_h, "w", encoding="utf-8", newline="") as f:
+        f.write(text)
+    print("  ✓ Patched OpenImageIO vendored fmt for MSVC Debug (issue #3540)")
 
 
 def dep_is_installed(install_prefix, marker_file):
@@ -1333,6 +1422,8 @@ def build_openimageio(install_prefix, src_base, build_type, dry_run=False):
     src_dir = download_dep(url, src_base, folder_name="OpenImageIO-2.5.16.0", dry_run=dry_run)
     if dry_run:
         return
+    # Patch vendored fmt 10.0 so the MSVC Debug build compiles (fmt #3540).
+    _patch_oiiio_fmt_msvc_debug(src_dir, dry_run=dry_run)
     extra_args = [
         "-DOIIO_BUILD_TESTS=OFF",
         "-DUSE_PYTHON=OFF",
@@ -1375,6 +1466,15 @@ def build_usd(install_prefix, usd_src_dir, build_type, python_executable, dry_ru
         "-DPXR_BUILD_DOCUMENTATION=OFF",
         "-DBoost_NO_SYSTEM_PATHS=ON",
         f"-DPython3_EXECUTABLE={python_executable}",
+        # Pin FindPython3 to the SDK python directory so the Development
+        # components resolve against THIS python (e.g. SDK/python 3.13), not
+        # whatever python happens to sort first on PATH (e.g. a scoop
+        # python312). Without this, FindPython3's Development validation can
+        # query a different interpreter via subprocess and report the
+        # components as missing even though the SDK python is complete.
+        f"-DPython3_ROOT_DIR={os.path.dirname(python_executable)}",
+        "-DPython3_FIND_STRATEGY=LOCATION",
+        "-DPython3_FIND_REGISTRY=NEVER",
     ]
 
     if is_windows():
@@ -1464,11 +1564,19 @@ def process_usd(targets, dry_run=False, keep_original_files=True, copy_only=Fals
                     "Python development files and re-run."
                 )
 
-        # Find Python executable for USD Python bindings
-        # Prefer system Python (has jinja2 for USD code generation) over SDK Python
+        # Find Python executable for USD Python bindings.
+        # IMPORTANT: prefer SDK/python so USD links against the SAME Python
+        # (e.g. 3.11) as the Ruzino app itself. The app's pyd extensions
+        # (stage_py, geometry_py, ...) are built against SDK/python; if USD
+        # were linked against a different system Python (e.g. 3.12 from
+        # scoop), usd_ms.dll would depend on python312.dll while Binaries
+        # only ships python311.dll, and LoadLibrary(usd_ms) fails at runtime
+        # (e.g. during nanobind stub generation). The earlier "prefer system
+        # Python for jinja2" rationale no longer holds — jinja2 must be
+        # installed into SDK/python if Python binding codegen is needed.
         python_cmd = "python" if is_windows() else "python3"
-        system_python = shutil.which(python_cmd)
-        python_executable = system_python or (sdk_python if os.path.exists(sdk_python) else python_cmd)
+        sdk_python_abs = sdk_python if os.path.exists(sdk_python) else None
+        python_executable = sdk_python_abs or shutil.which(python_cmd) or python_cmd
 
         # Shared source directory for all dependency sources
         src_base = os.path.join(
@@ -2203,9 +2311,18 @@ def main():
                         folders[lib], target=target, dry_run=dry_run
                     )
 
-    # Copy Python DLLs from SDK to Binaries for each target in copy-only mode
-    if copy_only:
-        copy_python_dlls_to_binaries(targets, dry_run=dry_run)
+    # Always copy Python DLLs from SDK to Binaries for each target. Python is
+    # a pure runtime dependency (no Debug/Release ABI split), so copying it
+    # unconditionally keeps Binaries/{target} runnable regardless of which
+    # --library was built.
+    copy_python_dlls_to_binaries(targets, dry_run=dry_run)
+
+    # Always copy third-party runtime DLLs (slang/dxc/embree/d3d12 bin) to
+    # Binaries/{target}. These are prebuilt upstream archives (no compile),
+    # so copying is fast and side-effect-free; doing it unconditionally means
+    # a plain `--library openusd` run still produces a runnable Binaries dir
+    # instead of leaving slang/dxc/d3d12/embree DLLs missing.
+    _copy_runtime_bin_dlls_to_binaries(targets, dry_run=dry_run)
 
     # Always copy CUDA runtime DLLs if available
     copy_cuda_runtime_dlls_to_binaries(targets, dry_run=dry_run)

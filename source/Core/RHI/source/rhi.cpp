@@ -4,6 +4,8 @@
 
 #include <RHI/internal/nvrhi_equality.hpp>
 #include <RHI/rhi.hpp>
+#include <algorithm>
+#include <cstring>
 #include <memory>
 
 #include "RHI/DeviceManager/DeviceManager.h"
@@ -328,19 +330,32 @@ DeviceManager* internal::get_device_manager()
 bool ensure_gl_driver_loaded()
 {
 #if RUZINO_WITH_OPENUSD
-    // Hydra's HgiGL requires a current OpenGL 4.5 context. The naive headless
-    // approach — wglCreateContext on the console window — only yields
-    // Microsoft's software GL 1.1, which HgiGL rejects ("minimum OpenGL
-    // requirements not met").
+    // HgiGL requires a current, hardware-accelerated OpenGL >=4.5 context for
+    // its whole lifetime (it queries glGetString(GL_VERSION) + many
+    // glGetIntegerv in HgiGLCapabilities at construction, and HgiGL_ScopedState
+    // Holder captures/restores a broad set of GL state each blit submit).
     //
-    // The robust fix (the same one the interactive RuzinoEngine path uses) is:
-    //   1. create a dedicated (non-console) window so the GPU driver
-    //      participates in pixel-format selection,
-    //   2. bootstrap a legacy context to obtain wglCreateContextAttribsARB,
-    //   3. create a real 4.5 core context (falling back 4.4..4.0) and make it
-    //      current on this thread.
-    // The window/context live for the process so the context stays current for
-    // downstream HgiGL/UsdImagingGL. Idempotent.
+    // Strategy: mirror USD's own reference context creation
+    // (pxr/imaging/garch/glPlatformDebugWindowWindows.cpp: GarchGLDebugWindow):
+    //   - glfwInit() so the GPU's OpenGL ICD is associated with the process
+    //     (the GUI path already did this via
+    //     RHI::init(true)->CreateWindowDevice AndSwapChain; the headless path
+    //     skips glfwInit, so we do it here).
+    //   - host the GL context on a real window (the main GLFW window's HWND if
+    //     we have one, else a hidden dedicated window). The main GLFW window is
+    //     created with GLFW_CLIENT_API=GLFW_NO_API (DeviceManager.cpp), so it
+    //     never had its pixel format set and can safely host a WGL context.
+    //   - plain wglCreateContext (NOT wglCreateContextAttribsARB+CORE_PROFILE).
+    //     This yields the driver's highest COMPATIBILITY-profile context
+    //     (typically 4.6 on modern GPUs). A core-profile context was the cause
+    //     of pervasive GL_INVALID_ENUM: HgiGL_ScopedStateHolder restores
+    //     GL_POINT_SMOOTH / GL_POINT_SPRITE / GL_MULTISAMPLE, whose enums are
+    //     removed in core profile, so every restore produced GL_INVALID_ENUM,
+    //     surfaced as a TF_RUNTIME_ERROR on every blit submit (crippling
+    //     RelWithDebInfo and breaking the Storm renderer). Compatibility
+    //     profile keeps those legacy enums valid.
+    // Idempotent; the window/context leak intentionally so the context stays
+    // current for downstream HgiGL/UsdImagingGL.
     static bool initialized = false;
     static bool ok = false;
     if (initialized)
@@ -348,90 +363,169 @@ bool ensure_gl_driver_loaded()
     initialized = true;
 
 #ifdef _WIN32
-    WNDCLASSA wc = {};
-    wc.lpfnWndProc = DefWindowProcA;
-    wc.hInstance = GetModuleHandle(nullptr);
-    wc.lpszClassName = "RuzinoGLContext";
-    RegisterClassA(&wc);
+    auto logger = cached_logger.lock();
 
-    HWND hwnd = CreateWindowExA(
-        0,
-        "RuzinoGLContext",
-        "",
-        0,
-        0,
-        0,
-        1,
-        1,
-        nullptr,
-        nullptr,
-        GetModuleHandle(nullptr),
-        nullptr);
-    if (!hwnd) {
-        if (auto logger = cached_logger.lock())
-            logger->error("ensure_gl_driver_loaded: CreateWindowEx failed");
+    // 1. Make sure the GPU OpenGL ICD is loaded for this process. glfwInit is
+    //    idempotent and a no-op if RHI::init(true) already ran.
+    if (!glfwInit()) {
+        if (logger)
+            logger->error("ensure_gl_driver_loaded: glfwInit failed");
         return ok = false;
     }
-    HDC hdc = GetDC(hwnd);
 
+    // 2. Choose the host window HWND.
+    HWND hwnd = nullptr;
+    HDC hdc = nullptr;
+    bool owns_window = false;
+
+    // 2a. GUI path: reuse the main GLFW window's native HWND. It was created
+    //     with GLFW_NO_API, so it has no GL context/pixel-format yet — we can
+    //     attach one without conflict, and we avoid a second window that could
+    //     desync driver state.
+    if (auto* mgr = internal::get_device_manager()) {
+        if (GLFWwindow* glfwWin = mgr->GetWindow()) {
+            hwnd = glfwGetWin32Window(glfwWin);
+        }
+    }
+
+    // 2b. Headless path (no main window): create a hidden dedicated window,
+    //     matching GarchGLDebugWindow's approach but never shown.
+    if (!hwnd) {
+        WNDCLASSA wc = {};
+        wc.lpfnWndProc = DefWindowProcA;
+        wc.hInstance = GetModuleHandle(nullptr);
+        wc.lpszClassName = "RuzinoGLContext";
+        RegisterClassA(&wc);
+        hwnd = CreateWindowExA(
+            0,
+            "RuzinoGLContext",
+            "",
+            0,
+            0,
+            0,
+            1,
+            1,
+            nullptr,
+            nullptr,
+            GetModuleHandle(nullptr),
+            nullptr);
+        if (!hwnd) {
+            if (logger)
+                logger->error("ensure_gl_driver_loaded: CreateWindowEx failed");
+            return ok = false;
+        }
+        owns_window = true;
+    }
+
+    hdc = GetDC(hwnd);
+    if (!hdc) {
+        if (logger)
+            logger->error("ensure_gl_driver_loaded: GetDC failed");
+        return ok = false;
+    }
+
+    // 3. Pixel format — matches GarchGLDebugWindow (RGBA8 + depth24 +
+    //    stencil8 + doublebuffer).
     PIXELFORMATDESCRIPTOR pfd = {};
     pfd.nSize = sizeof(pfd);
     pfd.nVersion = 1;
     pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
     pfd.iPixelType = PFD_TYPE_RGBA;
-    pfd.cColorBits = 32;
+    pfd.cRedBits = 8;
+    pfd.cGreenBits = 8;
+    pfd.cBlueBits = 8;
+    pfd.cAlphaBits = 8;
+    pfd.cColorBits = 24;
     pfd.cDepthBits = 24;
     pfd.cStencilBits = 8;
 
     int pixelFormat = ChoosePixelFormat(hdc, &pfd);
-    SetPixelFormat(hdc, pixelFormat, &pfd);
-
-    // Bootstrap a legacy context to obtain the modern-context creation entry
-    // point (wglGetProcAddress only works with a current context).
-    HGLRC legacyCtx = wglCreateContext(hdc);
-    if (!legacyCtx) {
-        if (auto logger = cached_logger.lock())
+    if (pixelFormat == 0) {
+        if (logger)
             logger->error(
-                "ensure_gl_driver_loaded: legacy wglCreateContext failed");
+                "ensure_gl_driver_loaded: ChoosePixelFormat returned 0; "
+                "no hardware OpenGL ICD is loaded (GL will be MS software 1.1 "
+                "and HgiGL will reject it)");
         return ok = false;
     }
-    wglMakeCurrent(hdc, legacyCtx);
+    SetPixelFormat(hdc, pixelFormat, &pfd);
 
-    using PFNWGLCREATECONTEXTATTRIBSARB =
-        HGLRC(WINAPI*)(HDC, HGLRC, const int*);
-    auto wglCreateContextAttribsARB =
-        (PFNWGLCREATECONTEXTATTRIBSARB)wglGetProcAddress(
-            "wglCreateContextAttribsARB");
+    // 4. Plain wglCreateContext -> compatibility profile (NOT core). See the
+    //    block comment at the top of this function for why core profile broke
+    //    HgiGL_ScopedStateHolder's state restore.
+    HGLRC ctx = wglCreateContext(hdc);
+    if (!ctx) {
+        if (logger)
+            logger->error(
+                "ensure_gl_driver_loaded: wglCreateContext failed (err={})",
+                GetLastError());
+        return ok = false;
+    }
+    wglMakeCurrent(hdc, ctx);
 
-    if (wglCreateContextAttribsARB) {
-        int attribs[] = { WGL_CONTEXT_MAJOR_VERSION_ARB,
-                          4,
-                          WGL_CONTEXT_MINOR_VERSION_ARB,
-                          5,
-                          WGL_CONTEXT_PROFILE_MASK_ARB,
-                          WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
-                          0 };
-        HGLRC modernCtx = nullptr;
-        for (int minor = 5; minor >= 0 && !modernCtx; --minor) {
-            attribs[3] = minor;
-            modernCtx = wglCreateContextAttribsARB(hdc, nullptr, attribs);
-        }
-        if (modernCtx) {
-            wglMakeCurrent(hdc, modernCtx);
-            wglDeleteContext(legacyCtx);
-            if (auto logger = cached_logger.lock())
-                logger->info(
-                    "ensure_gl_driver_loaded: created modern GL context");
-            return ok = true;
+    // 5. Verify we actually got a hardware context at OpenGL >=4.5 (HgiGL's
+    //    hard requirement). A software context reports "1.1.0 Microsoft" and
+    //    must be treated as failure.
+    //    NB: resolve glGetString straight from opengl32.dll via GetProcAddress.
+    //    We can't call glGetString() directly here because garch/glApi.h
+    //    (included for HgiGL interop) re-declares it as a pxr::internal::GLApi
+    //    function-pointer that is only populated by GarchGLApiLoad() — which
+    //    the caller runs AFTER this function. Going through GetProcAddress
+    //    sidesteps both the garch pointer (still null) and the link-time
+    //    dependency on the garch symbol, and works on any GL 1.1+ context.
+    using PFNGLGETSTRING = const unsigned char*(APIENTRY*)(unsigned int);
+    PFNGLGETSTRING pfnGlGetString = reinterpret_cast<PFNGLGETSTRING>(
+        GetProcAddress(GetModuleHandleA("opengl32.dll"), "glGetString"));
+    const char* glVer =
+        pfnGlGetString
+            ? reinterpret_cast<const char*>(pfnGlGetString(GL_VERSION))
+            : nullptr;
+    const char* glVendor =
+        pfnGlGetString
+            ? reinterpret_cast<const char*>(pfnGlGetString(GL_VENDOR))
+            : nullptr;
+    const char* glRenderer =
+        pfnGlGetString
+            ? reinterpret_cast<const char*>(pfnGlGetString(GL_RENDERER))
+            : nullptr;
+
+    int major = 0, minor = 0;
+    if (glVer) {
+        // GL_VERSION looks like "4.6.0 <vendor> <version>" or "4.1
+        // <vendor-...>"
+        const char* dot = strchr(glVer, '.');
+        if (dot && dot != glVer) {
+            major = std::max(0, std::min(9, *(dot - 1) - '0'));
+            minor = std::max(0, std::min(9, *(dot + 1) - '0'));
         }
     }
+    int glVersionCode = major * 100 + minor * 10;
 
-    // Stuck with the legacy context — HgiGL will likely reject it.
-    if (auto logger = cached_logger.lock())
-        logger->warn(
-            "ensure_gl_driver_loaded: could not create a modern GL context; "
-            "HgiGL may reject the legacy context");
-    return ok = true;  // leave the legacy context current; let HgiGL decide
+    if (logger) {
+        logger->info(
+            "ensure_gl_driver_loaded: GL {} | vendor '{}' | renderer '{}'",
+            glVer ? glVer : "(null)",
+            glVendor ? glVendor : "(null)",
+            glRenderer ? glRenderer : "(null)");
+    }
+
+    if (glVersionCode < 450) {
+        if (logger)
+            logger->error(
+                "ensure_gl_driver_loaded: OpenGL {}.{} is below HgiGL's 4.5 "
+                "minimum; Storm/HgiGL rendering will fail. "
+                "(owns_window={})",
+                major,
+                minor,
+                owns_window);
+        // Leave the context current anyway — HgiGL's own check will warn too,
+        // and at least the process won't crash on a null context.
+    }
+
+    // The window/context intentionally leak: HgiGL needs the context to remain
+    // current for its entire lifetime (it captures/restores GL state on every
+    // submit). Destroying the window or releasing the DC would invalidate it.
+    return ok = (glVersionCode >= 450);
 #else
     return ok = false;
 #endif

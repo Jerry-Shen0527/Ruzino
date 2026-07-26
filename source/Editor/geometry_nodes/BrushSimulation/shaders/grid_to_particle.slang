@@ -48,7 +48,7 @@ void main(uint3 tid : SV_DispatchThreadID)
     // Global buffer index.
     uint gidx = grid_idx_3d(uint(x), uint(y), uint(z), res, res_z);
     float cell_density = density[gidx];
-    if (cell_density < 0.15) {
+    if (cell_density < 0.05) {
         density_out[gidx] = cell_density;
         return;
     }
@@ -113,7 +113,7 @@ void main(uint3 tid : SV_DispatchThreadID)
                 }
             }
 
-            if (interp_density < 0.05) continue;
+            if (interp_density < 0.02) continue;
 
             // Allocate particle slot (with wrap to prevent overflow)
             uint slot;

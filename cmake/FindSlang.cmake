@@ -35,7 +35,9 @@ if(";${Slang_FIND_COMPONENTS};slang;" MATCHES ";${_comp};")
 endif()
 endforeach()
 
-find_package_handle_standard_args(SLANG REQUIRED_VARS SLANG_INCLUDE_DIRS SLANG_LIBRARIES)
+# Package name MUST match the find_package() name (Slang) so the standard
+# result variables follow the expected `<Package>_FOUND` pattern.
+find_package_handle_standard_args(Slang REQUIRED_VARS SLANG_INCLUDE_DIRS SLANG_LIBRARIES)
 
 ##################################
 # Create targets

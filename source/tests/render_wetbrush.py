@@ -419,7 +419,7 @@ def render_loop(scene_path: Path, frame_times):
     import nodes_core_py as core
     from PIL import Image
 
-    WIDTH, HEIGHT, SPP = 640, 480, 32
+    WIDTH, HEIGHT, SPP = 1280, 960, 64
     OUTPUT_DIR.mkdir(exist_ok=True)
     for old in OUTPUT_DIR.glob("frame_*.png"):
         old.unlink()

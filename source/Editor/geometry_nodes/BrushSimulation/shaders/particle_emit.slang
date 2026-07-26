@@ -41,7 +41,7 @@ void main(uint3 tid : SV_DispatchThreadID)
         if (idx >= total) return;
 
         float4 col = sample_color[idx];
-        if (col.w < 0.5) return; // only emit if density is high
+        if (col.w < 0.1) return; // only emit if sample carries paint
 
         // Per-sample hash for a stable jitter (sin-hash, cheap GPU trick).
         uint slot = alloc_slot();
@@ -77,7 +77,7 @@ void main(uint3 tid : SV_DispatchThreadID)
         float dist = length(dxy);
 
         if (dist > cb.brush_radius + cb.D0) return;
-        if (density[idx] < 0.3) return;
+        if (density[idx] < 0.05) return;
 
         uint slot = alloc_slot();
         ptcl_pos[slot] = float4(cell_pos, 0.0);

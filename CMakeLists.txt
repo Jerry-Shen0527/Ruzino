@@ -28,8 +28,6 @@ set(Python3_FIND_FRAMEWORK NEVER)
 find_package(Python3 COMPONENTS Development Interpreter REQUIRED)
 message(STATUS "Found Python3 version: ${Python3_VERSION}")
 message(STATUS "Python3_EXECUTABLE: ${Python3_EXECUTABLE}")
-# Export Python3_EXECUTABLE to parent scope
-set(Python3_EXECUTABLE ${Python3_EXECUTABLE} PARENT_SCOPE)
 
 # Set up environment for nanobind to find the same Python
 # Remove the Python3 to Python mapping, let nanobind find Python itself
