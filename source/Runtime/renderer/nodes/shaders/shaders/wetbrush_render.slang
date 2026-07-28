@@ -172,42 +172,79 @@ void RayGen()
             uint material_id = payload.materialID;
             uint eta_flipped = payload.eta_flipped;
 
-            // No material assigned — use fallback eval (index 2)
+            // No material assigned — use fallback Lambertian eval (index 2).
+            // Mirrors the regular material path below: sample a (non-dome)
+            // light, eval the fallback BRDF, accumulate direct lighting, update
+            // throughput, then continue bouncing. Dome light is picked up
+            // automatically on the next-bounce miss. (Previously this branch
+            // ran its own dome-skipping direct-lighting loop and then
+            // `break`-terminated, so fallback objects went fully black under
+            // dome-only lighting and received no indirect light.)
             if (material_id == uint(-1)) {
-                // Accumulate direct lighting from all non-dome lights
-                Spectrum fallbackColor = Spectrum(0.0);
-                for (uint li = 0; li < ptConstants.lightCount; li++) {
-                    LightData light = lightBuffer[li];
-                    if (light.type == uint(LightType::Dome))
-                        continue;
+                // Sample a light source for direct lighting
+                LightSample lightSample =
+                    sampleLights(vertex.posW, vertex.faceNormalW, payload.seed);
 
-                    float3 lightDir = -light.dirW;
-                    float NdotL = max(0.0, dot(vertex.normalW, lightDir));
-                    if (NdotL <= 0.0)
-                        continue;
+                // Fallback BRDF eval (Lambertian albedo=0.8)
+                EvalCallableData evalData;
+                evalData.color = Spectrum(0.0);
+                evalData.throughput = Spectrum(1.0);
+                evalData.L = lightSample.direction;
+                evalData.V = -current_ray.Direction;
+                evalData.sampledDir = float3(0, 0, 0);
+                evalData.pdf = 0.0;
+                evalData.seed = payload.seed;
+                evalData.eta_flipped = eta_flipped;
+                evalData.material_params_index = id;
+                evalData.vertexInfo = vertex;
 
-                    EvalCallableData evalData;
-                    evalData.color = Spectrum(0.0);
-                    evalData.throughput = Spectrum(1.0);
-                    evalData.L = lightDir;
-                    evalData.V = -current_ray.Direction;
-                    evalData.sampledDir = float3(0, 0, 0);
-                    evalData.pdf = 1.0;
-                    evalData.seed = payload.seed;
-                    evalData.eta_flipped = eta_flipped;
-                    evalData.material_params_index = id;
-                    evalData.vertexInfo = vertex;
+                CallShader(2, evalData);
 
-                    CallShader(2, evalData);
+                float pdf = evalData.pdf;
+                payload.seed = evalData.seed;
 
-                    fallbackColor = add(
-                        fallbackColor,
-                        mul(Spectrum(light.intensity * NdotL), evalData.color));
+                if (pdf == 0.0) {
+                    break;
                 }
 
-                accumulated_color = add(
-                    accumulated_color, mul(current_throughput, fallbackColor));
-                break;
+                // Add direct lighting contribution (same formula as regular path)
+                if (lightSample.valid) {
+                    Spectrum directContrib = div(
+                        mul(Spectrum(lightSample.intensity *
+                            max(0.0, dot(vertex.normalW, lightSample.direction))),
+                            evalData.color),
+                        lightSample.pdf);
+                    accumulated_color = add(
+                        accumulated_color, mul(current_throughput, directContrib));
+                }
+
+                // Update throughput for next bounce
+                float3 ray_dir = evalData.sampledDir;
+                bool isTransmission = dot(ray_dir, vertex.faceNormalW) < 0.0;
+                current_throughput =
+                    mul(current_throughput, div(evalData.throughput, pdf));
+
+                // Russian Roulette path termination
+                if (depth >= 3) {
+                    float3 thr = current_throughput.toFloat3();
+                    float rrProbability = min(0.95, max(thr.x, max(thr.y, thr.z)));
+                    if (random_float(payload.seed) > rrProbability) {
+                        break;
+                    }
+                    current_throughput = div(current_throughput, rrProbability);
+                }
+
+                // Prepare next ray — continue bouncing (dome/indirect picked up
+                // via the miss path on subsequent bounces)
+                float3 offset_normal =
+                    isTransmission ? -vertex.faceNormalW : vertex.faceNormalW;
+                float3 ray_offset = offset_normal * 1e-3f;
+
+                current_ray.Origin = vertex.posW + ray_offset;
+                current_ray.Direction = ray_dir;
+                current_ray.TMin = 0.0;
+                current_ray.TMax = 3000.0;
+                continue;
             }
 
             var material_header = materialHeaderBuffer[material_id];
