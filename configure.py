@@ -195,7 +195,7 @@ def _find_system_python():
     SDK/python.
 
     Order of preference:
-      1. Windows: the 'py' launcher (--list / -3.11 / -3.10), which resolves
+      1. Windows: the 'py' launcher (--list / -3.13), which resolves
          to base installs and is not fooled by an active virtualenv on PATH.
       2. 'python3' / 'python' on PATH, but only if the resolved dir is a real
          install (not a venv) AND passes the completeness check.
@@ -206,10 +206,12 @@ def _find_system_python():
     candidates = []
 
     # 1. Windows py launcher — most reliable, skips venvs.
+    # 3.13 first: the project standardizes on 3.13 for both the app pyd
+    # extensions and OpenUSD. Older versions are listed only as fallback.
     if is_windows():
         py_launcher = shutil.which("py")
         if py_launcher:
-            for ver in ("3.13", "3.12", "3.11", "3.10"):
+            for ver in ("3.13", "3.12", "3.11"):
                 try:
                     exe = subprocess.check_output(
                         [py_launcher, f"-{ver}", "-c",
@@ -246,7 +248,8 @@ def _find_system_python():
         local_appdata = os.environ.get("LocalAppData", "")
         roots = [
             os.path.join(local_appdata, "Programs", "Python"),
-            os.path.join(program_files, "Python310"),
+            os.path.join(program_files, "Python313"),
+            os.path.join(program_files, "Python312"),
             os.path.join(program_files, "Python311"),
         ]
         for root in roots:
@@ -1551,7 +1554,7 @@ def process_usd(targets, dry_run=False, keep_original_files=True, copy_only=Fals
             if python_dir is None:
                 print(
                     "ERROR: No complete Python installation found. Install "
-                    "Python 3.10 or 3.11 (with dev headers/libs) and ensure "
+                    "Python 3.13 (with dev headers/libs) and ensure "
                     "it is not only a virtualenv."
                 )
                 return
@@ -1566,14 +1569,13 @@ def process_usd(targets, dry_run=False, keep_original_files=True, copy_only=Fals
 
         # Find Python executable for USD Python bindings.
         # IMPORTANT: prefer SDK/python so USD links against the SAME Python
-        # (e.g. 3.11) as the Ruzino app itself. The app's pyd extensions
+        # (3.13) as the Ruzino app itself. The app's pyd extensions
         # (stage_py, geometry_py, ...) are built against SDK/python; if USD
         # were linked against a different system Python (e.g. 3.12 from
-        # scoop), usd_ms.dll would depend on python312.dll while Binaries
-        # only ships python311.dll, and LoadLibrary(usd_ms) fails at runtime
-        # (e.g. during nanobind stub generation). The earlier "prefer system
-        # Python for jinja2" rationale no longer holds — jinja2 must be
-        # installed into SDK/python if Python binding codegen is needed.
+        # scoop), usd_ms.dll would depend on a different python3x.dll than
+        # Binaries ships, and LoadLibrary(usd_ms) fails at runtime (e.g.
+        # during nanobind stub generation). jinja2 must be installed into
+        # SDK/python if Python binding codegen is needed.
         python_cmd = "python" if is_windows() else "python3"
         sdk_python_abs = sdk_python if os.path.exists(sdk_python) else None
         python_executable = sdk_python_abs or shutil.which(python_cmd) or python_cmd

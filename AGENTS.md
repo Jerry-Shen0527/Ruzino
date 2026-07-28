@@ -37,7 +37,7 @@ All of them require an existing `build/build.ninja`. Each prints `BUILDEXIT=<cod
 ## Prerequisites
 
 - CMake (>= 3.31.5), Ninja
-- Python 3.10 or 3.11
+- Python 3.13
 - Vulkan SDK 1.3.296
 - MSVC (Windows) or Xcode (macOS)
 
@@ -137,7 +137,7 @@ Per-frame accumulation across ticks is driven by the **simulation-zone feedback 
 ### Build Issues
 - cmake fails → check dependencies (see `README.md`)
 - ninja fails → try `rm -rf build/*` and reconfigure
-- Python must be 3.10 or 3.11
+- Python must be 3.13
 
 ### Test Issues
 - C++ tests not found → build first
