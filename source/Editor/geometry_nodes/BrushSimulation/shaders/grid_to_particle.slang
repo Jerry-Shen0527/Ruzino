@@ -3,6 +3,15 @@
 // are converted into particles via stratified sampling (3×3×3 = 27 candidates).
 // After creating particles, REDUCES grid density by Eq.15:
 //   ρ_c^new = max(ρ_c - m_k * Σ_k W(p_k - x_c, h), 0)
+// Paper §5.2: "c can be any cell near new particles and it does not have
+// to emit any particle ... to ensure sufficient smoothness in the density
+// field." So each emitted particle subtracts its mass (weighted by W) from
+// its 3×3×3 neighborhood of cells, NOT just the emitting cell. The host
+// seeds density_out with the current density before this dispatch, so the
+// shader only needs to subtract contributions. Plain -= races on the
+// RWStructuredBuffer (Slang CAS unsupported on structured-buffer elements,
+// see common.slangh note), but with h = 1.5 cells each particle's spread is
+// small enough that collisions are rare and slight.
 // Dispatched over the active window (win_n3d threads). Buffer indexing is
 // GLOBAL (buffers are global-sized).
 
@@ -21,7 +30,8 @@ RWStructuredBuffer<float4> ptcl_pos : register(u1);
 RWStructuredBuffer<float4> ptcl_vel : register(u2);
 RWStructuredBuffer<float4> ptcl_color : register(u3);
 RWStructuredBuffer<uint> ptcl_alive : register(u4);
-// Density reduction output (Eq.15)
+// Density reduction output (Eq.15). Seeded with current density by the host;
+// this shader subtracts particle contributions via the 3×3×3 neighborhood.
 RWStructuredBuffer<float> density_out : register(u5);
 
 [numthreads(256, 1, 1)]
@@ -48,10 +58,7 @@ void main(uint3 tid : SV_DispatchThreadID)
     // Global buffer index.
     uint gidx = grid_idx_3d(uint(x), uint(y), uint(z), res, res_z);
     float cell_density = density[gidx];
-    if (cell_density < 0.05) {
-        density_out[gidx] = cell_density;
-        return;
-    }
+    if (cell_density < 0.05) return;
 
     float half_p = cb.paper_size * 0.5;
     float half_h = cb.height_extent * 0.5;
@@ -65,26 +72,21 @@ void main(uint3 tid : SV_DispatchThreadID)
     // Only convert cells within D0 of the brush footprint (XY)
     float2 dxy = cell_center.xy - float2(cb.brush_pos_x, cb.brush_pos_y);
     float d_to_brush = length(dxy);
-    if (d_to_brush > cb.D0) {
-        density_out[gidx] = cell_density;
-        return;
-    }
+    if (d_to_brush > cb.D0) return;
 
     // Stratified sampling: 27 candidate positions (3×3×3 sub-grid per cell)
     float h = cell_sz * 1.5;  // smoothing kernel radius (XY-isotropic approx)
 
     // Particle mass per sub-cell: equal share of cell density
-    float mass_per_candidate = cell_density / 27.0 * 0.5;  // 50% of density → particles
+    float mass_per_candidate = cell_density / 27.0;
 
-    int num_emitted = 0;
-    float density_removed = 0.0;  // Σ(m_k · W(p_k - x_c, h)) for Eq.15
+    float dV = cell_sz * cell_sz * cell_z;
 
     [unroll] for (int sz = 0; sz < 3; sz++) {
       [unroll] for (int sy = 0; sy < 3; sy++) {
         [unroll] for (int sx = 0; sx < 3; sx++) {
 
             // Stratified sub-cell position (27 samples per cell, §5.2)
-
             float3 candidate = float3(
                 cell_cx - cell_sz * 0.5 + (float(sx) + 0.5) / 3.0 * cell_sz,
                 cell_cy - cell_sz * 0.5 + (float(sy) + 0.5) / 3.0 * cell_sz,
@@ -100,7 +102,6 @@ void main(uint3 tid : SV_DispatchThreadID)
                     for (int dx = -1; dx <= 1; dx++) {
                         int nx = cx + dx, ny = cy + dy, nz = cz + dz;
                         if (nx < 0 || nx >= res || ny < 0 || ny >= res || nz < 0 || nz >= res_z) continue;
-                        // Global index for the density read.
                         float3 npos = float3(
                             (float(nx) + 0.5) * cell_sz - half_p + cb.grid_center_x,
                             (float(ny) + 0.5) * cell_sz - half_p + cb.grid_center_y,
@@ -120,15 +121,33 @@ void main(uint3 tid : SV_DispatchThreadID)
             ptcl_counter.InterlockedAdd(0, 1, slot);
             slot = slot % uint(cb.max_particles);
 
-            float m_k = min(mass_per_candidate, 0.5);
+            float m_k = mass_per_candidate;
 
-            // Eq.15 density subtraction: accumulate Σ(m_k · W(p_k - x_c, h) · dV).
-            // The dV (cell volume) factor matches particle_to_grid's Eq.16 so the
-            // transfer is conservative (without dV, W at r≈0 is ~317000 for
-            // cell-size h, causing runaway density).
-            float dV = cell_sz * cell_sz * cell_z;
-            density_removed += m_k * W_smooth_3d(candidate - cell_center, h) * dV;
-            num_emitted++;
+            // Eq.15 density subtraction spread to the particle's 3×3×3
+            // neighborhood (paper §5.2: "c can be any cell near new particles
+            // and it does not have to emit any particle"). Each neighbor cell
+            // c loses m_k · W(candidate − x_c, h) · dV. This is symmetric with
+            // particle_to_grid's Eq.16 add and produces a smooth density field
+            // across the D0 boundary. Plain -= races but collisions are rare
+            // (see common.slangh note).
+            int pcx = int(floor((candidate.x - cb.grid_center_x + half_p) / cell_sz));
+            int pcy = int(floor((candidate.y - cb.grid_center_y + half_p) / cell_sz));
+            int pcz = int(floor((candidate.z - cb.grid_center_z + half_h) / cell_z));
+            for (int sdt = -1; sdt <= 1; sdt++) {
+              for (int sdy = -1; sdy <= 1; sdy++) {
+                for (int sdx = -1; sdx <= 1; sdx++) {
+                    int nx = pcx + sdx, ny = pcy + sdy, nz = pcz + sdt;
+                    if (nx < 0 || nx >= res || ny < 0 || ny >= res || nz < 0 || nz >= res_z) continue;
+                    float3 npos = float3(
+                        (float(nx) + 0.5) * cell_sz - half_p + cb.grid_center_x,
+                        (float(ny) + 0.5) * cell_sz - half_p + cb.grid_center_y,
+                        (float(nz) + 0.5) * cell_z  - half_h + cb.grid_center_z);
+                    float w = W_smooth_3d(candidate - npos, h);
+                    uint gi = grid_idx_3d(uint(nx), uint(ny), uint(nz), res, res_z);
+                    density_out[gi] -= m_k * w * dV;
+                }
+              }
+            }
 
             ptcl_pos[slot] = float4(candidate, 0.0);
             ptcl_vel[slot] = float4(vel_x[gidx], vel_y[gidx], vel_z[gidx], 0.0);
@@ -138,6 +157,9 @@ void main(uint3 tid : SV_DispatchThreadID)
       }
     }
 
-    // Eq.15: ρ_c^new = max(ρ_c - Σ_k(m_k · W(p_k - x_c, h)), 0)
-    density_out[gidx] = max(cell_density - density_removed, 0.0);
+    // Clamp own cell to non-negative (neighbors handled by their own threads).
+    // The host seeds density_out with current density, so subtraction may leave
+    // negative values; clamp to 0 here. Neighbor cells are clamped by their
+    // own threads (each thread runs the same shader).
+    density_out[gidx] = max(density_out[gidx], 0.0);
 }

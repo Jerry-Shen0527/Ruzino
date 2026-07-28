@@ -400,7 +400,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                         field->jacobi_program,
                         { { "field_in", *pair.first },
                           { "rhs", *pair.first },
-                          { "bristle_psi", field->bristle_density },
                           { "wetness", field->wetness },
                           { "density", field->density } },
                         { { "field_out", *pair.second } },
@@ -420,7 +419,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                         { { "vel_x", field->vel_x },
                           { "vel_y", field->vel_y },
                           { "vel_z", field->vel_z },
-                          { "bristle_psi", field->bristle_density },
                           { "wetness", field->wetness },
                           { "density", field->density } },
                         { { "div_out", field->divergence_buf } },
@@ -442,7 +440,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                             field->jacobi_program,
                             { { "field_in", field->pressure_a },
                               { "rhs", field->divergence_buf },
-                              { "bristle_psi", field->bristle_density },
                               { "wetness", field->wetness },
                               { "density", field->density } },
                             { { "field_out", field->pressure_b } },
@@ -456,7 +453,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                         rc,
                         field->gradient_program,
                         { { "pressure", field->pressure_a },
-                          { "bristle_psi", field->bristle_density },
                           { "wetness", field->wetness },
                           { "density", field->density } },
                         { { "vel_x", field->vel_x },
@@ -634,6 +630,29 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         // Grid to particle (emit near brush, Eq.15 density subtraction).
         // No counter reset: append past the survivors (compact left them at
         // [0, counter), so InterlockedAdd writes into freed dead slots).
+        //
+        // Paper §5.2: "c can be any cell near new particles and it does not
+        // have to emit any particle." Each emitted particle subtracts its mass
+        // (weighted by W) from its 3×3×3 neighborhood, NOT just its emitting
+        // cell. The shader writes density_out via RWByteAddressBuffer atomic
+        // subtract, so we must seed density_out with the current density
+        // (atomic subtract accumulates on top of the seed).
+        {
+            auto seed_cmd = rc.create(CommandListDesc{});
+            seed_cmd->open();
+            seed_cmd->copyBuffer(
+                field->density_tmp,
+                0,
+                field->density,
+                0,
+                static_cast<size_t>(field->grid_res) *
+                    field->grid_res_z * field->grid_res *
+                    sizeof(float));
+            seed_cmd->close();
+            device->executeCommandList(seed_cmd);
+            device->waitForIdle();
+            rc.destroy(seed_cmd);
+        }
         Ruzino::brush_dispatch(
             rc,
             field->grid_to_ptcl_program,

@@ -83,8 +83,10 @@ bool in_grid(int ix, int iy, int iz)
 // Returns false if the cell is outside the global grid bounds.
 bool window_gi(int gx, int gy, int gz, out uint gi)
 {
-    if (!in_grid(gx, gy, gz))
+    if (!in_grid(gx, gy, gz)) {
+        gi = 0u;
         return false;
+    }
     gi = grid_idx_3d(uint(gx), uint(gy), uint(gz), cb.grid_res, cb.grid_res_z);
     return true;
 }

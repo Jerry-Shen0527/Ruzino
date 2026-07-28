@@ -123,8 +123,10 @@ bool window_local_idx(SimConstants cb, int gx, int gy, int gz, out uint lidx)
 {
     int N = cb.res;
     int D = cb.res_z;
-    if (gx < 0 || gx >= N || gy < 0 || gy >= N || gz < 0 || gz >= D)
+    if (gx < 0 || gx >= N || gy < 0 || gy >= N || gz < 0 || gz >= D) {
+        lidx = 0u;
         return false;
+    }
     lidx = grid_idx_3d((uint)gx, (uint)gy, (uint)gz, N, D);
     return true;
 }

@@ -219,6 +219,9 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
 
     int ptcl_count = 0;
     float ptcl_mass = 0.0f;
+    std::vector<float> ptcl_positions;
+    std::vector<float> ptcl_colors;
+    std::vector<uint32_t> ptcl_alive_flags;
     if (field->particles_initialized && field->ptcl_counter) {
         uint32_t cnt = 0;
         auto rb = rc.create(
@@ -242,8 +245,9 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
         if (ptcl_count > 0) {
             int n = std::min(ptcl_count, max_ptcl);
             constexpr int STRIDE = 4;
-            std::vector<float> cols(n * STRIDE);
-            std::vector<uint32_t> alive(n);
+            ptcl_positions.resize(n * STRIDE);
+            ptcl_colors.resize(n * STRIDE);
+            ptcl_alive_flags.resize(n);
             auto read_structured =
                 [&](nvrhi::BufferHandle buf, int elem_bytes, void* dst) {
                     auto rb2 = rc.create(
@@ -266,11 +270,14 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
                     rc.destroy(cmd2);
                 };
             read_structured(
-                field->ptcl_color, sizeof(float) * STRIDE, cols.data());
-            read_structured(field->ptcl_alive, sizeof(uint32_t), alive.data());
+                field->ptcl_pos, sizeof(float) * STRIDE, ptcl_positions.data());
+            read_structured(
+                field->ptcl_color, sizeof(float) * STRIDE, ptcl_colors.data());
+            read_structured(
+                field->ptcl_alive, sizeof(uint32_t), ptcl_alive_flags.data());
             for (int i = 0; i < n; ++i)
-                if (alive[i] != 0)
-                    ptcl_mass += cols[i * STRIDE + 3];
+                if (ptcl_alive_flags[i] != 0)
+                    ptcl_mass += ptcl_colors[i * STRIDE + 3];
         }
     }
 
@@ -284,18 +291,46 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
     params.set_output("Total Particle Mass", ptcl_mass);
 
     // ======================================================================
-    // OUTPUT: "Paint Particles" — the 2D canvas layer is gone (paper §4.2 uses
-    // a pure 3D density grid; footnote 1 rejects height-field/2D). This port
-    // is kept for socket compatibility but emits empty geometry. The real
-    // paint data is the 3D field, output below as "Paint Field 3D".
+    // OUTPUT: "Paint Particles" — active FLIP/PIC particles with positions,
+    // colors (RYB→RGB) and mass as width. Useful for debugging particle
+    // distribution in Ruzino.exe via hdStorm.
     // ======================================================================
     {
         auto [particles, pts] = make_particles();
-        std::vector<glm::vec3> empty;
-        pts->set_vertices(empty);
-        pts->set_display_color(empty);
-        std::vector<float> empty_w;
-        pts->set_width(empty_w);
+        const int N = static_cast<int>(ptcl_positions.size()) / 4;
+        std::vector<glm::vec3> ptcl_pts_vec;
+        std::vector<glm::vec3> ptcl_cols_vec;
+        std::vector<float> ptcl_widths_vec;
+        for (int i = 0; i < N; ++i) {
+            if (ptcl_alive_flags[i] == 0)
+                continue;
+            float r_ryb = ptcl_colors[i * 4 + 0];
+            float y_ryb = ptcl_colors[i * 4 + 1];
+            float b_ryb = ptcl_colors[i * 4 + 2];
+            float mass  = ptcl_colors[i * 4 + 3];
+            float rm = 1 - r_ryb, ym = 1 - y_ryb, bm = 1 - b_ryb;
+            glm::vec3 rgb =
+                rm * ym * bm * glm::vec3(1, 1, 1) +
+                r_ryb * ym * bm * glm::vec3(1, 0, 0) +
+                rm * y_ryb * bm * glm::vec3(1, 1, 0) +
+                rm * ym * b_ryb * glm::vec3(0.163f, 0.373f, 0.6f) +
+                r_ryb * y_ryb * bm * glm::vec3(1, 0.5f, 0) +
+                r_ryb * ym * b_ryb * glm::vec3(0.5f, 0, 0.5f) +
+                rm * y_ryb * b_ryb * glm::vec3(0, 0.66f, 0.2f) +
+                r_ryb * y_ryb * b_ryb * glm::vec3(0.2f, 0.094f, 0.029f);
+            ptcl_pts_vec.emplace_back(
+                ptcl_positions[i * 4 + 0],
+                ptcl_positions[i * 4 + 1],
+                ptcl_positions[i * 4 + 2]);
+            ptcl_cols_vec.push_back(rgb);
+            // Width is in world units for USD point rendering. Use a small
+            // fixed fraction of a cell so particles are visible but not huge;
+            // the actual mass is not a size.
+            ptcl_widths_vec.push_back(cell_sz * 0.5f);
+        }
+        pts->set_vertices(ptcl_pts_vec);
+        pts->set_display_color(ptcl_cols_vec);
+        pts->set_width(ptcl_widths_vec);
         params.set_output("Paint Particles", std::move(particles));
     }
 

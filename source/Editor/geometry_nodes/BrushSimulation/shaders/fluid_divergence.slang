@@ -12,26 +12,22 @@ ConstantBuffer<SimConstants> cb : register(b0);
 StructuredBuffer<float> vel_x : register(t0);
 StructuredBuffer<float> vel_y : register(t1);
 StructuredBuffer<float> vel_z : register(t2);
-// Boundary-condition fields (Wetbrush §4.2): bristle density ψ marks cells
-// currently occupied by bristles; wetness+density marks cells whose paint
-// has dried. Both act as solid during pressure projection.
-StructuredBuffer<float> bristle_psi : register(t3);
-StructuredBuffer<float> wetness    : register(t4);
-StructuredBuffer<float> density    : register(t5);
+// Boundary-condition fields (Wetbrush §4.2): wetness+density marks cells
+// whose paint has dried. Dried cells act as solid during pressure projection.
+StructuredBuffer<float> wetness    : register(t3);
+StructuredBuffer<float> density    : register(t4);
 
 RWStructuredBuffer<float> div_out : register(u0);
 
-// Solid in pressure projection (paper §4.2: "treat it as a solid cell") if
-// the cell carries bristle mass, OR it carries paint that has dried.
-// The density gate on the dryness test is essential: an EMPTY cell (no paint
-// ever deposited) has wetness == 0 by initialization, but it is NOT solid —
-// fluid must flow into empty space. Only cells that HAVE paint and have
-// dried below the wetness threshold block the fluid. Without this gate, the
-// entire empty grid was treated as solid and the fluid had nowhere to go.
+// Solid in pressure projection (paper §4.2: "Once the dryness reaches a
+// threshold, a cell is considered as a solid cell"). The density gate on the
+// dryness test is essential: an EMPTY cell (no paint ever deposited) has
+// wetness == 0 by initialization, but it is NOT solid — fluid must flow into
+// empty space. Only cells that HAVE paint and have dried below the wetness
+// threshold block the fluid.
 bool is_solid(uint idx)
 {
-    return bristle_psi[idx] > 0.5 ||
-           (density[idx] > 1e-6f && wetness[idx] < 0.01f);
+    return density[idx] > 1e-6f && wetness[idx] < 0.01f;
 }
 
 [numthreads(256, 1, 1)]

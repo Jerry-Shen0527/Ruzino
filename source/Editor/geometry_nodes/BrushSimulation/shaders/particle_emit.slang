@@ -56,12 +56,21 @@ void main(uint3 tid : SV_DispatchThreadID)
         // Mode 1: emit from grid cells within D0 of brush (3D)
         int res = cb.grid_res;
         int res_z = cb.grid_res_z;
-        if (idx >= res * res * res_z) return;
+        int WSX = cb.window_size_x, WSZ = cb.window_size_z;
+        int total = WSX * WSX * WSZ;
+        if (idx >= total) return;
 
-        int z = idx / (res * res);
-        int rem = idx - z * res * res;
-        int y = rem / res;
-        int x = rem - y * res;
+        int lz = idx / (WSX * WSX);
+        int rem = idx - lz * WSX * WSX;
+        int ly = rem / WSX;
+        int lx = rem - ly * WSX;
+        int x = lx + cb.window_origin_x;
+        int y = ly + cb.window_origin_y;
+        int z = lz + cb.window_origin_z;
+        if (x < 0 || x >= res || y < 0 || y >= res || z < 0 || z >= res_z) return;
+
+        // Global buffer index.
+        uint gidx = grid_idx_3d(uint(x), uint(y), uint(z), res, res_z);
 
         float half_p = cb.paper_size * 0.5;
         float half_h = cb.height_extent * 0.5;
@@ -76,13 +85,13 @@ void main(uint3 tid : SV_DispatchThreadID)
         float2 dxy = cell_pos.xy - brush_pos3.xy;
         float dist = length(dxy);
 
-        if (dist > cb.brush_radius + cb.D0) return;
-        if (density[idx] < 0.05) return;
+        if (dist > cb.D0) return;
+        if (density[gidx] < 0.05) return;
 
         uint slot = alloc_slot();
         ptcl_pos[slot] = float4(cell_pos, 0.0);
         ptcl_vel[slot] = float4(0, 0, 0, 0);
-        ptcl_color[slot] = float4(0, 0, 0, density[idx]);
+        ptcl_color[slot] = float4(0, 0, 0, density[gidx]);
         ptcl_alive[slot] = 1;
     }
 }

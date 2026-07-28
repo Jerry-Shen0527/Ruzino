@@ -27,15 +27,6 @@ void main(uint3 dtid : SV_DispatchThreadID)
     if (dtid.x >= total) return;
     uint idx = dtid.x;
 
-    // Oil-density-modulated viscous drag (§6). Low oil density → thick →
-    // strong drag (factor → 0.9); high oil density → thin → weak drag
-    // (factor → 0.99). Linear blend across [0, 1].
-    float oil = clamp(oil_density[idx], 0.0, 1.0);
-    float damp = lerp(0.90f, 0.99f, oil);
-    vel_x[idx] *= damp;
-    vel_y[idx] *= damp;
-    vel_z[idx] *= damp;
-
     // Zero velocity where paint is dry
     if (wetness[idx] < 0.01f) {
         vel_x[idx] = 0.0f;

@@ -47,8 +47,8 @@ void main(uint3 tid : SV_DispatchThreadID)
     float fy = gy - float(iy);
     float fz = gz - float(iz);
 
-    float deposit = col.w * 0.1;
-    float3 color_deposit = col.rgb * col.w * 0.1;
+    float deposit = col.w;
+    float3 color_deposit = col.rgb * col.w;
 
     int res = cb.grid_res, res_z = cb.grid_res_z;
     [unroll] for (int dz = 0; dz <= 1; dz++) {
