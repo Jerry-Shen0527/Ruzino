@@ -27,23 +27,31 @@ void main(uint3 tid : SV_DispatchThreadID)
     // Window-relative: dispatch over the active window, not the full grid.
     WindowCell c;
     if (!window_map(cb, tid.x, c)) return;
-    uint idx = c.idx;  // window-local index
 
-    float bd = bristle_density[idx];
+    // Two index spaces:
+    //   - win_idx: window-local, into the WINDOW-SIZED bristle/particle
+    //     accumulation grids (Group B/C). Built from c.lx/ly/lz.
+    //   - gidx:    global, into the FULL-GRID main sim fields (Group A:
+    //     density/color/vel/wetness/oil_density). That's c.idx.
+    int WSX = cb.window_size_x;
+    uint win_idx = c.lz * uint(WSX * WSX) + c.ly * uint(WSX) + c.lx;
+    uint gidx = c.idx;
+
+    float bd = bristle_density[win_idx];
     if (bd < 1e-6) return;
 
-    float bvx = bristle_vel_x[idx];
-    float bvy = bristle_vel_y[idx];
-    float bvz = bristle_vel_z[idx];
-    float bcr = bristle_color_r[idx];
-    float bcy = bristle_color_y[idx];
-    float bcb = bristle_color_b[idx];
+    float bvx = bristle_vel_x[win_idx];
+    float bvy = bristle_vel_y[win_idx];
+    float bvz = bristle_vel_z[win_idx];
+    float bcr = bristle_color_r[win_idx];
+    float bcy = bristle_color_y[win_idx];
+    float bcb = bristle_color_b[win_idx];
 
     // Normalize accumulated color by density
     float3 new_ryb = float3(bcr, bcy, bcb) / (bd + 1e-8);
-    float3 old_ryb = float3(color_r[idx], color_y[idx], color_b[idx]);
+    float3 old_ryb = float3(color_r[gidx], color_y[gidx], color_b[gidx]);
 
-    float old_density = density[idx];
+    float old_density = density[gidx];
     float new_density = bd;
 
     // Brightness-preserving color mix (Algorithm 2)
@@ -58,14 +66,14 @@ void main(uint3 tid : SV_DispatchThreadID)
     // it multiplied the already-mass-weighted value by a user knob, breaking
     // conservation and driving unbounded growth. ink_amount's correct role is
     // the per-frame supply refill in deposit.cpp, the paint source.)
-    density[idx] = density[idx] + bd;
-    vel_x[idx] += bvx * bd;
-    vel_y[idx] += bvy * bd;
-    vel_z[idx] += bvz * bd;
-    color_r[idx] = mixed.x;
-    color_y[idx] = mixed.y;
-    color_b[idx] = mixed.z;
-    wetness[idx] = min(wetness[idx] + bd * 0.5, 1.0f);
+    density[gidx] = density[gidx] + bd;
+    vel_x[gidx] += bvx * bd;
+    vel_y[gidx] += bvy * bd;
+    vel_z[gidx] += bvz * bd;
+    color_r[gidx] = mixed.x;
+    color_y[gidx] = mixed.y;
+    color_b[gidx] = mixed.z;
+    wetness[gidx] = min(wetness[gidx] + bd * 0.5, 1.0f);
     // Oil density relaxes toward base as bristle paint merges in (§6).
-    oil_density[idx] += (cb.oil_density_base - oil_density[idx]) * bd * 0.5;
+    oil_density[gidx] += (cb.oil_density_base - oil_density[gidx]) * bd * 0.5;
 }

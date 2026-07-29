@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """
-Render TWO crossing Wetbrush strokes (red horizontal, then blue vertical)
-to verify wet-in-wet color mixing.
+Render TWO crossing Wetbrush strokes (yellow horizontal, then blue vertical) to
+verify wet-in-wet color mixing — via the ZERO-COPY GPU buffer path (interleaved
+sim+render, no bake).
 
-Reuses render_wetbrush.py's bake + render stages; only the sim graph differs:
+Same interleaved architecture as render_wetbrush.py; only the sim graph differs:
 it uses the `mock_strokes` node (two curve segments with delayed absolute
 timestamps) instead of the single `mock_stroke`.
 
-Stroke 0 (red,  RYB 1,0,0): horizontal along X, frames  0..~30
-Stroke 1 (blue, RYB 0,0,1): vertical along Y, frames ~30..60, crossing stroke 0
+Stroke 0 (yellow, RYB 1,1,0): horizontal along X, frames  0..~30
+Stroke 1 (blue,   RYB 0,0,1): vertical along Y, frames ~30..60, crossing stroke 0
+
+Paper §6 Figure 11c: the brightness-preserving RYB mix turns yellow+blue green
+at the crossing — the signature check that color_mix is correct.
 
 Run from Binaries/Release:
 
@@ -17,6 +21,8 @@ Run from Binaries/Release:
 import os
 import sys
 from pathlib import Path
+
+import numpy as np
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
@@ -30,24 +36,22 @@ sys.path.insert(0, str(HERE))  # so we can import render_wetbrush
 os.environ["PXR_USD_WINDOWS_DLL_PATH"] = str(BIN)
 os.environ["PATH"] = str(BIN) + os.pathsep + os.environ.get("PATH", "")
 
-import numpy as np
-from pxr import Usd, UsdGeom, Sdf, Gf, Vt
+from pxr import Usd, UsdGeom, Sdf  # noqa: E402
 
 import stage_py  # noqa: E402
 from ruzino_graph import RuzinoGraph  # noqa: E402
 
-# Reuse the proven bake + render stages from render_wetbrush.
+# Reuse the marker-scene builder + interleaved runner from render_wetbrush.
 import render_wetbrush as rw
+from render_wetbrush import build_marker_scene, run_interleaved  # noqa: E402
 
-NUM_FRAMES = 60
-FPS = 60.0
-DT = 1.0 / FPS
-
+NUM_FRAMES = rw.NUM_FRAMES
 OUTPUT_DIR = BIN / "wetbrush_cross_sequence"
 
 
-def run_streaming_zone_cross(out_usd: Path):
-    """Same topology as render_wetbrush.run_streaming_zone but with mock_strokes."""
+def build_sim_graph_cross(sim_usd: Path):
+    """Same topology as render_wetbrush.build_sim_graph but with mock_strokes
+    (two crossing strokes) and the cross-test deposit params."""
     g = RuzinoGraph("WetbrushCross")
     g.loadConfiguration(str(BIN / "geometry_nodes.json"))
 
@@ -78,11 +82,9 @@ def run_streaming_zone_cross(out_usd: Path):
     g.setSocketDefaults({
         (mock, "Num Points"): 30, (mock, "Length"): 0.3,
         (mock, "Stroke 0 Duration"): 0.5, (mock, "Stroke 1 Start"): 0.5,
-        # Resolution 512 — matches render_wetbrush.py. Paper §4.2 uses 4096;
-        # we step up from 256 first to test whether the discrete "growing
-        # bumps" are a resolution artifact. At 256 the brush radius covered
-        # only ~10 cells, so bristle splats landed in single XY columns.
-        (deposit, "Resolution"): 512, (deposit, "Paper Size"): 1.0,
+        # Resolution 4096 (paper Section 4.2: "4096x4096x64").
+        (deposit, "Resolution"): rw.SIM_RES, (deposit, "Resolution Z"): rw.SIM_RES_Z,
+        (deposit, "Paper Size"): rw.SIM_PAPER,
         (deposit, "Brush Radius"): 0.02, (deposit, "Brush Pressure"): 1.0,
         (deposit, "Ink Amount"): 0.8,
         (bristle, "Brush Radius"): 0.02,
@@ -95,61 +97,34 @@ def run_streaming_zone_cross(out_usd: Path):
     })
     assert sim_in.paired_node is sim_out, "zone pairing not established"
 
-    if out_usd.exists():
-        out_usd.unlink()
-    stage = stage_py.Stage(str(out_usd))
+    if sim_usd.exists():
+        sim_usd.unlink()
+    stage = stage_py.Stage(str(sim_usd))
     prim_path = "/Brush"
     UsdGeom.Mesh.Define(stage.get_pxr_stage(), prim_path)
     g.apply_to_stage(stage, prim_path)
 
     prim = stage.get_pxr_stage().GetPrimAtPath(Sdf.Path(prim_path))
     prim.CreateAttribute("Animatable", Sdf.ValueTypeNames.Bool).Set(True)
-
-    for i in range(NUM_FRAMES):
-        stage.set_render_time((i + 1) * DT)
-        stage.tick(DT)
-        stage.finish_tick()
-    stage.save()
-
-    # Compose skeleton + modifier (same as render_wetbrush).
-    modifier = out_usd.with_name(out_usd.stem + "_modifiers.usdc")
-    if not modifier.exists():
-        sys.exit(f"modifier layer not found: {modifier} -- sim did not export")
-    composed = out_usd.parent / "wetbrush_cross_composed.usda"
-    if composed.exists():
-        composed.unlink()
-    layer = Sdf.Layer.CreateNew(str(composed))
-    layer.subLayerPaths = [
-        str(modifier.resolve()), str(out_usd.resolve())]
-    layer.Save()
-    composed_stage = Usd.Stage.Open(str(composed))
-
-    _p = composed_stage.GetPrimAtPath(Sdf.Path(prim_path))
-    _pts_attr = _p.GetAttribute("points")
-    _pts_ts = _pts_attr.GetTimeSamples() if _pts_attr else []
-    if not _pts_ts:
-        sys.exit("composed stage has no time-sampled points -- sim failed")
-    _final = _pts_attr.Get(_pts_ts[-1])
-    print(f"[cross] stage 1: composed {len(_pts_ts)} time samples "
-          f"({len(_final) if _final else 0} pts at final frame)")
-    return composed_stage, prim_path, g
+    return g, stage, prim_path
 
 
 def main():
-    # Point render_wetbrush's OUTPUT_DIR at our cross-sequence dir.
+    # Point render_wetbrush's OUTPUT_DIR at the cross-sequence dir so
+    # run_interleaved writes here.
     rw.OUTPUT_DIR = OUTPUT_DIR
 
     sim_usd = BIN / "wetbrush_cross_sim.usdc"
     sim_usd.parent.mkdir(parents=True, exist_ok=True)
-    print("[cross] stage 1: running streaming zone (2 crossing strokes)")
-    sim_stage, prim_path, sim_graph = run_streaming_zone_cross(sim_usd)
+    print("[cross] stage 1a: building cross-stroke sim graph (zero-copy)")
+    sim_graph, stage, prim_path = build_sim_graph_cross(sim_usd)
 
     scene = BIN / "wetbrush_cross.usdc"
-    print(f"[cross] stage 2: baking render scene -> {scene.name}")
-    frame_times = rw.bake_render_scene(sim_stage, prim_path, scene)
+    print(f"[cross] stage 1b: building marker render scene -> {scene.name}")
+    build_marker_scene(scene)
 
-    print("[cross] stage 3: in-process render loop")
-    rw.render_loop(scene, frame_times)
+    print("[cross] stage 2: interleaved sim+render loop")
+    run_interleaved(scene, stage, sim_graph)
 
 
 if __name__ == "__main__":

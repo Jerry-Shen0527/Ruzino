@@ -384,7 +384,14 @@ struct WetbrushSimState {
     nvrhi::BufferHandle divergence_buf;
 
     // --- Bristle chain state (spring positions + samples + liquid) ---
-    static constexpr int NUM_BRISTLES = 80;
+    // NUM_BRISTLES: paper §6 says brushes contain "40 to 600 bristles". 80 was
+    // the lower end and left the XY footprint sparsely sampled at 1024 grid
+    // (footprint ~20 cells, 80 roots → visible grain in the rasterized density).
+    // 200 helped but close-up views still show grain. Paper's own smoothness
+    // source is dense bristle sampling (up to 600×128 = 76800 samples), so use
+    // the paper's upper bound — fully paper-faithful, no XY splat kernel (which
+    // the paper doesn't specify).
+    static constexpr int NUM_BRISTLES = 600;
     static constexpr int VERTS_PER_BRISTLE = 10;
     static constexpr int SAMPLES_PER_BRISTLE = 128;
     static constexpr int BRISTLE_VERTEX_STRIDE = sizeof(float) * 4 * 2;

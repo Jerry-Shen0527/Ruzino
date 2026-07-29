@@ -6,6 +6,7 @@
 
 #include "RHI/rhi.hpp"
 #include "hd_RUZINO/render_global_payload.hpp"
+#include "renderParam.h"  // Hd_RUZINO_RenderParam (for reset_accumulation host hook)
 #include "nodes/core/api.hpp"
 #include "nodes/core/node_exec_eager.hpp"
 #include "nodes/system/node_system.hpp"
@@ -134,6 +135,26 @@ class HydraRenderer {
             *static_cast<const std::shared_ptr<NodeSystem>*>(ptr);
         return node_system_ptr
             .get();  // Return raw pointer for cross-module compatibility
+    }
+
+    // Request that the next render() resets the path-tracer accumulation
+    // (clears the accumulate node's running average). For interleaved sim+render
+    // where each tick() starts a fresh scene, the host calls this between
+    // frames so samples don't bleed across sim states. The flag sticks on the
+    // render delegate's renderParam until the next render() folds it into
+    // global_payload.reset_accumulation and consumes it (see renderer.cpp).
+    void reset_accumulation()
+    {
+        auto rp_value = engine_->GetRendererSetting(
+            pxr::TfToken("HdRuzinoRenderParam"));
+        if (!rp_value.IsHolding<const void*>()) {
+            spdlog::warn(
+                "reset_accumulation: renderParam not exposed by delegate");
+            return;
+        }
+        auto* rp = static_cast<Hd_RUZINO_RenderParam*>(
+            const_cast<void*>(rp_value.UncheckedGet<const void*>()));
+        if (rp) rp->pending_force_reset_accumulation = true;
     }
 
     // Render one frame synchronously (waits for GPU idle). Renders the stage
@@ -374,6 +395,12 @@ NB_MODULE(hd_RUZINO_py, m)
             "stop",
             &HydraRenderer::stop,
             "Stop the render thread and wait for completion")
+        .def(
+            "reset_accumulation",
+            &HydraRenderer::reset_accumulation,
+            "Force the next render() to clear the accumulate node's running "
+            "average. Call between sim frames in interleaved sim+render so "
+            "path-tracer samples don't bleed across sim states.")
         .def(
             "get_output_texture",
             [](HydraRenderer& self) -> std::vector<float> {

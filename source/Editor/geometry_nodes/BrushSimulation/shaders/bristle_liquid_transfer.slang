@@ -79,9 +79,33 @@ bool in_grid(int ix, int iy, int iz)
         && iz >= 0 && iz < cb.grid_res_z;
 }
 
-// Convert a GLOBAL grid cell to a GLOBAL linear index (buffers are global-sized).
-// Returns false if the cell is outside the global grid bounds.
-bool window_gi(int gx, int gy, int gz, out uint gi)
+// Convert a GLOBAL grid cell (gx,gy,gz) to a WINDOW-LOCAL linear index into
+// the window-sized bristle_density buffer (Group B). Paper §5.1: bristle
+// samples only exist in the brush-local window, so any sample's nearest grid
+// cell is inside [origin, origin+WIN). Returns false if the cell is outside
+// the global grid OR outside the active window.
+bool bristle_gi(int gx, int gy, int gz, out uint gi)
+{
+    if (!in_grid(gx, gy, gz)) {
+        gi = 0u;
+        return false;
+    }
+    int lx = gx - cb.window_origin_x;
+    int ly = gy - cb.window_origin_y;
+    int lz = gz - cb.window_origin_z;
+    int WSX = cb.window_size_x;
+    if (lx < 0 || lx >= WSX || ly < 0 || ly >= WSX || lz < 0 || lz >= cb.grid_res_z) {
+        gi = 0u;
+        return false;
+    }
+    gi = uint(lz) * uint(WSX * WSX) + uint(ly) * uint(WSX) + uint(lx);
+    return true;
+}
+
+// Convert a GLOBAL grid cell (gx,gy,gz) to a GLOBAL linear index into the
+// full-grid main sim fields (Group A: density/color/vel/wetness). Returns
+// false only if the cell is outside the global grid bounds.
+bool grid_gi(int gx, int gy, int gz, out uint gi)
 {
     if (!in_grid(gx, gy, gz)) {
         gi = 0u;
@@ -110,7 +134,7 @@ float4 sample_grid_paint(float3 s_pos)
             int nx = cx + dx, ny = cy + dy, nz = cz + dz;
             if (!in_grid(nx, ny, nz)) continue;
             uint gi;
-            if (!window_gi(nx, ny, nz, gi)) continue;  // outside window → empty
+            if (!grid_gi(nx, ny, nz, gi)) continue;  // outside grid → empty
             float d = grid_density[gi];
             if (d > 0.01) {
                 color_sum += float3(grid_color_r[gi], grid_color_y[gi], grid_color_b[gi]) * d;
@@ -135,7 +159,7 @@ float compute_potential_capacity(float3 s_pos)
     float psi = 0.0;
     if (in_grid(ix, iy, iz)) {
         uint gi;
-        if (window_gi(ix, iy, iz, gi)) psi = bristle_psi[gi];
+        if (bristle_gi(ix, iy, iz, gi)) psi = bristle_psi[gi];
     }
 
     return max((1.0 - cb.mu * psi) * cb.M_max, cb.M_min);
@@ -166,7 +190,7 @@ float estimate_surface_distance(float3 s_pos, float R_j)
             if (!in_grid(nx, ny, nz)) continue;
 
             uint gi;
-            if (!window_gi(nx, ny, nz, gi)) continue;  // outside window → empty
+            if (!grid_gi(nx, ny, nz, gi)) continue;  // outside grid → empty
             if (grid_density[gi] > 0.1) {
                 float cell_z = cb.height_extent / float(cb.grid_res_z);
                 float3 cell_world = float3(

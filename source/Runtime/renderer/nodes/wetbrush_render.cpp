@@ -126,6 +126,16 @@ NODE_EXECUTION_FUNCTION(wetbrush_render)
             light_dirty,
             size_changed);
 
+    // Geometry content changed (e.g. the wetbrush volume rprim picked up a new
+    // sim frame via the zero-copy registry). The path tracer must restart
+    // accumulation from scratch, otherwise the accumulate node keeps averaging
+    // new samples on top of the previous frame's buffer and painted regions
+    // appear to darken/brighten over time. Material/light/size changes already
+    // reset elsewhere; geometry changes did not.
+    if (geom_dirty) {
+        g.reset_accumulation = true;
+    }
+
     storage.rc = &(resource_allocator);
 
     // Check for dome light with valid custom shader

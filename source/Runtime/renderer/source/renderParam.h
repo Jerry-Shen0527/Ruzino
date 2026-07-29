@@ -101,6 +101,25 @@ class Hd_RUZINO_RenderParam final : public HdRenderParam {
     uint32_t last_geometry_version = 0;
     uint32_t last_light_version = 0;
 
+    // Sticky "force reset accumulation" flag, set by an explicit host call
+    // (HydraRenderer::reset_accumulation, exposed to Python). renderer.cpp
+    // folds this into global_payload.reset_accumulation on every render BEFORE
+    // the node graph executes, and clears it after the graph runs — so a reset
+    // requested between frames survives into the next render() and is consumed
+    // by the accumulate node. Used by interleaved sim+render where each tick()
+    // starts a fresh scene and the path tracer must not average across frames.
+    bool pending_force_reset_accumulation = false;
+
+    // Last-seen version of the wetbrush zero-copy registry buffer
+    // ("wetbrush_paint_field"). #1 (auto-trigger) path: the sim bumps this every
+    // frame it packs a new paint field. Since that path bypasses USD primvars,
+    // Hydra never marks the volume prim dirty, so the geometry_version check
+    // above stays stale. renderer.cpp polls the registry and, on a bump, marks
+    // DirtyGeometry — which the wetbrush_render node reads as geom_dirty and
+    // turns into a reset_accumulation. This is the "correct" auto path; the
+    // pending_force_reset_accumulation above is the host escape hatch.
+    uint64_t last_wetbrush_registry_version = 0;
+
     std::vector<std::thread> texture_loading_threads;
     std::vector<std::thread> material_loading_threads;
 

@@ -64,6 +64,16 @@ void deposit_point(float3 pos, float4 col, float3 vel,
     int z_spread = min(3, D);
     if (ix < 0 || ix >= N || iy < 0 || iy >= N) return;
 
+    // The bristle accumulation grids are WINDOW-SIZED (WIN_XY × WIN_XY × D),
+    // so the write index is window-local: global cell minus window_origin.
+    // Paper §5.1: bristle samples only exist in the brush-local window, so
+    // the splat target is always inside [origin, origin+WIN). Cells outside
+    // the window are skipped.
+    int wox = cb.window_origin_x, woy = cb.window_origin_y;
+    int lx = ix - wox, ly = iy - woy;
+    int WSX = cb.window_size_x;
+    if (lx < 0 || lx >= WSX || ly < 0 || ly >= WSX) return;
+
     for (int dz = 0; dz < z_spread; dz++) {
         int iz = iz_center + dz - 1;
         if (iz < 0 || iz >= D) continue;
@@ -76,7 +86,8 @@ void deposit_point(float3 pos, float4 col, float3 vel,
 
         float z_weight = (1.0 - 0.3 * abs(float(dz - 1))) * z_weight_at_center;
 
-        uint gi = grid_idx_3d((uint)ix, (uint)iy, (uint)iz, N, D);
+        // Window-local linear index into the window-sized buffer.
+        uint gi = uint(iz) * uint(WSX * WSX) + uint(ly) * uint(WSX) + uint(lx);
         bristle_density[gi] += deposit * z_weight;
         bristle_vel_x[gi] += vel.x * deposit * z_weight;
         bristle_vel_y[gi] += vel.y * deposit * z_weight;

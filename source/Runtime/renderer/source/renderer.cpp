@@ -9,6 +9,7 @@
 #include "nodes/system/node_system.hpp"
 #include "pxr/imaging/hd/renderBuffer.h"
 #include "pxr/imaging/hd/tokens.h"
+#include "RHI/shared_buffer_registry.hpp"  // zero-copy sim buffer version poll
 #include "renderBuffer.h"
 #include "renderParam.h"
 
@@ -142,6 +143,26 @@ void Hd_RUZINO_Renderer::Render(HdRenderThread* renderThread)
             render_param->last_geometry_version = current_geometry_version;
         }
 
+        // #1 (auto-trigger): poll the wetbrush zero-copy registry buffer. The
+        // sim bumps its version every frame it packs a new paint field via a
+        // path that bypasses USD primvars, so Hydra never dirties the volume
+        // prim and the geometry_version check above stays stale. Detecting the
+        // bump here marks DirtyGeometry, which the wetbrush_render node turns
+        // into a reset_accumulation (see wetbrush_render.cpp). This is the
+        // correct auto path for interleaved sim+render.
+        {
+            nvrhi::BufferHandle _buf;
+            size_t _bytes;
+            uint64_t reg_ver;
+            if (SharedGPUBufferRegistry::get().lookup(
+                    "wetbrush_paint_field", _buf, _bytes, reg_ver) &&
+                reg_ver != render_param->last_wetbrush_registry_version) {
+                global_payload.mark_dirty(
+                    RenderGlobalPayload::SceneDirtyBits::DirtyGeometry);
+                render_param->last_wetbrush_registry_version = reg_ver;
+            }
+        }
+
         uint32_t current_light_version =
             global_payload.InstanceCollection->get_light_version();
         if (render_param->last_light_version != current_light_version) {
@@ -155,7 +176,15 @@ void Hd_RUZINO_Renderer::Render(HdRenderThread* renderThread)
 
         global_payload.lens_system = render_param->lens_system;
 
-        global_payload.reset_accumulation = false;
+        // Fold any host-requested force-reset (HydraRenderer::reset_accumulation)
+        // into this frame's reset signal BEFORE clearing the auto-reset path.
+        // The accumulate node reads reset_accumulation during execute() below;
+        // setting it here ensures the request survives from the prior frame.
+        if (render_param->pending_force_reset_accumulation) {
+            global_payload.reset_accumulation = true;
+        } else {
+            global_payload.reset_accumulation = false;
+        }
 
         // Find a present node to use as required_node so the tree actually
         // executes. Without this, execute() calls compile(tree, nullptr) which
@@ -170,6 +199,9 @@ void Hd_RUZINO_Renderer::Render(HdRenderThread* renderThread)
         }
 
         node_system->execute(false, required_node);
+
+        // Consume the force-reset request now that the accumulate node has run.
+        render_param->pending_force_reset_accumulation = false;
 
         // Clear dirty flags after execution
         // Note: nodes should clear specific flags as they handle them

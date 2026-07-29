@@ -51,6 +51,14 @@ void main(uint3 tid : SV_DispatchThreadID)
     float3 color_deposit = col.rgb * col.w;
 
     int res = cb.grid_res, res_z = cb.grid_res_z;
+    // The particle rasterize grids are WINDOW-SIZED (WIN_XY × WIN_XY × res_z),
+    // so the splat index is window-local: global cell minus window_origin.
+    // Paper §5: particles only exist in the brush-local window, so the splat
+    // target is always inside [origin, origin+WIN). Cells outside the window
+    // (including the 2×2×2 trilinear apron that falls past the window edge)
+    // are skipped.
+    int wox = cb.window_origin_x, woy = cb.window_origin_y;
+    int WSX = cb.window_size_x;
     [unroll] for (int dz = 0; dz <= 1; dz++) {
         [unroll] for (int dy = 0; dy <= 1; dy++) {
             [unroll] for (int dx = 0; dx <= 1; dx++) {
@@ -59,13 +67,16 @@ void main(uint3 tid : SV_DispatchThreadID)
                 int nz = iz + dz;
                 if (nx < 0 || nx >= res || ny < 0 || ny >= res || nz < 0 || nz >= res_z)
                     continue;
+                int lnx = nx - wox, lny = ny - woy;
+                if (lnx < 0 || lnx >= WSX || lny < 0 || lny >= WSX)
+                    continue;
 
                 float wx = (dx == 0) ? (1.0 - fx) : fx;
                 float wy = (dy == 0) ? (1.0 - fy) : fy;
                 float wz = (dz == 0) ? (1.0 - fz) : fz;
                 float w = wx * wy * wz;
-                // Global grid index (buffers are global-sized).
-                uint gi = grid_idx_3d(uint(nx), uint(ny), uint(nz), res, res_z);
+                // Window-local linear index into the window-sized buffer.
+                uint gi = uint(nz) * uint(WSX * WSX) + uint(lny) * uint(WSX) + uint(lnx);
 
                 // NOTE: plain += races when many particles splat into the
                 // same cell. Slang's RWStructuredBuffer lacks a working

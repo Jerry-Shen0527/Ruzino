@@ -577,6 +577,15 @@ VtValue Hd_RUZINO_RenderDelegate::GetRenderSetting(TfToken const& key) const
         return VtValue(reinterpret_cast<const void*>(&node_system));
     }
 
+    // Expose the renderParam pointer so the Python HydraRenderer can poke
+    // host-side flags (e.g. pending_force_reset_accumulation for interleaved
+    // sim+render). Returns a pointer-to-pointer to match the RenderNodeSystem
+    // pattern (VtValue holding const void* pointing at a shared_ptr/storage).
+    if (key == TfToken("HdRuzinoRenderParam")) {
+        return VtValue(
+            reinterpret_cast<const void*>(_renderParam.get()));
+    }
+
 #ifdef RUZINO_DIRECT_VK_DISPLAY
     if (key == TfToken("VulkanColorAov")) {
         // Legacy: return default texture for backward compatibility

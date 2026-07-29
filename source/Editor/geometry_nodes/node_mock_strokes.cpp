@@ -1,14 +1,15 @@
 // Mock two crossing strokes — a test fixture for multi-color paint mixing.
 //
 // Emits TWO curve segments:
-//   stroke 0 (red,  RYB 1,0,0): horizontal along X, 0..0.5s
-//   stroke 1 (blue, RYB 0,0,1): vertical along Y, crossing stroke 0 mid-canvas,
-//                               delayed to 0.5..1.0s so it draws AFTER stroke 0
-//                               completes.
+//   stroke 0 (red,  RYB ~0.8,0.12,0.12): horizontal along X, 0..0.5s
+//   stroke 1 (blue, RYB ~0.15,0.18,0.75): vertical along Y, crossing stroke 0
+//                               mid-canvas, delayed to 0.5..1.0s so it draws
+//                               AFTER stroke 0 completes.
 //
 // Each point carries an absolute `timestamp` (seconds since sim start) so the
 // mock_point_emitter replays stroke 0 fully, THEN stroke 1 — exercising the
-// wet-in-wet color mixing where blue crosses the still-wet red.
+// wet-in-wet color mixing where blue crosses the still-wet red. Colors are
+// desaturated slightly so the crossing blend reads softer than pure RYB.
 
 #include "GCore/Components/CurveComponent.h"
 #include "GCore/GOP.h"
@@ -43,10 +44,13 @@ NODE_EXECUTION_FUNCTION(mock_strokes)
     std::vector<float> timestamps;
     std::vector<float> widths;
 
-    const glm::vec3 red(1.0f, 0.0f, 0.0f);   // RYB red
-    const glm::vec3 blue(0.0f, 0.0f, 1.0f);  // RYB blue
+    // RYB red + blue pair. Desaturated slightly (channels pulled toward mid)
+    // so the pure (1,0,0)/(0,0,1) tones aren't garish; the crossing still
+    // shows the wet-in-wet blend.
+    const glm::vec3 red(0.80f, 0.12f, 0.12f);   // RYB red, desaturated
+    const glm::vec3 blue(0.15f, 0.18f, 0.75f);  // RYB blue, desaturated
 
-    // Stroke 0: red, horizontal along X, centered at origin, gently wavy.
+    // Stroke 0: yellow, horizontal along X, centered at origin, gently wavy.
     // Draws over [0, s0_dur).
     for (int i = 0; i < num_points; i++) {
         float t = static_cast<float>(i) / static_cast<float>(num_points - 1);

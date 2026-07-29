@@ -1,31 +1,29 @@
 #!/usr/bin/env python3
 """
-Render the Wetbrush streaming-zone paint animation with the Ruzino path tracer.
+Render the Wetbrush streaming-zone paint animation with the Ruzino path tracer
+via the ZERO-COPY GPU buffer path (no bake / no CPU readback / no USD primvar).
 
-Stage 1 (PLACEHOLDER, no volume rprim yet): drives the streaming Wetbrush zone
-(mock_stroke -> simulation_in -> brush_wb_deposit -> bristle -> fluid -> commit
--> simulation_out, feedback), reads the commit node's Paint Particles output
-(one point per painted canvas cell, RYB->RGB color baked in, thickness in Z),
-bakes it into a self-contained render scene, and renders a per-frame PNG
-sequence in-process via HydraRenderer.render(time_code).
+Architecture (interleaved per-frame animation):
+  Stage 1: build the streaming Wetbrush zone graph (mock_stroke -> simulation_in
+           -> brush_wb_deposit -> bristle -> fluid -> commit -> simulation_out,
+           feedback) and a marker render scene (UsdVolVolume carrying grid
+           metadata primvars but NO paintField, plus the Paper mesh, camera,
+           lights). The graph is NOT driven here.
+  Stage 2: interleave { stage.tick(dt) -> hydra.render(t) x SPP -> save PNG }
+           for NUM_FRAMES. Each tick, the commit node packs density+color into a
+           Float4 GPU buffer and registers it in SharedGPUBufferRegistry under
+           "wetbrush_paint_field"; the Hd_RUZINO_WetbrushVolume rprim's Sync()
+           detects the version bump and rebinds the SAME buffer (zero copy).
+           No data crosses back to the CPU.
 
-The POINTS rprim renders each paint cell as an analytic sphere sized by
-`widths`; color is single-material (Points rprim has no per-point color path
--- displayColor primvar is written but unread by the renderer). So this first
-pass renders the stroke SHAPE and thickness; the real volume rendering (with
-per-cell color via the new Hd_RUZINO_WetbrushVolume rprim + custom intersection
-shader) replaces this scene in a later step.
-
-Reuses the proven render_gridbox.py three-stage pattern:
-  1. run the streaming zone into an in-memory stage (time-sampled points),
-  2. bake a render scene (camera + light + the points geometry, animated),
-  3. in-process HydraRenderer.render(t) loop -> PNG sequence.
+The volume is rendered by the custom Hd_RUZINO_WetbrushVolume rprim, raymarched
+by the VolumeClosestHit shader (paper Section 6: first-cross + penetration blend
++ Lambertian + 64-ray ambient occlusion).
 
 Run from Binaries/Release (so node-plugin DLLs resolve):
 
     python ../../source/tests/render_wetbrush.py
 """
-import math
 import os
 import sys
 from pathlib import Path
@@ -54,21 +52,22 @@ DT = 1.0 / FPS
 
 OUTPUT_DIR = BIN / "wetbrush_sequence"
 
+# Sim grid parameters — MUST match what build_sim_graph configures on the
+# deposit node, because the marker scene's gridResX/Y/Z + cellSize primvars
+# describe the SAME grid the sim packs into the registry buffer.
+SIM_RES = 4096
+SIM_RES_Z = 64
+SIM_PAPER = 1.0
+CELL_SZ = SIM_PAPER / SIM_RES
+
 
 # ---------------------------------------------------------------------------
-# Stage 1: build the streaming Wetbrush zone (same topology as
-# test_wetbrush_zone._build_streaming_graph) and drive it NUM_FRAMES ticks.
-# Returns (pxr_stage, prim_path) where prim_path carries time-sampled `points`.
+# Stage 1a: build the streaming Wetbrush zone graph. Returns (graph, stage,
+# prim_path). The graph is NOT driven — caller interleaves tick()+render().
+# The returned graph must be kept alive for the whole render loop so the sim's
+# GPU buffers (incl. the registry-registered packed_paint) are not freed.
 # ---------------------------------------------------------------------------
-def run_streaming_zone(out_usd: Path):
-    """Drive the streaming zone and return a COMPOSED pxr stage.
-
-    write_usd writes the per-frame points into a session/modifier layer, not
-    into the skeleton .usdc (which only holds the /Brush prim skeleton). A plain
-    Usd.Stage.Open(skeleton) composes the session layer only at cook time; to
-    read the persisted animation afterwards we compose skeleton + modifier
-    explicitly via a subLayerPaths layer (mirrors render_gridbox.py:62-76).
-    """
+def build_sim_graph(sim_usd: Path):
     g = RuzinoGraph("WetbrushRender")
     g.loadConfiguration(str(BIN / "geometry_nodes.json"))
 
@@ -92,10 +91,9 @@ def run_streaming_zone(out_usd: Path):
     g.addEdge(bristle, "State", fluid, "State")
     g.addEdge(fluid, "State", commit, "State")
     g.addEdge(sim_in, "Simulation Out", commit, "Stroke Curves")
-    # Read the 3D density window (paper §6 render target), not the 2D canvas
-    # accumulation. commit emits one point per painted 3D voxel of the
-    # brush-local active window, in world space, with the instantaneous density
-    # in widths.
+    # commit's Paint Field 3D output still feeds write_usd so the sim USD has
+    # a populated prim for downstream inspection, but the renderer does NOT
+    # read it — it consumes the zero-copy registry buffer.
     g.addEdge(commit, "Paint Field 3D", write, "Geometry")
     g.addEdge(commit, "State", sim_out, "Simulation In")
     g.addEdge(commit, "Stroke Curves", sim_out, "Simulation In")
@@ -103,14 +101,13 @@ def run_streaming_zone(out_usd: Path):
     g.setSocketDefaults({
         (mock, "Num Points"): 30, (mock, "Amplitude"): 0.05,
         (mock, "Length"): 0.3,
-        # Resolution 512 (paper §4.2 uses 4096; we step up from 256 first to
-        # test whether the discrete "growing bumps" are a resolution artifact).
-        # At 256 a brush radius of 0.02 covered only ~10 cells, so each bristle
-        # splat landed in a single XY column. 512 makes the footprint ~20 cells
-        # across — enough to tell if the bumps fade. 1024 is possible but bake
-        # stage 2 spends ~3 min in the Vt.Vec4fArray pack loop; revisit once
-        # the renderer's zero-copy registry path is enabled (plan Part B).
-        (deposit, "Resolution"): 512, (deposit, "Paper Size"): 1.0,
+        # Resolution 4096 (paper Section 4.2: "we typically set the grid
+        # resolution to 4096x4096x64"). At lower resolutions the brush
+        # footprint covered too few cells, so trilinear filtering + the
+        # 2-cell gradient normal rode cell-boundary density steps and the
+        # Lambertian shading flickered across the stroke.
+        (deposit, "Resolution"): SIM_RES, (deposit, "Resolution Z"): SIM_RES_Z,
+        (deposit, "Paper Size"): SIM_PAPER,
         (deposit, "Brush Radius"): 0.02, (deposit, "Brush Pressure"): 1.0,
         (deposit, "Ink Amount"): 0.8,
         (bristle, "Brush Radius"): 0.02,
@@ -119,212 +116,54 @@ def run_streaming_zone(out_usd: Path):
     })
     assert sim_in.paired_node is sim_out, "zone pairing not established"
 
-    if out_usd.exists():
-        out_usd.unlink()
-    stage = stage_py.Stage(str(out_usd))
+    if sim_usd.exists():
+        sim_usd.unlink()
+    stage = stage_py.Stage(str(sim_usd))
     prim_path = "/Brush"
     UsdGeom.Mesh.Define(stage.get_pxr_stage(), prim_path)  # placeholder prim
     g.apply_to_stage(stage, prim_path)
 
-    # The three simulation gates (AGENTS.md §Simulation).
+    # The three simulation gates (AGENTS.md Section "Simulation").
     prim = stage.get_pxr_stage().GetPrimAtPath(Sdf.Path(prim_path))
     prim.CreateAttribute("Animatable", Sdf.ValueTypeNames.Bool).Set(True)
 
-    for i in range(NUM_FRAMES):
-        stage.set_render_time((i + 1) * DT)
-        stage.tick(DT)
-        stage.finish_tick()
-    stage.save()
-
-    # Compose skeleton + modifier so the time-sampled points are readable.
-    # The modifier layer path mirrors what render_gridbox.py expects; find it
-    # next to the skeleton.
-    modifier = out_usd.with_name(out_usd.stem + "_modifiers.usdc")
-    if not modifier.exists():
-        sys.exit(f"modifier layer not found: {modifier} -- sim did not export")
-    composed = out_usd.parent / "wetbrush_render_composed.usda"
-    if composed.exists():
-        composed.unlink()
-    layer = Sdf.Layer.CreateNew(str(composed))
-    layer.subLayerPaths = [
-        str(modifier.resolve()), str(out_usd.resolve())]
-    layer.Save()
-    composed_stage = Usd.Stage.Open(str(composed))
-
-    # Sanity-check the points are actually there before returning.
-    _p = composed_stage.GetPrimAtPath(Sdf.Path(prim_path))
-    _pts_attr = _p.GetAttribute("points")
-    _pts_ts = _pts_attr.GetTimeSamples() if _pts_attr else []
-    if not _pts_ts:
-        sys.exit("composed stage has no time-sampled points -- sim failed")
-    _final = _pts_attr.Get(_pts_ts[-1])
-    print(f"[render] stage 1: composed {len(_pts_ts)} time samples "
-          f"({len(_final) if _final else 0} pts at final frame)")
-    return composed_stage, prim_path, g  # keep g alive so sim GPU buffers survive
+    return g, stage, prim_path
 
 
 # ---------------------------------------------------------------------------
-# Stage 2: bake a self-contained render scene. Splat the sim's per-frame paint
-# points (one per painted canvas cell, RYB->RGB baked in) into a 2D paint grid
-# (Float4: density, r, g, b) and author it on a UsdGeomVolume prim as the
-# `paintField` primvar (+ gridRes/gridPaper/gridCenter/canvasFloorZ metadata).
-# Hd_RUZINO_WetbrushVolume reads these primvars, builds the density slab, and
-# the wetbrush_render node raymarches it via the VolumeClosestHit shader.
+# Stage 1b: build the marker render scene. UsdVolVolume with grid metadata
+# primvars (NO paintField — the rprim reads paint from the registry buffer),
+# plus the Paper mesh, camera, and lights. Returns the scene path.
 # ---------------------------------------------------------------------------
-def bake_render_scene(sim_stage, prim_path: str, scene_path: Path):
-    """Accumulate the 3D density windows into one large 3D paint field.
-
-    The commit node emits, per frame, the 3D density window (paper §6 active
-    window) as a point cloud: one point per painted 3D voxel, in world space,
-    widths = instantaneous density (bounded), displayColor = RYB->RGB.
-
-    For a "growing stroke" animation, each render frame N shows the UNION of
-    sim frames 0..N rasterized into a 3D grid covering the whole stroke bbox.
-    """
-    src = UsdGeom.Points.Get(sim_stage, prim_path)
-    if not src.GetPrim().IsValid():
-        sys.exit(f"sim prim {prim_path} is not a valid Points prim "
-                 f"(write_usd may not have run)")
-
-    src_pts_attr = src.GetPointsAttr()
-    frame_times = src_pts_attr.GetTimeSamples()
-    if not frame_times:
-        sys.exit("sim points has no time samples -- the zone did not cook")
-    print(f"[render] anim: {len(frame_times)} time samples "
-          f"(t={frame_times[0]:.4f}..{frame_times[-1]:.4f})")
-
-    src_color_primvar = UsdGeom.PrimvarsAPI(src).GetPrimvar("displayColor")
-    src_widths_attr = src.GetWidthsAttr()
-
-    # Collect ALL frames' points (positions, density, color) and compute the
-    # 3D union bbox so the volume grid covers the whole stroke.
-    all_pts = []        # list of np.array(N,3) per frame
-    all_density = []    # list of np.array(N,) per frame
-    all_color = []      # list of np.array(N,3) per frame
-    pmin = np.array([1e9, 1e9, 1e9], dtype=np.float32)
-    pmax = np.array([-1e9, -1e9, -1e9], dtype=np.float32)
-    for t in frame_times:
-        pts = src_pts_attr.Get(t)
-        widths = src_widths_attr.Get(t) if src_widths_attr else None
-        colors = src_color_primvar.Get(t) if src_color_primvar else None
-        if not pts or len(pts) == 0:
-            all_pts.append(np.zeros((0, 3), dtype=np.float32))
-            all_density.append(np.zeros((0,), dtype=np.float32))
-            all_color.append(np.zeros((0, 3), dtype=np.float32))
-            continue
-        pa = np.array([[p[0], p[1], p[2]] for p in pts], dtype=np.float32)
-        da = np.array([float(widths[i]) if (widths and i < len(widths))
-                       else 0.5 for i in range(len(pts))], dtype=np.float32)
-        ca = (np.array([[colors[i][0], colors[i][1], colors[i][2]]
-                        for i in range(len(pts))], dtype=np.float32)
-              if (colors and len(colors)) else
-              np.ones((len(pts), 3), dtype=np.float32))
-        all_pts.append(pa); all_density.append(da); all_color.append(ca)
-        pmin = np.minimum(pmin, pa.min(axis=0))
-        pmax = np.maximum(pmax, pa.max(axis=0))
-
-    if pmax[0] - pmin[0] <= 0:
-        sys.exit("all frames empty -- nothing to render")
-    print(f"[render] stroke 3D bbox: [{pmin[0]:.4f},{pmin[1]:.4f},"
-          f"{pmin[2]:.4f}]..[{pmax[0]:.4f},{pmax[1]:.4f},{pmax[2]:.4f}]")
-
-    # 3D grid covering the stroke bbox (square XY, real Z range), with margin.
-    margin_xy = max((pmax[0] - pmin[0]), (pmax[1] - pmin[1])) * 0.2 + 0.005
-    margin_z = (pmax[2] - pmin[2]) * 0.2 + 0.002
-    grid_min = np.array([pmin[0] - margin_xy, pmin[1] - margin_xy,
-                         pmin[2] - margin_z], dtype=np.float32)
-    grid_max = np.array([pmax[0] + margin_xy, pmax[1] + margin_xy,
-                         pmax[2] + margin_z], dtype=np.float32)
-    # Use the sim's actual cell size so the render grid matches the data
-    # resolution (no up/downsampling): cell_sz = grid_paper / grid_res.
-    # MUST match the deposit node's Resolution / Paper Size (see
-    # run_streaming_zone), otherwise the baked render grid is misaligned
-    # with the sim voxels and the stroke smears/fragments.
-    SIM_RES = 512; SIM_PAPER = 1.0
-    cell_sz = SIM_PAPER / SIM_RES  # ~0.0039, the source voxel size
-    GRID_X = int(np.ceil((grid_max[0] - grid_min[0]) / cell_sz))
-    GRID_Y = int(np.ceil((grid_max[1] - grid_min[1]) / cell_sz))
-    GRID_Z = int(np.ceil((grid_max[2] - grid_min[2]) / cell_sz))
-    print(f"[render] 3D grid: {GRID_X}x{GRID_Y}x{GRID_Z} cells "
-          f"(cell_sz={cell_sz:.5f}, total {GRID_X*GRID_Y*GRID_Z} voxels)")
-
-    grid_extent = grid_max - grid_min
-    grid_center_world = ((grid_min + grid_max) * 0.5).tolist()
-
+def build_marker_scene(scene_path: Path):
     if scene_path.exists():
         scene_path.unlink()
     stage = Usd.Stage.CreateNew(str(scene_path))
 
     # UsdVolVolume -> Hydra token "volume" -> Hd_RUZINO_WetbrushVolume.
+    # The metadata primvars describe the SAME grid the sim packs. The rprim's
+    # Sync() reads them, then create_gpu_resources() Phase 1 overrides the
+    # buffer source with the registry buffer (and re-asserts the same grid
+    # geometry from the registry metadata blob).
     vol = UsdVol.Volume.Define(stage, "/BrushPaint")
-    primvar_api = UsdGeom.PrimvarsAPI(vol)
-    paint_primvar = primvar_api.CreatePrimvar(
-        "paintField", Sdf.ValueTypeNames.Float4Array)
-    paint_primvar.SetInterpolation(UsdGeom.Tokens.constant)
-    # 3D grid metadata primvars (read by the rprim + shader).
-    primvar_api.CreatePrimvar(
-        "gridResX", Sdf.ValueTypeNames.Int).Set(int(GRID_X))
-    primvar_api.CreatePrimvar(
-        "gridResY", Sdf.ValueTypeNames.Int).Set(int(GRID_Y))
-    primvar_api.CreatePrimvar(
-        "gridResZ", Sdf.ValueTypeNames.Int).Set(int(GRID_Z))
-    primvar_api.CreatePrimvar(
-        "cellSize", Sdf.ValueTypeNames.Float).Set(float(cell_sz))
-    gm = Gf.Vec3f(float(grid_min[0]), float(grid_min[1]), float(grid_min[2]))
-    primvar_api.CreatePrimvar(
-        "gridMin", Sdf.ValueTypeNames.Float3).Set(gm)
+    pv = UsdGeom.PrimvarsAPI(vol)
+    pv.CreatePrimvar("gridResX", Sdf.ValueTypeNames.Int).Set(int(SIM_RES))
+    pv.CreatePrimvar("gridResY", Sdf.ValueTypeNames.Int).Set(int(SIM_RES))
+    pv.CreatePrimvar("gridResZ", Sdf.ValueTypeNames.Int).Set(int(SIM_RES_Z))
+    pv.CreatePrimvar("cellSize", Sdf.ValueTypeNames.Float).Set(float(CELL_SZ))
+    # gridMin matches the sim's grid layout EXACTLY — see node_brush_wb_commit.cpp
+    # PaintFieldMeta: gridMinZ = grid_center_z - grid_height/2 = canvas_z (since
+    # grid_center_z = canvas_z + height/2). Canvas Z defaults to 0 in the
+    # deposit node, so paint volume occupies Z in [0, grid_height]. The paper
+    # mesh sits just below at Z = -0.0005. (A previous version used
+    # -grid_height/2 here, which mismatched the registry metadata by 32 cells
+    # in Z and smeared the rendered paint.)
+    grid_height = SIM_PAPER * SIM_RES_Z / SIM_RES
+    canvas_z = 0.0
+    gm = Gf.Vec3f(-SIM_PAPER * 0.5, -SIM_PAPER * 0.5, float(canvas_z))
+    pv.CreatePrimvar("gridMin", Sdf.ValueTypeNames.Float3).Set(gm)
 
-    # For each render frame, rasterize the sim's 3D window points into the
-    # render grid. Last-write semantics: each frame's window data is the
-    # current state of those cells (the sim's global grid is now persistent,
-    # paper §4.2). Non-zero points overwrite; zero points are skipped so they
-    # don't erase previously painted cells that the window has moved past.
-    #
-    # VECTORIZED: the original per-point raster + per-cell Gf.Vec4f pack was
-    # O(GRID_TOTAL) Python ops per frame. At res 512+ that is millions of ops
-    # × 60 frames and stage 2 stalls for minutes. Both loops are now numpy:
-    #   - raster: fancy-index into accum_*, one vectorized write per frame
-    #   - pack:   build a (GRID_TOTAL,4) float32 ndarray, hand the list-of-
-    #             lists to Vt.Vec4fArray (its fastest construction path,
-    #             ~2s for a 2.3M-cell grid vs 200s+ for per-element Gf.Vec4f).
-    GRID_TOTAL = GRID_X * GRID_Y * GRID_Z
-    accum_density = np.zeros(GRID_TOTAL, dtype=np.float32)
-    accum_color = np.zeros((GRID_TOTAL, 3), dtype=np.float32)
-    for fi, t in enumerate(frame_times):
-        pa = all_pts[fi]; da = all_density[fi]; ca = all_color[fi]
-        if len(pa) > 0:
-            mask = da > 0
-            pa = pa[mask]; da = da[mask]; ca = ca[mask]
-            if len(pa) > 0:
-                ix = ((pa[:, 0] - grid_min[0]) / cell_sz).astype(np.int64)
-                iy = ((pa[:, 1] - grid_min[1]) / cell_sz).astype(np.int64)
-                iz = ((pa[:, 2] - grid_min[2]) / cell_sz).astype(np.int64)
-                inb = ((ix >= 0) & (ix < GRID_X) &
-                       (iy >= 0) & (iy < GRID_Y) &
-                       (iz >= 0) & (iz < GRID_Z))
-                ix = ix[inb]; iy = iy[inb]; iz = iz[inb]
-                da = da[inb]; ca = ca[inb]
-                idx = (iz * GRID_Y + iy) * GRID_X + ix
-                accum_density[idx] = da
-                accum_color[idx] = ca
-        # Pack the accumulated field into the primvar at this frame's time.
-        packed = np.empty((GRID_TOTAL, 4), dtype=np.float32)
-        packed[:, 0] = accum_density
-        packed[:, 1:4] = accum_color
-        vt_arr = Vt.Vec4fArray(packed.tolist())
-        paint_primvar.Set(vt_arr, t)
-
-    stage.SetStartTimeCode(frame_times[0])
-    stage.SetEndTimeCode(frame_times[-1])
-    stage.SetTimeCodesPerSecond(FPS)
-
-    nz = int((accum_density > 0).sum())
-    print(f"[render] final 3D field: {nz}/{GRID_TOTAL} painted voxels "
-          f"(density max={accum_density.max():.4f})")
-
-    # The volume hit path sets payload.isVolume + accumulates the paint color
-    # directly; the bound material is only a fallback (per-cell color comes
-    # from the field). Bind a neutral one so the rprim has a material id.
+    # Neutral fallback material (the volume hit path colors from the field).
     mat = UsdShade.Material.Define(stage, "/PaintMaterial")
     shader = UsdShade.Shader.Define(stage, "/PaintMaterial/Shader")
     shader.CreateIdAttr("UsdPreviewSurface")
@@ -336,17 +175,17 @@ def bake_render_scene(sim_stage, prim_path: str, scene_path: Path):
         UsdShade.AttributeType.Output)
     UsdShade.MaterialBindingAPI.Apply(vol.GetPrim()).Bind(mat)
 
-    # Paper ground plane at the stroke's Z floor.
-    pz = float(pmin[2]) - 0.0005
-    pm = float(margin_xy)
-    px0, px1 = float(grid_min[0]) - pm, float(grid_max[0]) + pm
-    py0, py1 = float(grid_min[1]) - pm, float(grid_max[1]) + pm
+    # Paper = the whole canvas (not just a frame around the stroke bbox). The
+    # volume's empty cells are transparent (VolumeIntersection only reports on
+    # paint), so the paper underneath shows through and the paint reads as
+    # painted ON the paper.
+    pz = float(canvas_z) - 0.0005
     paper = UsdGeom.Mesh.Define(stage, "/Paper")
     paper.CreatePointsAttr().Set(Vt.Vec3fArray([
-        Gf.Vec3f(float(px0), float(py0), float(pz)),
-        Gf.Vec3f(float(px1), float(py0), float(pz)),
-        Gf.Vec3f(float(px1), float(py1), float(pz)),
-        Gf.Vec3f(float(px0), float(py1), float(pz))]))
+        Gf.Vec3f(-SIM_PAPER * 0.5, -SIM_PAPER * 0.5, pz),
+        Gf.Vec3f( SIM_PAPER * 0.5, -SIM_PAPER * 0.5, pz),
+        Gf.Vec3f( SIM_PAPER * 0.5,  SIM_PAPER * 0.5, pz),
+        Gf.Vec3f(-SIM_PAPER * 0.5,  SIM_PAPER * 0.5, pz)]))
     paper.CreateFaceVertexCountsAttr().Set([4])
     paper.CreateFaceVertexIndicesAttr().Set([0, 1, 2, 3])
     paper.CreateSubdivisionSchemeAttr().Set(UsdGeom.Tokens.none)
@@ -364,17 +203,22 @@ def bake_render_scene(sim_stage, prim_path: str, scene_path: Path):
         UsdShade.AttributeType.Output)
     UsdShade.MaterialBindingAPI.Apply(paper.GetPrim()).Bind(paper_mat)
 
-    # Camera: 3/4 view above the stroke center.
+    # Camera: tight 3/4 view framing the stroke region (the strokes span
+    # ~0.3×0.3 around the origin — `length`=0.3 in mock_strokes). Aiming at the
+    # whole 1.0 canvas from ~2.0 away left the brush a tiny speck; pull in to
+    # ~0.55 distance and target the stroke center so the paint fills the frame.
+    # Paper mesh still extends ±0.5 so it shows as the paper around the stroke.
     cam = UsdGeom.Camera.Define(stage, "/Camera")
     cam.GetFocalLengthAttr().Set(50.0)
     cam.GetHorizontalApertureAttr().Set(36.0)
     cam.GetVerticalApertureAttr().Set(20.25)
     cam.GetClippingRangeAttr().Set((0.1, 100.0))
-    canvas_size = float(max(grid_extent[0], grid_extent[1]))
-    eye = np.array([grid_center_world[0] + canvas_size * 0.4,
-                    grid_center_world[1] - canvas_size * 1.4,
-                    grid_center_world[2] + canvas_size * 2.0])
-    target = np.array(grid_center_world)
+    frame_size = 0.35  # roughly the stroke span + a little breathing room
+    cx = cy = cz = 0.0
+    eye = np.array([cx + frame_size * 0.5,
+                    cy - frame_size * 1.1,
+                    cz + frame_size * 1.5])
+    target = np.array([cx, cy, cz])
     up = np.array([0.0, 0.0, 1.0])
     fwd = target - eye
     fwd = fwd / np.linalg.norm(fwd)
@@ -387,7 +231,9 @@ def bake_render_scene(sim_stage, prim_path: str, scene_path: Path):
     m.SetRow(3, Gf.Vec4d(*eye.tolist(), 1.0))
     UsdGeom.Xformable(cam).AddTransformOp().Set(m)
 
-    # DistantLight from above-front.
+    # Key DistantLight from above-front. intensity=3.0 — paper reads near its
+    # diffuseColor (0.92,0.90,0.85) without saturating once the dome fill is
+    # added underneath.
     light_xf = Gf.Matrix4d(); light_xf.SetIdentity()
     light_xf.SetRow(2, Gf.Vec4d(-0.3, 0.4, -0.85, 0.0))
     UsdLux.DistantLight.Define(stage, "/Sun")
@@ -395,13 +241,19 @@ def bake_render_scene(sim_stage, prim_path: str, scene_path: Path):
     sun.CreateIntensityAttr().Set(3.0)
     UsdGeom.Xformable(sun).AddTransformOp().Set(light_xf)
 
+    # Dome light — fills the background off black; dim so the warm key light
+    # still dominates the paper.
+    dome = UsdLux.DomeLight.Define(stage, "/Dome")
+    dome.CreateIntensityAttr().Set(0.25)
+    dome.CreateColorAttr().Set((0.6, 0.75, 1.0))
+
     stage.GetRootLayer().Save()
-    print(f"[render] scene: {scene_path.name} ({len(frame_times)} frames)")
-    return frame_times
+    print(f"[render] marker scene: {scene_path.name}")
+    return scene_path
 
 
 # ---------------------------------------------------------------------------
-# Stage 3: in-process HydraRenderer.render(t) loop -> PNG.
+# Stage 2: interleaved { tick(dt) -> render(t) x SPP -> save PNG }.
 # ---------------------------------------------------------------------------
 def _locate_render_cfg():
     primary = BIN / "render_nodes.json"
@@ -414,12 +266,12 @@ def _locate_render_cfg():
     sys.exit("render node config not found (render_nodes.json)")
 
 
-def render_loop(scene_path: Path, frame_times):
+def run_interleaved(scene_path: Path, stage, sim_graph):
     import hd_RUZINO_py as renderer
     import nodes_core_py as core
     from PIL import Image
 
-    WIDTH, HEIGHT, SPP = 1280, 960, 64
+    WIDTH, HEIGHT, SPP = 1280, 960, 32
     OUTPUT_DIR.mkdir(exist_ok=True)
     for old in OUTPUT_DIR.glob("frame_*.png"):
         old.unlink()
@@ -433,8 +285,8 @@ def render_loop(scene_path: Path, frame_times):
 
     rng = tree.add_node("rng_texture"); rng.ui_name = "RNG"
     ray_gen = tree.add_node("node_render_ray_generation"); ray_gen.ui_name = "RayGen"
-    # Use the wetbrush_render node (path_tracing + 2 volume hit groups) instead
-    # of path_tracing, so the Hd_RUZINO_WetbrushVolume density slab is hit.
+    # wetbrush_render = path_tracing + 2 procedural volume hit groups, so the
+    # Hd_RUZINO_WetbrushVolume density slab is hit.
     path_trace = tree.add_node("wetbrush_render"); path_trace.ui_name = "WetbrushRender"
     accumulate = tree.add_node("accumulate"); accumulate.ui_name = "Accumulate"
     rng_buffer = tree.add_node("rng_buffer"); rng_buffer.ui_name = "RNGBuffer"
@@ -462,9 +314,20 @@ def render_loop(scene_path: Path, frame_times):
         socket = node.get_input_socket(socket_name)
         executor.sync_node_from_external_storage(socket, core.to_meta_any(value))
 
-    print(f"[render] rendering {len(frame_times)} frames "
-          f"({WIDTH}x{HEIGHT}, {SPP} spp) in-process -> {OUTPUT_DIR.name}/")
-    for i, t in enumerate(frame_times):
+    print(f"[render] interleaved {NUM_FRAMES} frames "
+          f"({WIDTH}x{HEIGHT}, {SPP} spp) -> {OUTPUT_DIR.name}/")
+    for i in range(NUM_FRAMES):
+        t = (i + 1) * DT
+        # Drive one sim step FIRST so the registry holds this frame's packed
+        # paint before the rprim's Sync() runs during render().
+        stage.set_render_time(t)
+        stage.tick(DT)
+        stage.finish_tick()
+        # Belt-and-suspenders: the auto path (renderer.cpp polls the registry
+        # version → DirtyGeometry → wetbrush_render geom_dirty → reset) should
+        # already trigger a clean reset for this fresh sim frame. This explicit
+        # host request is the escape hatch in case that auto path ever lags.
+        hydra.reset_accumulation()
         for _ in range(SPP):
             hydra.render(float(t))
         tex = hydra.get_output_texture()
@@ -477,7 +340,7 @@ def render_loop(scene_path: Path, frame_times):
         rgb = (rgb * 255).astype(np.uint8)
         rgb = np.flipud(rgb)
         Image.fromarray(rgb).save(OUTPUT_DIR / f"frame_{i:04d}.png")
-        print(f"  frame {i:3d}/{len(frame_times)-1} (t={t:.4f}) saved "
+        print(f"  frame {i:3d}/{NUM_FRAMES-1} (t={t:.4f}) saved "
               f"lit={float(rgb.max(axis=2).mean()/255)*100:4.1f}%")
 
     hydra.stop()
@@ -486,18 +349,19 @@ def render_loop(scene_path: Path, frame_times):
 
 
 def main():
-    sim_usd = HERE / "data" / "output" / "wetbrush_render_sim.usdc"
+    sim_usd = BIN / "wetbrush_render_sim.usdc"
     sim_usd.parent.mkdir(parents=True, exist_ok=True)
-    print("[render] stage 1: running streaming zone for "
-          f"{NUM_FRAMES} frames -> {sim_usd.name}")
-    sim_stage, prim_path, _sim_graph = run_streaming_zone(sim_usd)
+    print("[render] stage 1a: building sim graph (zero-copy, no 60-frame drive)")
+    sim_graph, stage, prim_path = build_sim_graph(sim_usd)
 
     scene = BIN / "wetbrush_render.usdc"
-    print(f"[render] stage 2: baking render scene -> {scene.name}")
-    frame_times = bake_render_scene(sim_stage, prim_path, scene)
+    print(f"[render] stage 1b: building marker render scene -> {scene.name}")
+    build_marker_scene(scene)
 
-    print("[render] stage 3: in-process render loop")
-    render_loop(scene, frame_times)
+    print("[render] stage 2: interleaved sim+render loop")
+    # sim_graph MUST stay alive through the loop — it owns the GPU buffers the
+    # rprim reads zero-copy from the registry.
+    run_interleaved(scene, stage, sim_graph)
 
 
 if __name__ == "__main__":

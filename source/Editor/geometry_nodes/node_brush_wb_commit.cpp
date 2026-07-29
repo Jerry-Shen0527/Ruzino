@@ -138,6 +138,29 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
             grid_n3d);
         rc.destroy(pack_cb_buf);
 
+        // Flush the pack dispatch before registering the buffer. brush_dispatch
+        // only enqueues the compute work; without this flush the registry
+        // would hand the renderer a buffer whose contents are still being
+        // written by the GPU. The setPermanentBufferState + commitBarriers
+        // pair transitions packed_paint from its UnorderedAccess initial state
+        // (set at allocation, keepInitialState=true keeps it tracked there
+        // after each sim command list) into ShaderResource, which is the state
+        // the render rprim's RawBuffer_SRV expects. waitForIdle then drains
+        // the GPU so the interleaved test architecture (sim tick → render
+        // frame) has implicit synchronization without double-buffering.
+        {
+            auto flush_cmd = rc.create(CommandListDesc{});
+            flush_cmd->open();
+            flush_cmd->setPermanentBufferState(
+                field->packed_paint.Get(),
+                nvrhi::ResourceStates::ShaderResource);
+            flush_cmd->commitBarriers();
+            flush_cmd->close();
+            device->executeCommandList(flush_cmd);
+            device->waitForIdle();
+            rc.destroy(flush_cmd);
+        }
+
         // Register the packed buffer for zero-copy render consumption.
         // The metadata blob carries the grid geometry so the render rprim can
         // build its AABB without reading USD primvars (both sides agree on this

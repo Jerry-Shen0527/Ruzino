@@ -166,6 +166,20 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         // paint store; the window is only a dispatch range.
         int alloc_win_n3d = resolution * resolution * rz;
 
+        // Bristle/particle accumulation grids (Group B/C) are allocated at the
+        // active-window size, not the full global grid. Paper §5/§5.1: bristle
+        // samples and particles only exist within the brush-local compute
+        // window (WIN_ALLOC_XY × WIN_ALLOC_XY × res_z), so a full-grid alloc
+        // wastes (res/WIN)²× the memory for buffers that are cleared and
+        // rebuilt each sub-step anyway. At res=4096 this is the difference
+        // between 14 buffers × 1B cells (out of memory) and 14 × 1M cells.
+        // Shaders index these with window-local coords (global cell minus
+        // window_origin); see bristle_rasterize / particle_rasterize /
+        // bristle_merge / bristle_liquid_transfer.
+        int win_alloc_n3d =
+            WetbrushSimState::WIN_ALLOC_XY *
+            WetbrushSimState::WIN_ALLOC_XY * rz;
+
         auto safe_destroy = [&](nvrhi::BufferHandle& h) {
             if (h) {
                 rc.destroy(h);
@@ -226,6 +240,11 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         auto make_buf = [&](const char* name) {
             return Ruzino::brush_create_field_buffer(rc, alloc_win_n3d, name);
         };
+        // Window-sized factory for Group B/C (bristle/particle accumulation
+        // grids). See win_alloc_n3d comment above.
+        auto make_win_buf = [&](const char* name) {
+            return Ruzino::brush_create_field_buffer(rc, win_alloc_n3d, name);
+        };
 
         field->density = make_buf("wb_density");
         field->density_tmp = make_buf("wb_density_tmp");
@@ -249,36 +268,58 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         field->pressure_a = make_buf("wb_pressure_a");
         field->pressure_b = make_buf("wb_pressure_b");
         field->divergence_buf = make_buf("wb_divergence");
-        field->bristle_density = make_buf("wb_bristle_density");
-        field->bristle_vel_x = make_buf("wb_bristle_vel_x");
-        field->bristle_vel_y = make_buf("wb_bristle_vel_y");
-        field->bristle_vel_z = make_buf("wb_bristle_vel_z");
-        field->bristle_color_r = make_buf("wb_bristle_color_r");
-        field->bristle_color_y = make_buf("wb_bristle_color_y");
-        field->bristle_color_b = make_buf("wb_bristle_color_b");
-        field->ptcl_density = make_buf("wb_ptcl_density");
-        field->ptcl_vel_x = make_buf("wb_ptcl_vel_x");
-        field->ptcl_vel_y = make_buf("wb_ptcl_vel_y");
-        field->ptcl_vel_z = make_buf("wb_ptcl_vel_z");
-        field->ptcl_rast_r = make_buf("wb_ptcl_rast_r");
-        field->ptcl_rast_y = make_buf("wb_ptcl_rast_y");
-        field->ptcl_rast_b = make_buf("wb_ptcl_rast_b");
+        // Group B (bristle accumulation grids) — window-sized.
+        field->bristle_density = make_win_buf("wb_bristle_density");
+        field->bristle_vel_x = make_win_buf("wb_bristle_vel_x");
+        field->bristle_vel_y = make_win_buf("wb_bristle_vel_y");
+        field->bristle_vel_z = make_win_buf("wb_bristle_vel_z");
+        field->bristle_color_r = make_win_buf("wb_bristle_color_r");
+        field->bristle_color_y = make_win_buf("wb_bristle_color_y");
+        field->bristle_color_b = make_win_buf("wb_bristle_color_b");
+        // Group C (particle rasterize grids) — window-sized.
+        field->ptcl_density = make_win_buf("wb_ptcl_density");
+        field->ptcl_vel_x = make_win_buf("wb_ptcl_vel_x");
+        field->ptcl_vel_y = make_win_buf("wb_ptcl_vel_y");
+        field->ptcl_vel_z = make_win_buf("wb_ptcl_vel_z");
+        field->ptcl_rast_r = make_win_buf("wb_ptcl_rast_r");
+        field->ptcl_rast_y = make_win_buf("wb_ptcl_rast_y");
+        field->ptcl_rast_b = make_win_buf("wb_ptcl_rast_b");
         field->vel_x_old = make_buf("wb_vel_x_old");
         field->vel_y_old = make_buf("wb_vel_y_old");
         field->vel_z_old = make_buf("wb_vel_z_old");
         // Float4 packed paint field (density,r,g,b) — global grid sized, for
-        // the shared GPU buffer registry (zero-copy sim→render).
-        field->packed_paint = Ruzino::brush_create_typed_buffer(
-            rc, alloc_win_n3d, sizeof(float) * 4, "wb_packed_paint");
+        // the shared GPU buffer registry (zero-copy sim→render). Needs
+        // CanHaveRawViews because the render rprim binds it as a
+        // RawBuffer_SRV (ByteAddressBuffer); brush_create_typed_buffer only
+        // sets TypedViews, which produces a view-mismatch (shader reads
+        // zeroes). Built inline rather than via the factory to keep the
+        // factory's flag set unchanged for the many other callers.
+        field->packed_paint = rc.create(
+            nvrhi::BufferDesc{}
+                .setByteSize(static_cast<size_t>(alloc_win_n3d) * sizeof(float) * 4)
+                .setStructStride(sizeof(float) * 4)
+                .setInitialState(nvrhi::ResourceStates::UnorderedAccess)
+                .setKeepInitialState(true)
+                .setCanHaveUAVs(true)
+                .setCanHaveTypedViews(true)
+                .setCanHaveRawViews(true)
+                .setDebugName("wb_packed_paint"));
 
         // Zero-init everything. Variadic write (same MSVC init-list reason
-        // as destroy_buffers above).
+        // as destroy_buffers above). Two groups: full-grid (alloc_win_n3d)
+        // and window-sized (win_alloc_n3d) for Group B/C.
         std::vector<float> zeros3d(alloc_win_n3d, 0.0f);
+        std::vector<float> zeros_win(win_alloc_n3d, 0.0f);
         auto cmd = rc.create(CommandListDesc{});
         cmd->open();
         auto write_3d = [&](auto&... bufs) {
             (cmd->writeBuffer(
                  bufs, zeros3d.data(), alloc_win_n3d * sizeof(float)),
+             ...);
+        };
+        auto write_win = [&](auto&... bufs) {
+            (cmd->writeBuffer(
+                 bufs, zeros_win.data(), win_alloc_n3d * sizeof(float)),
              ...);
         };
         write_3d(
@@ -304,6 +345,10 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
             field->pressure_a,
             field->pressure_b,
             field->divergence_buf,
+            field->vel_x_old,
+            field->vel_y_old,
+            field->vel_z_old);
+        write_win(
             field->bristle_density,
             field->bristle_vel_x,
             field->bristle_vel_y,
@@ -317,10 +362,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
             field->ptcl_vel_z,
             field->ptcl_rast_r,
             field->ptcl_rast_y,
-            field->ptcl_rast_b,
-            field->vel_x_old,
-            field->vel_y_old,
-            field->vel_z_old);
+            field->ptcl_rast_b);
         cmd->close();
         device->executeCommandList(cmd);
         device->waitForIdle();

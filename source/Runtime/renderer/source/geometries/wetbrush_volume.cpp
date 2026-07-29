@@ -65,23 +65,20 @@ void Hd_RUZINO_WetbrushVolume::create_gpu_resources(
     // produced by the simulation. If hit, use it directly (skip createBuffer +
     // writeBuffer entirely). The metadata blob carries the grid geometry.
     //
-    // DISABLED: the zero-copy registry path currently produces near-black
-    // output (frame 0 ~0.3% lit, frame 1+ 0%). The sim's packed_paint buffer
-    // is created with UAV/TypedView flags (brush_create_typed_buffer) but the
-    // renderer binds it as a RawBuffer (ByteAddressBuffer) SRV -- the view
-    // mismatch plus a missing UA→ShaderResource state transition after the
-    // sim's pack_float4 dispatch leave the shader reading zeroes. Falling back
-    // to the primvar path (Phase 2) renders correctly. Re-enable once the
-    // buffer flags + post-dispatch barrier are fixed. See SESSION_CONTEXT.md.
+    // Requirements (all now met on the producer side):
+    //   - packed_paint is created with CanHaveRawViews (matches the
+    //     RawBuffer_SRV binding below) — see node_brush_wb_deposit.cpp.
+    //   - commit flushes the pack dispatch + transitions the buffer to
+    //     ShaderResource before registering — see node_brush_wb_commit.cpp.
     // ------------------------------------------------------------------
     nvrhi::BufferHandle ext_buf;
     size_t ext_bytes = 0;
     uint64_t ext_version = 0;
     const void* ext_meta_ptr = nullptr;
     size_t ext_meta_bytes = 0;
-    bool registry_hit = false;  // SharedGPUBufferRegistry path disabled (see above)
-    (void)ext_buf; (void)ext_bytes; (void)ext_version;
-    (void)ext_meta_ptr; (void)ext_meta_bytes;
+    bool registry_hit = SharedGPUBufferRegistry::get().lookup(
+        "wetbrush_paint_field", ext_buf, ext_bytes, ext_version,
+        &ext_meta_ptr, &ext_meta_bytes);
 
     if (registry_hit && ext_buf && ext_meta_bytes >= 7 * sizeof(float)) {
         // Pull grid geometry from the registry metadata (agreed POD layout:
@@ -410,7 +407,12 @@ void Hd_RUZINO_WetbrushVolume::Sync(
         }
     }
 
-    if (update_gpu_resources && gridResX > 0 && !paintField.empty()) {
+    // create_gpu_resources runs when either path needs a refresh: registry
+    // version bumped (zero-copy sim update) OR paintField primvar changed
+    // (bake fallback). The paintField.empty() check is intentionally NOT
+    // required — under zero-copy, paintField stays empty and Phase 1 reads
+    // the registry buffer directly.
+    if (update_gpu_resources && gridResX > 0) {
         create_gpu_resources(render_param);
     }
 

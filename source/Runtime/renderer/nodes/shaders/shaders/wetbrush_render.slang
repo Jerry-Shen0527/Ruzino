@@ -770,12 +770,37 @@ void VolumeIntersection()
     uint vol_id = instanceDescBuffer[instance_id].geometryID;
     VolumeDesc vd = volumeDescBuffer[vol_id];
     float tEnter, tExit;
-    if (intersectSlab(vd, tEnter, tExit)) {
-        VolumeHitAttributes attr;
-        attr.tEnter = tEnter;
-        attr.tExit = tExit;
-        ReportHit(tEnter, 0u, attr);
+    if (!intersectSlab(vd, tEnter, tExit))
+        return;
+
+    // Paper §6 first-cross, evaluated in the intersection stage: only report
+    // a hit if the ray segment actually crosses a paint cell (density above
+    // the surface threshold). Empty volume segments must NOT report —
+    // otherwise they swallow the ray (one TraceRay = one result) and the
+    // paint reads as drawn on the dome background instead of on the paper
+    // plane behind the volume. Marching the segment here mirrors what
+    // VolumeClosestHit's Phase 1 does; the cost is bounded by the slab
+    // depth (5 cells for the test scene).
+    float3 origin = WorldRayOrigin();
+    float3 dir = WorldRayDirection();
+    float step = vd.cellSize * 0.25;  // 1/4 cell, paper §6 cadence
+    float segLen = tExit - tEnter;
+    int maxSteps = 256;
+    int steps = min(maxSteps, int(ceil(segLen / step)));
+    float actualStep = segLen / float(max(1, steps));
+    for (int i = 0; i < steps; ++i) {
+        float t = tEnter + (float(i) + 0.5) * actualStep;
+        float3 p = origin + t * dir;
+        if (sampleDensity(vd, p) > kDensitySurface) {
+            VolumeHitAttributes attr;
+            attr.tEnter = tEnter;
+            attr.tExit = tExit;
+            ReportHit(tEnter, 0u, attr);
+            return;
+        }
     }
+    // No paint along this segment: do not report. Ray continues to the next
+    // hit (e.g. the paper plane behind the volume).
 }
 
 [shader("closesthit")]
@@ -830,9 +855,10 @@ void VolumeClosestHit(inout RayPayload payload, in VolumeHitAttributes attr)
             break;
         }
     }
-    // No paint along this ray segment: the AABB was hit but the ray passed
-    // through empty grid cells. Treat as a miss so RayGen shows the background
-    // (otherwise the whole grid AABB would render as an opaque black box).
+    // Defensive: VolumeIntersection now only reports when the segment crosses
+    // a paint cell, so tCross should always be found. Keep the guard so a
+    // future regression in the intersection shader can never re-introduce the
+    // "opaque black box" bug.
     if (tCross < 0.0) {
         payload.hit = false;
         payload.isVolume = false;
