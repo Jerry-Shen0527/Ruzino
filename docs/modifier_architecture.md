@@ -1,12 +1,22 @@
-# Modifier Architecture Design
+# Modifier Architecture
+
+> **实现状态**：本架构已落地。`write_geometry_as_over_spec()`、`GeomPayload::is_modifier_mode`、
+> `node_input_geometry` / `node_write_usd` 的 modifier 分支都已实现
+> （见 `source/Editor/geometry/usd_extension/usd_extension.cpp`、
+> `source/Editor/geometry_nodes/node_input_geometry.cpp`、`node_write_usd.cpp`）。
+> `animation.cpp` 里 `is_modifier_mode` 现在恒为 true（始终走 modifier 层）。
+> 本文 originally 是设计提案，下面保留原 "Current vs Target" 对比作为背景说明，
+> 但请以「Target 架构 = 当前实际架构」来理解。
 
 ## Overview
 
-This document describes how to transform the current geometry node system into a modifier-based architecture that leveraging USD's layer composition capabilities.
+This document describes the modifier-based architecture that leverages USD's layer composition
+capabilities for non-destructive geometry editing. The architecture is implemented; the
+"Current (Direct Write)" flow below describes the legacy behavior that has been superseded.
 
-## Current Architecture vs Target Architecture
+## Legacy vs Current Architecture
 
-### Current (Direct Write) Architecture
+### Legacy (Direct Write) Architecture — 已废弃
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                   Current Flow                                  │
@@ -24,7 +34,7 @@ This document describes how to transform the current geometry node system into a
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Target (Modifier Layer) Architecture
+### Current (Modifier Layer) Architecture — 已实现
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                   New Flow                                     │
@@ -73,12 +83,12 @@ struct ModifierStack {
 struct GeomPayload {
     // ... existing fields ...
     
-    // NEW: Modifier support
+    // Modifier support
     ModifierStack* modifier_stack;           // Active modifier stack for this prim
     int current_modifier_index;              // Which modifier in stack we executing
     pxr::SdfPath modifier_output_path;      // Where current modifier writes to
-    
-    // NEW: Layer management
+
+    // Layer management
     pxr::SdfPath modifier_layer_path;       // Path to modifier layer (e.g., session or external)
     bool is_modifier_mode;                 // true = modifier mode, false = direct write
  };
@@ -97,7 +107,7 @@ struct GeomPayload {
     pxr::UsdTimeCode current_time = pxr::UsdTimeCode(0);
     pxr::SdfPath prim_path;
     
-    // NEW: Modifier support
+    // Modifier support
     ModifierStack* modifier_stack = nullptr;
     int current_modifier_index = -1;
     pxr::SdfPath modifier_output_path;
@@ -158,7 +168,7 @@ NODE_DEF_CLOSE_SCOPE
 
 **File**: `source/Editor/geometry_nodes/node_write_usd.cpp`
 
-Current implementation writes directly to the prim. New implementation should support over spec mode:
+Current implementation writes directly to the prim. In modifier mode it writes as an over spec instead (see `node_write_usd.cpp`):
 
 ```cpp
 NODE_EXECUTION_FUNCTION(write_usd)

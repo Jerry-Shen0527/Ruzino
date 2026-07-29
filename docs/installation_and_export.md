@@ -16,11 +16,11 @@ This document describes how to install the Ruzino SDK and use it in external pro
 
 Before building and installing Ruzino, ensure you have:
 
-- CMake >= 3.20
+- CMake >= 3.28 (root `CMakeLists.txt` requires `cmake_minimum_required(VERSION 3.28)`)
 - Ninja build system (recommended)
 - C++20 compatible compiler (MSVC on Windows, Clang/GCC on Linux/macOS)
-- Python 3.8+
-- Vulkan SDK (for graphics)
+- Python 3.13 (required by the build, see `AGENTS.md`)
+- Vulkan SDK 1.3.296 (for graphics)
 
 ## Building and Installing
 
@@ -116,7 +116,7 @@ RuzinoInstall/
 Create a `CMakeLists.txt` in your project:
 
 ```cmake
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.28)
 project(MyProject LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -207,7 +207,7 @@ int main() {
 
 ```cmake
 # CMakeLists.txt
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.28)
 project(MyWindowApp LANGUAGES CXX)
 
 set(CMAKE_PREFIX_PATH "/path/to/RuzinoInstall")
@@ -263,7 +263,7 @@ This ensures:
 For developing Ruzino plugins, additional CMake modules are available:
 
 ```cmake
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.28)
 project(MyPlugin LANGUAGES CXX)
 
 set(CMAKE_PREFIX_PATH "/path/to/RuzinoInstall")

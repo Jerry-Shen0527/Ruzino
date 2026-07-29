@@ -1,5 +1,10 @@
 # ECS 场景管理架构
 
+> **实现状态说明**：ECS 框架本体（components / systems / StageListener 回调）已落地并可用。
+> 文中所有 **PhysX 相关内容（PhysicsSystem、SceneQuerySystem、PhysicsComponent）目前都是预留桩**，
+> 实现里全是 `// TODO:`，PhysX SDK 尚未真正接入。涉及 PhysX 的接口签名可参考，但不要当作可用功能。
+> EnTT 以源码形式内嵌在 `source/Core/rznode/ext/entt`，不是系统级依赖。
+
 ## 概述
 
 本项目已经完全重构为使用 EnTT ECS 框架管理场景。新架构提供了更灵活、模块化的方式来处理场景中的实体，同时保持了与现有 USD 工作流的兼容性。StageListener 已完全重构以避免循环依赖，并通过回调机制与 ECS 系统无缝集成。
@@ -15,7 +20,7 @@
 3. **TransformComponent** - 位置、旋转、缩放信息（支持 glm 变换矩阵）
 4. **GeometryComponent** - 包装现有的 Geometry 系统
 5. **MaterialComponent** - 材质引用
-6. **PhysicsComponent** - PhysX 物理属性（预留接口）
+6. **PhysicsComponent** - PhysX 物理属性（**预留接口，未实现**）
 7. **DirtyComponent** - 标记需要同步的 entity
 8. **Tag Components** - AnimatableTag, RenderableTag, SimulationTag
 
@@ -25,8 +30,8 @@
 
 1. **AnimationSystem** - 更新所有动画 entity，执行节点树逻辑
 2. **UsdSyncSystem** - 双向同步 ECS 和 USD，支持增量更新
-3. **PhysicsSystem** - 物理模拟（预留 PhysX 集成接口）
-4. **SceneQuerySystem** - 场景查询（raycast, overlap 等，预留接口）
+3. **PhysicsSystem** - 物理模拟（**预留 PhysX 集成接口，目前是空桩**）
+4. **SceneQuerySystem** - 场景查询（raycast, overlap 等，**预留接口，目前是空桩**）
 
 ### StageListener (重构后)
 
@@ -59,9 +64,9 @@
 - 数据局部性优化（所有组件连续存储）
 - 支持多线程更新（通过 entt groups）
 
-### 3. 为 PhysX 集成做好准备
-- PhysicsComponent 和 PhysicsSystem 已定义接口
-- SceneQuerySystem 预留 raycast/overlap 接口
+### 3. 为 PhysX 集成做好准备（尚未实现）
+- PhysicsComponent 和 PhysicsSystem 已定义接口（**实现为空桩**）
+- SceneQuerySystem 预留 raycast/overlap 接口（**实现为空桩**）
 - 变换同步机制已就绪
 
 ## 使用示例
@@ -82,14 +87,14 @@ anim.node_tree_executor = create_node_tree_executor(exec_desc);
 stage->get_registry().emplace<ecs::AnimatableTag>(entity);
 ```
 
-### 2. 添加物理组件（为 PhysX 预留）
+### 2. 添加物理组件（为 PhysX 预留，目前无实际效果）
 
 ```cpp
-auto& physics = stage->get_registry().emplace<ecs::PhysicsComponent>(entity);
+auto& physics = registry.emplace<ecs::PhysicsComponent>(entity);
 physics.type = ecs::PhysicsComponent::Type::Dynamic;
 physics.mass = 10.0f;
 
-// 将来可以添加到物理系统
+// ⚠️ PhysX 尚未集成，下面这行当前是空桩，不会产生物理效果
 stage->get_physics_system()->add_physics_actor(stage->get_registry(), entity);
 ```
 
@@ -165,9 +170,9 @@ void Stage::tick(float delta_time) {
 2. 旧的 `animatable_prims` map 仍然存在并工作
 3. 可以逐步将现有代码迁移到 ECS 架构
 
-## PhysX 集成准备
+## PhysX 集成准备（尚未实现）
 
-系统已经预留了 PhysX 集成的接口：
+系统已经预留了 PhysX 集成的接口，但 `PhysicsSystem` / `SceneQuerySystem` 的方法体目前全是 `// TODO:` 空桩，PhysX SDK 还没有真正接入。下面的接口签名是设计目标，不代表当前能跑：
 
 ```cpp
 class PhysicsSystem {
@@ -191,9 +196,9 @@ class SceneQuerySystem {
 };
 ```
 
-## 下一步
+## 下一步（待办，非现状）
 
-1. **集成 PhysX**:
+1. **集成 PhysX**（当前未开始，接口已预留）:
    - 在 `PhysicsSystem::initialize()` 中初始化 PhysX SDK
    - 实现 `add_physics_actor()` 创建 PxRigidActor
    - 在 `update()` 中同步 PhysX 变换到 TransformComponent
