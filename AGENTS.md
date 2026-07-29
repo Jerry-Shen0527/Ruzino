@@ -21,19 +21,6 @@ It is a quick reference for AI agents; see `INSTALL.md` for the full installatio
 | `scripts/install_linux_deps.sh` | apt install Linux system dev packages |
 | `scripts/format_and_commit_manager.ps1` | PowerShell launcher for the above (double-click friendly) |
 
-### Windows quick-build `.bat` scripts (repo root)
-
-All `.bat` scripts load the MSVC environment (`vcvars64.bat`) themselves, then run `ninja` in the preconfigured `build/` directory. Prefer these for incremental builds — no PowerShell, no reconfigure step.
-
-| Script | ninja target |
-|--------|--------------|
-| `build.bat` | passes args through; no args = full build (`ninja`) |
-| `build_ruzino.bat` | `Ruzino` (main app) |
-| `gen_json.bat` | `geometry_nodes_json_target` |
-| `reconfig.bat` | re-run CMake configure in `build/` (no rebuild) |
-
-All of them require an existing `build/build.ninja`. Each prints `BUILDEXIT=<code>` (`reconfig.bat` → `CONFIGEXIT`, `gen_json.bat` → `JSONEXIT`) so the build result is machine-checkable. For any other single target, use `build.bat <target>` (e.g. `build.bat node_brush_capture`).
-
 ## Prerequisites
 
 - CMake (>= 3.31.5), Ninja
@@ -62,10 +49,10 @@ pwsh -File scripts/build_devshell.ps1            # incremental
 pwsh -File scripts/build_devshell.ps1 -Reconfigure # wipe + reconfigure
 ```
 
-For single-target incremental builds, the repo-root `.bat` scripts (see "Windows quick-build `.bat` scripts" above) are faster and self-contained — they set up the MSVC environment themselves and skip the reconfigure step. Example:
-```cmd
-build.bat                 :: full incremental build (ninja, no args)
-build.bat node_brush_capture   :: node_brush_capture only
+For single-target incremental builds, pass the ninja target to the same script via `-Target`:
+```powershell
+pwsh -File scripts/build_devshell.ps1 -Target Ruzino              # main app only
+pwsh -File scripts/build_devshell.ps1 -Target node_brush_capture  # one node
 ```
 
 ### Fresh configure
