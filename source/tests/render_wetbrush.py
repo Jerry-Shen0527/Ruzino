@@ -55,8 +55,14 @@ OUTPUT_DIR = BIN / "wetbrush_sequence"
 # Sim grid parameters — MUST match what build_sim_graph configures on the
 # deposit node, because the marker scene's gridResX/Y/Z + cellSize primvars
 # describe the SAME grid the sim packs into the registry buffer.
-SIM_RES = 4096
-SIM_RES_Z = 64
+#
+# Paper §7 uses 4096×4096×64 (the Group A buffers alone need ~112 GB VRAM at
+# that resolution). Override for a smaller GPU with the WETBRUSH_RES env var,
+# e.g. on a 12 GB card:
+#   WETBRUSH_RES=1024 python ../../source/tests/render_wetbrush_cross.py
+# 1024²×64 fits in ~7 GB; 2048²×64 needs ~28 GB.
+SIM_RES = int(os.environ.get("WETBRUSH_RES", "4096"))
+SIM_RES_Z = int(os.environ.get("WETBRUSH_RES_Z", "64"))
 SIM_PAPER = 1.0
 CELL_SZ = SIM_PAPER / SIM_RES
 

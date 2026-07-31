@@ -11,7 +11,8 @@
 1. **仿真**：bristle-level 笔刷物理（§4.1）+ grid-based 液体仿真（§4.2）+ hybrid
    grid-particle 表示（§5）+ bristle-particle 液体转移（§5.1）。
 2. **渲染**：paper §6 的 raycast 体积渲染（first-cross 表面检测 + penetration blend
-   + ambient occlusion），paint 显示为画在纸上的 3D 笔触。
+   + ambient occlusion），paint 显示为画在纸上的 3D 笔触（paint 在 Z 方向有完整
+   `res_z` 层体积，非薄片；见 §4.2 grid）。
 3. **验证**：双色交叉笔画（wet-in-wet mixing）渲染成动画序列，确认颜色混合、
    覆盖、干燥行为正确。
 
@@ -74,7 +75,24 @@ canvas_commit（paper footnote 1 拒绝 2D height-field）。
   (Eq.16) 缺 cell-volume 因子 → 单粒子注入 158K density。修复：Eq.15/16 都乘
   `dV = cell_size² × cell_z`。
 
-### 3. §6 体积渲染（committed `06422279`）
+### 3. §4.1 bristle-level 物理 + §4.2 真 3D volume grid
+
+两项都是 paper-faithful 实现（之前误记为"遗留目标"，已澄清）：
+
+- **bristle 物理**（`bristle_simulate.slang`，329 行）：完整实现 paper §4.1。
+  - Eq.2 非惯性 brush frame 积分，4 个惯性项全在：直线加速 `a_B`、离心 `ω×(ω×x_B)`、
+    Euler 角加速 `ω̇×x_B`、Coriolis `-2ω×v_B`，按 `dv/dt = a_i − β_B·(四项之和)`。
+  - PBD 约束（Müller et al. 2007）：不可拉伸（双向距离）+ 弯曲 + rest-shape restore +
+    canvas collision + pressure splay（Fig 3a 扇形展开）。
+  - 每 bristle 是 M 顶点链（`BRV_STRIDE`），根节点用 Vogel/golden-angle spiral 均匀铺
+    满 brush footprint；bristle 感受 grid-liquid drag（§4.1 要求）。
+- **真 3D volume**（`node_brush_wb_deposit.cpp:140-154`）：grid 是 `res×res×res_z`
+  （如 1024×1024×64），**64 层 Z**，`height = paper_size × res_z / res`，
+  `canvas_z` 是 volume 的**底部**（`brush_sim_common.hpp:241-243` "paint-volume floor"）。
+  paint 在 Z 方向有完整体积，不是薄片。`bristle_simulate` 的 `if (p.z < canvas_z)` 只是
+  挡 bristle 顶点不穿透纸面，不钳制 paint 的 Z 分布。
+
+### 4. §6 体积渲染（committed `06422279`）
 
 `Hd_RUZINO_WetbrushVolume` rprim + `wetbrush_render` 节点（path_tracing + 2 个
 procedural volume hit group）。
@@ -85,19 +103,19 @@ procedural volume hit group）。
 - `VolumeIntersection`：只在射线段确实穿过 paint cell 时 ReportHit；空 volume 段
   不报，射线继续到 Paper mesh（否则 paint 看起来画在背景上而非纸上）。
 
-### 4. 圆形跳变 artifact 消除（committed `790c0092`）
+### 5. 圆形跳变 artifact 消除（committed `790c0092`）
 
 笔刷移走时圆形边缘颜色跳变。根因：grid_to_particle (Eq.15) 只从 emit cell 减
 density，违反 paper §5.2 "c can be any cell near new particles"。修复：density
 减法扩散到 3×3×3 邻域，按 W kernel。
 
-### 5. paper §5.2 守恒清理
+### 6. paper §5.2 守恒清理
 
 移除多处偏离 paper 的 hack：0.1 mass 缩放、0.5 retention、mass cap、velocity 阻尼、
 bristle_psi 进 is_solid 判定（paper §4.2 只用 dryness）。mode1 window mapping bug
 修复。
 
-### 6. 零拷贝 sim→render（SharedGPUBufferRegistry）
+### 7. 零拷贝 sim→render（SharedGPUBufferRegistry）
 
 **问题**：bake 回路（commit readback 全 grid → Python 光栅化成 dense render grid
 → USD primvar → rprim 读 primvar 建 buffer）在 4096 grid 下 RAM 爆炸（render grid
@@ -116,13 +134,13 @@ bristle_psi 进 is_solid 判定（paper §4.2 只用 dryness）。mode1 window m
   pack dispatch 后做 UAV→ShaderResource state transition（`setPermanentBufferState`
   + `commitBarriers` + `waitForIdle`）。
 
-### 7. Interleaved sim+render（真 per-frame 动画）
+### 8. Interleaved sim+render（真 per-frame 动画）
 
 `render_wetbrush.py` 改为 interleaved：每帧 `tick(dt)` → `render(t)` × SPP → save PNG。
 sim_graph 引用保留到循环结束（否则 GPU buffer 被释放，registry 悬空）。删除了
 bake_render_scene（不再需要）。
 
-### 8. accumulate 跨帧叠加修复
+### 9. accumulate 跨帧叠加修复
 
 **问题**：interleaved 下已画位置随时间变深（拖影）。根因：`accumulate` 渲染节点
 的 reset 触发只看 material/light/size dirty，漏了 geometry content change —— sim 每
@@ -139,7 +157,7 @@ bake_render_scene（不再需要）。
 
 Python loop 里两个机制都触发（belt-and-suspenders）。
 
-### 9. Group B/C buffer 改窗口大小
+### 10. Group B/C buffer 改窗口大小
 
 **问题**：4096 grid 下 Group A（26 个全 grid buffer）占 ~112GB 显存，Group B/C（14 个
 bristle/particle accumulation buffer）原本也是全 grid，额外浪费。
@@ -149,13 +167,13 @@ Group B/C buffer 改成窗口大小分配（128²×res_z = 1M cells，vs 全 gri
 4 个 shader（bristle_rasterize / particle_rasterize / bristle_merge /
 bristle_liquid_transfer）的索引从 global 改为 window-local。
 
-### 10. 颗粒感改善
+### 11. 颗粒感改善
 
 bristle 单点 XY splat + 1024 grid 下 footprint 稀疏 → paint 呈颗粒状。paper §6 说
 brush 含 40-600 bristles，平滑来自密集采样。NUM_BRISTLES 80 → 600（paper 上限），
 纯参数、paper-faithful，颗粒感显著减弱。
 
-### 11. 渲染观感调整
+### 12. 渲染观感调整
 
 - **纸面**：整张 canvas（±paper_size/2），不是笔触 bbox 外一圈 margin。配合
   VolumeIntersection 的空段透明，paint 画在纸上。
@@ -199,12 +217,13 @@ brush 含 40-600 bristles，平滑来自密集采样。NUM_BRISTLES 80 → 600�
 
 - **Group A 全 grid buffer 稀疏化**：26 个核心 sim field 在 4096 下要 112GB。需要
   sparse / block-allocated grid（只为有 paint 的区域分配）。这是真正上 4096（paper
-  分辨率）的前提。当前只能跑 1024（7GB），2048 需 28GB。
-- **真 bristle brush 接入**：当前用 `mock_point_emitter` + bristle_simulate，不是
-  真正的 brush capture（鼠标/压感输入）。真 brush 的 bristle 物理形变会产生更自然的
-  footprint 分散。
-- **paint 3D 厚度**：当前 mock brush 把 paint 压在 Z=0 单层（canvas collision 钳制），
-  是薄片不是 3D volume。真 brush 会把 paint 压进 volume 有厚度（paper §4.2）。
+  分辨率）的前提。12 GB 卡当前用 `WETBRUSH_RES=1024` 跑（~7 GB），2048 需 28 GB。
+- **压感输入接入**：`node_brush_capture` 已能捕获鼠标轨迹，但 `node_brush_input` 的
+  BrushPressure 是 socket 常量（默认 1.0），无 Wintab / Windows Ink / pen pressure
+  输入。压感→bristle 压扁→容量 Eq.12→注入量这条链目前断开。接入真压感会让 footprint
+  随力度动态变化。
+  （注：bristle 物理本身已 faithful 实现，见 `bristle_simulate.slang` 的 Eq.2 非惯性
+  brush frame 积分 + PBD 约束 + canvas collision + pressure splay。）
 
 ### 中优先级
 
@@ -258,19 +277,26 @@ cd build && ninja node_brush_wb_commit.dll
 cd Binaries/Release
 python ../../source/tests/render_wetbrush_cross.py
 # 输出: Binaries/Release/wetbrush_cross_sequence/frame_XXXX.png
+#
+# 显存不够跑 4096（默认，需 ~112 GB）时用环境变量降分辨率：
+# WETBRUSH_RES=1024 python ../../source/tests/render_wetbrush_cross.py   # ~7 GB
+# WETBRUSH_RES=2048 python ../../source/tests/render_wetbrush_cross.py   # ~28 GB
+# （Python 须 3.13；PATH 里的默认 python 若是 3.12 会报
+#  "Module use of python313.dll conflicts"——用 scoop 的 python313 或
+#  Binaries/Release/python.exe）
 ```
 
 Shaders 运行时编译（非 build 时）。编辑 `.slang` 后无需 rebuild，但 renderer 加载的
 是 deployed copy（如 `Binaries/Release/usd/hd_RUZINO/resources/shaders/`）。
 
-分辨率/参数在 `render_wetbrush.py` 顶部（SIM_RES, SIM_RES_Z, SPP）和
-`brush_sim_common.hpp`（NUM_BRISTLES）。
+分辨率/参数在 `render_wetbrush.py` 顶部（SIM_RES 默认 4096，可用 `WETBRUSH_RES` 环境变量
+覆盖；SIM_RES_Z / SPP 同理）和 `brush_sim_common.hpp`（NUM_BRISTLES）。
 
 ## 参数对照（paper Table 1 vs 当前）
 
 | 参数 | Paper | 当前 | 备注 |
 |---|---|---|---|
-| Grid 分辨率 | 4096×4096×64 | 1024×1024×64 | 显存限制，需稀疏化才能上 4096 |
+| Grid 分辨率 | 4096×4096×64 | 默认 4096（env 可降：1024 ~7GB / 2048 ~28GB） | 全 grid 分配，需稀疏化才能在消费级卡跑满 4096 |
 | D₀ (grid→particle range) | 1 cm 固定 | brush_radius×3.0 | 单位换算，经批准 |
 | D₁ (bristle adhesion) | 0.3 cm | brush_radius×0.9 | 同上 |
 | γ (FLIP/PIC blend) | 0.8 | 0.8 | ✓ |
