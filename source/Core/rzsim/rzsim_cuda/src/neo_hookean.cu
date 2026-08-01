@@ -8,6 +8,7 @@
 #include <thrust/transform_reduce.h>
 #include <thrust/tuple.h>
 #include <thrust/unique.h>
+#include <cuda/std/functional>  // ::cuda::std::plus (replaces deprecated thrust::plus)
 
 #include <Eigen/Dense>
 #include <RHI/cuda.hpp>
@@ -1434,7 +1435,7 @@ float compute_vector_norm_nh_gpu(cuda::CUDALinearBufferHandle vec, int size)
         d_vec + size,
         square_op_nh(),
         0.0f,
-        thrust::plus<float>());
+        ::cuda::std::plus<float>());
 
     return sqrtf(sum_sq);
 }

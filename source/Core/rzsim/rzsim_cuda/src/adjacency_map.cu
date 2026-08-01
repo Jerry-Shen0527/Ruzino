@@ -6,6 +6,7 @@
 #include <thrust/sort.h>
 #include <thrust/tuple.h>
 #include <thrust/unique.h>
+#include <cuda/std/functional>  // ::cuda::std::plus (replaces deprecated thrust::plus)
 
 #include <RHI/cuda.hpp>
 #include <RHI/rhi.hpp>
@@ -665,7 +666,7 @@ compute_volume_adjacency_gpu(
         face_counts.begin(),
         face_counts.end(),
         0u,
-        thrust::plus<unsigned>());
+        ::cuda::std::plus<unsigned>());
 
     unsigned total_elements = total_face_counts / 4;
 

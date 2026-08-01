@@ -8,6 +8,7 @@
 #include <thrust/transform_reduce.h>
 #include <thrust/tuple.h>
 #include <thrust/unique.h>
+#include <cuda/std/functional>  // ::cuda::std::plus (replaces deprecated thrust::plus)
 
 #include <Eigen/Dense>
 #include <RHI/cuda.hpp>
@@ -295,7 +296,7 @@ CSRStructure build_hessian_structure_gpu(
             return count;
         },
         0,
-        thrust::plus<int>());
+        ::cuda::std::plus<int>());
 
     int num_mass_entries = n;
     int num_spring_entries = num_edges * 36;
@@ -779,7 +780,7 @@ float compute_vector_norm_gpu(cuda::CUDALinearBufferHandle vec, int size)
         d_vec + size,
         square_op(),
         0.0f,
-        thrust::plus<float>());
+        ::cuda::std::plus<float>());
 
     return sqrtf(sum_sq);
 }
