@@ -507,14 +507,61 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
             advect_scalar(field->wetness, field->wetness_tmp);
             advect_scalar(field->oil_density, field->oil_density_tmp);
 
-            // NOTE: no scalar diffusion step here. Paper §4.2/§5.1 line 209
-            // applies viscosity to the VELOCITY field only (done in
-            // fluid_damp_dry.slang as per-cell drag), NOT to density/color/
-            // wetness scalars. A previous Jacobi-mode-0 diffusion of the
-            // scalars (alpha = dt*diffusion*N² ≈ 26 at res 512) was eroding
-            // stroke edges below the render threshold every frame, which
-            // looked like the finished stroke contracting/shrinking over
-            // time. Removing it matches the paper and eliminates the shrink.
+            // Scalar diffusion of the COLOR channels only (paper §4.2: "we
+            // diffuse the density and color fields"). Diffusing the pigment
+            // smooths the per-cell RYB splat noise that showed as speckle/
+            // mottling on freshly painted strokes — this is the part that
+            // fixes the blue-stroke color mottling.
+            //
+            // DENSITY is deliberately NOT diffused. The density field is the
+            // paint MASS, and it is injected only where bristles actually
+            // touch the canvas (×10 in bristle_rasterize). Diffusing it
+            // pushes that high-density front into neighboring cells whose
+            // color was never injected (color_r/y/b are still 0 there).
+            // Those cells then cross the render surface threshold
+            // (kDensitySurface = 0.002) as "high density + zero pigment",
+            // which renders as white/gray — and because the brush keeps
+            // re-injecting ×10 at the tip, the diffusive front never stops
+            // advancing: the visible "white paint infinitely flowing out /
+            // continuously widening past where the brush already moved"
+            // artifact. Keeping density where it was deposited locks the
+            // stroke width to the brush footprint; smoothness there comes
+            // from the W_smooth_3d splat at injection + semi-Lagrangian
+            // advect re-sampling, neither of which advances mass into
+            // untouched cells.
+            //
+            // alpha = dt·diffusion·N² (≈1.7 at res 4096 for the default
+            // diffusion 1e-4). The window Neumann BC (fluid_jacobi.slang)
+            // makes this a closed domain, so the diffused color mass is
+            // conserved within the active window.
+            fluid_cb.jacobi_mode = 0;
+            fluid_cb.jacobi_alpha =
+                sub_dt * diffusion *
+                static_cast<float>(field->grid_res * field->grid_res);
+            {
+                nvrhi::BufferHandle dcb;
+                Ruzino::brush_upload_cb(
+                    rc, device, &fluid_cb, sizeof(fluid_cb), "wb_diff_cb", dcb);
+                auto diffuse_scalar = [&](nvrhi::BufferHandle& f,
+                                          nvrhi::BufferHandle& tmp) {
+                    Ruzino::brush_dispatch(
+                        rc,
+                        field->jacobi_program,
+                        { { "field_in", f },
+                          { "rhs", f },
+                          { "wetness", field->wetness },
+                          { "density", field->density } },
+                        { { "field_out", tmp } },
+                        dcb,
+                        window_total);
+                    std::swap(f, tmp);
+                };
+                diffuse_scalar(field->color_r, field->color_r_tmp);
+                diffuse_scalar(field->color_y, field->color_y_tmp);
+                diffuse_scalar(field->color_b, field->color_b_tmp);
+                diffuse_scalar(field->oil_density, field->oil_density_tmp);
+                rc.destroy(dcb);
+            }
 
             // Damp + dry. Dispatched over the FULL grid (not just the active
             // window) so that paint left behind by a moving brush still dries
@@ -645,9 +692,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                 0,
                 field->density,
                 0,
-                static_cast<size_t>(field->grid_res) *
-                    field->grid_res_z * field->grid_res *
-                    sizeof(float));
+                static_cast<size_t>(field->grid_res) * field->grid_res_z *
+                    field->grid_res * sizeof(float));
             seed_cmd->close();
             device->executeCommandList(seed_cmd);
             device->waitForIdle();

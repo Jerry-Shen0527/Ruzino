@@ -386,11 +386,11 @@ struct WetbrushSimState {
     // --- Bristle chain state (spring positions + samples + liquid) ---
     // NUM_BRISTLES: paper §6 says brushes contain "40 to 600 bristles". 80 was
     // the lower end and left the XY footprint sparsely sampled at 1024 grid
-    // (footprint ~20 cells, 80 roots → visible grain in the rasterized density).
-    // 200 helped but close-up views still show grain. Paper's own smoothness
-    // source is dense bristle sampling (up to 600×128 = 76800 samples), so use
-    // the paper's upper bound — fully paper-faithful, no XY splat kernel (which
-    // the paper doesn't specify).
+    // (footprint ~20 cells, 80 roots → visible grain in the rasterized
+    // density). 200 helped but close-up views still show grain. Paper's own
+    // smoothness source is dense bristle sampling (up to 600×128 = 76800
+    // samples), so use the paper's upper bound — fully paper-faithful, no XY
+    // splat kernel (which the paper doesn't specify).
     static constexpr int NUM_BRISTLES = 600;
     static constexpr int VERTS_PER_BRISTLE = 10;
     static constexpr int SAMPLES_PER_BRISTLE = 128;
@@ -418,7 +418,13 @@ struct WetbrushSimState {
     nvrhi::BufferHandle bristle_color_b;
 
     // --- FLIP/PIC particle buffers ---
-    static constexpr int MAX_PARTICLES = 262144;
+    // Paper §4.3/§7: "Our system needs 200K to 1M particles" / the paper's
+    // example runs 210K. The old 262144 cap was below the worst case here:
+    // grid_to_particle emits 27 stratified candidates per in-window cell
+    // (paper §5.2), which at ~4k new cells/frame means ~110k/frame — the old
+    // pool wrapped every ~2.4 frames, overwriting live particles and losing
+    // the density they had absorbed (speckled, residual-density strokes).
+    static constexpr int MAX_PARTICLES = 1000000;
 
     nvrhi::BufferHandle ptcl_pos;
     nvrhi::BufferHandle ptcl_vel;
@@ -440,11 +446,13 @@ struct WetbrushSimState {
     nvrhi::BufferHandle ptcl_color_b;
     nvrhi::BufferHandle ptcl_alive_b;
 
-    // --- Float4 packed paint field (density,r,g,b interleaved). Produced by
-    // the pack_float4 shader each frame in the commit node, registered into
-    // SharedGPUBufferRegistry for zero-copy render consumption. Global grid
-    // sized (res³). ---
+    // --- Float4 packed paint field (density,r,g,b interleaved) + packed oil
+    // density (float). Produced by the pack_float4 shader each frame in the
+    // commit node, registered into SharedGPUBufferRegistry for zero-copy
+    // render consumption (paper §6 penetration distance needs oil density).
+    // Global grid sized. ---
     nvrhi::BufferHandle packed_paint;
+    nvrhi::BufferHandle packed_oil;
     ProgramHandle pack_program;
 
     // --- Compiled shader programs (lazily built on first use; persist so we
@@ -484,7 +492,14 @@ struct WetbrushSimState {
     float grid_center_z = 0.0f;
     bool center_initialized = false;
 
-    static constexpr int WIN_ALLOC_XY = 128;
+    // Active-window XY size. Must be >= the brush footprint DIAMETER in
+    // cells: at res=4096 with brush_radius 0.02 on paper 1.0 the footprint
+    // is ~164 cells across, so a 128 window CLIPPED the outer ~39% of
+    // bristles (their samples were skipped in rasterize), squaring off the
+    // footprint and wobbling the stroke edge as the window origin
+    // re-quantized per frame. 256²×res_z × 14 window buffers ≈ 235 MB at
+    // res_z=64 — fine on consumer cards.
+    static constexpr int WIN_ALLOC_XY = 256;
     int win_alloc_z = 0;
     int win_origin_x = 0;
     int win_origin_y = 0;
@@ -565,6 +580,7 @@ struct WetbrushSimState {
             release(ptcl_color_b);
             release(ptcl_alive_b);
             release(packed_paint);
+            release(packed_oil);
             return;
         }
 
@@ -634,6 +650,7 @@ struct WetbrushSimState {
         destroy_buf(ptcl_color_b);
         destroy_buf(ptcl_alive_b);
         destroy_buf(packed_paint);
+        destroy_buf(packed_oil);
 
         auto destroy_prog = [&](ProgramHandle& h) {
             if (h) {

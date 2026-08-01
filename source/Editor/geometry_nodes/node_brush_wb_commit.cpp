@@ -132,8 +132,10 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
             { { "density", field->density },
               { "color_r", field->color_r },
               { "color_y", field->color_y },
-              { "color_b", field->color_b } },
-            { { "packed_out", field->packed_paint } },
+              { "color_b", field->color_b },
+              { "oil_density", field->oil_density } },
+            { { "packed_out", field->packed_paint },
+              { "packed_oil", field->packed_oil } },
             pack_cb_buf,
             grid_n3d);
         rc.destroy(pack_cb_buf);
@@ -142,18 +144,21 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
         // only enqueues the compute work; without this flush the registry
         // would hand the renderer a buffer whose contents are still being
         // written by the GPU. The setPermanentBufferState + commitBarriers
-        // pair transitions packed_paint from its UnorderedAccess initial state
-        // (set at allocation, keepInitialState=true keeps it tracked there
-        // after each sim command list) into ShaderResource, which is the state
-        // the render rprim's RawBuffer_SRV expects. waitForIdle then drains
-        // the GPU so the interleaved test architecture (sim tick → render
-        // frame) has implicit synchronization without double-buffering.
+        // pair transitions packed_paint/packed_oil from their UnorderedAccess
+        // initial state (set at allocation, keepInitialState=true keeps them
+        // tracked there after each sim command list) into ShaderResource,
+        // which is the state the render rprim's RawBuffer_SRV expects.
+        // waitForIdle then drains the GPU so the interleaved test architecture
+        // (sim tick → render frame) has implicit synchronization without
+        // double-buffering.
         {
             auto flush_cmd = rc.create(CommandListDesc{});
             flush_cmd->open();
             flush_cmd->setPermanentBufferState(
                 field->packed_paint.Get(),
                 nvrhi::ResourceStates::ShaderResource);
+            flush_cmd->setPermanentBufferState(
+                field->packed_oil.Get(), nvrhi::ResourceStates::ShaderResource);
             flush_cmd->commitBarriers();
             flush_cmd->close();
             device->executeCommandList(flush_cmd);
@@ -183,7 +188,17 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
             "wetbrush_paint_field",
             field->packed_paint,
             static_cast<size_t>(grid_n3d) * sizeof(float) * 4,
-            &meta, sizeof(meta));
+            &meta,
+            sizeof(meta));
+
+        // Second registry entry: per-cell oil density (paper §6 penetration
+        // distance). Same grid geometry — reuse the PaintFieldMeta blob.
+        Ruzino::SharedGPUBufferRegistry::get().register_buffer(
+            "wetbrush_oil_field",
+            field->packed_oil,
+            static_cast<size_t>(grid_n3d) * sizeof(float),
+            &meta,
+            sizeof(meta));
     }
 
     // ======================================================================
@@ -313,6 +328,16 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
     params.set_output("Particle Count", ptcl_count);
     params.set_output("Total Particle Mass", ptcl_mass);
 
+    // DIAGNOSTIC: per-frame conservation stats (remove after debugging).
+    spdlog::info(
+        "wb_diag density={:.4f} color_b={:.4f} particles={} mean_div={:.6f} "
+        "max_div={:.6f}",
+        tot_density,
+        tot_b,
+        ptcl_count,
+        mean_div,
+        max_div);
+
     // ======================================================================
     // OUTPUT: "Paint Particles" — active FLIP/PIC particles with positions,
     // colors (RYB→RGB) and mass as width. Useful for debugging particle
@@ -330,7 +355,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
             float r_ryb = ptcl_colors[i * 4 + 0];
             float y_ryb = ptcl_colors[i * 4 + 1];
             float b_ryb = ptcl_colors[i * 4 + 2];
-            float mass  = ptcl_colors[i * 4 + 3];
+            float mass = ptcl_colors[i * 4 + 3];
             float rm = 1 - r_ryb, ym = 1 - y_ryb, bm = 1 - b_ryb;
             glm::vec3 rgb =
                 rm * ym * bm * glm::vec3(1, 1, 1) +

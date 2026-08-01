@@ -173,7 +173,9 @@ struct VolumeDesc {
     float3 gridMin;      ///< World-space min corner of the grid (voxel 0,0,0).
     float3 boundsMin;    ///< World-space grid AABB min (for intersection).
     float3 boundsMax;    ///< World-space grid AABB max.
-    uint padding;        ///< Keep the struct 16-byte aligned for the pool.
+    int oilIndex;        ///< Index into t_BindlessBuffers for the per-cell oil
+                         ///< density (paper §6 penetration distance); -1 when
+                         ///< no oil buffer is bound (primvar fallback path).
 };
 
 enum class MeshFlags : uint32_t {

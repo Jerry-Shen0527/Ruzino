@@ -46,8 +46,9 @@
 ### 关键设计决策
 
 - **全局持久 grid + 局部计算窗口**（paper §4.2）：一个覆盖整张 canvas 的大 3D grid
-  是 paint 的持久存储；每帧只在笔刷周围的 active window (128×128×res_z) 内计算。
-  窗口只是 dispatch 范围，不 commit/clear。
+  是 paint 的持久存储；每帧只在笔刷周围的 active window (256×256×res_z) 内计算。
+  窗口只是 dispatch 范围，不 commit/clear。窗口 ≥ 笔刷 footprint 直径（4096 下
+  164 格），128 会裁掉外圈 bristle。
 - **零拷贝 sim→render**（详见下文）：sim 的 `packed_paint` GPU buffer 通过
   `SharedGPUBufferRegistry` 直接给 render rprim 用，无 CPU readback / USD primvar
   往返。这是支撑高分辨率（4096）的关键 —— bake 回路在 4096 下 RAM 爆炸。
@@ -173,6 +174,10 @@ bristle 单点 XY splat + 1024 grid 下 footprint 稀疏 → paint 呈颗粒状�
 brush 含 40-600 bristles，平滑来自密集采样。NUM_BRISTLES 80 → 600（paper 上限），
 纯参数、paper-faithful，颗粒感显著减弱。
 
+后续（详见 §13）：bristle→grid 注入改用 paper 自己的 `W_smooth_3d` 3×3×3 核 +
+细步进，彻底消除颗粒/空洞。600 bristles 仍是平滑密度的基础（每根 bristle 一个 XY
+列，采样沿 Z 铺开）。
+
 ### 12. 渲染观感调整
 
 - **纸面**：整张 canvas（±paper_size/2），不是笔触 bbox 外一圈 margin。配合
@@ -182,6 +187,30 @@ brush 含 40-600 bristles，平滑来自密集采样。NUM_BRISTLES 80 → 600�
 - **相机**：tight framing 笔触区域（frame_size≈0.35），3/4 俯视角。
 - **gridMin Z 对齐**：marker scene 的 gridMin Z 必须和 sim registry metadata 一致
   （canvas_z=0），否则 paint 渲染位置偏移，产生光晕 + 悬浮。
+
+### 13. 平滑度修复 + paper-faithful 渲染补全
+
+- **bristle→grid 注入用 paper 的 W kernel**（`bristle_rasterize.slang`）：单格 XY
+  splat 改为 `W_smooth_3d`（h=1.5 格，与 §5.2 Eq.15/16 粒子注入同一个核）3×3×3
+  归一化分摊。之前每帧只有 600 个 XY 格被画（每 bristle 一列，采样全在 Z 上），
+  密度场是散点 → 表面凸点。现在每个采样平滑铺开，密度场连续。
+- **细步进**（`node_brush_wb_deposit.cpp`）：`n_sub` 阈值从"1 个笔刷直径"改为
+  "~2 格"（cap 128）——paper §Limitations 明说平滑依赖 "densely sampled stroke
+  path"（论文实时负担不起，我们是离线渲染）。1024 下每帧 ~11 子步，消除了相邻帧
+  间 20-41 格的斑马纹空档。
+- **active window 256²**：`WIN_ALLOC_XY` 128→256。4096 下笔刷 footprint 直径 164
+  格 > 128 窗口 → 外侧 ~39% bristle 采样被裁掉（footprint 被砍成方形 + 窗口量化
+  跳动）。256²×res_z×14 buffer ≈ 235MB，消费级卡可接受。
+- **渲染 RYB→RGB**（`wetbrush_render.slang` + `volume_intersection.slang`）：混色
+  blend 出的颜料是 RYB 空间，直接当 RGB 辐射度输出是错的（纯黄 (0,1,0) 会显示成
+  绿、混合色全偏）。`ryb_to_rgb`（Gossett & Chen 2004）转换后再输出。
+- **§6 oil_density 穿透距离**：paper "we use the oil density to calculate a
+  penetration distance"——pack_float4 新增 `packed_oil` 通道（第二个 registry key
+  `wetbrush_oil_field`，rprim 绑定第二个 RawBuffer_SRV，`VolumeDesc.oilIndex`），
+  渲染端 `penDepth = max(cell, oil×cell×8)`（油多→透明→穿透深→混合更多下层颜料）。
+  无 oil buffer（primvar fallback）时回退 density 驱动。
+- **mock 交叉笔触用真 RYB 黄**：`(1,1,0)` 在 RYB 里是橙色不是黄色，与蓝混出脏灰。
+  改 `(0,1,0)`（paper Fig 11c 黄+蓝→绿验证真正成立）。
 
 ## 关键经验教训
 
@@ -232,8 +261,10 @@ brush 含 40-600 bristles，平滑来自密集采样。NUM_BRISTLES 80 → 600�
 - **生产级 threaded sim/render 同步**：当前 Python sequential + waitForIdle 提供隐式
   同步，无并发。真多线程 sim/render 需要 double-buffering 或 GPU fence（registry 单
   buffer 帧间竞争）。
-- **XY splat kernel（如 600 bristles 仍不够）**：bristle_rasterize 单点 XY splat 改
-  Gaussian/3×3 kernel。偏离 paper（paper 没写 XY kernel），需批准。
+- **bristle 弯曲**：paper §4.1 的 bristles 随拖拽弯曲（Fig 4），采样沿弯曲链在 XY
+  铺开——这正是论文"bristle-level"细节的来源。当前 rest-shape restore 刚度 0.5 把链
+  拉直，128 采样叠在同一 XY 列（XY 覆盖 = 600 格/帧）。W kernel 注入 + 细步进已补偿
+  平滑度，但真弯曲会带来更自然的 footprint 与笔触纹路。
 
 ### 低优先级
 
