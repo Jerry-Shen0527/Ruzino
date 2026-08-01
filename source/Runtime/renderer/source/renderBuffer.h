@@ -97,11 +97,6 @@ class Hd_RUZINO_RenderBuffer : public HdRenderBuffer {
     void Clear();
     void Present(nvrhi::TextureHandle texture);
 
-#ifdef RUZINO_BACKEND_OPENGL
-    GLuint fbo = 0;
-    GLuint tex = 0;
-#endif
-
    private:
     nvrhi::IDevice* nvrhi_device;
     nvrhi::StagingTextureHandle staging;
