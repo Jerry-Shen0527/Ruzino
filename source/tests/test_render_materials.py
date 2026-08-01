@@ -11,10 +11,18 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from conftest import TEST_OUTPUT_DIR
+import _render_compare
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 BINARY_DIR = PROJECT_ROOT / "Binaries" / "Release"
 DATA_DIR = Path(__file__).resolve().parent / "data"
-OUTPUT_DIR = DATA_DIR / "output"
+# Test output lives under Binaries/Release/test_output/ (never the source tree).
+# data/reference/ holds the committed anchor image (the one allowed render
+# product in source); data/scenes/ holds the small input scenes.
+OUTPUT_DIR = Path(TEST_OUTPUT_DIR) / "render_materials"
+REFERENCE_DIR = DATA_DIR / "reference"
+ANCHOR_PATH = REFERENCE_DIR / "cornell_box_anchor"
 
 
 def _save_image(img, name):
@@ -142,37 +150,89 @@ def _render(scene_path, width=128, height=128, samples=4, save_name=None):
     return img
 
 
+def _make_incremental_prober(scene_path, width, height, max_samples):
+    """Build one HydraRenderer and return a probe(spp) closure for convergence.
+
+    The HD renderer plugin is a process-global singleton that does not tolerate
+    repeated HydraRenderer construction/teardown within one process. A
+    convergence sweep needs many renders at increasing SPP, so we build *one*
+    renderer and drive it incrementally: each probe resets the accumulator and
+    renders exactly ``spp`` frames, yielding that SPP's accumulated image.
+
+    ``max_samples`` sets the accumulate node's Max Samples (a ceiling; rendering
+    fewer frames than it is fine — the accumulator averages what it receives).
+
+    Returns ``probe(spp) -> HxWx4 float32 ndarray``.
+    """
+    try:
+        import hd_RUZINO_py as renderer
+    except ImportError as e:
+        pytest.skip(f"hd_RUZINO_py not available: {e}")
+
+    hydra = renderer.HydraRenderer(str(scene_path), width, height)
+    _build_render_graph(hydra, max_samples)
+
+    def probe(spp):
+        hydra.reset_accumulation()
+        for _ in range(spp):
+            hydra.render()
+        texture_data = hydra.get_output_texture()
+        img = np.array(texture_data, dtype=np.float32).reshape(height, width, 4)
+        # GPU textures have origin at top-left; flip to match camera/scene Y-up
+        return np.flipud(img)
+
+    return probe
+
+
 # --- Cornell Box tests ---
+#
+# Outputs (PNG/diagnostics) go to Binaries/Release/test_output/render_materials/.
+# The committed reference anchor lives in source/tests/data/reference/ (the one
+# allowed render product in the source tree). Tests never write anywhere else
+# under source/.
+#
+# The HD renderer plugin is a process-global singleton: building more than a
+# couple of HydraRenderer instances in one process corrupts it ("Invalid plugin
+# id Hd_RUZINO_RendererPlugin"). So all cornell tests share ONE renderer via the
+# session-scoped `cornell_prober` fixture, driving it incrementally with
+# reset_accumulation(). Different SPP are just different probe counts on the
+# same renderer.
 
 
-def test_cornell_box_renders():
-    """Cornell Box scene should produce non-trivial output."""
-    scene = DATA_DIR / "scenes" / "cornell_box.usda"
-    if not scene.exists():
+SCENE_CORNELL = DATA_DIR / "scenes" / "cornell_box.usda"
+CORNELL_SIZE = 256
+
+
+@pytest.fixture(scope="module")
+def cornell_prober():
+    """A shared incremental probe(spp) closure for the Cornell Box scene.
+
+    Module-scoped so every cornell test reuses the single underlying
+    HydraRenderer. Each call resets the accumulator and renders ``spp`` frames.
+    """
+    if not SCENE_CORNELL.exists():
         pytest.skip("cornell_box.usda not found")
+    return _make_incremental_prober(
+        SCENE_CORNELL, CORNELL_SIZE, CORNELL_SIZE, max_samples=256)
 
-    img = _render(scene, 1024, 1024, 64, save_name="cornell_box")
+
+def test_cornell_box_renders(cornell_prober):
+    """Cornell Box scene should produce non-trivial output (smoke test)."""
+    img = cornell_prober(32)
+    _save_image(img, "cornell_box_smoke")
     mean_val = float(img[:, :, :3].mean())
     assert mean_val > 0.01, f"Render too dim (mean={mean_val:.4f})"
 
 
-def test_cornell_box_finite():
+def test_cornell_box_finite(cornell_prober):
     """Cornell Box output should be finite (no NaN/Inf)."""
-    scene = DATA_DIR / "scenes" / "cornell_box.usda"
-    if not scene.exists():
-        pytest.skip("cornell_box.usda not found")
-
-    img = _render(scene, 256, 256, 64, save_name="cornell_box_finite")
+    img = cornell_prober(32)
     assert np.isfinite(img).all(), "Render contains NaN or Inf"
 
 
-def test_cornell_box_wall_colors():
+def test_cornell_box_wall_colors(cornell_prober):
     """Left wall should be red-tinted, right wall green-tinted."""
-    scene = DATA_DIR / "scenes" / "cornell_box.usda"
-    if not scene.exists():
-        pytest.skip("cornell_box.usda not found")
-
-    img = _render(scene, 256, 256, 64, save_name="cornell_box_colors")
+    img = cornell_prober(32)
     h, w = img.shape[:2]
 
     # Sample vertical strips from left and right walls
@@ -188,13 +248,9 @@ def test_cornell_box_wall_colors():
         f"Right wall should be green-dominant, G={right_mean[1]:.4f} R={right_mean[0]:.4f}"
 
 
-def test_cornell_box_all_regions_visible():
+def test_cornell_box_all_regions_visible(cornell_prober):
     """Floor, ceiling, back wall, and blocks should all produce visible output."""
-    scene = DATA_DIR / "scenes" / "cornell_box.usda"
-    if not scene.exists():
-        pytest.skip("cornell_box.usda not found")
-
-    img = _render(scene, 256, 256, 64, save_name="cornell_box_regions")
+    img = cornell_prober(32)
     h, w = img.shape[:2]
 
     # Check center region (back wall + blocks) is visible
@@ -206,3 +262,33 @@ def test_cornell_box_all_regions_visible():
     top = img[:h // 4, :, :3]
     top_mean = float(top.mean())
     assert top_mean > 0.001, f"Top region (ceiling) too dim (mean={top_mean:.4f})"
+
+
+def test_cornell_box_converges(cornell_prober):
+    """As SPP grows, the render must converge toward the committed anchor.
+
+    The anchor (data/reference/cornell_box_anchor.*, 512 SPP) is the convergence
+    target. Probes at [16, 32, 64, 128, 256] SPP are each compared to the anchor
+    by per-channel MSE. A correct path tracer yields a monotonically decreasing
+    MSE curve that drops substantially — we judge the curve shape, not absolute
+    values, so GPU/driver/RNG differences across machines don't cause false
+    failures.
+
+    Reuses the module-shared HydraRenderer (cornell_prober fixture). Anchor
+    generation is handled once by source/tests/render_anchor.py and committed;
+    the test skips if it is missing (run the script first).
+    """
+    if not ANCHOR_PATH.with_suffix(".npy").exists() and \
+       not ANCHOR_PATH.with_suffix(".png").exists():
+        pytest.skip(
+            f"anchor not found at {ANCHOR_PATH}; run render_anchor.py to "
+            f"generate and commit it first")
+
+    probe_spps = [16, 32, 64, 128, 256]
+
+    # Diagnostics (anchor.png, probe_<spp>.png, mse_curve.json) land under
+    # OUTPUT_DIR (Binaries), never the source tree.
+    curve = _render_compare.render_convergence(
+        cornell_prober, ANCHOR_PATH, probe_spps, OUTPUT_DIR,
+        width=CORNELL_SIZE, height=CORNELL_SIZE, anchor_spp=512)
+    _render_compare.assert_converging(curve)

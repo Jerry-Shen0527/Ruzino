@@ -7,7 +7,15 @@ points rather than just trusting the test's n>0 assertion.
 """
 import math
 import os
+import sys
 from pathlib import Path
+
+# conftest sets up sys.path/DLL dirs/chdir for binary_dir; import it as a module
+# so the same setup applies when running this file as a plain script.
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+import conftest  # noqa: F401  (side effect: path/dll/chdir setup)
 
 import stage_py
 from pxr import Usd, UsdGeom, Sdf
@@ -15,8 +23,8 @@ from ruzino_graph import RuzinoGraph
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 BINARY_DIR = PROJECT_ROOT / "Binaries" / "Release"
-DATA_DIR = Path(__file__).resolve().parent / "data" / "output"
-OUTPUT_DIR = DATA_DIR
+# Diagnostic output lives under Binaries/Release/test_output/ (never source).
+OUTPUT_DIR = Path(conftest.TEST_OUTPUT_DIR) / "wetbrush_diagnostic"
 
 NUM_FRAMES = 12
 FPS = 60.0

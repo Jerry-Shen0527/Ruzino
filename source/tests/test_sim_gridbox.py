@@ -33,10 +33,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from conftest import TEST_OUTPUT_DIR
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 BINARY_DIR = PROJECT_ROOT / "Binaries" / "Release"
 DATA_DIR = Path(__file__).resolve().parent / "data"
-OUTPUT_DIR = DATA_DIR / "output"
+OUTPUT_DIR = Path(TEST_OUTPUT_DIR) / "sim_gridbox"
 
 NUM_FRAMES = 60
 FPS = 60.0

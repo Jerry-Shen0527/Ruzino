@@ -28,14 +28,21 @@ mock_point_emitter.dll, ...) resolve.
 
 import math
 import os
+import sys
 from pathlib import Path
 
 import pytest
 
+# Reuse the shared TEST_OUTPUT_DIR from the top-level source/tests/conftest.py
+# so all test output converges under Binaries/Release/test_output/.
+_TESTS_ROOT = Path(__file__).resolve().parents[3] / "tests"
+if str(_TESTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(_TESTS_ROOT))
+from conftest import TEST_OUTPUT_DIR
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
 BINARY_DIR = PROJECT_ROOT / "Binaries" / "Release"
-DATA_DIR = Path(__file__).resolve().parent / "data"
-OUTPUT_DIR = DATA_DIR / "output"
+OUTPUT_DIR = Path(TEST_OUTPUT_DIR) / "brush_sim"
 
 NUM_FRAMES = 12
 FPS = 60.0

@@ -11,10 +11,19 @@ from pathlib import Path
 
 import numpy as np
 
+# conftest sets up sys.path/DLL dirs/chdir for binary_dir; import it as a module
+# so the same setup applies when running this file as a plain script.
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+import conftest  # noqa: F401  (side effect: path/dll/chdir setup)
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 BINARY_DIR = PROJECT_ROOT / "Binaries" / "Release"
-DATA_DIR = Path(__file__).resolve().parent / "data" / "output"
-USD_PATH = DATA_DIR / "wetbrush_inspect.usdc"
+# Reads the usdc produced by inspect_wetbrush_points.py, which now writes under
+# Binaries/Release/test_output/wetbrush_diagnostic/ (never source).
+DIAG_DIR = Path(conftest.TEST_OUTPUT_DIR) / "wetbrush_diagnostic"
+USD_PATH = DIAG_DIR / "wetbrush_inspect.usdc"
 
 # --- params used by inspect_wetbrush_points.py (mirror here for checks) ---
 RESOLUTION = 256

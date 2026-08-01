@@ -14,6 +14,14 @@ project_root = os.path.abspath(os.path.join(tests_dir, "..", ".."))
 binary_dir = os.path.join(project_root, "Binaries", "Release")
 binary_dir = os.path.abspath(binary_dir)
 
+# All test outputs (renders, generated usdc/py/json, diagnostics) must live
+# under Binaries/Release/test_output/. Binaries/ is gitignored at repo root,
+# so nothing here enters the source tree or git history. Tests import this
+# constant via `from conftest import TEST_OUTPUT_DIR` or read the env var.
+TEST_OUTPUT_DIR = os.path.join(binary_dir, "test_output")
+os.makedirs(TEST_OUTPUT_DIR, exist_ok=True)
+os.environ["RZ_TEST_OUTPUT_DIR"] = TEST_OUTPUT_DIR
+
 os.environ["PXR_USD_WINDOWS_DLL_PATH"] = binary_dir
 
 sys.path.insert(0, binary_dir)
