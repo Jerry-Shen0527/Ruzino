@@ -104,7 +104,6 @@ static void _RenderCallback(
 }
 
 std::mutex Hd_RUZINO_RenderDelegate::_mutexResourceRegistry;
-std::atomic_int Hd_RUZINO_RenderDelegate::_counterResourceRegistry;
 HdResourceRegistrySharedPtr Hd_RUZINO_RenderDelegate::_resourceRegistry;
 
 void Hd_RUZINO_RenderDelegate::_Initialize()
@@ -224,12 +223,8 @@ void Hd_RUZINO_RenderDelegate::_Initialize()
         std::bind(_RenderCallback, _renderer.get(), &_renderThread));
     _renderThread.StartThread();
 
-    // Initialize one resource registry for all embree plugins
+    // Initialize a single shared resource registry.
     std::lock_guard<std::mutex> guard(_mutexResourceRegistry);
-
-    if (_counterResourceRegistry.fetch_add(1) == 0) {
-        _resourceRegistry = std::make_shared<HdResourceRegistry>();
-    }
     _resourceRegistry = std::make_shared<HdResourceRegistry>();
 }
 
@@ -469,7 +464,7 @@ HdSprim* Hd_RUZINO_RenderDelegate::CreateFallbackSprim(const TfToken& typeId)
     else if (typeId == HdPrimTypeTokens->cylinderLight) {
         auto light = new Hd_RUZINO_Cylinder_Light(SdfPath::EmptyPath(), typeId);
         lights.push_back(light);
-        return new Hd_RUZINO_Cylinder_Light(SdfPath::EmptyPath(), typeId);
+        return light;
     }
     else if (typeId == HdPrimTypeTokens->domeLight) {
         return new Hd_RUZINO_Dome_Light(SdfPath::EmptyPath(), typeId);

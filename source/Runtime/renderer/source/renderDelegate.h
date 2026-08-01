@@ -123,7 +123,6 @@ class HD_RUZINO_API Hd_RUZINO_RenderDelegate final : public HdRenderDelegate {
     std::shared_ptr<NodeSystem> node_system;
 
     static std::mutex _mutexResourceRegistry;
-    static std::atomic_int _counterResourceRegistry;
     static HdResourceRegistrySharedPtr _resourceRegistry;
 
     // Unique Material ID. The IDs are
