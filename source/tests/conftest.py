@@ -11,8 +11,14 @@ import platform
 
 tests_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(tests_dir, "..", ".."))
-binary_dir = os.path.join(project_root, "Binaries", "Release")
+# Respect RZ_BUILD_TYPE so tests can load Binaries/Debug for native debugging
+# (PDB symbols, cdb/VS stack traces). Defaults to Release for normal runs.
+_build_type = os.environ.get("RZ_BUILD_TYPE", "Release")
+binary_dir = os.path.join(project_root, "Binaries", _build_type)
 binary_dir = os.path.abspath(binary_dir)
+if not os.path.isdir(binary_dir):
+    # Fallback to Release if the requested build type isn't built.
+    binary_dir = os.path.abspath(os.path.join(project_root, "Binaries", "Release"))
 
 # All test outputs (renders, generated usdc/py/json, diagnostics) must live
 # under Binaries/Release/test_output/. Binaries/ is gitignored at repo root,

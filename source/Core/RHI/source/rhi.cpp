@@ -5,8 +5,10 @@
 #include <RHI/internal/nvrhi_equality.hpp>
 #include <RHI/rhi.hpp>
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <string>
 
 #include "RHI/DeviceManager/DeviceManager.h"
 #include "nvrhi/utils.h"
@@ -105,6 +107,21 @@ int init(bool with_window, bool use_dx12)
     params.enableDebugRuntime = true;
 #endif
     //    params.enableDebugRuntime = true;
+    // RHI validation is gated on an env var so it can be toggled at runtime
+    // without rebuilding. Set RZ_RHI_VALIDATION=1 to enable the nvrhi
+    // validation layer + D3D12 debug runtime — essential for diagnosing GPU
+    // crashes (Device Removed, resource-misuse) that surface only as a bare
+    // access violation otherwise. Costs performance, so off by default.
+    if (const char* v = std::getenv("RZ_RHI_VALIDATION")) {
+        if (std::string(v) == "1") {
+            params.enableNvrhiValidationLayer = true;
+            params.enableDebugRuntime = true;
+            if (auto logger = cached_logger.lock()) {
+                logger->info(
+                    "RHI validation layer enabled (RZ_RHI_VALIDATION=1)");
+            }
+        }
+    }
 
     if (with_window) {
         auto ret =

@@ -577,8 +577,7 @@ VtValue Hd_RUZINO_RenderDelegate::GetRenderSetting(TfToken const& key) const
     // sim+render). Returns a pointer-to-pointer to match the RenderNodeSystem
     // pattern (VtValue holding const void* pointing at a shared_ptr/storage).
     if (key == TfToken("HdRuzinoRenderParam")) {
-        return VtValue(
-            reinterpret_cast<const void*>(_renderParam.get()));
+        return VtValue(reinterpret_cast<const void*>(_renderParam.get()));
     }
 
 #ifdef RUZINO_DIRECT_VK_DISPLAY
@@ -588,8 +587,13 @@ VtValue Hd_RUZINO_RenderDelegate::GetRenderSetting(TfToken const& key) const
             auto it = _renderParam->presented_textures.find(
                 _renderParam->default_texture_name);
             if (it != _renderParam->presented_textures.end() && it->second) {
-                // Safe: map element addresses are stable until erase/rehash
-                return VtValue(reinterpret_cast<const void*>(&it->second));
+                // Return the ITexture* directly (as void*), NOT &handle.
+                // TextureHandle (RefCountPtr) overloads operator&() to return
+                // T**, which made callers do a fragile double-deref that read
+                // the wrong memory and crashed. Returning the pointer itself
+                // makes get_output_texture a single deref.
+                auto tex_ptr = static_cast<nvrhi::ITexture*>(it->second);
+                return VtValue(reinterpret_cast<const void*>(tex_ptr));
             }
         }
     }
@@ -603,9 +607,9 @@ VtValue Hd_RUZINO_RenderDelegate::GetRenderSetting(TfToken const& key) const
         auto it = _renderParam->presented_textures.find(texture_name);
         if (it != _renderParam->presented_textures.end()) {
             if (it->second) {
-                return VtValue(reinterpret_cast<const void*>(&it->second));
-            }
-            else {
+                // Return ITexture* directly (see VulkanColorAov comment above).
+                auto tex_ptr = static_cast<nvrhi::ITexture*>(it->second);
+                return VtValue(reinterpret_cast<const void*>(tex_ptr));
             }
         }
         else {

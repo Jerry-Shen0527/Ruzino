@@ -6,12 +6,12 @@
 
 #include "RHI/rhi.hpp"
 #include "hd_RUZINO/render_global_payload.hpp"
-#include "renderParam.h"  // Hd_RUZINO_RenderParam (for reset_accumulation host hook)
 #include "nodes/core/api.hpp"
 #include "nodes/core/node_exec_eager.hpp"
 #include "nodes/system/node_system.hpp"
 #include "nodes/system/node_system_dl.hpp"
 #include "pxr/base/vt/array.h"
+#include "renderParam.h"  // Hd_RUZINO_RenderParam (for reset_accumulation host hook)
 #include "renderTLAS.h"
 
 // USD Imaging includes for Hydra rendering
@@ -138,15 +138,16 @@ class HydraRenderer {
     }
 
     // Request that the next render() resets the path-tracer accumulation
-    // (clears the accumulate node's running average). For interleaved sim+render
-    // where each tick() starts a fresh scene, the host calls this between
-    // frames so samples don't bleed across sim states. The flag sticks on the
-    // render delegate's renderParam until the next render() folds it into
-    // global_payload.reset_accumulation and consumes it (see renderer.cpp).
+    // (clears the accumulate node's running average). For interleaved
+    // sim+render where each tick() starts a fresh scene, the host calls this
+    // between frames so samples don't bleed across sim states. The flag sticks
+    // on the render delegate's renderParam until the next render() folds it
+    // into global_payload.reset_accumulation and consumes it (see
+    // renderer.cpp).
     void reset_accumulation()
     {
-        auto rp_value = engine_->GetRendererSetting(
-            pxr::TfToken("HdRuzinoRenderParam"));
+        auto rp_value =
+            engine_->GetRendererSetting(pxr::TfToken("HdRuzinoRenderParam"));
         if (!rp_value.IsHolding<const void*>()) {
             spdlog::warn(
                 "reset_accumulation: renderParam not exposed by delegate");
@@ -154,7 +155,8 @@ class HydraRenderer {
         }
         auto* rp = static_cast<Hd_RUZINO_RenderParam*>(
             const_cast<void*>(rp_value.UncheckedGet<const void*>()));
-        if (rp) rp->pending_force_reset_accumulation = true;
+        if (rp)
+            rp->pending_force_reset_accumulation = true;
     }
 
     // Render one frame synchronously (waits for GPU idle). Renders the stage
@@ -200,8 +202,12 @@ class HydraRenderer {
     // name: optional texture name (uses default if empty)
     std::vector<float> get_output_texture(const std::string& name = "")
     {
-        // Ensure render thread has finished before reading
-        engine_->StopRenderer();
+        // NOTE: do NOT call engine_->StopRenderer() here. render() already
+        // calls StopRenderer at its end, and calling it again clears the
+        // render delegate's presented_textures map (StopRenderer finalizes the
+        // frame), so GetRendererSetting("VulkanColorAov") would return an empty
+        // VtValue and the texture pointer below would be null — crashing on
+        // texture->getDesc(). Callers must render() before reading output.
         pxr::TfToken token_key;
 
         if (name.empty()) {
@@ -225,9 +231,25 @@ class HydraRenderer {
             throw std::runtime_error("Failed to get output texture");
         }
 
-        auto bare_pointer = hacked_handle.Get<const void*>();
-        auto texture =
-            *static_cast<nvrhi::ITexture**>(const_cast<void*>(bare_pointer));
+        // The delegate now returns the ITexture* directly (as void*), so this
+        // is a single cast — no double dereference. The old code did
+        // `*static_cast<ITexture**>(ptr)` to read through a TextureHandle*,
+        // but TextureHandle's overloaded operator&() returned T** pointing at
+        // a location whose read occasionally yielded null, crashing here.
+        auto texture = static_cast<nvrhi::ITexture*>(
+            const_cast<void*>(hacked_handle.Get<const void*>()));
+
+        if (!texture) {
+            spdlog::error(
+                "get_output_texture: the '{}' handle is present in the render "
+                "delegate's presented_textures map but holds a null texture "
+                "pointer (the AOV texture was likely released before read). "
+                "Ensure render() completed and the AOV was not finalized.",
+                name.empty() ? std::string("default") : name);
+            throw std::runtime_error(
+                "Output texture handle is null — render may have finalized "
+                "the AOV before it was read");
+        }
 
         // Create staging texture and copy
         nvrhi::TextureDesc staging_desc;
@@ -284,9 +306,6 @@ class HydraRenderer {
     Ruzino::cuda::CUDALinearBufferHandle get_output_cuda_buffer(
         const std::string& name = "")
     {
-        // Ensure render thread has finished before reading
-        engine_->StopRenderer();
-
         pxr::TfToken token_key;
 
         if (name.empty()) {
@@ -307,9 +326,10 @@ class HydraRenderer {
             throw std::runtime_error("Failed to get output texture");
         }
 
-        auto bare_pointer = hacked_handle.Get<const void*>();
-        auto texture =
-            *static_cast<nvrhi::ITexture**>(const_cast<void*>(bare_pointer));
+        // Single cast: delegate returns ITexture* directly (see
+        // get_output_texture for why the old double-deref was unsafe).
+        auto texture = static_cast<nvrhi::ITexture*>(
+            const_cast<void*>(hacked_handle.Get<const void*>()));
 
         // Determine element size based on format
         uint32_t element_size = 0;

@@ -8,9 +8,16 @@ import pytest
 
 
 def _prepare_env():
+    import os
     script_dir = Path(__file__).parent.resolve()
     workspace_root = script_dir.parent.parent.parent.parent
-    binary_dir = workspace_root / "Binaries" / "Release"
+    # Allow switching to Binaries/Debug for native debugging (PDB symbols).
+    # Set RZ_BUILD_TYPE=Debug to load the Debug build instead of Release —
+    # essential for cdb/VS stack traces with source line numbers.
+    build_type = os.environ.get("RZ_BUILD_TYPE", "Release")
+    binary_dir = workspace_root / "Binaries" / build_type
+    if not binary_dir.exists():
+        binary_dir = workspace_root / "Binaries" / "Release"
 
     os.environ.setdefault('PXR_USD_WINDOWS_DLL_PATH', str(binary_dir))
     mtlx_stdlib = binary_dir / "libraries"

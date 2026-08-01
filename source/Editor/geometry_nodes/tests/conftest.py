@@ -16,6 +16,16 @@ project_root = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
 )
 
+# Test output directory — mirrors source/tests/conftest.py. Tests in this
+# directory do `from conftest import TEST_OUTPUT_DIR`, which resolves to *this*
+# conftest (pytest's nearest-conftest-wins rule), NOT the top-level one. So
+# TEST_OUTPUT_DIR must be defined here, or that import fails with ImportError.
+# Compute it independently rather than importing from the top-level conftest,
+# to avoid depending on conftest load order when this suite runs in isolation.
+TEST_OUTPUT_DIR = os.environ.get("RZ_TEST_OUTPUT_DIR") or os.path.join(binary_dir, "test_output")
+os.makedirs(TEST_OUTPUT_DIR, exist_ok=True)
+os.environ["RZ_TEST_OUTPUT_DIR"] = TEST_OUTPUT_DIR
+
 sys.path.append(binary_dir)
 if sys.platform == "win32":
     os.add_dll_directory(binary_dir)

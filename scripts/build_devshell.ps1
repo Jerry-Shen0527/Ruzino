@@ -55,9 +55,28 @@ if ($Reconfigure -or -not (Test-Path "$BuildPath\build.ninja")) {
         New-Item -ItemType Directory -Path $BuildPath | Out-Null
     }
     Push-Location $BuildPath
-    cmake -G Ninja -DCMAKE_BUILD_TYPE=$BuildType -DRUZINO_WITH_CUDA=ON -DUSTC_HOMEWORK_PLUGINS=OFF ..
+    # NOTE: $BuildType 必须用双引号包裹。PowerShell 把 `-DCMAKE_BUILD_TYPE=$var`
+    # 这种「连字符开头 + 等号 + 变量」的 token 作为 native argument 传给 cmake.exe 时,
+    # 若不加引号,变量插值会失效,字面量 "$BuildType" 会被原样写入 CMakeCache.txt。
+    # 后果是 ninja 生成的 rules.ninja 里出现非法配置名(如 CXX_COMPILER__gmock_$BuildType),
+    # 在 `ninja -t recompact` 阶段以 "expected newline, got lexing error" 崩溃。
+    # 加双引号后参数被强制当作单一可插值字符串处理,插值才稳定生效。
+    cmake -G Ninja "-DCMAKE_BUILD_TYPE=$BuildType" -DRUZINO_WITH_CUDA=ON -DUSTC_HOMEWORK_PLUGINS=OFF ..
     if ($LASTEXITCODE -ne 0) {
         Write-Host "✗ CMake 配置失败" -ForegroundColor Red
+        # 自检:cache 里的 CMAKE_BUILD_TYPE 必须是 Debug/Release/RelWithDebInfo/MinSizeRel
+        # 之一。若出现字面量(如 "$BuildType" 或空),说明上面的变量插值又失效了,
+        # 或 build 目录被外部污染。直接给出可操作的诊断,免得手动排查。
+        $cacheFile = Join-Path $BuildPath "CMakeCache.txt"
+        if (Test-Path $cacheFile) {
+            $cachedType = (Select-String -Path $cacheFile -Pattern '^CMAKE_BUILD_TYPE:STRING=(.+)$').Matches.Groups[1].Value
+            $validTypes = @('Debug','Release','RelWithDebInfo','MinSizeRel')
+            if ($cachedType -and ($cachedType -notin $validTypes)) {
+                Write-Host "  ! 诊断: CMakeCache.txt 里 CMAKE_BUILD_TYPE='$cachedType' 不是合法值。" -ForegroundColor Yellow
+                Write-Host "    合法值: $($validTypes -join ', ')。通常是 build_devshell.ps1 的变量插值失效," -ForegroundColor Yellow
+                Write-Host "    或 build 目录被旧缓存污染。删除 build/ 目录后重试 -Reconfigure。" -ForegroundColor Yellow
+            }
+        }
         Pop-Location
         exit 1
     }

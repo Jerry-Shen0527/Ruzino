@@ -125,8 +125,52 @@ Per-frame accumulation across ticks is driven by the **simulation-zone feedback 
 - cmake fails → check dependencies (see `README.md`)
 - ninja fails → try `rm -rf build/*` and reconfigure
 - Python must be 3.13
+- **`build_devshell.ps1` BuildType corruption** → if `CMakeCache.txt` shows `CMAKE_BUILD_TYPE=$BuildType` (literal, not `Release`), the script's `$BuildType` argument was not interpolated into the cmake `-D` flag. This was fixed: the flag is now quoted (`"-DCMAKE_BUILD_TYPE=$BuildType"`). The script also self-checks the cache on configure failure and prints a diagnostic if the build type is non-standard. A corrupted cache requires deleting `build/` and reconfiguring.
 
 ### Test Issues
 - C++ tests not found → build first
 - Python import errors → install Python dependencies
 - Wrong-directory errors → run from project root
+- **GPU crash / access violation** (`0xC0000005`, "Windows fatal exception") with no useful stack → set `RZ_RHI_VALIDATION=1` and rerun. This enables the nvrhi validation layer + D3D12 debug runtime, which prints the *actual* resource-misuse (e.g. "Bindings declared in the layout are not present in the binding set: t6" → "Device Removed!") before the crash, instead of a bare access violation. Costs performance, off by default. Also dumps the reflected shader binding map + which slots are bound/NULL when set, so an unbound SRV is named directly. See `rhi.cpp` (`RZ_RHI_VALIDATION` gate) and `program_vars.cpp` (binding dump).
+- **`run_all_tests.py` exit code** → 0 = all pass, 1 = any failure. The runner distinguishes `PASSED` / `○ SKIPPED` (whole file skipped, e.g. missing optional dep like torch) / `✗ FAILED (crash: access violation)` (infra crash, not a logic failure).
+
+### Native Debugging with cdb (access-violation crashes)
+
+When a test dies with a bare "Windows fatal exception: access violation" and no
+Python-level stack, the cause is in native (C++) code. Use **cdb** (Windows
+Console Debugger, ships with the Windows Kits Debuggers) to capture the precise
+faulting function, DLL, and source line. This was the workflow that pinned down
+the `get_output_texture` type-punning crash (`renderer.cpp:240`) in Aug 2026.
+
+**The helper script wraps it:**
+```bash
+python scripts/cdb_crash.py -m pytest source/.../test_rendering.py::test_render_basic -s
+```
+It runs the target under cdb, breaks on the access violation, prints the
+exception record + faulting-thread stack + loaded modules, then quits. Look for
+`=== Access violation caught ===` and the `Call Site` column.
+
+**For source-level stacks, you need PDBs — use the Debug build:**
+1. Build Debug (has `/Zi` + PDBs; Release does not):
+   ```powershell
+   pwsh -File scripts/build_devshell.ps1 -BuildType Debug -BuildDir build-debug -Reconfigure
+   ```
+2. Run the test under cdb with `RZ_BUILD_TYPE=Debug` so Python loads the
+   **Debug** DLLs (the conftests respect this env var). Mixed Debug/Release
+   DLLs corrupt memory and produce false-positive assertions — a pure-Debug run
+   is essential:
+   ```bash
+   cd Binaries/Debug
+   PATH="$PWD:$PATH" RZ_BUILD_TYPE=Debug python scripts/cdb_crash.py -m pytest <test> -s
+   ```
+   With `-lines` and the Debug PDBs, frames annotate as
+   `module!Function+0xNN [C:\...\file.cpp @ LINE]`.
+
+**Two gotchas learned the hard way:**
+- `run_all_tests.py` captures stdout, so a crash mid-test loses the last logs.
+  Run the single failing test directly with `-s` (unbuffered) for pre-crash output.
+- A Debug-mode *assertion* (e.g. entt `is_power_of_two`) can be a **false
+  positive** if any DLL loaded as Release. Confirm *every* relevant DLL in the
+  cdb `ModLoad` lines comes from `Binaries\Debug` before trusting an assertion
+  as the root cause. The Release build skips `_ASSERT` (`NDEBUG`), so a real
+  logic bug may surface only as a downstream access violation in Release.

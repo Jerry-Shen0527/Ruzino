@@ -2,6 +2,9 @@
 
 #include <nvrhi/nvrhi.h>
 
+#include <cstdlib>
+#include <iostream>
+
 #include "RHI/ResourceManager/resource_allocator.hpp"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
@@ -208,6 +211,32 @@ void ProgramVars::finish_setting_vars()
             binding_sets_solid[i] =
                 resource_allocator_.create(desc, binding_layouts[i].Get());
         }
+    }
+
+    // When RZ_RHI_VALIDATION is set, dump the reflected binding map alongside
+    // which slots actually received a resource. A slot that is reflected
+    // (declared by the shader) but whose resourceHandle is null is exactly
+    // what nvrhi reports as "Bindings declared in the layout are not present
+    // in the binding set: tN" — this dump names the culprit.
+    if (std::getenv("RZ_RHI_VALIDATION")) {
+        std::cerr << "[program-vars] reflected bindings:\n"
+                  << final_reflection_info;
+        std::cerr << "[program-vars] binding fill status (null = MISSING):\n";
+        for (size_t space = 0; space < binding_spaces.size(); ++space) {
+            const auto& items = binding_spaces[space];
+            for (size_t loc = 0; loc < items.size(); ++loc) {
+                const auto& item = items[loc];
+                std::cerr << "  space=" << space << " slot=t" << item.slot
+                          << " type=" << static_cast<int>(item.type)
+                          << " resource="
+                          << (item.resourceHandle ? "bound" : "NULL")
+                          << (descriptor_tables[space]
+                                  ? " (descriptor-table space)"
+                                  : "")
+                          << "\n";
+            }
+        }
+        std::cerr << std::flush;
     }
 }
 

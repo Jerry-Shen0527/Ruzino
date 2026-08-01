@@ -13,6 +13,7 @@ Usage:
 """
 
 import os
+import re
 import sys
 import subprocess
 from pathlib import Path
@@ -32,6 +33,33 @@ def find_test_directories(source_dir: Path) -> List[Path]:
         if 'tests' in dirs:
             test_dirs.append(Path(root) / 'tests')
     return test_dirs
+
+
+# Windows NTSTATUS for access violation. Returned by subprocess as a positive int
+# because Python surfaces the raw exit code. 0xC0000005 == 3221225477.
+_WIN_ACCESS_VIOLATION = 0xC0000005
+_WIN_ACCESS_VIOLATION_POS = 3221225477
+
+
+def _classify_crash(returncode: int, output: str) -> str:
+    """Return a short human-readable tag if the failure looks like an infrastructure
+    crash (not a test assertion failure), else ''.
+
+    Distinguishing these is valuable: a segfault during process shutdown usually
+    points to a C++ destructor or DLL-unload issue, while a non-zero exit with
+    normal pytest output is a real test failure. Tagging them separately keeps
+    the failure report actionable instead of lumping everything under 'FAILED'.
+    """
+    # Linux/macOS: negative returncodes encode the signal (e.g. -11 == SIGSEGV).
+    if returncode < 0:
+        return f"crash: signal {-returncode}"
+    # Windows: access violation surfaces as the raw NTSTATUS as a positive int.
+    if returncode == _WIN_ACCESS_VIOLATION_POS:
+        return "crash: access violation (0xC0000005)"
+    # Fall back to scanning output for fatal-exception banners pytest can't catch.
+    if output and re.search(r"Windows fatal exception: access violation", output):
+        return "crash: access violation"
+    return ""
 
 
 def find_python_test_files(test_dir: Path) -> List[Path]:
@@ -71,29 +99,32 @@ def should_run_test(exe_name: str, test_filter: Optional[str]) -> bool:
     return filter_base.lower() in test_base.lower()
 
 
-def run_pytest(test_dir: Path, test_filter: Optional[str] = None) -> Tuple[int, int, List[Tuple[str, str]]]:
+def run_pytest(test_dir: Path, test_filter: Optional[str] = None) -> Tuple[int, int, int, List[Tuple[str, str]]]:
     """Run pytest in the given directory.
 
     Returns:
-        Tuple of (passed, failed, failed_test_info)
-        where failed_test_info is a list of (test_name, output) tuples
+        Tuple of (passed, skipped_files, failed, failed_test_info)
+        where failed_test_info is a list of (test_name, output) tuples.
+        skipped_files counts whole test FILES skipped (e.g. missing optional
+        deps like torch), distinct from per-test skips inside a run.
     """
     python_tests = find_python_test_files(test_dir)
 
     if not python_tests:
-        return 0, 0, []
+        return 0, 0, 0, []
 
     # Apply filter if specified
     if test_filter:
         python_tests = [t for t in python_tests if test_filter.lower() in t.stem.lower()]
         if not python_tests:
-            return 0, 0, []
+            return 0, 0, 0, []
 
     print(f"\n{'='*80}")
     print(f"Running pytest in: {test_dir}")
     print(f"{'='*80}")
 
     passed = 0
+    skipped_files = 0
     failed = 0
     failed_tests = []
 
@@ -118,7 +149,6 @@ def run_pytest(test_dir: Path, test_filter: Optional[str] = None) -> Tuple[int, 
                 # C++ destructor segfault during process shutdown) that happen
                 # after pytest has already printed its results.
                 combined_output = result.stdout + result.stderr
-                import re
                 summary_match = re.search(
                     r'(\d+) passed(?:, (\d+) failed)?(?:, \d+ (?:warning|skipped|deselected|error)s?)?',
                     combined_output)
@@ -131,7 +161,28 @@ def run_pytest(test_dir: Path, test_filter: Optional[str] = None) -> Tuple[int, 
                         passed += 1
                         continue
 
-                print(f"✗ FAILED: {test_file.name} (exit code: {result.returncode})")
+                # A whole test FILE can be skipped via module-level
+                # pytest.importorskip("torch") when an optional dep is missing.
+                # pytest surfaces this as exit code 5 (NO_TESTS_COLLECTED) with
+                # "N skipped" in the summary — not a real failure. Detect it so
+                # the report distinguishes "couldn't run (env)" from "failed".
+                skip_match = re.search(r'(\d+) skipped', combined_output)
+                if (result.returncode == 5 and skip_match
+                        and not re.search(r'\d+ failed', combined_output)):
+                    n_skipped = int(skip_match.group(1))
+                    print(f"○ SKIPPED: {test_file.name} "
+                          f"({n_skipped} tests skipped, likely missing optional dep)")
+                    skipped_files += 1
+                    continue
+
+                # Distinguish infrastructure-level crashes (access violation / segfault)
+                # from genuine test assertion failures. Windows 0xC0000005 == 3221225477,
+                # Linux SIGSEGV == -11. These usually indicate a C++ destructor crash during
+                # process shutdown or an environment issue, NOT a test logic bug — surfacing
+                # this clearly saves hours of misdirected debugging.
+                crash_tag = _classify_crash(result.returncode, combined_output)
+                label = f" ({crash_tag})" if crash_tag else ""
+                print(f"✗ FAILED: {test_file.name} (exit code: {result.returncode}){label}")
                 failed += 1
                 output = result.stdout + result.stderr
                 failed_tests.append((f"{test_dir.name}/{test_file.name}", output))
@@ -146,7 +197,7 @@ def run_pytest(test_dir: Path, test_filter: Optional[str] = None) -> Tuple[int, 
             failed += 1
             failed_tests.append((f"{test_dir.name}/{test_file.name}", f"ERROR: {str(e)}"))
 
-    return passed, failed, failed_tests
+    return passed, skipped_files, failed, failed_tests
 
 
 def run_cpp_tests(test_dir: Path, binaries_dir: Path, test_filter: Optional[str] = None) -> Tuple[int, int, List[Tuple[str, str]]]:
@@ -197,10 +248,12 @@ def run_cpp_tests(test_dir: Path, binaries_dir: Path, test_filter: Optional[str]
                 print(f"✓ PASSED: {exe_name}")
                 passed += 1
             else:
-                print(f"✗ FAILED: {exe_name} (exit code: {result.returncode})")
+                combined = result.stdout + result.stderr
+                crash_tag = _classify_crash(result.returncode, combined)
+                label = f" ({crash_tag})" if crash_tag else ""
+                print(f"✗ FAILED: {exe_name} (exit code: {result.returncode}){label}")
                 failed += 1
-                output = result.stdout + result.stderr
-                failed_tests.append((exe_name, output))
+                failed_tests.append((exe_name, combined))
 
         except subprocess.TimeoutExpired as e:
             print(f"✗ TIMEOUT: {exe_name}")
@@ -238,6 +291,7 @@ def main():
 
     # Run all tests
     total_pytest_passed = 0
+    total_pytest_skipped = 0
     total_pytest_failed = 0
     total_cpp_passed = 0
     total_cpp_failed = 0
@@ -247,13 +301,14 @@ def main():
         print(f"\nProcessing: {test_dir.relative_to(project_root)}")
 
         # Run Python tests
-        pytest_passed, pytest_failed, pytest_failed_tests = run_pytest(test_dir, test_filter)
+        pytest_passed, pytest_skipped, pytest_failed, pytest_failed_tests = run_pytest(test_dir, test_filter)
         total_pytest_passed += pytest_passed
+        total_pytest_skipped += pytest_skipped
         total_pytest_failed += pytest_failed
         all_failed_tests.extend(pytest_failed_tests)
 
-        if pytest_passed + pytest_failed > 0:
-            print(f"  Python tests: {pytest_passed} passed, {pytest_failed} failed")
+        if pytest_passed + pytest_skipped + pytest_failed > 0:
+            print(f"  Python tests: {pytest_passed} passed, {pytest_skipped} skipped, {pytest_failed} failed")
 
         # Run C++ tests
         cpp_passed, cpp_failed, cpp_failed_tests = run_cpp_tests(test_dir, binaries_dir, test_filter)
@@ -268,9 +323,10 @@ def main():
     print("\n" + "="*80)
     print("TEST SUMMARY")
     print("="*80)
-    print(f"Python Tests: {total_pytest_passed} passed, {total_pytest_failed} failed")
+    print(f"Python Tests: {total_pytest_passed} passed, {total_pytest_skipped} skipped, {total_pytest_failed} failed")
     print(f"C++ Tests:    {total_cpp_passed} passed, {total_cpp_failed} failed")
     print(f"Overall:      {total_pytest_passed + total_cpp_passed} passed, "
+          f"{total_pytest_skipped} skipped, "
           f"{total_pytest_failed + total_cpp_failed} failed")
 
     # Print failed tests if any

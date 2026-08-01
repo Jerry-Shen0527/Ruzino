@@ -6,10 +6,14 @@ import sys
 import os
 import platform
 
-# Get binary directory
+# Get binary directory. Respect RZ_BUILD_TYPE so tests can load Binaries/Debug
+# for native debugging (PDB symbols). Defaults to Release.
 tests_dir = os.path.dirname(os.path.abspath(__file__))
-binary_dir = os.path.abspath(os.path.join(tests_dir, "..", "..", "..", "..", "Binaries", "Release"))
 project_root = os.path.abspath(os.path.join(tests_dir, "..", "..", "..", ".."))
+_build_type = os.environ.get("RZ_BUILD_TYPE", "Release")
+binary_dir = os.path.abspath(os.path.join(tests_dir, "..", "..", "..", "..", "Binaries", _build_type))
+if not os.path.isdir(binary_dir):
+    binary_dir = os.path.abspath(os.path.join(tests_dir, "..", "..", "..", "..", "Binaries", "Release"))
 
 # Set PXR_USD_WINDOWS_DLL_PATH so USD can find its DLLs
 os.environ['PXR_USD_WINDOWS_DLL_PATH'] = binary_dir

@@ -5,11 +5,11 @@
 #include <filesystem>
 #include <memory>
 
-#include "RHI/shaderCompiler.h"
 #include "../source/renderTLAS.h"
 #include "GPUContext/program_vars.hpp"
 #include "GPUContext/raytracing_context.hpp"
 #include "RHI/internal/resources.hpp"
+#include "RHI/shaderCompiler.h"
 #include "Scene/MaterialParamsBuffer.slang"
 #include "camera.h"
 #include "hd_RUZINO/render_node_base.h"
@@ -304,8 +304,7 @@ void fetch_)" + material.second->GetMaterialName() +
             }
             else {
                 // Regular MaterialX material - use fetch+eval pattern
-                auto shader_source =
-                    material.second->GetShader(shader_factory);
+                auto shader_source = material.second->GetShader(shader_factory);
                 auto mat_name = material.second->GetMaterialName();
 
                 if (mat_name.empty() || shader_source.empty()) {
@@ -391,6 +390,15 @@ void fetch_)" + material.second->GetMaterialName() +
             instance_collection->instance_pool.get_device_buffer();
         program_vars["meshDescBuffer"] =
             instance_collection->mesh_pool.get_device_buffer();
+        // volumeDescBuffer is declared unconditionally in
+        // shaders/Scene/BindlessVertexBuffer.slang alongside instanceDescBuffer
+        // and meshDescBuffer, so reflection always expects it — even in scenes
+        // with no volumes (the pool just stays empty). Leaving it unbound makes
+        // nvrhi report "Bindings declared in the layout are not present in the
+        // binding set: t6" and crashes the GPU (Device Removed) on the first
+        // ray traversal that touches the volume fetch path.
+        program_vars["volumeDescBuffer"] =
+            instance_collection->volume_pool.get_device_buffer();
 
         program_vars["materialBlobBuffer"] =
             instance_collection->material_pool.get_device_buffer();
@@ -411,8 +419,8 @@ void fetch_)" + material.second->GetMaterialName() +
 
         // Use pool count so shader iterates all allocated light entries
         instance_collection->light_pool.compress();
-        uint32_t lightCount = static_cast<uint32_t>(
-            instance_collection->light_pool.count());
+        uint32_t lightCount =
+            static_cast<uint32_t>(instance_collection->light_pool.count());
 
         program_vars["lightBuffer"] =
             instance_collection->light_pool.get_device_buffer();
@@ -576,6 +584,8 @@ void fetch_)" + material.second->GetMaterialName() +
             instance_collection->instance_pool.get_device_buffer();
         program_vars["meshDescBuffer"] =
             instance_collection->mesh_pool.get_device_buffer();
+        program_vars["volumeDescBuffer"] =
+            instance_collection->volume_pool.get_device_buffer();
 
         program_vars.finish_setting_vars();
 
