@@ -1,6 +1,0 @@
-#pragma once
-#include "api.h"
-#include "pxr/base/gf/vec3f.h"
-RUZINO_NAMESPACE_OPEN_SCOPE
-using Color = pxr::GfVec3f;
-RUZINO_NAMESPACE_CLOSE_SCOPE

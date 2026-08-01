@@ -125,12 +125,6 @@ void UsdviewEngine::ChooseRenderer(
                 .Get<const void*>();
     }
 
-    if (available_renderers[i].GetString() == "Hd_RUZINO_GL_RendererPlugin") {
-        renderer_ui_control =
-            renderer_->GetRendererSetting(pxr::TfToken("RenderNodeSystem"))
-                .Get<const void*>();
-    }
-
     renderer_->SetEnablePresentation(false);
     data_->nvrhi_texture = nullptr;
 
