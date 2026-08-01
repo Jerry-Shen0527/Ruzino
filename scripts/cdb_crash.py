@@ -43,13 +43,21 @@ CDB_CANDIDATES = [
 # command string, not a multi-line script, and subprocess must pass it as one
 # arg so the shell doesn't split it.
 CDB_SCRIPT = (
+    ".lines;"                              # enable source line info (needs PDBs)
     "sxe av;"                              # break (first-chance) on access violation
     "g;"                                   # NOW run the target until AV or exit
     ".echo === Access violation caught ===;"
     ".exr -1;"                             # dump exception record
+    ".echo === Registers ===;"
+    "r;"                                   # dump all registers (rcx = 1st arg)
+    ".echo === Faulting IP source ===;"
+    "ln @rip;"                             # resolve faulting instr to nearest symbol
     ".echo === Faulting thread stack ===;"
     "~#s;"                                 # switch to faulting thread
     "knL;"                                 # print stack with module+frame numbers
+    ".echo === Caller frame locals (frame 2) ===;"
+    ".frame /r 2;"                         # switch to copyBuffer caller with regs
+    "dv /i /V;"                            # dump locals with values + types
     ".echo === Loaded modules ===;"
     "lm;"                                  # list modules (name + load addr + range)
     "q"                                    # quit debugger
@@ -78,10 +86,13 @@ def main():
     cdb = find_cdb()
     target_args = sys.argv[1:]
 
-    # Resolve the python interpreter that has pytest/nanobind modules.
-    # Prefer the project's python if present, else the one running this script.
-    project_py = Path(__file__).resolve().parent.parent / "SDK" / "python" / "python.exe"
-    python_exe = str(project_py) if project_py.exists() else sys.executable
+    # Use the SAME python that is running this script (sys.executable). The
+    # project's portable SDK/python/python.exe does NOT have pytest installed,
+    # so it can't run tests. The caller is responsible for invoking this script
+    # with a python that has pytest (e.g. scoop python313). The test's conftest
+    # injects Binaries/{Release,Debug} onto PATH and PXR_USD_WINDOWS_DLL_PATH,
+    # so native DLLs resolve correctly regardless of which interpreter runs.
+    python_exe = sys.executable
 
     # cdb flags:
     #   -o          output to console
@@ -91,22 +102,48 @@ def main():
     #               entirely; the 'g' must come last inside -c so sxe av is set
     #               first.
     #   -y          symbol path (Microsoft symbol server + local cache).
-    #   -cfl        log file to capture full output (cdb truncates console).
+    #   -logo       opens a NEW log file capturing full output (cdb truncates
+    #               console output to ~64KB). NOTE: this is -logo, NOT -cfl
+    #               (which does not exist — it gets misparsed as -cf "command
+    #               file" and cdb tries to execute the log PATH as a script,
+    #               silently aborting with "Address expression missing").
     log_file = str(Path(__file__).resolve().parent.parent / "cdb_output.log")
     cdb_cmd = [
         cdb,
         "-o", "-G",
         "-c", CDB_SCRIPT,
         "-y", "srv*C:\\symbols*https://msdl.microsoft.com/download/symbols",
-        "-cfl", log_file,
+        "-logo", log_file,
         python_exe,
     ] + target_args
 
-    print(f"[cdb_crash] launching: {' '.join(cdb_cmd)}")
-    print("=" * 80)
-    # Run from Binaries/Release so DLLs resolve (mirrors run_all_tests.py).
-    bin_dir = Path(__file__).resolve().parent.parent / "Binaries" / "Release"
+    # Respect RZ_BUILD_TYPE so a Debug crash can be debugged with PDBs. The
+    # test conftests read the same env var to load Binaries/{Debug,Release}.
+    build_type = os.environ.get("RZ_BUILD_TYPE", "Release")
+    project_root = Path(__file__).resolve().parent.parent
+    bin_dir = project_root / "Binaries" / build_type
+    if not bin_dir.exists():
+        # fallback to Release if the requested build dir is absent.
+        bin_dir = project_root / "Binaries" / "Release"
     cwd = str(bin_dir) if bin_dir.exists() else None
+
+    # Symbol path: project Binaries (so cdb finds our private PDBs by DLL
+    # location) BEFORE the Microsoft symbol server. Without the local path cdb
+    # only queries the MS server, which never has our private symbols, so all
+    # frames resolve to nearest-export names (wrong).
+    sym_path = (
+        f"srv*C:\\symbols*https://msdl.microsoft.com/download/symbols;"
+        f"cache*C:\\symbols;{bin_dir}"
+    )
+    # Replace the placeholder -y value added above with the full path.
+    for i, a in enumerate(cdb_cmd):
+        if a == "-y":
+            cdb_cmd[i + 1] = sym_path
+            break
+
+    print(f"[cdb_crash] launching: {' '.join(cdb_cmd)}")
+    print(f"[cdb_crash] build={build_type} cwd={cwd}")
+    print("=" * 80)
 
     result = subprocess.run(cdb_cmd, cwd=cwd)
     # cdb exit code: 0 = debuggee exited cleanly; non-zero = it caught something.

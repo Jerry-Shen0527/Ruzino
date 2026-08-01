@@ -391,21 +391,38 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                     sizeof(fluid_cb),
                     "wb_jacobi_cb",
                     jcb);
-                for (auto pair :
-                     { std::make_pair(&field->vel_x, &field->vel_x_tmp),
-                       std::make_pair(&field->vel_y, &field->vel_y_tmp),
-                       std::make_pair(&field->vel_z, &field->vel_z_tmp) }) {
+                // NOTE: do NOT use &field->vel_x here. RefCountPtr overloads
+                // operator&() to return IBuffer** (resource.h:307), so the
+                // unary-& yields a pointer to the ptr_ MEMBER, not to the
+                // RefCountPtr object — a downstream std::swap then swaps raw
+                // IBuffer* values, bypassing refcount accounting and
+                // corrupting the handles. This was the cause of field->vel_x
+                // becoming NULL mid-solve (crash in requireBufferState).
+                // std::addressof bypasses the overloaded operator& and returns
+                // the true BufferHandle*, so *addr is a correct BufferHandle&
+                // alias that swaps through the RefCountPtr move operators.
+                nvrhi::BufferHandle* vel_pairs[3][2] = {
+                    { std::addressof(field->vel_x),
+                      std::addressof(field->vel_x_tmp) },
+                    { std::addressof(field->vel_y),
+                      std::addressof(field->vel_y_tmp) },
+                    { std::addressof(field->vel_z),
+                      std::addressof(field->vel_z_tmp) },
+                };
+                for (auto& pp : vel_pairs) {
+                    nvrhi::BufferHandle& in = *pp[0];
+                    nvrhi::BufferHandle& out = *pp[1];
                     Ruzino::brush_dispatch(
                         rc,
                         field->jacobi_program,
-                        { { "field_in", *pair.first },
-                          { "rhs", *pair.first },
+                        { { "field_in", in },
+                          { "rhs", in },
                           { "wetness", field->wetness },
                           { "density", field->density } },
-                        { { "field_out", *pair.second } },
+                        { { "field_out", out } },
                         jcb,
                         window_total);
-                    std::swap(*pair.first, *pair.second);
+                    std::swap(in, out);
                 }
                 rc.destroy(jcb);
             }
@@ -464,22 +481,30 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
             };
             project();
 
-            // Advect velocity
-            for (auto pair :
-                 { std::make_pair(&field->vel_x, &field->vel_x_tmp),
-                   std::make_pair(&field->vel_y, &field->vel_y_tmp),
-                   std::make_pair(&field->vel_z, &field->vel_z_tmp) }) {
+            // Advect velocity. See diffuse note above: std::addressof is
+            // required because RefCountPtr::operator&() returns IBuffer**.
+            nvrhi::BufferHandle* advect_pairs[3][2] = {
+                { std::addressof(field->vel_x),
+                  std::addressof(field->vel_x_tmp) },
+                { std::addressof(field->vel_y),
+                  std::addressof(field->vel_y_tmp) },
+                { std::addressof(field->vel_z),
+                  std::addressof(field->vel_z_tmp) },
+            };
+            for (auto& pp : advect_pairs) {
+                nvrhi::BufferHandle& in = *pp[0];
+                nvrhi::BufferHandle& out = *pp[1];
                 Ruzino::brush_dispatch(
                     rc,
                     field->advect_program,
-                    { { "field_in", *pair.first },
+                    { { "field_in", in },
                       { "vel_x", field->vel_x },
                       { "vel_y", field->vel_y },
                       { "vel_z", field->vel_z } },
-                    { { "field_out", *pair.second } },
+                    { { "field_out", out } },
                     cb_buf,
                     window_total);
-                std::swap(*pair.first, *pair.second);
+                std::swap(in, out);
             }
 
             // Re-project
