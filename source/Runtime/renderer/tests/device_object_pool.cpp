@@ -4,6 +4,7 @@
 // SceneTypes
 #include <spdlog/spdlog.h>
 
+#include <mutex>
 #include <random>
 
 #include "../nodes/shaders/shaders/Scene/SceneTypes.slang"
@@ -109,25 +110,46 @@ TEST_F(MemoryPoolTest, data_io)
 
 TEST_F(MemoryPoolTest, multi_threaded_allocation)
 {
-    auto rng_engine = std::default_random_engine();
-    auto float_rng = std::uniform_real_distribution(0.0f, 1.0f);
+    // NOTE: this test exercises concurrent allocation on the two pools. The
+    // DeviceMemoryPool itself is thread-safe (allocate/erase take
+    // buffer_write_mutex_; the command-list open/write/close/execute sequence
+    // in write_data takes the global execution_launch_mutex). The shared state
+    // BELOW — the two result vectors and the RNG — is what used to race here:
+    //   * std::vector::push_back from 500 threads with no lock is a classic
+    //     use-after-free on reallocation (the original cause of the flaky
+    //     segfault that surfaced ~10% of runs).
+    //   * std::default_random_engine is NOT thread-safe; concurrent
+    //     operator() is a data race on its internal state.
+    // Each result vector now has its own mutex, and each thread seeds its own
+    // RNG from its launch index (still a valid concurrency stress test for the
+    // pools, just no UB on the test's own bookkeeping).
     std::vector<DeviceMemoryPool<int>::MemoryHandle> int_handles;
     std::vector<DeviceMemoryPool<float>::MemoryHandle> float_handles;
+    std::mutex int_handles_mutex;
+    std::mutex float_handles_mutex;
 
     std::vector<std::thread> threads;
     for (int i = 0; i < 500; ++i) {
         threads.push_back(
             std::thread([this,
-                         &rng_engine,
-                         &float_rng,
+                         i,
                          &int_handles,
-                         &float_handles]() {
+                         &float_handles,
+                         &int_handles_mutex,
+                         &float_handles_mutex]() {
+                // Per-thread RNG: seeded from the launch index so the run is
+                // deterministic yet free of cross-thread engine races.
+                auto rng_engine = std::default_random_engine(
+                    static_cast<std::default_random_engine::result_type>(i));
+                auto float_rng = std::uniform_real_distribution(0.0f, 1.0f);
+
                 if (float_rng(rng_engine) < 0.5) {
                     auto handle = pool.allocate(10);
                     std::vector<int> data(10, 42);
                     handle->write_data(data.data());
 
                     if (float_rng(rng_engine) < 0.5) {
+                        std::lock_guard lock(int_handles_mutex);
                         int_handles.push_back(handle);
                     }
                     else {
@@ -140,6 +162,7 @@ TEST_F(MemoryPoolTest, multi_threaded_allocation)
                     handle->write_data(data.data());
 
                     if (float_rng(rng_engine) < 0.5) {
+                        std::lock_guard lock(float_handles_mutex);
                         float_handles.push_back(handle);
                     }
                     else {
