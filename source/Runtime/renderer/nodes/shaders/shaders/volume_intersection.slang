@@ -21,26 +21,8 @@ struct VolumeHitAttributes {
     float tExit;   // Ray param at slab AABB exit (clamped to RayTCurrent).
 };
 
-// Density above which a cell counts as "paint surface". Chosen well below the
-// typical stroke density (~1-5/cell after the ×10 deposit): the surface
-// must be a solid slab, not the 0.02-threshold contour of a diluted field
-// (a field near the threshold gives ~30% ray hit rates → gray, speckled
-// strokes).
-static const float kDensitySurface = 0.002;
-
-// RYB -> RGB (Gossett & Chen 2004). The sim stores the pigment as a
-// red-yellow-blue vector (§3, Algorithm 2), so the blended pigment must be
-// converted to display RGB before it can be emitted as radiance. Emitting
-// RYB directly as RGB makes pure yellow (0,1,0) show as green and turns
-// every mixed color (e.g. RYB green (0,0.5,0.5)) into a muddy approximation.
-float3 ryb_to_rgb(float3 c)
-{
-    float rm = 1.0 - c.r, ym = 1.0 - c.g, bm = 1.0 - c.b;
-    return rm*ym*bm*float3(1,1,1)   + c.r*ym*bm*float3(1,0,0) +
-           rm*c.g*bm*float3(1,1,0)  + rm*ym*c.b*float3(0.163,0.373,0.6) +
-           c.r*c.g*bm*float3(1,0.5,0) + c.r*ym*c.b*float3(0.5,0,0.5) +
-           rm*c.g*c.b*float3(0,0.66,0.2) + c.r*c.g*c.b*float3(0.2,0.094,0.029);
-}
+// Density above which a cell counts as "paint surface".
+static const float kDensitySurface = 0.02;
 
 // Fetch one Float4 voxel, returning (0,0,0,0) outside the grid.
 float4 fetchVoxel(VolumeDesc vd, int ix, int iy, int iz)
@@ -50,20 +32,6 @@ float4 fetchVoxel(VolumeDesc vd, int ix, int iy, int iz)
         return float4(0, 0, 0, 0);
     uint idx = uint((iz * int(vd.gridResY) + iy) * int(vd.gridResX) + ix);
     return asfloat(t_BindlessBuffers[vd.bindlessIndex].Load4(idx * 16));
-}
-
-// Fetch one oil-density voxel (paper §6 penetration distance). Returns -1
-// when no oil buffer is bound (primvar fallback path) so the caller can fall
-// back to density-driven penetration.
-float fetchOilVoxel(VolumeDesc vd, int ix, int iy, int iz)
-{
-    if (vd.oilIndex < 0)
-        return -1.0;
-    if (ix < 0 || iy < 0 || iz < 0 ||
-        ix >= int(vd.gridResX) || iy >= int(vd.gridResY) || iz >= int(vd.gridResZ))
-        return 0.0;
-    uint idx = uint((iz * int(vd.gridResY) + iy) * int(vd.gridResX) + ix);
-    return asfloat(t_BindlessBuffers[vd.oilIndex].Load(idx * 4));
 }
 
 // Sample the per-cell (density, r, g, b) field at world-space position p.
@@ -98,31 +66,6 @@ float4 samplePaintField(VolumeDesc vd, float3 p)
 float sampleDensity(VolumeDesc vd, float3 p)
 {
     return samplePaintField(vd, p).x;
-}
-
-// Trilinearly sample the oil density at world position p (paper §6: "we use
-// the oil density to calculate a penetration distance"). Returns -1 when no
-// oil buffer is bound (primvar fallback path).
-float sampleOilField(VolumeDesc vd, float3 p)
-{
-    float3 rel = (p - vd.gridMin) / vd.cellSize - 0.5;
-    int x0 = int(floor(rel.x));
-    int y0 = int(floor(rel.y));
-    int z0 = int(floor(rel.z));
-    int x1 = x0 + 1, y1 = y0 + 1, z1 = z0 + 1;
-    float sx = rel.x - float(x0);
-    float sy = rel.y - float(y0);
-    float sz = rel.z - float(z0);
-
-    float c000 = fetchOilVoxel(vd,x0,y0,z0), c100 = fetchOilVoxel(vd,x1,y0,z0);
-    float c010 = fetchOilVoxel(vd,x0,y1,z0), c110 = fetchOilVoxel(vd,x1,y1,z0);
-    float c001 = fetchOilVoxel(vd,x0,y0,z1), c101 = fetchOilVoxel(vd,x1,y0,z1);
-    float c011 = fetchOilVoxel(vd,x0,y1,z1), c111 = fetchOilVoxel(vd,x1,y1,z1);
-    // Any missing oil buffer (oilIndex < 0) propagates the -1 sentinel.
-    float c00 = lerp(c000,c100,sx), c10 = lerp(c010,c110,sx);
-    float c01 = lerp(c001,c101,sx), c11 = lerp(c011,c111,sx);
-    float c0 = lerp(c00,c10,sy), c1 = lerp(c01,c11,sy);
-    return lerp(c0, c1, sz);
 }
 
 // Paint surface normal from the density gradient (paper §6). The gradient

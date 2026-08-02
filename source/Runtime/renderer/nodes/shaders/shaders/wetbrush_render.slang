@@ -866,23 +866,11 @@ void VolumeClosestHit(inout RayPayload payload, in VolumeHitAttributes attr)
     }
 
     // Phase 2: penetration blend. Continue from the first-cross point for a
-    // depth proportional to the OIL density (paper §6: "we use the oil
-    // density to calculate a penetration distance" — oil-rich paint is more
-    // transparent, so more pigment samples are collected along the ray into
-    // the surface within that distance), averaging the pigment color of every
-    // cell touched. Falls back to density-driven depth when no oil buffer is
-    // bound (primvar fallback path).
-    float3 surfP = origin + tCross * dir;
-    float oil = sampleOilField(vd, surfP);
-    float penDepth;
-    if (oil < 0.0) {
-        penDepth = max(cell_sz, densityAtCross * cell_sz * 4.0);
-    } else {
-        // oil_density_base is 0.5 in the test config; 8×cell at full oil
-        // gives a ~4-cell collect depth (denser than the old density term,
-        // which averaged only ~1 cell for typical densities).
-        penDepth = max(cell_sz, oil * cell_sz * 8.0);
-    }
+    // depth proportional to the oil density (denser paint = deeper collect),
+    // averaging the pigment color of every cell touched. Paper: "we allow more
+    // pigment samples to be collected along the ray into the surface within
+    // [the penetration] distance."
+    float penDepth = max(cell_sz, densityAtCross * cell_sz * 4.0);
     float tPenEnd = min(tCross + penDepth, attr.tExit);
     float3 colorSum = float3(0.0);
     float weightSum = 0.0;
@@ -903,6 +891,7 @@ void VolumeClosestHit(inout RayPayload payload, in VolumeHitAttributes attr)
     float3 paintColor = (weightSum > 0.0) ? colorSum / weightSum : float3(0.0);
 
     // Surface normal from the density gradient at the first-cross point.
+    float3 surfP = origin + tCross * dir;
     float3 nrm = surfaceNormal(vd, surfP);
 
     // Simple Lambertian facing term: paint facing the incoming ray direction
@@ -915,11 +904,7 @@ void VolumeClosestHit(inout RayPayload payload, in VolumeHitAttributes attr)
     // sampling darkens crevices and dense pigment pockets.
     float ao = ambientOcclusion(vd, surfP, nrm, payload.seed);
 
-    // The blended pigment is in RYB space (§3); convert to RGB before
-    // emitting as radiance (RYB (0,1,0) yellow must display as yellow, and
-    // the yellow+blue mix must display as the paper's Fig 11c green).
-    float3 radiance = ryb_to_rgb(paintColor);
-    payload.volumeColor = radiance * shade * (1.0 - ao);
+    payload.volumeColor = paintColor * shade * (1.0 - ao);
 }
 
 [shader("closesthit")]

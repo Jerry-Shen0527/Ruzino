@@ -4,8 +4,6 @@
 // The simulation grid is 3D: N×N×D (res × res × res_z).
 // Paper lies in the XY plane; Z is the height axis for paint volume.
 // Wetbrush uses 128×128×32 active window within a 4096×4096×64 global grid.
-// Ours is 256×256×res_z (WIN_ALLOC_XY in brush_sim_common.hpp): a 128 window
-// clips the brush footprint at res=4096 (footprint ~164 cells diameter).
 
 #ifndef BRUSH_SIM_COMMON
 #define BRUSH_SIM_COMMON

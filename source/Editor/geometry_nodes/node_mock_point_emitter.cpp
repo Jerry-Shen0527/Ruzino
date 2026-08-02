@@ -38,7 +38,7 @@ struct EmitterStorage {
     // Stroke k occupies vertices [stroke_start[k],
     // stroke_start[k]+stroke_len[k]).
     std::vector<glm::vec3> points;
-    std::vector<glm::vec3> colors;      // per-point RYB display color
+    std::vector<glm::vec3> colors;       // per-point RYB display color
     std::vector<float> times;           // per-point stroke-local time
     std::vector<int> stroke_start_idx;  // first flat index of each stroke
     std::vector<int> stroke_len;        // vertex count per stroke
@@ -96,8 +96,7 @@ NODE_EXECUTION_FUNCTION(mock_point_emitter)
             // single static Ink Color — needed for multi-color strokes).
             storage.colors = curve->get_display_color();
             if (storage.colors.size() != verts.size()) {
-                storage.colors.assign(
-                    verts.size(), glm::vec3(1.0f, 0.0f, 0.0f));
+                storage.colors.assign(verts.size(), glm::vec3(1.0f, 0.0f, 0.0f));
             }
 
             // Timestamps (optional — stroke-local time per point).
@@ -124,24 +123,16 @@ NODE_EXECUTION_FUNCTION(mock_point_emitter)
             }
             storage.total_strokes = static_cast<int>(vc.size());
 
-            // Synthesize per-stroke local timestamps only if the captured
-            // ones are MISSING or degenerate. A stroke starting at t=0 is
-            // legitimate (e.g. mock_stroke authors 0..0.967s); the old check
-            // `times[s0] != 0.0f` misread any 0-starting stroke as
-            // "no timestamps" and replaced real timing with a flat 1/60
-            // spacing — making the brush finish a 0.967s stroke in 30 frames
-            // and leaving no settle time for particle re-deposit.
+            // Synthesize per-stroke local timestamps if the captured ones
+            // are missing or mismatched.
             if (storage.times.size() == verts.size() &&
                 storage.total_strokes > 0) {
                 bool needs_synth = false;
                 for (int s = 0; s < storage.total_strokes; ++s) {
                     int s0 = storage.stroke_start_idx[s];
-                    int len = storage.stroke_len[s];
-                    int end = s0 + len;
-                    if (end > 0 &&
-                        end - 1 < static_cast<int>(storage.times.size()) &&
-                        storage.times[end - 1] > storage.times[s0]) {
-                        // Monotonically increasing timestamps — trust them.
+                    if (s0 < static_cast<int>(storage.times.size()) &&
+                        storage.times[s0] != 0.0f) {
+                        // captured timestamps exist; trust them.
                     }
                     else {
                         needs_synth = true;
@@ -180,7 +171,7 @@ NODE_EXECUTION_FUNCTION(mock_point_emitter)
             out.pos = storage.points[0];
             out.time = storage.times.empty() ? 0.0f : storage.times[0];
             out.color = storage.colors.empty() ? glm::vec3(1.0f, 0.0f, 0.0f)
-                                               : storage.colors[0];
+                                                : storage.colors[0];
             out.active = true;
             out.stroke_start = true;
             storage.last_pos = out.pos;

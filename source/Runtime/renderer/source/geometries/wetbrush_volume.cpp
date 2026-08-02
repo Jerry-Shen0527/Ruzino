@@ -39,13 +39,14 @@ HdDirtyBits Hd_RUZINO_WetbrushVolume::GetInitialDirtyBitsMask() const
     int mask = HdChangeTracker::Clean | HdChangeTracker::InitRepr |
                HdChangeTracker::DirtyTransform |
                HdChangeTracker::DirtyVisibility |
-               HdChangeTracker::DirtyPrimvar | HdChangeTracker::DirtyInstancer |
+               HdChangeTracker::DirtyPrimvar |
+               HdChangeTracker::DirtyInstancer |
                HdChangeTracker::DirtyMaterialId;
     return (HdDirtyBits)mask;
 }
 
-HdDirtyBits Hd_RUZINO_WetbrushVolume::_PropagateDirtyBits(
-    HdDirtyBits bits) const
+HdDirtyBits Hd_RUZINO_WetbrushVolume::_PropagateDirtyBits(HdDirtyBits bits)
+    const
 {
     return bits;
 }
@@ -76,17 +77,12 @@ void Hd_RUZINO_WetbrushVolume::create_gpu_resources(
     const void* ext_meta_ptr = nullptr;
     size_t ext_meta_bytes = 0;
     bool registry_hit = SharedGPUBufferRegistry::get().lookup(
-        "wetbrush_paint_field",
-        ext_buf,
-        ext_bytes,
-        ext_version,
-        &ext_meta_ptr,
-        &ext_meta_bytes);
+        "wetbrush_paint_field", ext_buf, ext_bytes, ext_version,
+        &ext_meta_ptr, &ext_meta_bytes);
 
     if (registry_hit && ext_buf && ext_meta_bytes >= 7 * sizeof(float)) {
         // Pull grid geometry from the registry metadata (agreed POD layout:
-        // uint32 resX, resY, resZ; float cellSize, gridMinX, gridMinY,
-        // gridMinZ).
+        // uint32 resX, resY, resZ; float cellSize, gridMinX, gridMinY, gridMinZ).
         struct PaintFieldMeta {
             uint32_t resX, resY, resZ;
             float cellSize;
@@ -115,57 +111,20 @@ void Hd_RUZINO_WetbrushVolume::create_gpu_resources(
             spdlog::info(
                 "WetbrushVolume {}: registry hit (v{}, {}x{}x{}, {} bytes, "
                 "bindless={})",
-                GetId().GetText(),
-                ext_version,
-                gridResX,
-                gridResY,
-                gridResZ,
-                ext_bytes,
+                GetId().GetText(), ext_version,
+                gridResX, gridResY, gridResZ, ext_bytes,
                 densityDescriptorHandle.Get());
         }
-
-        // Companion oil-density field (paper §6 penetration distance). Same
-        // grid as the paint field; version/handle tracked the same way.
-        {
-            nvrhi::BufferHandle oil_buf;
-            size_t oil_bytes = 0;
-            uint64_t oil_ver = 0;
-            bool oil_hit = SharedGPUBufferRegistry::get().lookup(
-                "wetbrush_oil_field", oil_buf, oil_bytes, oil_ver);
-            if (oil_hit && oil_buf &&
-                (!oilDescriptorHandle.Get() ||
-                 oilBuffer.Get() != oil_buf.Get() ||
-                 oilRegistryVersion != oil_ver)) {
-                oilBuffer = oil_buf;
-                oilRegistryVersion = oil_ver;
-                auto descriptor_table = render_param->InstanceCollection
-                                            ->get_buffer_descriptor_table();
-                oilDescriptorHandle = descriptor_table->CreateDescriptorHandle(
-                    nvrhi::BindingSetItem::RawBuffer_SRV(0, oilBuffer));
-                spdlog::info(
-                    "WetbrushVolume {}: oil registry hit (v{}, {} bytes, "
-                    "bindless={})",
-                    GetId().GetText(),
-                    oil_ver,
-                    oil_bytes,
-                    oilDescriptorHandle.Get());
-            }
-        }
-    }
-    else if (cell_count == 0 || paintField.size() != cell_count) {
+    } else if (cell_count == 0 || paintField.size() != cell_count) {
         // Phase 2 fallback requires primvar data — if it's missing/empty, skip.
         spdlog::warn(
             "WetbrushVolume {}: no registry buffer and paint field mismatch "
             "({}x{}x{} voxels, {} entries) -- skipping GPU resources",
-            GetId().GetText(),
-            gridResX,
-            gridResY,
-            gridResZ,
+            GetId().GetText(), gridResX, gridResY, gridResZ,
             paintField.size());
         _valid = false;
         return;
-    }
-    else {
+    } else {
         // ------------------------------------------------------------------
         // Phase 2 fallback: create our own buffer from the primvar data
         // (Float4 per voxel: density, r, g, b).
@@ -285,9 +244,7 @@ void Hd_RUZINO_WetbrushVolume::create_gpu_resources(
     vd.gridMin = float3(gridMin[0], gridMin[1], gridMin[2]);
     vd.boundsMin = float3(bounds_min[0], bounds_min[1], bounds_min[2]);
     vd.boundsMax = float3(bounds_max[0], bounds_max[1], bounds_max[2]);
-    // -1 = no oil buffer bound (primvar fallback path); the shader then
-    // falls back to density-driven penetration.
-    vd.oilIndex = oilDescriptorHandle.Get() ? oilDescriptorHandle.Get() : -1;
+    vd.padding = 0;
 
     if (!volume_desc_buffer)
         volume_desc_buffer =
@@ -301,12 +258,8 @@ void Hd_RUZINO_WetbrushVolume::create_gpu_resources(
         GetId().GetText(),
         cell_count,
         vd.bindlessIndex,
-        bounds_min[0],
-        bounds_min[1],
-        bounds_min[2],
-        bounds_max[0],
-        bounds_max[1],
-        bounds_max[2]);
+        bounds_min[0], bounds_min[1], bounds_min[2],
+        bounds_max[0], bounds_max[1], bounds_max[2]);
 }
 
 void Hd_RUZINO_WetbrushVolume::updateTLAS(
@@ -342,8 +295,9 @@ void Hd_RUZINO_WetbrushVolume::updateTLAS(
     memcpy(&instance_data.transform, transform.data(), sizeof(pxr::GfMatrix4f));
     // Stamp the type bits so the shader can recognise the volume instance
     // (flags top 3 bits encode GeometryType::Custom).
-    instance_data.flags = static_cast<uint32_t>(GeometryType::Custom)
-                          << GeometryInstanceData::kTypeOffset;
+    instance_data.flags =
+        static_cast<uint32_t>(GeometryType::Custom)
+        << GeometryInstanceData::kTypeOffset;
     instanceBuffer->write_data(&instance_data);
 
     nvrhi::rt::InstanceDesc rt_instance;
@@ -391,8 +345,8 @@ void Hd_RUZINO_WetbrushVolume::Sync(
     }
 
     // Pull the canvas metadata + paint-field primvars.
-    if (*dirtyBits &
-        (HdChangeTracker::DirtyPrimvar | HdChangeTracker::InitRepr)) {
+    if (*dirtyBits & (HdChangeTracker::DirtyPrimvar | HdChangeTracker::InitRepr))
+    {
         // 3D grid metadata primvars (authored by render_wetbrush.py bake).
         VtValue rx_v = sceneDelegate->Get(id, TfToken("gridResX"));
         VtValue ry_v = sceneDelegate->Get(id, TfToken("gridResY"));
@@ -402,20 +356,16 @@ void Hd_RUZINO_WetbrushVolume::Sync(
         VtValue paint_v = sceneDelegate->Get(id, TfToken("paintField"));
 
         auto read_uint = [](const VtValue& v) -> uint32_t {
-            if (v.IsHolding<int>())
-                return static_cast<uint32_t>(v.UncheckedGet<int>());
-            if (v.IsHolding<uint>())
-                return static_cast<uint32_t>(v.UncheckedGet<uint>());
+            if (v.IsHolding<int>())  return static_cast<uint32_t>(v.UncheckedGet<int>());
+            if (v.IsHolding<uint>()) return static_cast<uint32_t>(v.UncheckedGet<uint>());
             return 0;
         };
         uint32_t new_rx = read_uint(rx_v);
         uint32_t new_ry = read_uint(ry_v);
         uint32_t new_rz = read_uint(rz_v);
-        float new_cs =
-            cs_v.IsHolding<float>() ? cs_v.UncheckedGet<float>() : 0.0f;
-        GfVec3f new_gm = gm_v.IsHolding<GfVec3f>()
-                             ? gm_v.UncheckedGet<GfVec3f>()
-                             : GfVec3f(0.0f);
+        float new_cs = cs_v.IsHolding<float>() ? cs_v.UncheckedGet<float>() : 0.0f;
+        GfVec3f new_gm = gm_v.IsHolding<GfVec3f>() ? gm_v.UncheckedGet<GfVec3f>()
+                                                    : GfVec3f(0.0f);
         if (new_rx != gridResX || new_ry != gridResY || new_rz != gridResZ ||
             new_cs != cellSize || new_gm != gridMin) {
             gridResX = new_rx;
@@ -446,11 +396,7 @@ void Hd_RUZINO_WetbrushVolume::Sync(
             spdlog::info(
                 "WetbrushVolume {}: loaded 3D paint field ({} voxels, "
                 "{}x{}x{})",
-                id.GetText(),
-                paintField.size(),
-                gridResX,
-                gridResY,
-                gridResZ);
+                id.GetText(), paintField.size(), gridResX, gridResY, gridResZ);
         }
     }
 

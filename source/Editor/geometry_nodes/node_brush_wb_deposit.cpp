@@ -176,8 +176,9 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         // Shaders index these with window-local coords (global cell minus
         // window_origin); see bristle_rasterize / particle_rasterize /
         // bristle_merge / bristle_liquid_transfer.
-        int win_alloc_n3d = WetbrushSimState::WIN_ALLOC_XY *
-                            WetbrushSimState::WIN_ALLOC_XY * rz;
+        int win_alloc_n3d =
+            WetbrushSimState::WIN_ALLOC_XY *
+            WetbrushSimState::WIN_ALLOC_XY * rz;
 
         auto safe_destroy = [&](nvrhi::BufferHandle& h) {
             if (h) {
@@ -234,8 +235,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
             field->vel_x_old,
             field->vel_y_old,
             field->vel_z_old,
-            field->packed_paint,
-            field->packed_oil);
+            field->packed_paint);
 
         auto make_buf = [&](const char* name) {
             return Ruzino::brush_create_field_buffer(rc, alloc_win_n3d, name);
@@ -296,8 +296,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         // factory's flag set unchanged for the many other callers.
         field->packed_paint = rc.create(
             nvrhi::BufferDesc{}
-                .setByteSize(
-                    static_cast<size_t>(alloc_win_n3d) * sizeof(float) * 4)
+                .setByteSize(static_cast<size_t>(alloc_win_n3d) * sizeof(float) * 4)
                 .setStructStride(sizeof(float) * 4)
                 .setInitialState(nvrhi::ResourceStates::UnorderedAccess)
                 .setKeepInitialState(true)
@@ -305,19 +304,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
                 .setCanHaveTypedViews(true)
                 .setCanHaveRawViews(true)
                 .setDebugName("wb_packed_paint"));
-
-        // Packed oil density — one float per cell, same RawBuffer_SRV
-        // requirement as packed_paint (bound by the render rprim).
-        field->packed_oil = rc.create(
-            nvrhi::BufferDesc{}
-                .setByteSize(static_cast<size_t>(alloc_win_n3d) * sizeof(float))
-                .setStructStride(sizeof(float))
-                .setInitialState(nvrhi::ResourceStates::UnorderedAccess)
-                .setKeepInitialState(true)
-                .setCanHaveUAVs(true)
-                .setCanHaveTypedViews(true)
-                .setCanHaveRawViews(true)
-                .setDebugName("wb_packed_oil"));
 
         // Zero-init everything. Variadic write (same MSVC init-list reason
         // as destroy_buffers above). Two groups: full-grid (alloc_win_n3d)
@@ -361,8 +347,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
             field->divergence_buf,
             field->vel_x_old,
             field->vel_y_old,
-            field->vel_z_old,
-            field->packed_oil);
+            field->vel_z_old);
         write_win(
             field->bristle_density,
             field->bristle_vel_x,
@@ -655,9 +640,9 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
     }
 
     // ======================================================================
-    // position_window — center the active window's dispatch range on a brush
-    // XY. Paper §4.2: the 3D grid is global and persistent; the window is only
-    // the per-frame compute region. Moving the window no longer commits/clears
+    // position_window — center the active window's dispatch range on a brush XY.
+    // Paper §4.2: the 3D grid is global and persistent; the window is only the
+    // per-frame compute region. Moving the window no longer commits/clears
     // anything — the old cells keep their values in the global grid.
     // ======================================================================
     auto position_window = [&](float bx, float by) {
@@ -893,15 +878,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         if (field->has_prev_brush_pos) {
             glm::vec3 delta = brush_pos_3d - field->prev_brush_pos;
             float frame_disp = glm::length(delta);
-            // Sub-step so consecutive deposits are <= ~2 cells apart — with
-            // the W_smooth_3d splat (h = 1.5 cells) overlapping kernels make
-            // the band continuous. The old threshold (one brush diameter)
-            // left 20-41-cell gaps between frames' 600-cell speckle patterns
-            // (periodic zebra striping). Paper §Limitations names "densely
-            // sampled stroke path" as its own smoothness mechanism.
-            float step_target = std::max(cell_sz * 2.0f, 1e-6f);
-            n_sub = std::max(
-                1, static_cast<int>(std::ceil(frame_disp / step_target)));
+            float diam = std::max(brush_radius * 2.0f, cell_sz);
+            n_sub = std::max(1, static_cast<int>(std::ceil(frame_disp / diam)));
             const int N_SUB_CAP = 128;
             if (n_sub > N_SUB_CAP)
                 n_sub = N_SUB_CAP;

@@ -1,7 +1,7 @@
 // Mock two crossing strokes — a test fixture for multi-color paint mixing.
 //
 // Emits TWO curve segments:
-//   stroke 0 (yellow, RYB (0,1,0)): horizontal along X, 0..0.5s
+//   stroke 0 (yellow, RYB (1,1,0)): horizontal along X, 0..0.5s
 //   stroke 1 (blue,   RYB (0,0,1)): vertical along Y, crossing stroke 0
 //                                   mid-canvas, delayed to 0.5..1.0s so it
 //                                   draws AFTER stroke 0 completes.
@@ -12,12 +12,12 @@
 // §6 Figure 11c the brightness-preserving RYB mix turns yellow+blue GREEN at
 // the crossing — the signature check that color_mix is correct.
 
-#include <cmath>
-#include <vector>
-
 #include "GCore/Components/CurveComponent.h"
 #include "GCore/GOP.h"
 #include "geom_node_base.h"
+
+#include <cmath>
+#include <vector>
 
 NODE_DEF_OPEN_SCOPE
 
@@ -25,10 +25,7 @@ NODE_DECLARATION_FUNCTION(mock_strokes)
 {
     b.add_input<int>("Num Points").default_val(30).min(2).max(200);
     b.add_input<float>("Length").default_val(0.3f).min(0.01f).max(2.0f);
-    b.add_input<float>("Stroke 0 Duration")
-        .default_val(0.5f)
-        .min(0.05f)
-        .max(5.0f);
+    b.add_input<float>("Stroke 0 Duration").default_val(0.5f).min(0.05f).max(5.0f);
     b.add_input<float>("Stroke 1 Start").default_val(0.5f).min(0.0f).max(5.0f);
     b.add_output<Geometry>("Stroke Curves");
 }
@@ -51,9 +48,7 @@ NODE_EXECUTION_FUNCTION(mock_strokes)
     // RYB yellow + blue pair (paper §6 Figure 11c): at the crossing the
     // brightness-preserving Color_Mix turns yellow+blue GREEN — the canonical
     // wet-in-wet mixing check. Pure RYB primaries so the blend reads cleanly.
-    // NOTE: RYB yellow is (0,1,0). (1,1,0) is ORANGE in RYB space and mixing
-    // it with blue yields a muddy gray, not green.
-    const glm::vec3 yellow(0.00f, 1.00f, 0.00f);  // RYB yellow
+    const glm::vec3 yellow(1.00f, 1.00f, 0.00f);  // RYB yellow
     const glm::vec3 blue(0.00f, 0.00f, 1.00f);    // RYB blue
 
     // Stroke 0: yellow, horizontal along X, centered at origin, gently wavy.
@@ -83,7 +78,7 @@ NODE_EXECUTION_FUNCTION(mock_strokes)
 
     curve->set_vertices(vertices);
     // Two segments, num_points each.
-    curve->set_vert_count({ num_points, num_points });
+    curve->set_vert_count({num_points, num_points});
     curve->set_display_color(colors);
     curve->set_width(widths);
     curve->add_vertex_scalar_quantity("timestamp", timestamps);

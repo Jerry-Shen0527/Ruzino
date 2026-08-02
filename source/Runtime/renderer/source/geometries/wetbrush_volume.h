@@ -63,13 +63,6 @@ class HD_RUZINO_API Hd_RUZINO_WetbrushVolume final : public HdVolume {
     nvrhi::BufferHandle densityBuffer;
     DescriptorHandle densityDescriptorHandle;
 
-    // Bindless per-cell oil density buffer (paper §6 penetration distance),
-    // registered by the sim under "wetbrush_oil_field". Empty in the primvar
-    // fallback path.
-    nvrhi::BufferHandle oilBuffer;
-    DescriptorHandle oilDescriptorHandle;
-    uint64_t oilRegistryVersion = 0;
-
     // Single procedural AABB covering the whole slab (CPU-computed).
     nvrhi::BufferHandle aabbBuffer;
 
@@ -93,9 +86,9 @@ class HD_RUZINO_API Hd_RUZINO_WetbrushVolume final : public HdVolume {
     bool _valid = false;
 
     // Shared-registry two-phase lookup state. When the sim registers a packed
-    // Float4 buffer under "wetbrush_paint_field", we use it directly (zero
-    // copy) instead of creating our own buffer from the primvar data.
-    uint64_t registryVersion = 0;  // last-seen registry version for the buffer
+    // Float4 buffer under "wetbrush_paint_field", we use it directly (zero copy)
+    // instead of creating our own buffer from the primvar data.
+    uint64_t registryVersion = 0;   // last-seen registry version for the buffer
 
     void create_gpu_resources(Hd_RUZINO_RenderParam* render_param);
     void updateTLAS(
@@ -107,8 +100,7 @@ class HD_RUZINO_API Hd_RUZINO_WetbrushVolume final : public HdVolume {
     HdDirtyBits _PropagateDirtyBits(HdDirtyBits bits) const override;
 
     Hd_RUZINO_WetbrushVolume(const Hd_RUZINO_WetbrushVolume&) = delete;
-    Hd_RUZINO_WetbrushVolume& operator=(const Hd_RUZINO_WetbrushVolume&) =
-        delete;
+    Hd_RUZINO_WetbrushVolume& operator=(const Hd_RUZINO_WetbrushVolume&) = delete;
 };
 
 RUZINO_NAMESPACE_CLOSE_SCOPE
