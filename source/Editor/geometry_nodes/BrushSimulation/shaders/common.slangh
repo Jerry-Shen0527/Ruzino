@@ -55,17 +55,7 @@ struct SimConstants {
     // → thinner, flatter paint; lower → thicker. The base value is the user
     // input; cells relax toward it as paint is deposited.
     float oil_density_base;
-    // Density threshold for the diffusion (mode 0) pass. When > 0, a neighbor
-    // cell is only included in the 6-neighbor average if its density exceeds
-    // this gate; otherwise the neighbor is reflected (Neumann) as the center
-    // value. Used by the COLOR diffusion dispatch so pigment only spreads
-    // between cells that actually hold paint — averaging a real pigment
-    // against an empty (zero-pigment) cell dilutes it toward RYB (0,0,0),
-    // which renders white (Gossett&Chen RYB->RGB: no pigment = white paper),
-    // compressing a saturated stroke to gray. The velocity-viscosity diffuse
-    // dispatch leaves this at 0 (no gating) so velocity diffuses normally.
-    float diffuse_density_gate;
-    float _pad1, _pad2;  // keep 16-byte alignment
+    float _pad0, _pad1, _pad2;  // keep 16-byte alignment
 };
 
 // ============================================================

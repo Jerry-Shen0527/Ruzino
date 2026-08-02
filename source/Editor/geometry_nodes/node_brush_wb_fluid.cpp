@@ -186,26 +186,25 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
             Nb * S);
         rc.destroy(emit0_cb);
 
-        // Emit mode 1 (from grid cells) — DISABLED.
-        //
-        // particle_emit.slang mode 1 reads a grid cell's density and mints a
-        // particle whose color is HARDCODED to (0,0,0,density) — it carries
-        // DENSITY as mass but ZERO pigment. The particle is not consumed by
-        // grid_to_particle (which only fires within D0 of the brush), so
-        // outside the brush footprint these zero-color particles survive and
-        // are re-rasterized + re-merged into the grid every frame. In
-        // bristle_merge.slang the zero-color particle goes through color_mix
-        // as new_ryb=(0,0,0), which dilutes the cell's real RYB color toward
-        // (0,0,0). In the Gossett&Chen RYB model (0,0,0) = WHITE PAPER, so
-        // this dilution rendered saturated strokes white — especially blue,
-        // whose RYB->RGB corner (0.163,0.373,0.6) is dim and goes gray/white
-        // fastest as the RYB value shrinks. Yellow stayed readable because
-        // its corner (1,1,0) is bright. Emit mode 0 (from bristle samples,
-        // which carry the real ink pigment) is retained and is the only
-        // particle source now.
-        //
-        // (particle_emit.slang is outside this change set, so the fix is
-        // applied here at the dispatch site in the diff'd node file.)
+        // Emit mode 1 (from grid cells)
+        pc.emit_mode = 1;
+        nvrhi::BufferHandle emit1_cb;
+        Ruzino::brush_upload_cb(
+            rc, device, &pc, sizeof(pc), "wb_emit1_cb", emit1_cb);
+        Ruzino::brush_dispatch(
+            rc,
+            field->ptcl_emit_program,
+            { { "sample_pos", field->sample_pos },
+              { "sample_color", field->sample_color },
+              { "density", field->density } },
+            { { "ptcl_counter", field->ptcl_counter },
+              { "ptcl_pos", field->ptcl_pos },
+              { "ptcl_vel", field->ptcl_vel },
+              { "ptcl_color", field->ptcl_color },
+              { "ptcl_alive", field->ptcl_alive } },
+            emit1_cb,
+            win_n3d);
+        rc.destroy(emit1_cb);
 
         // Update particles (ping-pong)
         Ruzino::brush_dispatch(
@@ -533,39 +532,37 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
             advect_scalar(field->wetness, field->wetness_tmp);
             advect_scalar(field->oil_density, field->oil_density_tmp);
 
-            // Scalar diffusion of the COLOR + OIL channels (paper §4.2: "we
+            // Scalar diffusion of the COLOR channels only (paper §4.2: "we
             // diffuse the density and color fields"). Diffusing the pigment
-            // smooths the per-cell RYB splat noise that showed as speckle on
-            // freshly painted strokes.
+            // smooths the per-cell RYB splat noise that showed as speckle/
+            // mottling on freshly painted strokes — this is the part that
+            // fixes the blue-stroke color mottling.
             //
-            // DENSITY is deliberately NOT diffused (see above): it is the
-            // paint MASS injected only where bristles touch the canvas;
-            // diffusing it pushes the high-density front into zero-pigment
-            // cells, which then render white and advance the stroke width
-            // past the brush footprint.
-            //
-            // DENSITY-GATED color diffusion (diffuse_density_gate > 0): a
-            // neighbor only joins the 6-cell average if IT holds paint
-            // (density > gate). Without this gate, averaging a real pigment
-            // against an empty (zero-pigment) neighbor dilutes it toward RYB
-            // (0,0,0) = white paper in the Gossett&Chen RYB->RGB map. Blue is
-            // the worst case: its RGB corner (0.163,0.373,0.6) is dim, so a
-            // half-diluted RYB (0,0,0.5) renders as light gray, not light
-            // blue — the "blue stroke renders white" bug. The gate keeps the
-            // diffusion inside the painted region so pigment stays saturated
-            // while still smoothing the speckle the diffusion was added for.
-            // The velocity-viscosity diffuse pass leaves the gate at 0.
+            // DENSITY is deliberately NOT diffused. The density field is the
+            // paint MASS, and it is injected only where bristles actually
+            // touch the canvas (×10 in bristle_rasterize). Diffusing it
+            // pushes that high-density front into neighboring cells whose
+            // color was never injected (color_r/y/b are still 0 there).
+            // Those cells then cross the render surface threshold
+            // (kDensitySurface = 0.002) as "high density + zero pigment",
+            // which renders as white/gray — and because the brush keeps
+            // re-injecting ×10 at the tip, the diffusive front never stops
+            // advancing: the visible "white paint infinitely flowing out /
+            // continuously widening past where the brush already moved"
+            // artifact. Keeping density where it was deposited locks the
+            // stroke width to the brush footprint; smoothness there comes
+            // from the W_smooth_3d splat at injection + semi-Lagrangian
+            // advect re-sampling, neither of which advances mass into
+            // untouched cells.
             //
             // alpha = dt·diffusion·N² (≈1.7 at res 4096 for the default
             // diffusion 1e-4). The window Neumann BC (fluid_jacobi.slang)
-            // makes this a closed domain, so the diffused mass is conserved
-            // within the active window.
+            // makes this a closed domain, so the diffused color mass is
+            // conserved within the active window.
             fluid_cb.jacobi_mode = 0;
             fluid_cb.jacobi_alpha =
                 sub_dt * diffusion *
                 static_cast<float>(field->grid_res * field->grid_res);
-            fluid_cb.diffuse_density_gate =
-                1e-3f;  // only between painted cells
             {
                 nvrhi::BufferHandle dcb;
                 Ruzino::brush_upload_cb(
@@ -590,7 +587,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                 diffuse_scalar(field->oil_density, field->oil_density_tmp);
                 rc.destroy(dcb);
             }
-            fluid_cb.diffuse_density_gate = 0.0f;  // restore for velocity pass
 
             // Damp + dry. Dispatched over the FULL grid (not just the active
             // window) so that paint left behind by a moving brush still dries

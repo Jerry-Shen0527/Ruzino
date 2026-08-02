@@ -207,11 +207,7 @@ struct SimConstants {
     int window_size_z;
 
     float oil_density_base;
-    // Density threshold for the diffusion (mode 0) pass; see common.slangh
-    // SimConstants.diffuse_density_gate. Must match the shader layout
-    // (replaces the former _pad0).
-    float diffuse_density_gate;
-    float _pad1, _pad2;
+    float _pad0, _pad1, _pad2;
 };
 
 struct BristleConstants {

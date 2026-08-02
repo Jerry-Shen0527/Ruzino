@@ -328,34 +328,15 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
     params.set_output("Particle Count", ptcl_count);
     params.set_output("Total Particle Mass", ptcl_mass);
 
-    // DIAGNOSTIC: per-frame conservation stats. wRYB is the density-weighted
-    // average RYB over painted cells — the same quantity the renderer blends
-    // along the penetration ray (colorSum/weightSum, w=density). For a
-    // saturated blue stroke it should read ~(0,0,1); drifting toward (0,0,0)
-    // renders white (Gossett&Chen RYB: no pigment = white paper).
-    double wr = 0.0, wy = 0.0, wb = 0.0, wd = 0.0;
-    for (int i = 0; i < grid_n3d; ++i) {
-        if (density_cpu[i] > 0.0) {
-            wr += cr_cpu[i];
-            wy += cy_cpu[i];
-            wb += cb_cpu[i];
-            wd += density_cpu[i];
-        }
-    }
-    float avg_r = wd > 0.0 ? float(wr / wd) : 0.0f;
-    float avg_y = wd > 0.0 ? float(wy / wd) : 0.0f;
-    float avg_b = wd > 0.0 ? float(wb / wd) : 0.0f;
+    // DIAGNOSTIC: per-frame conservation stats (remove after debugging).
     spdlog::info(
         "wb_diag density={:.4f} color_b={:.4f} particles={} mean_div={:.6f} "
-        "max_div={:.6f} wRYB=({:.4f},{:.4f},{:.4f})",
+        "max_div={:.6f}",
         tot_density,
         tot_b,
         ptcl_count,
         mean_div,
-        max_div,
-        avg_r,
-        avg_y,
-        avg_b);
+        max_div);
 
     // ======================================================================
     // OUTPUT: "Paint Particles" — active FLIP/PIC particles with positions,

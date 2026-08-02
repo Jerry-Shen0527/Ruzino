@@ -88,21 +88,12 @@ void main(uint3 dtid : SV_DispatchThreadID)
         // Diffusion (viscosity): standard 6-neighbor Laplacian with Neumann BC.
         // Neighbors outside the active window are reflected (see in_window
         // above) so the window is a closed domain for the diffuse pass.
-        //
-        // Optional density gate (cb.diffuse_density_gate > 0): a neighbor is
-        // only averaged in if its density exceeds the gate. Used by the COLOR
-        // diffusion dispatch so pigment spreads only between painted cells,
-        // not into empty (zero-pigment) neighbors that would dilute it toward
-        // RYB (0,0,0) = white. The velocity-viscosity pass leaves the gate
-        // at 0 (ungated) so velocity diffuses normally. The center cell
-        // itself is always counted (rhs[idx]); only the 6 neighbors are gated.
-        float gate = cb.diffuse_density_gate;
-        float left   = (gx > 0 && in_window(cb, int(gx) - 1, int(gy), int(gz))              && (gate <= 0.0f || density[idx - 1]        > gate)) ? field_in[idx - 1]        : center;
-        float right  = (gx < (uint)RES - 1 && in_window(cb, int(gx) + 1, int(gy), int(gz))  && (gate <= 0.0f || density[idx + 1]        > gate)) ? field_in[idx + 1]        : center;
-        float up     = (gy > 0 && in_window(cb, int(gx), int(gy) - 1, int(gz))              && (gate <= 0.0f || density[idx - (uint)RES] > gate)) ? field_in[idx - (uint)RES] : center;
-        float down   = (gy < (uint)RES - 1 && in_window(cb, int(gx), int(gy) + 1, int(gz))  && (gate <= 0.0f || density[idx + (uint)RES] > gate)) ? field_in[idx + (uint)RES] : center;
-        float back   = (gz > 0 && in_window(cb, int(gx), int(gy), int(gz) - 1)              && (gate <= 0.0f || density[idx - RNN]      > gate)) ? field_in[idx - RNN]      : center;
-        float front  = (gz < (uint)RESZ - 1 && in_window(cb, int(gx), int(gy), int(gz) + 1) && (gate <= 0.0f || density[idx + RNN]      > gate)) ? field_in[idx + RNN]      : center;
+        float left   = (gx > 0 && in_window(cb, int(gx) - 1, int(gy), int(gz)))   ? field_in[idx - 1]        : center;
+        float right  = (gx < (uint)RES - 1 && in_window(cb, int(gx) + 1, int(gy), int(gz))) ? field_in[idx + 1]        : center;
+        float up     = (gy > 0 && in_window(cb, int(gx), int(gy) - 1, int(gz)))   ? field_in[idx - (uint)RES] : center;
+        float down   = (gy < (uint)RES - 1 && in_window(cb, int(gx), int(gy) + 1, int(gz))) ? field_in[idx + (uint)RES] : center;
+        float back   = (gz > 0 && in_window(cb, int(gx), int(gy), int(gz) - 1))   ? field_in[idx - RNN]      : center;
+        float front  = (gz < (uint)RESZ - 1 && in_window(cb, int(gx), int(gy), int(gz) + 1)) ? field_in[idx + RNN]      : center;
         float sum = left + right + up + down + back + front;
 
         float a = cb.jacobi_alpha;
