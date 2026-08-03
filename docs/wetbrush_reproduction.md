@@ -183,6 +183,99 @@ brush 含 40-600 bristles，平滑来自密集采样。NUM_BRISTLES 80 → 600�
 - **gridMin Z 对齐**：marker scene 的 gridMin Z 必须和 sim registry metadata 一致
   （canvas_z=0），否则 paint 渲染位置偏移，产生光晕 + 悬浮。
 
+### 14. 架构修正：回归 paper 的粒子驱动 paint 注入（进行中）
+
+一次彻底的架构排查，发现原实现的 paint 注入机制**整体偏离 paper**，是白色
+膨胀 + 几何变形 + 颜色斑点三个症状的共同根源。
+
+#### paper 的机制（§4.1/§4.2/§5）
+
+- bristle rasterize 出的 density/velocity **只作 pressure projection 的边界
+  条件**（§4.1 line 118 "used as boundary conditions"；§4.2 line 124
+  "treated as boundary conditions in pressure projection"）。
+- paint 进入 grid **只有一条路径**：bristle sample 液体过载（m_j > (1+ε)M_j，
+  §5.1）→ emit 粒子 → 粒子离开笔刷 D0 范围时沉积进 grid（§5.2 Eq.16）。
+- bristle **从不直接接触 grid liquid**（§5 line 218 "brush bristles are not
+  in direct contact with grid-based liquid"）。
+
+#### 原实现的三重偏差
+
+| 偏差 | paper | 原实现 | 后果 |
+|---|---|---|---|
+| ① bristle 直接注入 | density 只做边界条件 | `bristle_merge` 每帧 `density[gidx] += bd` | 持续不守恒注入 → 膨胀 |
+| ② emit-mode-0 与容量脱节 | emit 基于 m_j > (1+ε)M_j | 基于 ink_amount，每 sample 每帧固定 emit | 过量发射 |
+| ③ merge/transfer 乒乓 | §5.2 唯一 mass 路径 | bristle_merge 每帧加 mass，grid_to_particle 又转走 | paint 永不积累 |
+
+另外发现两个无 paper 依据的「发明」（已移除）：
+- `hue_var`（per-bristle ±0.075 随机色差）：paper §5.1 的 pigment c_j 只通过
+  Color Mix 变化，没有 per-bristle 色差。它在源头制造 cell-level RYB 方差，
+  因 Gossett&Chen RYB→RGB 对蓝色高度非线性（blue corner (0.163,0.373,0.6)
+  亮度仅 0.356），方差被放大成肉眼可见的蓝色斑点（Δ brightness 0.50，其它色
+  ~0.00）。
+- `tip_fade`（笔尖 RYB × 0.7-1.0）：paper 的"笔尖颜料少"通过液体载量 m_j /
+  容量 M_j（§5.1 Eq.12/13）建模，不乘颜色。RYB 乘小数在 Gossett&Chen 空间
+  等于"加白纸"，是概念错误。
+
+#### 本轮改动（commit `01fce9b9`，进行中未完成）
+
+**第 1 层 — 移除 bristle 直接注入：** `deposit_at` 里移除 bristle_merge
+dispatch。bristle_rasterize 仍产出 bristle_density（作 §5.1 Eq.12 capacity ψ
++ 第 3 层边界条件），但不再 merge 进主 grid。
+
+**第 2 层 — 启用 paper §5.1 emission，停用 emit-mode-0/1：** 移除
+particle_emit 的 mode-0/mode-1 dispatch；paint 粒子唯一来源 = bristle node
+PASS=1（m_j > (1+ε)M_j）。移除 bristle node 的 counter reset（改为 append，
+保持粒子持久性 §4.3）。ABSORB 改为饱和吸收（capillary refill）+ 允许过载吸收
+（去掉 M_j×(1+ε) clamp）。sample_liquid 初始化为饱和 m_j=M'_j（蘸满颜料的笔刷
+落笔，cold-start）。
+
+**第 3 层 — bristle density 作 pressure projection 边界（§4.2）：**
+fluid_divergence/jacobi/gradient 加 bristle_density SRV，brush-occupied cell
+（bristle_density > brush_boundary_gate=0.01）视为 no-flux 墙。SimConstants
+加 brush_boundary_gate 字段。
+
+**bristle_merge 改为 velocity-only 耦合：** 只写 vel_x/y/z（FLIP §4.3 速度
+合并），不再写 density/color/wetness/oil（paint mass 交给 §5.2 transfer）。
+
+#### 当前阻塞：粒子不逃逸
+
+`particle_to_grid`（§5.2 Eq.16，paint 进 grid 的唯一路径）触发条件：
+`距离笔刷 ≥ D0×1.5 且 速度 < 0.5`。
+
+但 `particle_update` 的高附着力（Eq.10 blend，β_L=0.1，D1=brush_radius×0.9）
+把粒子锁在笔刷上，粒子从不离开 D0 → particle_to_grid 从不触发 → grid density
+全程 ≈ 0。frame 31 笔刷跳到 stroke 1（位置突变）时旧粒子瞬间远离才触发一次
+沉积（density 跳到 216）。
+
+paper 的粒子靠真实动力学（惯性/重力/粘度）自然脱离笔刷。
+
+#### 下一步 TODO
+
+1. **粒子逃逸**（最高优先级）：调 `particle_update.slang` 的附着力参数/逻辑，
+   让粒子能离开 D0 范围并触发 particle_to_grid 沉积。可能需要降低 Eq.10 的
+   blend 强度或 D1 距离，或加入重力/惯性的更强作用让 paint 自然脱离笔刷。
+2. **color 守恒**：`grid_to_particle`（Eq.15）减 density 时不同步减 color
+   （line 147 只 `density_out -= ...`），particle_to_grid 又加 color → color
+   双重计数。需在 grid_to_particle 按比例同步减 color_r/y/b。
+3. **wetness/oil 来源**：去掉 bristle_merge 的 wetness/oil 写入后，grid 的
+   wetness/oil 无人维护。paper §5.2 说 "other liquid particle variables, such
+   as oil density and dryness, can be simply merged into the grid cells"，
+   需让 particle_to_grid 也写 wetness/oil（粒子携带这些属性）。
+4. **爆池控制**：cold-start 初始 mass=M'_j 时所有接触画布的 sample 同时过载
+   emit（76800 samples），frame 1 瞬间打满 262144 粒子池。需控制 emit 速率
+   （max_emit_per_step）或 sample 过载的时序。
+
+#### 诊断方法（本轮验证有效）
+
+- `wb_diag` 日志（commit node）：density / color_b / particles / ptcl_mass /
+  ptcl_d_sum。density=0 但 ptcl_d_sum>0 说明 rasterize 写了但 merge 没转进
+  grid（本轮定位到 merge/transfer 乒乓的关键证据）。
+- sentinel 测试：临时把 merge 的 density 写入改成 `=999.0`，读回 0.35 →
+  证明写入被后续步骤（grid_to_particle）覆盖。
+- 跳过 fluid solve：`if (false && sim_dt > 1e-6f)` 隔离 merge vs advect。
+- 多色对照（render_wetbrush_color.py --ryb）：RYB→RGB 非线性使蓝色斑点最
+  明显，黄/红几乎不可见——用多色对照快速定位"颜色问题 vs 通用问题"。
+
 ## 关键经验教训
 
 1. **先量像素再下结论**。"纸是黑的"其实是背景 dome 蓝；"变深"先以为是 sim 累积，
