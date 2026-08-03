@@ -34,6 +34,21 @@ std::unordered_map<std::string, MaterialX::NodeDefPtr>
     Hd_RUZINO_MaterialX::nodedef_cache_;
 std::mutex Hd_RUZINO_MaterialX::nodedef_cache_mutex_;
 
+void Hd_RUZINO_MaterialX::reset_shared_state()
+{
+    // Rebuild shared_document from the (scene-independent) libraries so the
+    // next render delegate starts with a clean document instead of one still
+    // holding the previous scene's accumulated material/shader nodes. See the
+    // header doc for why this matters. libraries is left untouched.
+    std::lock_guard<std::mutex> doc_lock(document_mutex);
+    std::lock_guard<std::mutex> cache_lock(nodedef_cache_mutex_);
+
+    shared_document = mx::createDocument();
+    shared_document->importLibrary(libraries);
+    nodedef_cache_.clear();
+    spdlog::info("MaterialX: shared document reset for next render delegate");
+}
+
 Hd_RUZINO_MaterialX::Hd_RUZINO_MaterialX(SdfPath const& id)
     : Hd_RUZINO_Material(id)
 {

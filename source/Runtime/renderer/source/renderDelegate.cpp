@@ -273,6 +273,14 @@ Hd_RUZINO_RenderDelegate::~Hd_RUZINO_RenderDelegate()
     _globalPayload.reset();
     _renderParam.reset();
 
+    // _renderParam (and thus the material_map it owns) is gone, so no live
+    // material still references the process-global MaterialX shared_document.
+    // Now it's safe to reset that document so the NEXT render delegate built
+    // in this process doesn't inherit this scene's accumulated material/shader
+    // nodes — which otherwise leaves the next render black (the singleton
+    // pollution seen when running several HydraRenderers back-to-back).
+    Hd_RUZINO_MaterialX::reset_shared_state();
+
     RHI::get_device()->runGarbageCollection();
 
     std::cout << "Destroying RenderDelegate" << std::endl;

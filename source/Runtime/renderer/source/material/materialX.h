@@ -28,6 +28,17 @@ class HD_RUZINO_API Hd_RUZINO_MaterialX : public Hd_RUZINO_Material {
     // Upload material data to GPU after texture loading is complete
     void upload_material_data();
 
+    // Tear down the process-global MaterialX state that persists across render
+    // delegates: the shared_document (which every material's node graph gets
+    // added to and is never cleared) and the nodedef lookup cache. Without this,
+    // a second Hd_RUZINO_RenderDelegate built in the same process sees a
+    // document still carrying the previous scene's material/shader nodes, so the
+    // new scene's shader generation runs over stale state and the render comes
+    // out black. `libraries` (the read-only stdlib) is intentionally preserved —
+    // it's scene-independent — and shared_document is rebuilt from it. Called
+    // from ~Hd_RUZINO_RenderDelegate so the next delegate starts clean.
+    static void reset_shared_state();
+
    protected:
     void BuildGPUTextures(Hd_RUZINO_RenderParam* render_param);
     void CollectTextures(
