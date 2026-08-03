@@ -22,6 +22,14 @@ void mx_dielectric_bsdf(
     }
     if (closureData.closureType != CLOSURE_TYPE_TRANSMISSION &&
         scatter_mode == 1) {
+        // This lobe is transmission-only but the closure is a reflection
+        // evaluation: the lobe contributes neither response nor throughput.
+        // Zero the throughput explicitly so downstream mx_mix_bsdf /
+        // mx_layer_bsdf are not polluted by the BSDF default throughput (1.0)
+        // — which would otherwise inflate the mixed result for refractive
+        // materials evaluated in the reflection closure.
+        bsdf.throughput = 0.0;
+        bsdf.response = float3(0.0);
         return;
     }
 
