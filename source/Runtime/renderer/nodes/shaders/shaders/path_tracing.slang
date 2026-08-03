@@ -243,6 +243,35 @@ void RayGen()
                     material_header.material_type_id,
                 fetchData);
 
+            // Opacity presence test: with probability (1 - opacity) the ray
+            // passes straight through the surface (no scattering, no direct
+            // lighting), letting the path continue to whatever is behind.
+            // This is the standard path-tracing treatment of opacity<1
+            // (cutout/presence): the surface exists with probability opacity,
+            // otherwise the ray ignores it. The BSDF layer still clamps
+            // opacity<0.25 to fully transparent (UsdPreviewSurface/standard),
+            // so this branch mainly handles the 0.25..1 range.
+            FetchCallableData opacityFetchData;
+            opacityFetchData.vertexInfo = vertex;
+            opacityFetchData.materialBlobID = material_header.material_blob_id;
+            opacityFetchData.material_params_index = 0;
+            opacityFetchData.shader_type_id = 0;
+            CallShader(
+                ptConstants.materialFetchCallableBaseIndex +
+                    material_header.material_type_id +
+                    ptConstants.materialOpacityCallableOffset,
+                opacityFetchData);
+            float surfaceOpacity = asfloat(opacityFetchData.material_params_index);
+            if (random_float(payload.seed) > surfaceOpacity) {
+                // Ray passes through: continue along the same direction.
+                current_ray.Origin =
+                    vertex.posW + current_ray.Direction * 1e-3f;
+                // Direction, TMin/TMax unchanged; throughput unchanged
+                // (the (1-opacity) chance is already accounted for by the
+                // stochastic test — surviving paths keep full weight).
+                continue;
+            }
+
             // Step 2: Call material evaluation callable
             EvalCallableData evalData;
             evalData.color = Spectrum(0.0);
