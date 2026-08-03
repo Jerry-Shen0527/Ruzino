@@ -160,51 +160,20 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         Ruzino::brush_upload_cb(
             rc, device, &pc, sizeof(pc), "wb_ptcl_cb", ptcl_cb);
 
-        // Do NOT reset the counter here. Particles are PERSISTENT (paper §4.3:
-        // 200K-1M particles survive across frames). The counter carries the
-        // alive-particle count from last frame's compact step; emit appends
-        // past it via InterlockedAdd, wrapping into the dead slots that
-        // compact freed. Resetting here made every frame's emit overwrite
-        // slot 0 and destroy the survivors.
-        // Emit mode 0 (from bristle samples)
-        pc.emit_mode = 0;
-        nvrhi::BufferHandle emit0_cb;
-        Ruzino::brush_upload_cb(
-            rc, device, &pc, sizeof(pc), "wb_emit0_cb", emit0_cb);
-        Ruzino::brush_dispatch(
-            rc,
-            field->ptcl_emit_program,
-            { { "sample_pos", field->sample_pos },
-              { "sample_color", field->sample_color },
-              { "density", field->density } },
-            { { "ptcl_counter", field->ptcl_counter },
-              { "ptcl_pos", field->ptcl_pos },
-              { "ptcl_vel", field->ptcl_vel },
-              { "ptcl_color", field->ptcl_color },
-              { "ptcl_alive", field->ptcl_alive } },
-            emit0_cb,
-            Nb * S);
-        rc.destroy(emit0_cb);
-
-        // Emit mode 1 (from grid cells)
-        pc.emit_mode = 1;
-        nvrhi::BufferHandle emit1_cb;
-        Ruzino::brush_upload_cb(
-            rc, device, &pc, sizeof(pc), "wb_emit1_cb", emit1_cb);
-        Ruzino::brush_dispatch(
-            rc,
-            field->ptcl_emit_program,
-            { { "sample_pos", field->sample_pos },
-              { "sample_color", field->sample_color },
-              { "density", field->density } },
-            { { "ptcl_counter", field->ptcl_counter },
-              { "ptcl_pos", field->ptcl_pos },
-              { "ptcl_vel", field->ptcl_vel },
-              { "ptcl_color", field->ptcl_color },
-              { "ptcl_alive", field->ptcl_alive } },
-            emit1_cb,
-            win_n3d);
-        rc.destroy(emit1_cb);
+        // Paint-particle emission is handled ENTIRELY by the bristle node's
+        // §5.1 EMIT pass (bristle_liquid_emit.slang): bristle sample liquid
+        // overloads (m_j > (1+ε)M_j) and releases particles carrying its
+        // pigment c_j and the excess mass. That is the paper's only paint ->
+        // particle path (§5.1).
+        //
+        // The previous emit-mode-0 / emit-mode-1 dispatches here
+        // (particle_emit.slang) are DISABLED. They were decoupled from the
+        // §5.1 capacity model: mode 0 fired once per bristle sample every
+        // frame based on the global ink_amount (not m_j/M_j overload), and
+        // mode 1 minted zero-pigment particles from grid density. Together
+        // they flooded the pool and bypassed the sample-liquid conservation,
+        // so paint mass grew without bound. particle_emit.slang is kept on
+        // disk (not dispatched) for reference.
 
         // Update particles (ping-pong)
         Ruzino::brush_dispatch(
@@ -344,6 +313,13 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
             fluid_cb.window_size_x = WIN_XY;
             fluid_cb.window_size_y = WIN_XY;
             fluid_cb.window_size_z = WIN_Z;
+            // Brush-interior boundary for pressure projection (paper §4.2):
+            // bristle-occupied cells act as no-flux walls. The gate is small
+            // so only cells genuinely under bristles block the flow; empty
+            // cells and thin paint do not. bristle_density is the §4.1
+            // rasterized field (window-sized), bound into divergence/jacobi/
+            // gradient. See those shaders' is_brush_g.
+            fluid_cb.brush_boundary_gate = 0.01f;
 
             nvrhi::BufferHandle cb_buf;
             Ruzino::brush_upload_cb(
@@ -418,7 +394,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                         { { "field_in", in },
                           { "rhs", in },
                           { "wetness", field->wetness },
-                          { "density", field->density } },
+                          { "density", field->density },
+                          { "bristle_density", field->bristle_density } },
                         { { "field_out", out } },
                         jcb,
                         window_total);
@@ -437,7 +414,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                           { "vel_y", field->vel_y },
                           { "vel_z", field->vel_z },
                           { "wetness", field->wetness },
-                          { "density", field->density } },
+                          { "density", field->density },
+                          { "bristle_density", field->bristle_density } },
                         { { "div_out", field->divergence_buf } },
                         cb_buf,
                         window_total);
@@ -458,7 +436,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                             { { "field_in", field->pressure_a },
                               { "rhs", field->divergence_buf },
                               { "wetness", field->wetness },
-                              { "density", field->density } },
+                              { "density", field->density },
+                              { "bristle_density", field->bristle_density } },
                             { { "field_out", field->pressure_b } },
                             pcb,
                             window_total);
@@ -471,7 +450,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                         field->gradient_program,
                         { { "pressure", field->pressure_a },
                           { "wetness", field->wetness },
-                          { "density", field->density } },
+                          { "density", field->density },
+                          { "bristle_density", field->bristle_density } },
                         { { "vel_x", field->vel_x },
                           { "vel_y", field->vel_y },
                           { "vel_z", field->vel_z } },
@@ -670,9 +650,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                 0,
                 field->density,
                 0,
-                static_cast<size_t>(field->grid_res) *
-                    field->grid_res_z * field->grid_res *
-                    sizeof(float));
+                static_cast<size_t>(field->grid_res) * field->grid_res_z *
+                    field->grid_res * sizeof(float));
             seed_cmd->close();
             device->executeCommandList(seed_cmd);
             device->waitForIdle();

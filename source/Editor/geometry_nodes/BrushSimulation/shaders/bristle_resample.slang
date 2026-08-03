@@ -46,15 +46,17 @@ void main(uint3 tid : SV_DispatchThreadID)
     int base = bi * M;
     int s_base = bi * S;
 
-    // Per-bristle color variation
-    float4 base_color = bristle_input_color[0];
-    float hue_var = frac(sin(float(bi) * 127.1) * 43758.5453) * 0.15 - 0.075;
-    float4 bristle_color = float4(
-        saturate(base_color.r + hue_var),
-        saturate(base_color.g + hue_var * 0.5),
-        saturate(base_color.b - hue_var),
-        base_color.a
-    );
+    // Pigment: the input ink color, shared by all bristles. Wetbrush §5.1
+    // models each bristle sample's pigment c_j as a single RYB vector that
+    // only changes through the color-mixing process (absorbing particles /
+    // grid paint, §6 Algorithm 2). The paper does NOT model per-bristle hue
+    // variation; the previous per-bristle random hue offset (±0.075) injected
+    // cell-to-cell RYB variance at the source, which the Gossett&Chen
+    // RYB->RGB map amplified into visible speckle on saturated blue strokes
+    // (blue's RGB corner (0.163,0.373,0.6) is dim and nonlinear, so small
+    // RYB variance reads as large brightness variance). Removed to match the
+    // paper: pigment variation comes only from color mixing during painting.
+    float4 bristle_color = bristle_input_color[0];
 
     // Cumulative arc length
     float seg_lengths[64];
@@ -76,8 +78,13 @@ void main(uint3 tid : SV_DispatchThreadID)
         for (int si = 0; si < S; si++) {
             sample_pos[s_base + si] = float4(root, 0.0);
             sample_vel[s_base + si] = float4(rvel, 0.0);
-            float tip_fade = 1.0 - 0.3 * float(si) / float(S - 1);
-            sample_color[s_base + si] = float4(bristle_color.rgb * tip_fade, bristle_color.a);
+            // Pigment is the shared ink color (no tip fade). Wetbrush models
+            // "less paint at the tip" via the liquid load m_j and capacity
+            // M_j (§5.1), NOT by scaling the RYB pigment vector. Scaling RYB
+            // toward 0 means "add white paper" in the Gossett&Chen model, not
+            // "less pigment" — it manufactured per-sample color variance that
+            // surfaced as speckle.
+            sample_color[s_base + si] = bristle_color;
             sample_frame[s_base + si] = SampleFrame(
                 float4(t0, omega_L.x),
                 float4(n0, omega_L.y),
@@ -121,10 +128,9 @@ void main(uint3 tid : SV_DispatchThreadID)
         float tlen = length(t0);
         float3 t = (tlen > 1e-8) ? t0 / tlen : float3(0,0,1);
         init_frame(t, n_prev, b_prev);
-        float tip_fade = 1.0 - 0.3 * 0.0;
         sample_pos[s_base] = float4(positions[0], 0.0);
         sample_vel[s_base] = float4(velocities[0], 0.0);
-        sample_color[s_base] = float4(bristle_color.rgb * tip_fade, bristle_color.a);
+        sample_color[s_base] = bristle_color;
         sample_frame[s_base] = SampleFrame(
             float4(t, omega_L.x), float4(n_prev, omega_L.y), float4(b_prev, omega_L.z));
     }
@@ -136,10 +142,9 @@ void main(uint3 tid : SV_DispatchThreadID)
         float3 n_cur, b_cur;
         parallel_transport(n_prev, b_prev, t, n_cur, b_cur);
 
-        float tip_fade = 1.0 - 0.3 * float(si) / float(S - 1);
         sample_pos[s_base + si] = float4(positions[si], 0.0);
         sample_vel[s_base + si] = float4(velocities[si], 0.0);
-        sample_color[s_base + si] = float4(bristle_color.rgb * tip_fade, bristle_color.a);
+        sample_color[s_base + si] = bristle_color;
         sample_frame[s_base + si] = SampleFrame(
             float4(t, omega_L.x), float4(n_cur, omega_L.y), float4(b_cur, omega_L.z));
 

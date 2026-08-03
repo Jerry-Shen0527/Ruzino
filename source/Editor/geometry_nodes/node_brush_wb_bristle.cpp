@@ -126,8 +126,16 @@ NODE_EXECUTION_FUNCTION(brush_wb_bristle)
         Nb * S);
     std::swap(field->sample_liquid, field->sample_liquid_b);
 
-    // Pass 1: EMIT (sample -> particles, hemisphere pattern)
-    Ruzino::brush_reset_counter(rc, device, field->ptcl_counter);
+    // Pass 1: EMIT (sample -> particles, hemisphere pattern).
+    //
+    // Do NOT reset the counter here. Paper §4.3: "Our system needs 200K to 1M
+    // particles" that survive across frames. The counter is owned by the
+    // fluid node's compact step, which resets it to 0 and rewrites only the
+    // alive particles into [0, count). EMIT appends past that count via
+    // InterlockedAdd. The previous reset here zeroed the counter every frame,
+    // destroying the survivors the compact step had preserved and breaking
+    // particle persistence — new particles overwrote slot 0+ and the
+    // §5.1-emitted paint never accumulated.
     Ruzino::brush_dispatch(
         rc,
         field->bri_liquid_emit_program,

@@ -183,7 +183,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
             "wetbrush_paint_field",
             field->packed_paint,
             static_cast<size_t>(grid_n3d) * sizeof(float) * 4,
-            &meta, sizeof(meta));
+            &meta,
+            sizeof(meta));
     }
 
     // ======================================================================
@@ -238,6 +239,22 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
         tot_r += cr_cpu[i];
         tot_y += cy_cpu[i];
         tot_b += cb_cpu[i];
+    }
+
+    // DIAGNOSTIC: particle rasterize accumulator (window-sized). If ptcl_d_sum
+    // > 0 but tot_density == 0, rasterize wrote but merge dropped it. If
+    // ptcl_d_sum == 0 with particles > 0, particles exist but rasterize wrote
+    // nothing (position/alive problem).
+    double ptcl_d_sum = 0.0;
+    int win_n3d_diag = field->win_alloc_z > 0
+                           ? WetbrushSimState::WIN_ALLOC_XY *
+                                 WetbrushSimState::WIN_ALLOC_XY *
+                                 field->win_alloc_z
+                           : 0;
+    if (field->ptcl_density && win_n3d_diag > 0) {
+        auto ptcl_d_cpu = readback(field->ptcl_density, win_n3d_diag);
+        for (int i = 0; i < win_n3d_diag; ++i)
+            ptcl_d_sum += ptcl_d_cpu[i];
     }
 
     int ptcl_count = 0;
@@ -313,6 +330,20 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
     params.set_output("Particle Count", ptcl_count);
     params.set_output("Total Particle Mass", ptcl_mass);
 
+    // DIAGNOSTIC: paint-mass accounting for the paper-faithful particle path.
+    // density = grid paint mass (should be injected ONLY by particle
+    // rasterize/transfer now that bristle direct-injection is removed).
+    // particles = live particle count. ptcl_mass = summed particle mass.
+    // If density stays ~0 the particle path isn't feeding the grid.
+    spdlog::info(
+        "wb_diag density={:.4f} color_b={:.4f} particles={} ptcl_mass={:.4f} "
+        "ptcl_d_sum={:.4f}",
+        tot_density,
+        tot_b,
+        ptcl_count,
+        ptcl_mass,
+        ptcl_d_sum);
+
     // ======================================================================
     // OUTPUT: "Paint Particles" — active FLIP/PIC particles with positions,
     // colors (RYB→RGB) and mass as width. Useful for debugging particle
@@ -330,7 +361,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
             float r_ryb = ptcl_colors[i * 4 + 0];
             float y_ryb = ptcl_colors[i * 4 + 1];
             float b_ryb = ptcl_colors[i * 4 + 2];
-            float mass  = ptcl_colors[i * 4 + 3];
+            float mass = ptcl_colors[i * 4 + 3];
             float rm = 1 - r_ryb, ym = 1 - y_ryb, bm = 1 - b_ryb;
             glm::vec3 rgb =
                 rm * ym * bm * glm::vec3(1, 1, 1) +

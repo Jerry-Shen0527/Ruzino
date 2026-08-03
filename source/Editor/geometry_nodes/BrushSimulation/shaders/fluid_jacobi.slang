@@ -20,12 +20,33 @@ StructuredBuffer<float> rhs     : register(t1);
 // the density gate enforces that.
 StructuredBuffer<float> wetness    : register(t2);
 StructuredBuffer<float> density    : register(t3);
+// Bristle rasterized density (paper §4.2 boundary condition). Window-sized.
+StructuredBuffer<float> bristle_density : register(t4);
 
 RWStructuredBuffer<float> field_out : register(u0);
 
 bool is_solid(uint idx)
 {
     return density[idx] > 1e-6f && wetness[idx] < 0.01f;
+}
+
+// Brush interior boundary (paper §4.2): bristle-occupied cells act as no-flux
+// walls in pressure projection. Global coords -> window-local lookup.
+bool is_brush_g(uint gx, uint gy, uint gz)
+{
+    int lx = int(gx) - cb.window_origin_x;
+    int ly = int(gy) - cb.window_origin_y;
+    int lz = int(gz) - cb.window_origin_z;
+    int WSX = cb.window_size_x;
+    if (lx < 0 || lx >= WSX || ly < 0 || ly >= WSX || lz < 0 || lz >= cb.window_size_z)
+        return false;
+    uint gi = uint(lz) * uint(WSX * WSX) + uint(ly) * uint(WSX) + uint(lx);
+    return bristle_density[gi] > cb.brush_boundary_gate;
+}
+
+bool is_blocked(uint idx, uint gx, uint gy, uint gz)
+{
+    return is_solid(idx) || is_brush_g(gx, gy, gz);
 }
 
 [numthreads(256, 1, 1)]
@@ -52,16 +73,16 @@ void main(uint3 dtid : SV_DispatchThreadID)
         // (∂P/∂n = 0), so the fluid is blocked by solid cells rather than
         // sucked toward them. See fluid_gradient.slang for the matching BC in
         // the pressure-gradient step.
-        if (is_solid(idx)) { field_out[idx] = 0.0f; return; }
+        if (is_blocked(idx, gx, gy, gz)) { field_out[idx] = 0.0f; return; }
 
         float sum = 0.0f;
         int fluid_neighbors = 0;
-        if (gx > 0)              { if (!is_solid(idx - 1))    { sum += field_in[idx - 1];    fluid_neighbors++; } }
-        if (gx < (uint)RES - 1)  { if (!is_solid(idx + 1))    { sum += field_in[idx + 1];    fluid_neighbors++; } }
-        if (gy > 0)              { if (!is_solid(idx - (uint)RES)){ sum += field_in[idx - (uint)RES]; fluid_neighbors++; } }
-        if (gy < (uint)RES - 1)  { if (!is_solid(idx + (uint)RES)){ sum += field_in[idx + (uint)RES]; fluid_neighbors++; } }
-        if (gz > 0)              { if (!is_solid(idx - RNN))  { sum += field_in[idx - RNN];  fluid_neighbors++; } }
-        if (gz < (uint)RESZ - 1) { if (!is_solid(idx + RNN))  { sum += field_in[idx + RNN];  fluid_neighbors++; } }
+        if (gx > 0)              { if (!is_blocked(idx - 1, gx - 1, gy, gz))    { sum += field_in[idx - 1];    fluid_neighbors++; } }
+        if (gx < (uint)RES - 1)  { if (!is_blocked(idx + 1, gx + 1, gy, gz))    { sum += field_in[idx + 1];    fluid_neighbors++; } }
+        if (gy > 0)              { if (!is_blocked(idx - (uint)RES, gx, gy - 1, gz)){ sum += field_in[idx - (uint)RES]; fluid_neighbors++; } }
+        if (gy < (uint)RES - 1)  { if (!is_blocked(idx + (uint)RES, gx, gy + 1, gz)){ sum += field_in[idx + (uint)RES]; fluid_neighbors++; } }
+        if (gz > 0)              { if (!is_blocked(idx - RNN, gx, gy, gz - 1))  { sum += field_in[idx - RNN];  fluid_neighbors++; } }
+        if (gz < (uint)RESZ - 1) { if (!is_blocked(idx + RNN, gx, gy, gz + 1))  { sum += field_in[idx + RNN];  fluid_neighbors++; } }
 
         // A fluid cell with NO fluid neighbors is fully enclosed by solid —
         // treat it as solid (pressure pinned to 0) instead of collapsing to

@@ -207,7 +207,11 @@ struct SimConstants {
     int window_size_z;
 
     float oil_density_base;
-    float _pad0, _pad1, _pad2;
+    // Threshold for the brush-interior boundary in pressure projection (paper
+    // §4.2). See common.slangh SimConstants.brush_boundary_gate. Must match the
+    // shader layout (replaces the former _pad0).
+    float brush_boundary_gate;
+    float _pad1, _pad2;
 };
 
 struct BristleConstants {

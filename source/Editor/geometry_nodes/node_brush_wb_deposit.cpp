@@ -176,9 +176,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         // Shaders index these with window-local coords (global cell minus
         // window_origin); see bristle_rasterize / particle_rasterize /
         // bristle_merge / bristle_liquid_transfer.
-        int win_alloc_n3d =
-            WetbrushSimState::WIN_ALLOC_XY *
-            WetbrushSimState::WIN_ALLOC_XY * rz;
+        int win_alloc_n3d = WetbrushSimState::WIN_ALLOC_XY *
+                            WetbrushSimState::WIN_ALLOC_XY * rz;
 
         auto safe_destroy = [&](nvrhi::BufferHandle& h) {
             if (h) {
@@ -296,7 +295,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         // factory's flag set unchanged for the many other callers.
         field->packed_paint = rc.create(
             nvrhi::BufferDesc{}
-                .setByteSize(static_cast<size_t>(alloc_win_n3d) * sizeof(float) * 4)
+                .setByteSize(
+                    static_cast<size_t>(alloc_win_n3d) * sizeof(float) * 4)
                 .setStructStride(sizeof(float) * 4)
                 .setInitialState(nvrhi::ResourceStates::UnorderedAccess)
                 .setKeepInitialState(true)
@@ -457,8 +457,38 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
             field->sample_pos,
             field->sample_vel,
             field->sample_color,
-            field->sample_liquid,
             field->sample_liquid_b);
+        // sample_liquid starts LOADED: a dipped brush carries paint in its
+        // bristles (paper §5.1 "a brush bristle can keep paint liquid due to
+        // its hydrophilicity"). Initialize each sample's liquid load m_j
+        // ABOVE its (1+ε)M_j overload threshold and its pigment c_j to the
+        // ink color, so the very first §5.1 EMIT pass releases particles and
+        // the paint -> particle -> grid cycle starts. Without this cold-start
+        // the grid is empty, samples cannot overload from supply alone, and
+        // no paint is ever produced. (One-shot: only runs at allocation;
+        // afterward ABSORB/EMIT update sample_liquid every frame.)
+        std::vector<float> liquid_init(Nb * S * 4, 0.0f);
+        for (int i = 0; i < Nb * S; ++i) {
+            // Initialize each sample LOADED to its free-space capacity M'_j
+            // (= M_max when bristle density ψ=0): a dipped brush's bristles
+            // are saturated with paint. This is NOT an overload by itself —
+            // only samples whose capacity drops (paper Eq.13: those touching
+            // the canvas, where r_j is small) will see m_j > (1+ε)M_j and
+            // emit via §5.1. Samples in free space keep m_j = M'_j and do not
+            // emit. This matches the paper: paint is deposited only where the
+            // brush actually contacts the canvas. Setting mass above M'_j
+            // instead made every sample emit at once on frame 1 and overflowed
+            // the particle pool (262144 particles in one frame → black blob).
+            liquid_init[i * 4 + 0] =
+                2.0f;  // m_j = M_max = M'_j (saturated, not overloaded)
+            liquid_init[i * 4 + 1] = ink_color.r;
+            liquid_init[i * 4 + 2] = ink_color.g;
+            liquid_init[i * 4 + 3] = ink_color.b;
+        }
+        cmd->writeBuffer(
+            field->sample_liquid,
+            liquid_init.data(),
+            Nb * S * sizeof(float) * 4);
         std::vector<float> z_frame(Nb * S * 4 * 3, 0.0f);
         cmd->writeBuffer(
             field->sample_frame,
@@ -640,9 +670,9 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
     }
 
     // ======================================================================
-    // position_window — center the active window's dispatch range on a brush XY.
-    // Paper §4.2: the 3D grid is global and persistent; the window is only the
-    // per-frame compute region. Moving the window no longer commits/clears
+    // position_window — center the active window's dispatch range on a brush
+    // XY. Paper §4.2: the 3D grid is global and persistent; the window is only
+    // the per-frame compute region. Moving the window no longer commits/clears
     // anything — the old cells keep their values in the global grid.
     // ======================================================================
     auto position_window = [&](float bx, float by) {
@@ -812,50 +842,31 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
             bristle_cb,
             Nb * S);
 
-        // Step 6: Merge bristle grids into the live simulation grids
-        Ruzino::SimConstants mc = {};
-        mc.res = field->grid_res;
-        mc.res_z = WIN_Z;
-        mc.height_extent = field->grid_height;
-        mc.grid_center_z = field->grid_center_z;
-        mc.cell_size = cell_sz;
-        mc.paper_size = field->grid_paper;
-        mc.ink_amount = ink_amount;
-        mc.oil_density_base = oil_density_in;
-        mc.window_origin_x = field->win_origin_x;
-        mc.window_origin_y = field->win_origin_y;
-        mc.window_origin_z = 0;
-        mc.window_size_x = WIN_XY;
-        mc.window_size_y = WIN_XY;
-        mc.window_size_z = WIN_Z;
-        nvrhi::BufferHandle merge_cb;
-        Ruzino::brush_upload_cb(
-            rc, device, &mc, sizeof(mc), "wb_merge_cb", merge_cb);
-
-        Ruzino::brush_dispatch(
-            rc,
-            field->bristle_merge_program,
-            { { "bristle_density", field->bristle_density },
-              { "bristle_vel_x", field->bristle_vel_x },
-              { "bristle_vel_y", field->bristle_vel_y },
-              { "bristle_vel_z", field->bristle_vel_z },
-              { "bristle_color_r", field->bristle_color_r },
-              { "bristle_color_y", field->bristle_color_y },
-              { "bristle_color_b", field->bristle_color_b } },
-            { { "density", field->density },
-              { "color_r", field->color_r },
-              { "color_y", field->color_y },
-              { "color_b", field->color_b },
-              { "vel_x", field->vel_x },
-              { "vel_y", field->vel_y },
-              { "vel_z", field->vel_z },
-              { "wetness", field->wetness },
-              { "oil_density", field->oil_density } },
-            merge_cb,
-            win_n3d);
+        // Step 6 (bristle -> main-grid merge) is intentionally OMITTED.
+        //
+        // Paper §5 (line 218): "brush bristles are not in direct contact with
+        // grid-based liquid." The bristle density/color/velocity rasterized
+        // above are NOT paint mass to inject into the grid — per paper §4.1
+        // (line 118) and §4.2 (line 124) they serve only as (a) the sample
+        // capacity field ψ for §5.1 Eq.12 (read by bristle_liquid_transfer as
+        // bristle_psi), and (b) boundary conditions for pressure projection
+        // (§4.2, applied in fluid_divergence/jacobi/gradient).
+        //
+        // Paint enters the grid by exactly one path: bristle sample liquid
+        // overload (m_j > (1+ε)M_j, §5.1) → emit particles → particle
+        // rasterize → bristle_merge (the fluid-node dispatch that merges
+        // ptcl_* into the main grid, a paper-faithful §5.2 transfer).
+        //
+        // The previous Step 6 dispatched bristle_merge here to add
+        // bristle_density/color/vel/wetness/oil straight into the main grid
+        // every sub-step. That was a non-conservative direct injection
+        // (density[gidx] += bd, mass created each frame) and the root cause
+        // of unbounded paint growth ("white bloat"). It also duplicated the
+        // particle path, so paint was injected twice. bristle_merge.slang
+        // itself is retained — the fluid node still uses it for the particle
+        // rasterize → grid transfer.
 
         rc.destroy(bristle_cb);
-        rc.destroy(merge_cb);
     };
 
     // ======================================================================

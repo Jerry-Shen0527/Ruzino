@@ -43,37 +43,25 @@ void main(uint3 tid : SV_DispatchThreadID)
     float bvx = bristle_vel_x[win_idx];
     float bvy = bristle_vel_y[win_idx];
     float bvz = bristle_vel_z[win_idx];
-    float bcr = bristle_color_r[win_idx];
-    float bcy = bristle_color_y[win_idx];
-    float bcb = bristle_color_b[win_idx];
 
-    // Normalize accumulated color by density
-    float3 new_ryb = float3(bcr, bcy, bcb) / (bd + 1e-8);
-    float3 old_ryb = float3(color_r[gidx], color_y[gidx], color_b[gidx]);
-
-    float old_density = density[gidx];
-    float new_density = bd;
-
-    // Brightness-preserving color mix (Algorithm 2)
-    float3 mixed = color_mix(new_ryb, old_ryb, new_density, old_density);
-
-    // Update fields.
+    // VELOCITY-ONLY coupling (FLIP/PIC, paper §4.3 line 209: "we rasterize
+    // them into density and velocity fields, and combine them with the
+    // existing fields"). This merge transfers particle momentum into the
+    // grid velocity field so the joint pressure projection (§4.2) couples
+    // particle and grid liquid. It does NOT transfer paint MASS or pigment —
+    // that is the exclusive job of the §5.2 grid↔particle transfer
+    // (grid_to_particle Eq.15 / particle_to_grid Eq.16), which fires based on
+    // distance to bristles (D0), not every frame for every particle.
     //
-    // Density: paper §5.2 Eq.16 is ρ_c += m_k·ΣW. `bd` (bristle_density) is
-    // already the rasterized, mass-weighted density accumulation from
-    // particles — it IS the m_k·ΣW term. Adding it directly is the conserved
-    // transfer. (The previous `bd * cb.ink_amount` was a net-injection bug:
-    // it multiplied the already-mass-weighted value by a user knob, breaking
-    // conservation and driving unbounded growth. ink_amount's correct role is
-    // the per-frame supply refill in deposit.cpp, the paint source.)
-    density[gidx] = density[gidx] + bd;
+    // The previous version also wrote density/color/wetness/oil here. That
+    // fought the §5.2 transfer: this merge added particle mass into the grid
+    // every frame, then grid_to_particle subtracted it right back (Eq.15),
+    // so paint ping-ponged between particle and grid and never accumulated.
+    // Removing the mass/color/wetness/oil writes lets §5.2 be the sole
+    // paint-mass path: particles carry paint while near the brush, and
+    // deposit it into the grid only when they drift away (particle_to_grid,
+    // §5.2 Eq.16) — exactly the paper's hybrid representation.
     vel_x[gidx] += bvx * bd;
     vel_y[gidx] += bvy * bd;
     vel_z[gidx] += bvz * bd;
-    color_r[gidx] = mixed.x;
-    color_y[gidx] = mixed.y;
-    color_b[gidx] = mixed.z;
-    wetness[gidx] = min(wetness[gidx] + bd * 0.5, 1.0f);
-    // Oil density relaxes toward base as bristle paint merges in (§6).
-    oil_density[gidx] += (cb.oil_density_base - oil_density[gidx]) * bd * 0.5;
 }
