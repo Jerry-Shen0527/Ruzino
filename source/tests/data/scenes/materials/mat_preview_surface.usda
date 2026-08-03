@@ -1,0 +1,571 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Camera "Camera"
+{
+    float2 clippingRange = (0.1, 100.0)
+    float focalLength = 50.0
+    float horizontalAperture = 36.0
+    float verticalAperture = 20.25
+    matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (0, 0, 4, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+# --- UsdPreviewSurface: red diffuse ---
+def Material "RedPS"
+{
+    token outputs:surface.connect = </RedPS/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0.9, 0.1, 0.1)
+        float inputs:metallic = 0
+        float inputs:roughness = 0.5
+        float inputs:opacity = 1
+        token outputs:surface
+    }
+}
+
+# --- UsdPreviewSurface: blue metallic ---
+def Material "BluePS"
+{
+    token outputs:surface.connect = </BluePS/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0.1, 0.2, 0.9)
+        float inputs:metallic = 1
+        float inputs:roughness = 0.3
+        float inputs:opacity = 1
+        token outputs:surface
+    }
+}
+
+# --- UsdPreviewSurface: semi-transparent yellow ---
+# opacity < 1 forces the fetch_shader_opacity computation path (P0 target).
+# A geometric checkerboard sits behind this board so the transparency shows.
+def Material "GlassPS"
+{
+    token outputs:surface.connect = </GlassPS/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0.95, 0.9, 0.1)
+        float inputs:metallic = 0
+        float inputs:roughness = 0.05
+        float inputs:opacity = 0.4
+        token outputs:surface
+    }
+}
+
+# --- Background checkerboard: light tile ---
+def Material "CheckLight"
+{
+    token outputs:surface.connect = </CheckLight/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (1.0, 1.0, 1.0)
+        float inputs:metallic = 0
+        float inputs:roughness = 0.8
+        float inputs:opacity = 1
+        token outputs:surface
+    }
+}
+
+# --- Background checkerboard: dark tile ---
+def Material "CheckDark"
+{
+    token outputs:surface.connect = </CheckDark/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0.12, 0.12, 0.12)
+        float inputs:metallic = 0
+        float inputs:roughness = 0.8
+        float inputs:opacity = 1
+        token outputs:surface
+    }
+}
+
+def Xform "World"
+{
+    def Mesh "Bg00" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-3.0, -2.0, -1.5), (-2.25, -2.0, -1.5), (-2.25, -1.3333333333333335, -1.5), (-3.0, -1.3333333333333335, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg01" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-2.25, -2.0, -1.5), (-1.5, -2.0, -1.5), (-1.5, -1.3333333333333335, -1.5), (-2.25, -1.3333333333333335, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg02" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-1.5, -2.0, -1.5), (-0.75, -2.0, -1.5), (-0.75, -1.3333333333333335, -1.5), (-1.5, -1.3333333333333335, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg03" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-0.75, -2.0, -1.5), (0.0, -2.0, -1.5), (0.0, -1.3333333333333335, -1.5), (-0.75, -1.3333333333333335, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg04" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(0.0, -2.0, -1.5), (0.75, -2.0, -1.5), (0.75, -1.3333333333333335, -1.5), (0.0, -1.3333333333333335, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg05" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(0.75, -2.0, -1.5), (1.5, -2.0, -1.5), (1.5, -1.3333333333333335, -1.5), (0.75, -1.3333333333333335, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg06" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(1.5, -2.0, -1.5), (2.25, -2.0, -1.5), (2.25, -1.3333333333333335, -1.5), (1.5, -1.3333333333333335, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg07" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(2.25, -2.0, -1.5), (3.0, -2.0, -1.5), (3.0, -1.3333333333333335, -1.5), (2.25, -1.3333333333333335, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg10" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-3.0, -1.3333333333333335, -1.5), (-2.25, -1.3333333333333335, -1.5), (-2.25, -0.6666666666666669, -1.5), (-3.0, -0.6666666666666669, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg11" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-2.25, -1.3333333333333335, -1.5), (-1.5, -1.3333333333333335, -1.5), (-1.5, -0.6666666666666669, -1.5), (-2.25, -0.6666666666666669, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg12" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-1.5, -1.3333333333333335, -1.5), (-0.75, -1.3333333333333335, -1.5), (-0.75, -0.6666666666666669, -1.5), (-1.5, -0.6666666666666669, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg13" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-0.75, -1.3333333333333335, -1.5), (0.0, -1.3333333333333335, -1.5), (0.0, -0.6666666666666669, -1.5), (-0.75, -0.6666666666666669, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg14" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(0.0, -1.3333333333333335, -1.5), (0.75, -1.3333333333333335, -1.5), (0.75, -0.6666666666666669, -1.5), (0.0, -0.6666666666666669, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg15" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(0.75, -1.3333333333333335, -1.5), (1.5, -1.3333333333333335, -1.5), (1.5, -0.6666666666666669, -1.5), (0.75, -0.6666666666666669, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg16" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(1.5, -1.3333333333333335, -1.5), (2.25, -1.3333333333333335, -1.5), (2.25, -0.6666666666666669, -1.5), (1.5, -0.6666666666666669, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg17" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(2.25, -1.3333333333333335, -1.5), (3.0, -1.3333333333333335, -1.5), (3.0, -0.6666666666666669, -1.5), (2.25, -0.6666666666666669, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg20" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-3.0, -0.6666666666666667, -1.5), (-2.25, -0.6666666666666667, -1.5), (-2.25, -1.1102230246251565e-16, -1.5), (-3.0, -1.1102230246251565e-16, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg21" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-2.25, -0.6666666666666667, -1.5), (-1.5, -0.6666666666666667, -1.5), (-1.5, -1.1102230246251565e-16, -1.5), (-2.25, -1.1102230246251565e-16, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg22" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-1.5, -0.6666666666666667, -1.5), (-0.75, -0.6666666666666667, -1.5), (-0.75, -1.1102230246251565e-16, -1.5), (-1.5, -1.1102230246251565e-16, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg23" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-0.75, -0.6666666666666667, -1.5), (0.0, -0.6666666666666667, -1.5), (0.0, -1.1102230246251565e-16, -1.5), (-0.75, -1.1102230246251565e-16, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg24" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(0.0, -0.6666666666666667, -1.5), (0.75, -0.6666666666666667, -1.5), (0.75, -1.1102230246251565e-16, -1.5), (0.0, -1.1102230246251565e-16, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg25" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(0.75, -0.6666666666666667, -1.5), (1.5, -0.6666666666666667, -1.5), (1.5, -1.1102230246251565e-16, -1.5), (0.75, -1.1102230246251565e-16, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg26" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(1.5, -0.6666666666666667, -1.5), (2.25, -0.6666666666666667, -1.5), (2.25, -1.1102230246251565e-16, -1.5), (1.5, -1.1102230246251565e-16, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg27" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(2.25, -0.6666666666666667, -1.5), (3.0, -0.6666666666666667, -1.5), (3.0, -1.1102230246251565e-16, -1.5), (2.25, -1.1102230246251565e-16, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg30" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-3.0, 0.0, -1.5), (-2.25, 0.0, -1.5), (-2.25, 0.6666666666666666, -1.5), (-3.0, 0.6666666666666666, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg31" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-2.25, 0.0, -1.5), (-1.5, 0.0, -1.5), (-1.5, 0.6666666666666666, -1.5), (-2.25, 0.6666666666666666, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg32" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-1.5, 0.0, -1.5), (-0.75, 0.0, -1.5), (-0.75, 0.6666666666666666, -1.5), (-1.5, 0.6666666666666666, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg33" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-0.75, 0.0, -1.5), (0.0, 0.0, -1.5), (0.0, 0.6666666666666666, -1.5), (-0.75, 0.6666666666666666, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg34" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(0.0, 0.0, -1.5), (0.75, 0.0, -1.5), (0.75, 0.6666666666666666, -1.5), (0.0, 0.6666666666666666, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg35" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(0.75, 0.0, -1.5), (1.5, 0.0, -1.5), (1.5, 0.6666666666666666, -1.5), (0.75, 0.6666666666666666, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg36" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(1.5, 0.0, -1.5), (2.25, 0.0, -1.5), (2.25, 0.6666666666666666, -1.5), (1.5, 0.6666666666666666, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg37" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(2.25, 0.0, -1.5), (3.0, 0.0, -1.5), (3.0, 0.6666666666666666, -1.5), (2.25, 0.6666666666666666, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg40" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-3.0, 0.6666666666666665, -1.5), (-2.25, 0.6666666666666665, -1.5), (-2.25, 1.333333333333333, -1.5), (-3.0, 1.333333333333333, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg41" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-2.25, 0.6666666666666665, -1.5), (-1.5, 0.6666666666666665, -1.5), (-1.5, 1.333333333333333, -1.5), (-2.25, 1.333333333333333, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg42" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-1.5, 0.6666666666666665, -1.5), (-0.75, 0.6666666666666665, -1.5), (-0.75, 1.333333333333333, -1.5), (-1.5, 1.333333333333333, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg43" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-0.75, 0.6666666666666665, -1.5), (0.0, 0.6666666666666665, -1.5), (0.0, 1.333333333333333, -1.5), (-0.75, 1.333333333333333, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg44" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(0.0, 0.6666666666666665, -1.5), (0.75, 0.6666666666666665, -1.5), (0.75, 1.333333333333333, -1.5), (0.0, 1.333333333333333, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg45" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(0.75, 0.6666666666666665, -1.5), (1.5, 0.6666666666666665, -1.5), (1.5, 1.333333333333333, -1.5), (0.75, 1.333333333333333, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg46" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(1.5, 0.6666666666666665, -1.5), (2.25, 0.6666666666666665, -1.5), (2.25, 1.333333333333333, -1.5), (1.5, 1.333333333333333, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg47" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(2.25, 0.6666666666666665, -1.5), (3.0, 0.6666666666666665, -1.5), (3.0, 1.333333333333333, -1.5), (2.25, 1.333333333333333, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg50" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-3.0, 1.333333333333333, -1.5), (-2.25, 1.333333333333333, -1.5), (-2.25, 1.9999999999999996, -1.5), (-3.0, 1.9999999999999996, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg51" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-2.25, 1.333333333333333, -1.5), (-1.5, 1.333333333333333, -1.5), (-1.5, 1.9999999999999996, -1.5), (-2.25, 1.9999999999999996, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg52" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-1.5, 1.333333333333333, -1.5), (-0.75, 1.333333333333333, -1.5), (-0.75, 1.9999999999999996, -1.5), (-1.5, 1.9999999999999996, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg53" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-0.75, 1.333333333333333, -1.5), (0.0, 1.333333333333333, -1.5), (0.0, 1.9999999999999996, -1.5), (-0.75, 1.9999999999999996, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg54" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(0.0, 1.333333333333333, -1.5), (0.75, 1.333333333333333, -1.5), (0.75, 1.9999999999999996, -1.5), (0.0, 1.9999999999999996, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg55" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(0.75, 1.333333333333333, -1.5), (1.5, 1.333333333333333, -1.5), (1.5, 1.9999999999999996, -1.5), (0.75, 1.9999999999999996, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg56" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(1.5, 1.333333333333333, -1.5), (2.25, 1.333333333333333, -1.5), (2.25, 1.9999999999999996, -1.5), (1.5, 1.9999999999999996, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg57" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(2.25, 1.333333333333333, -1.5), (3.0, 1.333333333333333, -1.5), (3.0, 1.9999999999999996, -1.5), (2.25, 1.9999999999999996, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+
+    def Mesh "Left" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-1.15, -0.6, 0), (-0.45, -0.6, 0), (-0.45, 0.6, 0), (-1.15, 0.6, 0)]
+        rel material:binding = </RedPS>
+    }
+
+    def Mesh "Center" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-0.35, -0.6, 0), (0.35, -0.6, 0), (0.35, 0.6, 0), (-0.35, 0.6, 0)]
+        rel material:binding = </BluePS>
+    }
+
+    def Mesh "Right" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(0.45, -0.6, 0), (1.15, -0.6, 0), (1.15, 0.6, 0), (0.45, 0.6, 0)]
+        rel material:binding = </GlassPS>
+    }
+}
+
+def DistantLight "Sun"
+{
+    float inputs:intensity = 3.0
+    matrix4d xformOp:transform = ( (1,0,0,0), (0,-1,0,0), (0,0,-1,0), (0,0,0,1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
