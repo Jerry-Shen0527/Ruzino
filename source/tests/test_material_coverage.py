@@ -14,97 +14,70 @@ moderate SPP and writes a PNG to Binaries/Release/test_output/material_coverage/
 Tests assert only that the render is finite and non-trivial; the real verdict
 is the PNG you inspect by eye.
 
-Each render runs in its OWN subprocess (``_render_worker.py``) rather than
-constructing a ``HydraRenderer`` in-process. The HD renderer plugin is a
-process-global singleton: ``Hd_RUZINO_RendererPlugin`` is cached by Hydra and
-the global ``GPUSceneAssember`` cannot be reconstructed cleanly, so a second
-``HydraRenderer`` in the same process leaves the render delegate's
-``presented_textures`` map stale and ``get_output_texture()`` throws "Failed to
-get output texture". ``test_render_materials.py`` dodges this by sharing one
-module-scoped renderer across its cornell tests, but here every test renders a
-*different scene*, so sharing one renderer isn't possible. Process isolation is
-the same pattern already used by ``materials_batch.py`` / ``render_gridbox.py``
-(both spawn a render per scene). The worker dumps the PNG plus a
-``.stats.json`` sidecar (mean, is_finite); this parent reads the sidecar to
-make its assertions, keeping the pytest failure UX intact.
+Each test constructs its own HydraRenderer in-process. This is safe because
+~Hd_RUZINO_RenderDelegate resets the process-global MaterialX shared_document
+(see Hd_RUZINO_MaterialX::reset_shared_state), so the Nth renderer doesn't
+inherit the previous scene's accumulated material/shader nodes. Previously the
+static shared_document was never cleared, which polluted later renders and
+forced a per-test subprocess workaround; that is no longer needed.
 """
 
-import json
 import os
-import subprocess
-import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from conftest import TEST_OUTPUT_DIR
+from test_render_materials import _build_render_graph
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 BINARY_DIR = PROJECT_ROOT / "Binaries" / "Release"
-TESTS_DIR = Path(__file__).resolve().parent
-SCENES_DIR = TESTS_DIR / "data" / "scenes" / "materials"
+SCENES_DIR = Path(__file__).resolve().parent / "data" / "scenes" / "materials"
 OUTPUT_DIR = Path(TEST_OUTPUT_DIR) / "material_coverage"
 
 RENDER_SIZE = 256
 RENDER_SPP = 64
 
 
-def _render_scene(scene_path, name, width=RENDER_SIZE, height=RENDER_SIZE, spp=RENDER_SPP):
-    """Render a scene at fixed SPP in a fresh subprocess and write a PNG.
-
-    Returns the stats dict ``{"mean": float, "is_finite": bool}`` from the
-    worker's ``.stats.json`` sidecar. The render itself happens in a child
-    process so the HD renderer singleton is constructed at most once per
-    process — defeating the singleton-pollution bug that breaks runs of
-    several of these tests back-to-back. Skips (rather than fails) if the
-    renderer build or worker isn't available.
-    """
+def _save_png(img, name):
+    """Save a render to OUTPUT_DIR/<name>.png for manual inspection."""
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    output_png = OUTPUT_DIR / f"{name}.png"
-    stats_path = OUTPUT_DIR / f"{name}.stats.json"
-    # Pass the binary dir through explicitly: the worker runs as a plain
-    # script (not under pytest, so conftest.py doesn't bootstrap its env), and
-    # it must find hd_RUZINO_py + USD DLLs + render_nodes.json there.
-    cmd = [
-        sys.executable,
-        str(TESTS_DIR / "_render_worker.py"),
-        "--scene", str(scene_path),
-        "--output", str(output_png),
-        "--width", str(width),
-        "--height", str(height),
-        "--spp", str(spp),
-        "--binary-dir", str(BINARY_DIR),
-    ]
+    rgb = np.clip(img[:, :, :3], 0, 1)
+    rgb = (rgb * 255).astype(np.uint8)
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=300,
-            cwd=str(BINARY_DIR))
-    except FileNotFoundError as e:
-        pytest.skip(f"python executable unavailable to run render worker: {e}")
-
-    if result.returncode != 0:
-        pytest.skip(
-            f"render worker failed (code {result.returncode}) for {name}:\n"
-            f"{result.stdout}\n{result.stderr}")
-    # Surface the worker's own progress line so `-s` output stays informative.
-    if result.stdout:
-        print(result.stdout.strip())
-
-    if not stats_path.exists():
-        pytest.skip(f"worker produced no stats sidecar for {name}")
-    stats = json.loads(stats_path.read_text())
-    print(f"Saved: {output_png}  mean={stats['mean']:.4f}")
-    return stats
+        from PIL import Image
+        Image.fromarray(rgb).save(OUTPUT_DIR / f"{name}.png")
+        print(f"Saved: {OUTPUT_DIR / (name + '.png')}  mean={img[:,:,:3].mean():.4f}")
+    except ImportError:
+        # Pillow missing — still write .npy so the render isn't lost.
+        np.save(OUTPUT_DIR / f"{name}.npy", img)
+        print(f"Saved: {OUTPUT_DIR / (name + '.npy')} (PIL missing, no PNG)")
 
 
-def _assert_finite_nonblank(stats, name):
-    """Common sanity: no NaN/Inf, and not pure black.
+def _render_scene(scene_path, name, width=RENDER_SIZE, height=RENDER_SIZE, spp=RENDER_SPP):
+    """Render a scene at fixed SPP and write a PNG. Returns the image array."""
+    try:
+        import hd_RUZINO_py as renderer
+    except ImportError as e:
+        pytest.skip(f"hd_RUZINO_py not available: {e}")
 
-    Takes the stats dict from ``_render_scene`` instead of an ndarray, since
-    the image itself now lives only in the worker process.
-    """
-    assert stats["is_finite"], f"{name}: render contains NaN/Inf"
-    mean = float(stats["mean"])
+    hydra = renderer.HydraRenderer(str(scene_path), width, height)
+    _build_render_graph(hydra, spp)
+    for _ in range(spp):
+        hydra.render()
+    texture_data = hydra.get_output_texture()
+    img = np.array(texture_data, dtype=np.float32).reshape(height, width, 4)
+    # GPU textures have origin at top-left; flip to match camera/scene Y-up.
+    img = np.flipud(img)
+    _save_png(img, name)
+    return img
+
+
+def _assert_finite_nonblank(img, name):
+    """Common sanity: no NaN/Inf, and not pure black."""
+    assert np.isfinite(img).all(), f"{name}: render contains NaN/Inf"
+    mean = float(img[:, :, :3].mean())
     assert mean > 1e-3, f"{name}: render too dim (mean={mean:.6f})"
 
 
@@ -121,8 +94,8 @@ def test_material_fallback():
     scene = SCENES_DIR / "mat_fallback.usda"
     if not scene.exists():
         pytest.skip(f"{scene} not found")
-    stats = _render_scene(scene, "mat_fallback")
-    _assert_finite_nonblank(stats, "fallback")
+    img = _render_scene(scene, "mat_fallback")
+    _assert_finite_nonblank(img, "fallback")
 
 
 def test_material_standard_surface():
@@ -135,8 +108,8 @@ def test_material_standard_surface():
     scene = SCENES_DIR / "mat_standard_surface.usda"
     if not scene.exists():
         pytest.skip(f"{scene} not found")
-    stats = _render_scene(scene, "mat_standard_surface")
-    _assert_finite_nonblank(stats, "standard_surface")
+    img = _render_scene(scene, "mat_standard_surface")
+    _assert_finite_nonblank(img, "standard_surface")
 
 
 def test_material_preview_surface():
@@ -148,8 +121,8 @@ def test_material_preview_surface():
     scene = SCENES_DIR / "mat_preview_surface.usda"
     if not scene.exists():
         pytest.skip(f"{scene} not found")
-    stats = _render_scene(scene, "mat_preview_surface")
-    _assert_finite_nonblank(stats, "preview_surface")
+    img = _render_scene(scene, "mat_preview_surface")
+    _assert_finite_nonblank(img, "preview_surface")
 
 
 def test_material_mixed():
@@ -163,8 +136,8 @@ def test_material_mixed():
     scene = SCENES_DIR / "mat_mixed.usda"
     if not scene.exists():
         pytest.skip(f"{scene} not found")
-    stats = _render_scene(scene, "mat_mixed")
-    _assert_finite_nonblank(stats, "mixed")
+    img = _render_scene(scene, "mat_mixed")
+    _assert_finite_nonblank(img, "mixed")
 
 
 def test_material_transmission():
@@ -182,5 +155,5 @@ def test_material_transmission():
     if not scene.exists():
         pytest.skip(f"{scene} not found")
     # Higher SPP for transmission: refraction needs more samples to converge.
-    stats = _render_scene(scene, "mat_transmission_sphere", spp=128)
-    _assert_finite_nonblank(stats, "transmission")
+    img = _render_scene(scene, "mat_transmission_sphere", spp=128)
+    _assert_finite_nonblank(img, "transmission")
