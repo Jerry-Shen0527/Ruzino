@@ -3,6 +3,14 @@
 This document describes the build and test workflow for the Ruzino Framework3D project.
 It is a quick reference for AI agents; see `INSTALL.md` for the full installation guide.
 
+## Multi-Agent Collaboration Rules
+
+Multiple agents may work on this repository **at the same time**. Follow these rules:
+
+1. **No unilateral wholesale changes.** No single agent may make major, repository-wide changes on its own — including `git stash`, large-scale refactors, mass file moves/renames, or wiping/regenerating build directories. Coordinate big moves with the user first.
+2. **Unexpected file changes are normal.** Because other agents may be editing files concurrently, files may change or appear to change "unexpectedly" between operations. Do not treat this as an error or assume corruption.
+3. **If something looks wrong, stop and ask.** If a conflict, lost change, or surprising state is encountered, stop and ask the user how to proceed instead of trying to fix it unilaterally.
+
 ## Project Structure
 
 - `cmake/AddLibrary.cmake`: Thin wrapper (7 lines) that delegates to `source/Core/rznode/cmake/AddLibrary.cmake`
