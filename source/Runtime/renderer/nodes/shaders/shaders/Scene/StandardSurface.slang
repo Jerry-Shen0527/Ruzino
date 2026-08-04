@@ -99,7 +99,10 @@ void NG_standard_surface_surfaceshader_100(
     float3 tangent,
     out surfaceshader out1)
 {
-    if (is_close(normalize(L), normalize(-V))) {
+    // The straight-through direction L = -V is a real transmission sample for
+    // thin_walled shells. Let it fall through to the full BSDF eval (which
+    // applies transmission_color tint) instead of short-circuiting to white.
+    if (!thin_walled && is_close(normalize(L), normalize(-V))) {
         // For near-perfect mirror reflection, use Fresnel-weighted response
         // instead of plain white (which is wrong for colored conductors).
         if (metalness > 1e-5) {
@@ -126,7 +129,9 @@ void NG_standard_surface_surfaceshader_100(
     // pass-through. Rays reaching this BSDF eval have already been judged to
     // hit an existing surface. The final `color *= surfaceOpacity` multiply
     // is also removed below for the same reason (double attenuation).
-    if (transmission > 0.0)
+    // thin_walled mirrors the sample-side gate: keep IOR un-flipped so the
+    // thin-shell treats both faces symmetrically (no Snell medium flip).
+    if (transmission > 0.0 && !thin_walled)
         if (eta_flipped > 0.0)
             specular_IOR = 1.0 / specular_IOR;
     float2 coat_roughness_vector_out = float2(0.0);
@@ -613,6 +618,223 @@ float fresnel_dielectric(float cosTheta, float eta)
     return 0.5 * (Rs * Rs + Rp * Rp);
 }
 
+// Context holding the frame + weight setup shared between sampling and pdf
+// evaluation of the layered standard-surface BSDF. Built once per shading
+// point; sample_standard_surface fills it implicitly via locals, the pdf
+// helper consumes it. Keeping it in a struct avoids a ~15-arg helper signature
+// and guarantees the pdf math stays identical to the sampling distribution.
+struct LayeredBsdfContext {
+    ShadingFrame sf;
+    ShadingFrame coat_sf;
+    float3 V_local;
+    float3 V_coat_local;
+    float NdotV;
+    float coat_NdotV;
+    float2 alpha;
+    float2 coat_alpha;
+    float eta;
+    float coat_sample_weight;
+    float base_sample_weight;
+    float metal_weight;
+    float nonmetal_weight;
+    float diffuse_weight;
+    float reflection_weight;
+    float transmission_weight;
+    float total_nonmetal_weight;
+};
+
+// Evaluate the layered BSDF sampling pdf for a query direction L_local (in the
+// base-layer local frame). This is the "Calculate MIS PDF" block factored out
+// of sample_standard_surface so the eval callable can also obtain bsdf_pdf(L)
+// for the NEE direction. Returns 0 for directions no layer can generate.
+float _layered_pdf(LayeredBsdfContext ctx, float3 L_local)
+{
+    float coat_pdf = 0.0;
+    float base_pdf = 0.0;
+
+    // Coat PDF (computed in coat's coordinate frame)
+    float3 L_world = ctx.sf.fromLocal(L_local);
+    float3 L_coat_local = ctx.coat_sf.toLocal(L_world);
+    if (L_coat_local.z > -M_FLOAT_EPS) {
+        float3 H_coat = normalize(ctx.V_coat_local + L_coat_local);
+        float VdotH_coat = max(dot(ctx.V_coat_local, H_coat), M_FLOAT_EPS);
+        float D = mx_ggx_NDF(H_coat, ctx.coat_alpha);
+        float G1 = mx_ggx_smith_G1_aniso(
+            ctx.coat_NdotV, ctx.V_coat_local.x, ctx.V_coat_local.y,
+            ctx.coat_alpha.x, ctx.coat_alpha.y);
+        float vndf_pdf = D * G1 * VdotH_coat / ctx.coat_NdotV;
+        coat_pdf = vndf_pdf / (4.0 * VdotH_coat);
+    }
+
+    float metal_pdf = 0.0;
+    float nonmetal_pdf = 0.0;
+
+    // Metal path PDF (reflection only)
+    if (L_local.z > -M_FLOAT_EPS) {
+        float3 H = normalize(ctx.V_local + L_local);
+        float VdotH = max(dot(ctx.V_local, H), M_FLOAT_EPS);
+        float D = mx_ggx_NDF(H, ctx.alpha);
+        float G1 = mx_ggx_smith_G1_aniso(
+            ctx.NdotV, ctx.V_local.x, ctx.V_local.y, ctx.alpha.x, ctx.alpha.y);
+        float vndf_pdf = D * G1 * VdotH / ctx.NdotV;
+        metal_pdf = vndf_pdf / (4.0 * VdotH);
+    }
+
+    if (ctx.total_nonmetal_weight > M_FLOAT_EPS) {
+        float diffuse_pdf = 0.0;
+        float reflection_pdf = 0.0;
+        float transmission_pdf = 0.0;
+
+        if (L_local.z > -M_FLOAT_EPS) {
+            diffuse_pdf = max(L_local.z, 0.0) * M_1_PI;
+            float3 H = normalize(ctx.V_local + L_local);
+            float VdotH = max(dot(ctx.V_local, H), M_FLOAT_EPS);
+            float D = mx_ggx_NDF(H, ctx.alpha);
+            float G1 = mx_ggx_smith_G1_aniso(
+                ctx.NdotV, ctx.V_local.x, ctx.V_local.y, ctx.alpha.x,
+                ctx.alpha.y);
+            float vndf_pdf = D * G1 * VdotH / ctx.NdotV;
+            reflection_pdf = vndf_pdf / (4.0 * VdotH);
+        }
+        else if (L_local.z < -M_FLOAT_EPS) {
+            float3 H = normalize(ctx.V_local + L_local * ctx.eta);
+            if (H.z < 0.0) H = -H;
+            float VdotH = max(dot(ctx.V_local, H), M_FLOAT_EPS);
+            float LdotH = max(abs(dot(L_local, H)), M_FLOAT_EPS);
+            float D = mx_ggx_NDF(H, ctx.alpha);
+            float G1 = mx_ggx_smith_G1_aniso(
+                ctx.NdotV, ctx.V_local.x, ctx.V_local.y, ctx.alpha.x,
+                ctx.alpha.y);
+            float vndf_pdf = D * G1 * VdotH / ctx.NdotV;
+            float denom = VdotH + LdotH / ctx.eta;
+            float jacobian = (ctx.eta * ctx.eta * LdotH) / (denom * denom);
+            transmission_pdf = vndf_pdf * jacobian / (4.0 * VdotH);
+        }
+
+        nonmetal_pdf = diffuse_pdf * ctx.diffuse_weight +
+                       reflection_pdf * ctx.reflection_weight +
+                       transmission_pdf * ctx.transmission_weight;
+    }
+
+    base_pdf = metal_pdf * ctx.metal_weight + nonmetal_pdf * ctx.nonmetal_weight;
+
+    float pdf = coat_pdf * ctx.coat_sample_weight +
+                base_pdf * ctx.base_sample_weight;
+    return max(pdf, M_FLOAT_EPS);
+}
+
+// Build the layered-BSDF context (frames + weights) shared by sampling and
+// pdf evaluation. Factored out of sample_standard_surface so the eval callable
+// can obtain the identical context for bsdf_pdf(L). Adjusts specular_IOR for
+// solid-transmission eta flipping (caller passes the already-flipped value).
+LayeredBsdfContext build_layered_bsdf_context(
+    float3 V,
+    float3 normal,
+    float3 tangent,
+    float specular_roughness,
+    float specular_anisotropy,
+    float specular_rotation,
+    float specular_IOR,
+    float coat,
+    float3 coat_normal,
+    float coat_roughness,
+    float coat_anisotropy,
+    float coat_rotation,
+    float coat_IOR,
+    float base,
+    float3 base_color,
+    float metalness,
+    float specular,
+    float transmission,
+    float3 transmission_color)
+{
+    float3 shading_normal = normal;
+    float3 shading_tangent = tangent;
+    if (dot(V, normal) < 0.0) {
+        shading_normal = -normal;
+        shading_tangent = -tangent;
+    }
+
+    float3 coat_shading_normal = coat_normal;
+    float3 coat_shading_tangent = tangent;
+    if (dot(V, coat_normal) < 0.0) {
+        coat_shading_normal = -coat_normal;
+        coat_shading_tangent = -tangent;
+    }
+
+    float3 rotated_tangent;
+    mx_rotate_vector3(
+        shading_tangent, specular_rotation * 360.0, shading_normal,
+        rotated_tangent);
+    bool valid;
+    ShadingFrame sf = ShadingFrame.createSafe(
+        shading_normal, float4(rotated_tangent, 1.0), valid);
+    float3 V_local = sf.toLocal(V);
+    float NdotV = clamp(V_local.z, M_FLOAT_EPS, 1.0);
+
+    float2 alpha;
+    mx_roughness_anisotropy(specular_roughness, specular_anisotropy, alpha);
+
+    float3 coat_rotated_tangent;
+    mx_rotate_vector3(
+        coat_shading_tangent, coat_rotation * 360.0, coat_shading_normal,
+        coat_rotated_tangent);
+    coat_rotated_tangent = normalize(coat_rotated_tangent);
+    bool coat_valid;
+    ShadingFrame coat_sf = ShadingFrame.createSafe(
+        coat_shading_normal, float4(coat_rotated_tangent, 1.0), coat_valid);
+    float3 V_coat_local = coat_sf.toLocal(V);
+    float coat_NdotV = clamp(V_coat_local.z, M_FLOAT_EPS, 1.0);
+
+    float coat_weight = clamp(coat, 0.0, 1.0);
+    float2 coat_alpha;
+    mx_roughness_anisotropy(coat_roughness, coat_anisotropy, coat_alpha);
+    float coat_fresnel = fresnel_dielectric(coat_NdotV, coat_IOR);
+
+    float eta = specular_IOR;
+    float base_fresnel = fresnel_dielectric(NdotV, eta);
+
+    float coat_reflection_prob = coat_weight * coat_fresnel;
+    float coat_sample_weight = coat_reflection_prob;
+    float base_sample_weight = 1.0 - coat_sample_weight;
+
+    float metal_weight = metalness;
+    float nonmetal_weight = 1.0 - metalness;
+    float diffuse_weight = base * (1.0 - base_fresnel) * luminance(base_color) *
+                           (1 - transmission);
+    float reflection_weight = base_fresnel * specular;
+    float transmission_weight =
+        (1.0 - base_fresnel) * transmission * luminance(transmission_color);
+
+    float total_nonmetal_weight =
+        diffuse_weight + reflection_weight + transmission_weight;
+    if (total_nonmetal_weight > M_FLOAT_EPS) {
+        diffuse_weight /= total_nonmetal_weight;
+        reflection_weight /= total_nonmetal_weight;
+        transmission_weight /= total_nonmetal_weight;
+    }
+
+    LayeredBsdfContext ctx;
+    ctx.sf = sf;
+    ctx.coat_sf = coat_sf;
+    ctx.V_local = V_local;
+    ctx.V_coat_local = V_coat_local;
+    ctx.NdotV = NdotV;
+    ctx.coat_NdotV = coat_NdotV;
+    ctx.alpha = alpha;
+    ctx.coat_alpha = coat_alpha;
+    ctx.eta = eta;
+    ctx.coat_sample_weight = coat_sample_weight;
+    ctx.base_sample_weight = base_sample_weight;
+    ctx.metal_weight = metal_weight;
+    ctx.nonmetal_weight = nonmetal_weight;
+    ctx.diffuse_weight = diffuse_weight;
+    ctx.reflection_weight = reflection_weight;
+    ctx.transmission_weight = transmission_weight;
+    ctx.total_nonmetal_weight = total_nonmetal_weight;
+    return ctx;
+}
+
 // Sample diffuse component using cosine hemisphere sampling
 float3 sample_diffuse_lobe(float2 u, out float pdf)
 {
@@ -751,103 +973,40 @@ float3 sample_standard_surface(
     inout uint seed,
     out float pdf)
 {
-    if (transmission > 0.0)
+    // thin_walled: single-sided open shell — no Snell refraction. Keep IOR
+    // un-flipped so both faces of the infinitesimally thin wall are treated
+    // symmetrically (the ray enters and exits the medium at the same point).
+    // Solid (thin_walled=false) keeps the eta_flipped logic for paired
+    // refraction across a closed volume.
+    if (transmission > 0.0 && !thin_walled)
         if (eta_flipped > 0.0)
             specular_IOR = 1.0 / specular_IOR;
 
     // The hard cutout (opacity.r<0.25 → return -V) was removed: it overlapped
     // with the path-tracing main loop's stochastic pass-through. Rays reaching
     // here hit an existing surface, so sample the BSDF normally.
-    // Fix normal orientation if view direction and shading normal are on
-    // opposite sides This can happen when normal map causes large perturbations
-    float3 shading_normal = normal;
-    float3 shading_tangent = tangent;
-    if (dot(V, normal) < 0.0) {
-        shading_normal = -normal;
-        shading_tangent = -tangent;
-    }
-
-    // Compute coat layer properties with its own shading frame
-    float3 coat_shading_normal = coat_normal;
-    float3 coat_shading_tangent = tangent;
-    if (dot(V, coat_normal) < 0.0) {
-        coat_shading_normal = -coat_normal;
-        coat_shading_tangent = -tangent;
-    }
-
-    if (eta_flipped != 0) {
-        // coat_shading_normal = -coat_shading_normal;
-        // coat_shading_tangent = -coat_shading_tangent;
-        // shading_normal = -shading_normal;
-        // shading_tangent = -shading_tangent;
-    }
-
-    // Create base layer shading frame
-    float3 rotated_tangent;
-    float rotation_angle = specular_rotation * 360.0;
-    mx_rotate_vector3(
-        shading_tangent, rotation_angle, shading_normal, rotated_tangent);
-
-    bool valid;
-    ShadingFrame sf = ShadingFrame.createSafe(
-        shading_normal, float4(rotated_tangent, 1.0), valid);
-
-    // Transform view direction to local space
-    float3 V_local = sf.toLocal(V);
-    float NdotV = clamp(V_local.z, M_FLOAT_EPS, 1.0);
-
-    // Compute base layer anisotropic roughness
-    float2 alpha;
-    mx_roughness_anisotropy(specular_roughness, specular_anisotropy, alpha);
-
-    float3 coat_rotated_tangent;
-    float coat_rotation_angle = coat_rotation * 360.0;
-    mx_rotate_vector3(
-        coat_shading_tangent,
-        coat_rotation_angle,
-        coat_shading_normal,
-        coat_rotated_tangent);
-    coat_rotated_tangent = normalize(coat_rotated_tangent);
-
-    bool coat_valid;
-    ShadingFrame coat_sf = ShadingFrame.createSafe(
-        coat_shading_normal, float4(coat_rotated_tangent, 1.0), coat_valid);
-    float3 V_coat_local = coat_sf.toLocal(V);
-    float coat_NdotV = clamp(V_coat_local.z, M_FLOAT_EPS, 1.0);
-
-    float coat_weight = clamp(coat, 0.0, 1.0);
-    float2 coat_alpha;
-    mx_roughness_anisotropy(coat_roughness, coat_anisotropy, coat_alpha);
-    float coat_fresnel = fresnel_dielectric(coat_NdotV, coat_IOR);
-
-    // Compute base layer properties
-    float eta = specular_IOR;
-    float base_fresnel = fresnel_dielectric(NdotV, eta);
-
-    // Layered sampling weights
-    // Coat reflects: coat * F_coat
-    // Base receives: (1 - coat * F_coat) of the incoming light
-    float coat_reflection_prob = coat_weight * coat_fresnel;
-    float coat_sample_weight = coat_reflection_prob;
-    float base_sample_weight = 1.0 - coat_sample_weight;
-
-    // Base layer weights (same as before, but scaled by base_sample_weight)
-    float metal_weight = metalness;
-    float nonmetal_weight = 1.0 - metalness;
-    float diffuse_weight = base * (1.0 - base_fresnel) * luminance(base_color) *
-                           (1 - transmission);
-    float reflection_weight = base_fresnel * specular;
-    float transmission_weight =
-        (1.0 - base_fresnel) * transmission * luminance(transmission_color);
-
-    // Normalize base layer weights
-    float total_nonmetal_weight =
-        diffuse_weight + reflection_weight + transmission_weight;
-    if (total_nonmetal_weight > M_FLOAT_EPS) {
-        diffuse_weight /= total_nonmetal_weight;
-        reflection_weight /= total_nonmetal_weight;
-        transmission_weight /= total_nonmetal_weight;
-    }
+    // Build the shared layered-BSDF context (frames + weights) once; the pdf
+    // helper _layered_pdf consumes the identical ctx, so sampling and
+    // bsdf_pdf(L) stay consistent.
+    LayeredBsdfContext ctx = build_layered_bsdf_context(
+        V, normal, tangent, specular_roughness, specular_anisotropy,
+        specular_rotation, specular_IOR, coat, coat_normal, coat_roughness,
+        coat_anisotropy, coat_rotation, coat_IOR, base, base_color, metalness,
+        specular, transmission, transmission_color);
+    // Local aliases so the sampling block below reads unchanged.
+    ShadingFrame sf = ctx.sf;
+    ShadingFrame coat_sf = ctx.coat_sf;
+    float3 V_local = ctx.V_local;
+    float3 V_coat_local = ctx.V_coat_local;
+    float2 alpha = ctx.alpha;
+    float2 coat_alpha = ctx.coat_alpha;
+    float eta = ctx.eta;
+    float coat_sample_weight = ctx.coat_sample_weight;
+    float base_sample_weight = ctx.base_sample_weight;
+    float metal_weight = ctx.metal_weight;
+    float nonmetal_weight = ctx.nonmetal_weight;
+    float diffuse_weight = ctx.diffuse_weight;
+    float reflection_weight = ctx.reflection_weight;
 
     // Sample component: coat vs base
     float component_sample = random_float(seed);
@@ -900,8 +1059,19 @@ float3 sample_standard_surface(
                 float2 u = random_float2(seed);
                 L_local = sample_specular_reflection(u, V_local, alpha, pdf);
             }
+            else if (thin_walled) {
+                // Thin-shell straight-through transmission (no Snell bend).
+                // The infinitely-thin wall enters & exits the medium at the
+                // same point, so the net direction is unchanged: L = -V.
+                // The eval side still applies Fresnel + transmission_color
+                // tint via mx_dielectric_bsdf, giving the colored-but-flat
+                // look of e.g. a soap bubble or leaf. pdf is near-Dirac; the
+                // throughput comes from the eval-side BSDF response.
+                L_local = -V_local;
+                pdf = 1.0;
+            }
             else {
-                // Sample transmission
+                // Solid: refract via Snell's law (paired entry/exit faces)
                 float2 u = random_float2(seed);
                 L_local = sample_transmission(u, V_local, alpha, eta, pdf);
             }
@@ -913,101 +1083,12 @@ float3 sample_standard_surface(
         }
     }
 
-    // Calculate MIS PDF: compute PDF for coat and base layers
-    float coat_pdf = 0.0;
-    float base_pdf = 0.0;
-
-    // Coat PDF (computed in coat's coordinate frame)
-    // Transform L from base frame to world, then to coat frame
-    float3 L_world = sf.fromLocal(L_local);
-    float3 L_coat_local = coat_sf.toLocal(L_world);
-
-    if (L_coat_local.z > -M_FLOAT_EPS) {
-        float3 H_coat = normalize(V_coat_local + L_coat_local);
-        float VdotH_coat = max(dot(V_coat_local, H_coat), M_FLOAT_EPS);
-
-        float D = mx_ggx_NDF(H_coat, coat_alpha);
-        float G1 = mx_ggx_smith_G1_aniso(
-            coat_NdotV,
-            V_coat_local.x,
-            V_coat_local.y,
-            coat_alpha.x,
-            coat_alpha.y);
-        float vndf_pdf = D * G1 * VdotH_coat / coat_NdotV;
-        coat_pdf = vndf_pdf / (4.0 * VdotH_coat);
-    }
-
-    // Base layer PDF (metal + nonmetal)
-    float metal_pdf = 0.0;
-    float nonmetal_pdf = 0.0;
-
-    // Metal path PDF (only has reflection component)
-    if (L_local.z > -M_FLOAT_EPS) {
-        float3 H = normalize(V_local + L_local);
-        float VdotH = max(dot(V_local, H), M_FLOAT_EPS);
-
-        float D = mx_ggx_NDF(H, alpha);
-        float G1 = mx_ggx_smith_G1_aniso(
-            NdotV, V_local.x, V_local.y, alpha.x, alpha.y);
-        float vndf_pdf = D * G1 * VdotH / NdotV;
-        metal_pdf = vndf_pdf / (4.0 * VdotH);
-    }
-
-    // Non-metal path PDF (compute all three components)
-    if (total_nonmetal_weight > M_FLOAT_EPS) {
-        float diffuse_pdf = 0.0;
-        float reflection_pdf = 0.0;
-        float transmission_pdf = 0.0;
-
-        if (L_local.z > -M_FLOAT_EPS) {
-            // Diffuse PDF (only valid for directions above surface)
-            diffuse_pdf = max(L_local.z, 0.0) * M_1_PI;
-
-            // Reflection PDF
-            float3 H = normalize(V_local + L_local);
-            float VdotH = max(dot(V_local, H), M_FLOAT_EPS);
-
-            float D = mx_ggx_NDF(H, alpha);
-            float G1 = mx_ggx_smith_G1_aniso(
-                NdotV, V_local.x, V_local.y, alpha.x, alpha.y);
-            float vndf_pdf = D * G1 * VdotH / NdotV;
-            reflection_pdf = vndf_pdf / (4.0 * VdotH);
-        }
-        else if (L_local.z < -M_FLOAT_EPS) {
-            // Transmission PDF - compute for downward directions
-            float3 H = normalize(V_local + L_local * eta);
-
-            // Ensure half vector points toward the incident side
-            if (H.z < 0.0) {
-                H = -H;
-            }
-
-            float VdotH = max(dot(V_local, H), M_FLOAT_EPS);
-            float LdotH = max(abs(dot(L_local, H)), M_FLOAT_EPS);
-
-            float D = mx_ggx_NDF(H, alpha);
-            float G1 = mx_ggx_smith_G1_aniso(
-                NdotV, V_local.x, V_local.y, alpha.x, alpha.y);
-            float vndf_pdf = D * G1 * VdotH / NdotV;
-
-            // Transform to transmission direction with proper Jacobian
-            float denom = VdotH + LdotH / eta;
-            float jacobian = (eta * eta * LdotH) / (denom * denom);
-            transmission_pdf = vndf_pdf * jacobian / (4.0 * VdotH);
-        }
-
-        nonmetal_pdf = diffuse_pdf * diffuse_weight +
-                       reflection_pdf * reflection_weight +
-                       transmission_pdf * transmission_weight;
-    }
-
-    // Combine base layer PDFs
-    base_pdf = metal_pdf * metal_weight + nonmetal_pdf * nonmetal_weight;
-
-    // Final MIS PDF: coat + base
-    pdf = coat_pdf * coat_sample_weight + base_pdf * base_sample_weight;
-    pdf = max(pdf, M_FLOAT_EPS);
+    // Calculate MIS PDF for the sampled direction via the shared helper (same
+    // math as the inline block that used to live here, now also reused by the
+    // eval callable to get bsdf_pdf(L) for the NEE direction).
+    pdf = _layered_pdf(ctx, L_local);
 
     // Transform to world space
     return sf.fromLocal(L_local);
 }
+

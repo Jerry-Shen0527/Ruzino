@@ -33,4 +33,8 @@ void eval_fallback(inout EvalCallableData data)
     // Throughput = f * NdotSampled (Lambertian); main loop divides by pdf.
     float NdotSampled = max(0.0, dot(data.vertexInfo.normalW, data.sampledDir));
     data.throughput = Spectrum(f * NdotSampled);
+
+    // bsdf_pdf(L): cosine-weighted hemisphere, pdf = max(0, NdotL) / PI.
+    float NdotL = max(0.0, dot(data.vertexInfo.normalW, data.L));
+    data.bsdfPdfForLightDir = NdotL / 3.14159265359;
 }

@@ -7,6 +7,7 @@
 #include "RHI/shaderCompiler.h"
 #include "../nodes/shaders/shaders/Scene/Lights/LightData.slang"
 #include "RHI/Hgi/format_conversion.hpp"
+#include "nvrhi/utils.h"
 #include "pxr/imaging/glf/simpleLight.h"
 #include "pxr/imaging/hd/changeTracker.h"
 #include "pxr/imaging/hd/rprimCollection.h"
@@ -483,10 +484,192 @@ void Hd_RUZINO_Rect_Light::Sync(
         }
 
         this->light_buffer->write_data(&lightData);
+
+        // Build (or rebuild) the intersectable light geometry so that
+        // BSDF-sampled rays can hit this RectLight and return its Le. The quad
+        // is built in world space from posW/tangent/bitangent (already
+        // world-space, scaled by width/height), so the TLAS instance transform
+        // is identity. light_buffer->index() is the stable LightData slot used
+        // by the ClosestHit shader to read Le.
+        BuildLightGeometry(
+            render_param,
+            lightData.posW,
+            lightData.tangent,
+            lightData.bitangent);
     }
 
     // Clear dirty bits
     *dirtyBits = Clean;
+}
+
+void Hd_RUZINO_Rect_Light::BuildLightGeometry(
+    Hd_RUZINO_RenderParam* render_param,
+    float3 posW,
+    float3 tangent,
+    float3 bitangent)
+{
+    auto device = RHI::get_device();
+    if (!light_command_list) {
+        light_command_list =
+            device->createCommandList({ .enableImmediateExecution = false });
+    }
+    auto descriptor_table =
+        render_param->InstanceCollection->get_buffer_descriptor_table();
+
+    // 4 corner vertices of the quad (world space), 2 triangles.
+    // tangent/bitangent are full-width/height vectors, so half-extents are 0.5.
+    float3 corners[4] = {
+        posW - 0.5f * tangent - 0.5f * bitangent,
+        posW + 0.5f * tangent - 0.5f * bitangent,
+        posW + 0.5f * tangent + 0.5f * bitangent,
+        posW - 0.5f * tangent + 0.5f * bitangent,
+    };
+    float positions[4 * 3];
+    for (int i = 0; i < 4; ++i) {
+        positions[i * 3 + 0] = corners[i].x;
+        positions[i * 3 + 1] = corners[i].y;
+        positions[i * 3 + 2] = corners[i].z;
+    }
+    uint indices[6] = {0, 1, 2, 0, 2, 3};
+
+    const size_t positions_bytes = sizeof(positions);   // 48
+    const size_t indices_bytes = sizeof(indices);       // 24
+    const size_t index_offset = positions_bytes;
+    const size_t total_bytes = positions_bytes + indices_bytes;
+
+    // (Re)create the vertex/index buffer each time geometry changes. This is
+    // cheap (72 bytes) and avoids tracking whether only params (intensity) vs.
+    // geometry (width/height/transform) changed.
+    nvrhi::BufferDesc desc =
+        nvrhi::BufferDesc{}
+            .setCanHaveRawViews(true)
+            .setByteSize(total_bytes)
+            .setIsVertexBuffer(true)
+            .setInitialState(nvrhi::ResourceStates::ShaderResource)
+            .setCpuAccess(nvrhi::CpuAccessMode::None)
+            .setIsAccelStructBuildInput(true)
+            .setKeepInitialState(true)
+            .setDebugName("rectLightVertexBuffer");
+    light_vertex_buffer = device->createBuffer(desc);
+
+    light_command_list->open();
+    light_command_list->writeBuffer(
+        light_vertex_buffer, positions, positions_bytes, 0);
+    light_command_list->writeBuffer(
+        light_vertex_buffer, indices, indices_bytes, index_offset);
+    light_command_list->close();
+
+    {
+        std::lock_guard lock(execution_launch_mutex);
+        device->executeCommandList(light_command_list);
+
+        // Build the BLAS (2 triangles, RGB32_FLOAT positions, R32_UINT indices
+        // -- same layout as Hd_RUZINO_Mesh so it uses the standard triangle
+        // hit group 0/1).
+        nvrhi::rt::AccelStructDesc blas_desc;
+        nvrhi::rt::GeometryDesc geometry_desc;
+        geometry_desc.geometryType = nvrhi::rt::GeometryType::Triangles;
+        nvrhi::rt::GeometryTriangles triangles;
+        triangles.setVertexBuffer(light_vertex_buffer)
+            .setVertexOffset(0)
+            .setIndexBuffer(light_vertex_buffer)
+            .setIndexOffset(index_offset)
+            .setIndexCount(6)
+            .setVertexCount(4)
+            .setVertexStride(3 * sizeof(float))
+            .setVertexFormat(nvrhi::Format::RGB32_FLOAT)
+            .setIndexFormat(nvrhi::Format::R32_UINT);
+        geometry_desc.setTriangles(triangles);
+        blas_desc.addBottomLevelGeometry(geometry_desc);
+        blas_desc.isTopLevel = false;
+        light_blas = device->createAccelStruct(blas_desc);
+
+        light_command_list->open();
+        nvrhi::utils::BuildBottomLevelAccelStruct(
+            light_command_list, light_blas, blas_desc);
+        light_command_list->close();
+        device->executeCommandList(light_command_list);
+        device->waitForIdle();
+
+        // Register the vertex/index buffer in the bindless descriptor table so
+        // the hit shaders can fetch positions via MeshDesc.bindlessIndex.
+        light_descriptor_handle = descriptor_table->CreateDescriptorHandle(
+            nvrhi::BindingSetItem::RawBuffer_SRV(
+                0, light_vertex_buffer.Get()));
+    }
+
+    // Write a MeshDesc so the standard BindlessVertexBuffer fetch path works.
+    // Only positions + indices are populated; normals/tangents/texcoords are
+    // unused for a light (Le is read from lightBuffer, not a material).
+    MeshDesc mesh_desc;
+    mesh_desc.vbOffset = 0;
+    mesh_desc.ibOffset = index_offset;
+    mesh_desc.normalOffset = 0;
+    mesh_desc.tangentOffset = 0;
+    mesh_desc.texCrdOffset = 0;
+    mesh_desc.subsetMatIdOffset = 0;
+    mesh_desc.skinningVbOffset = 0;
+    mesh_desc.prevVbOffset = 0;
+    mesh_desc.flags = 0;
+    mesh_desc.bindlessIndex = light_descriptor_handle.Get();
+    mesh_desc.texCrdInterpolation = InterpolationType::Vertex;
+    mesh_desc.normalInterpolation = InterpolationType::Vertex;
+    mesh_desc.tangentInterpolation = InterpolationType::Vertex;
+    mesh_desc.padding = 0;
+
+    if (!light_mesh_desc_buffer) {
+        light_mesh_desc_buffer =
+            render_param->InstanceCollection->mesh_pool.allocate(1);
+    }
+    light_mesh_desc_buffer->write_data(&mesh_desc);
+
+    // Write the TLAS instance. geometryID = light_buffer->index() so the
+    // ClosestHit shader can look up Le. materialID = -1 (lights have no
+    // material). flags marks this as GeometryType::Light (top kTypeBits). The
+    // quad is already in world space, so the instance transform is identity.
+    GeometryInstanceData instance_data(GeometryType::Light);
+    instance_data.geometryID = light_buffer->index();
+    instance_data.materialID = uint(-1);
+    GfMatrix4f identity(1.0f);
+    memcpy(
+        &instance_data.transform,
+        identity.data(),
+        sizeof(GfMatrix4f));  // float4x4 is binary-compatible with GfMatrix4f
+
+    if (!light_instance_buffer) {
+        light_instance_buffer =
+            render_param->InstanceCollection->instance_pool.allocate(1);
+    }
+    light_instance_buffer->write_data(&instance_data);
+
+    nvrhi::rt::InstanceDesc rt_instance;
+    rt_instance.blasDeviceAddress = light_blas->getDeviceAddress();
+    // Light geometry is a NON-OCCLUDER: a light does not block light (it would
+    // be nonsensical for a light to shadow itself, or to block another light's
+    // illumination in a way its own surface already accounts for). We give light
+    // instances a dedicated instanceMask bit (0x2) so that shadow rays can
+    // exclude them via InstanceInclusionMask = 0xFF & ~0x2 = 0xFD, while
+    // radiance rays keep 0xFF so BSDF-sampled rays still hit the light and
+    // return Le. Meshes use mask 0x1, so the two namespaces don't collide.
+    rt_instance.instanceMask = 0x2;
+    rt_instance.flags = nvrhi::rt::InstanceFlags::None;
+    // identity transform (reuse `identity` declared above for instance_data)
+    GfMatrix4f identity_T = identity.GetTranspose();  // nvrhi wants row-major
+    memcpy(
+        rt_instance.transform,
+        identity_T.data(),
+        sizeof(nvrhi::rt::AffineTransform));
+    rt_instance.instanceID = light_instance_buffer->index();
+    rt_instance.instanceContributionToHitGroupIndex =
+        0;  // standard triangle hit group (ClosestHit / ShadowHit)
+
+    if (!light_rt_instance_buffer) {
+        light_rt_instance_buffer =
+            render_param->InstanceCollection->rt_instance_pool.allocate(1);
+    }
+    light_rt_instance_buffer->write_data(&rt_instance);
+
+    render_param->InstanceCollection->set_require_rebuild_tlas();
 }
 
 void Hd_RUZINO_Disk_Light::Sync(

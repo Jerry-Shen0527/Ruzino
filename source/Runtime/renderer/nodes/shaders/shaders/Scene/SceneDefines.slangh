@@ -34,6 +34,7 @@ RUZINO_NAMESPACE_OPEN_SCOPE
 #define GEOMETRY_TYPE_TRIANGLE_MESH             1
 #define GEOMETRY_TYPE_DISPLACED_TRIANGLE_MESH   2
 #define GEOMETRY_TYPE_CURVE                     3
+#define GEOMETRY_TYPE_LIGHT                     4
 #define GEOMETRY_TYPE_SDF_GRID                  5
 #define GEOMETRY_TYPE_CUSTOM                    6
 

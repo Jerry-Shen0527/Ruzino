@@ -653,6 +653,7 @@ float3 sample_preview_surface(
     float component_sample = random_float(seed);
     float3 L_local;
     bool sampled_metal = (component_sample < metal_weight);
+    bool sampled_diffuse = false;
 
     if (sampled_metal) {
         // Sample metal reflection
@@ -673,6 +674,7 @@ float3 sample_preview_surface(
             // Sample diffuse
             float2 u = random_float2(seed);
             L_local = sample_diffuse_lobe(u, pdf);
+            sampled_diffuse = true;
         }
         else {
             // Sample non-metal reflection
@@ -686,19 +688,23 @@ float3 sample_preview_surface(
         }
     }
 
-    // Calculate MIS PDF: both paths need to compute their probability for the
-    // sampled direction
+    // Compute the pdf of the SAMPLED direction as the UNCONDITIONAL (marginal)
+    // pdf of the hierarchical sampler: sum over all branches that could have
+    // produced L of (branch conditional pdf * branch selection probability).
+    // This is the correct density of a layered sampler -- picking branch j with
+    // probability w_j then sampling its conditional distribution p_j gives a
+    // sample whose total density at L is sum_j w_j * p_j(L). Using only the
+    // drawn branch's conditional pdf underestimates the pdf whenever multiple
+    // branches can reach L (e.g. diffuse + glossy on a rough surface), which
+    // over-weights the contribution and produces fireflies.
     float metal_pdf = 0.0;
     float nonmetal_pdf = 0.0;
 
-    // Metal path PDF (only has reflection component)
-    // Use consistent threshold with sampling: allow directions very close to
-    // horizontal
+    // Metal branch: reflection pdf only.
     if (L_local.z > -M_FLOAT_EPS) {
         float3 H = normalize(V_local + L_local);
         float NdotH = max(H.z, M_FLOAT_EPS);
         float VdotH = max(dot(V_local, H), M_FLOAT_EPS);
-
         float2 alpha = float2(roughness * roughness, roughness * roughness);
         float D = mx_ggx_NDF(H, alpha);
         float G1 = mx_ggx_smith_G1_aniso(
@@ -707,31 +713,89 @@ float3 sample_preview_surface(
         metal_pdf = vndf_pdf / (4.0 * VdotH);
     }
 
-    // Non-metal path PDF (compute diffuse and reflection components)
+    // Non-metal branch: diffuse + reflection, each times its lobe weight.
     if (total_nonmetal_weight > M_FLOAT_EPS && L_local.z > -M_FLOAT_EPS) {
-        // Diffuse PDF (only valid for directions above surface)
         float diffuse_pdf = max(L_local.z, 0.0) * M_1_PI;
-
-        // Reflection PDF
         float3 H = normalize(V_local + L_local);
         float NdotH = max(H.z, M_FLOAT_EPS);
         float VdotH = max(dot(V_local, H), M_FLOAT_EPS);
-
         float2 alpha = float2(roughness * roughness, roughness * roughness);
         float D = mx_ggx_NDF(H, alpha);
         float G1 = mx_ggx_smith_G1_aniso(
             NdotV, V_local.x, V_local.y, alpha.x, alpha.y);
         float vndf_pdf = D * G1 * VdotH / NdotV;
         float reflection_pdf = vndf_pdf / (4.0 * VdotH);
-
         nonmetal_pdf =
             diffuse_pdf * diffuse_weight + reflection_pdf * reflection_weight;
     }
 
-    // Final MIS PDF combining both paths
-    pdf = metal_pdf * metal_weight + nonmetal_pdf * nonmetal_weight;
-    pdf = max(pdf, M_FLOAT_EPS);
+    // Marginal pdf: metal + non-metal branches, each times selection prob.
+    pdf = max(
+        metal_pdf * metal_weight + nonmetal_pdf * nonmetal_weight,
+        M_FLOAT_EPS);
 
     // Transform to world space
     return sf.fromLocal(L_local);
+}
+
+// Evaluate the BSDF sampling pdf for an arbitrary direction L (world space),
+// for MIS balance heuristic on the NEE path (bsdf_pdf(L_light)). This is the
+// unconditional (marginal) pdf of the hierarchical sampler: the sum over all
+// branches that could have produced L of (branch conditional pdf * branch
+// selection probability). It is consistent with the conditional pdf returned
+// by sample_preview_surface (which is the per-sample density of the drawn
+// branch); the marginal is what MIS needs for an arbitrary query direction.
+float eval_preview_surface_pdf(
+    VertexData vd,
+    float3 V,
+    float3 L,
+    uint eta_flipped,
+    float3 diffuseColor,
+    float metallic,
+    float roughness,
+    float ior)
+{
+    bool valid;
+    ShadingFrame sf =
+        ShadingFrame.createSafe(vd.normalWorld, float4(1, 0, 0, 1), valid);
+    float3 V_local = sf.toLocal(V);
+    float NdotV = clamp(V_local.z, M_FLOAT_EPS, 1.0);
+
+    float eta = eta_flipped != 0 ? (1.0 / ior) : ior;
+    float fresnel = fresnel_dielectric(NdotV, eta);
+
+    float final_metallic = metallic;
+    float3 final_diffuse_color = diffuseColor * (1.0 - metallic);
+
+    float metal_weight = final_metallic;
+    float nonmetal_weight = 1.0 - final_metallic;
+    float diffuse_weight = (1.0 - fresnel) * luminance(final_diffuse_color);
+    float reflection_weight = fresnel;
+    float total_nonmetal_weight = diffuse_weight + reflection_weight;
+    if (total_nonmetal_weight > M_FLOAT_EPS) {
+        diffuse_weight /= total_nonmetal_weight;
+        reflection_weight /= total_nonmetal_weight;
+    }
+
+    float3 L_local = sf.toLocal(L);
+    if (L_local.z <= -M_FLOAT_EPS) return 0.0;  // below surface: unreachable
+
+    float3 H = normalize(V_local + L_local);
+    float NdotH = max(H.z, M_FLOAT_EPS);
+    float VdotH = max(dot(V_local, H), M_FLOAT_EPS);
+    float2 alpha = float2(roughness * roughness, roughness * roughness);
+    float D = mx_ggx_NDF(H, alpha);
+    float G1 = mx_ggx_smith_G1_aniso(
+        NdotV, V_local.x, V_local.y, alpha.x, alpha.y);
+    float vndf_pdf = D * G1 * VdotH / NdotV;
+    float specular_pdf = vndf_pdf / (4.0 * VdotH);
+    float diffuse_pdf = max(L_local.z, 0.0) * M_1_PI;
+
+    // Marginal pdf: sum over all branches that can produce L.
+    float pdf = specular_pdf * metal_weight;
+    if (total_nonmetal_weight > M_FLOAT_EPS) {
+        pdf += diffuse_pdf * diffuse_weight * nonmetal_weight;
+        pdf += specular_pdf * reflection_weight * nonmetal_weight;
+    }
+    return max(pdf, M_FLOAT_EPS);
 }

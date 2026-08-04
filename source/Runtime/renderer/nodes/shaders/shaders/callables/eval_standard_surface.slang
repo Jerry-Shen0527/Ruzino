@@ -79,6 +79,23 @@ void eval_standard_surface(inout EvalCallableData data)
 
     data.color = Spectrum(bsdf_result.color);
 
+    // bsdf_pdf(L) for MIS balance heuristic on the NEE path. Build the same
+    // layered context the sampler uses, then evaluate its pdf at the NEE
+    // direction L (transformed into the base-layer local frame).
+    float evalIOR = params.specular_IOR;
+    if (params.transmission > 0.0 && params.thin_walled == 0)
+        if (data.eta_flipped > 0.0)
+            evalIOR = 1.0 / evalIOR;
+    LayeredBsdfContext lctx = build_layered_bsdf_context(
+        data.V, params.normal, params.tangent, params.specular_roughness,
+        params.specular_anisotropy, params.specular_rotation, evalIOR,
+        params.coat, params.coat_normal, params.coat_roughness,
+        params.coat_anisotropy, params.coat_rotation, params.coat_IOR,
+        params.base, params.base_color, params.metalness, params.specular,
+        params.transmission, params.transmission_color);
+    float3 L_local = lctx.sf.toLocal(data.L);
+    data.bsdfPdfForLightDir = _layered_pdf(lctx, L_local);
+
     // Sample the BSDF for next direction
     data.sampledDir = sample_standard_surface(
         vd,
@@ -180,5 +197,14 @@ void eval_standard_surface(inout EvalCallableData data)
         params.tangent,
         weight_result);
 
-    data.throughput = Spectrum(weight_result.color);
+    // Throughput = f * NdotSampled. The MaterialX response here is the pure
+    // BSDF value f (this eval uses the generated surface shader's color
+    // output, NOT the closure response), and the main loop divides by the
+    // sampling pdf (cosθ/π), so cosθ from the rendering equation must be
+    // folded in here. Verified against the white-furnace test: without it,
+    // grazing BSDF samples (NdotL→0) are over-weighted by 1/cosθ, producing
+    // fireflies on the BSDF-hit-light path.
+    float NdotSampled =
+        max(0.0, dot(data.vertexInfo.normalW, data.sampledDir));
+    data.throughput = Spectrum(weight_result.color * NdotSampled);
 }

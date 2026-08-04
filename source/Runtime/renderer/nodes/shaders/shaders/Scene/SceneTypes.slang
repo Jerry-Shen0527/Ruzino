@@ -69,6 +69,7 @@ enum class GeometryType : uint32_t {
     TriangleMesh = GEOMETRY_TYPE_TRIANGLE_MESH,
     DisplacedTriangleMesh = GEOMETRY_TYPE_DISPLACED_TRIANGLE_MESH,
     Curve = GEOMETRY_TYPE_CURVE,
+    Light = GEOMETRY_TYPE_LIGHT,
     SDFGrid = GEOMETRY_TYPE_SDF_GRID,
     Custom = GEOMETRY_TYPE_CUSTOM,
 
@@ -81,6 +82,7 @@ enum class GeometryTypeFlags : uint32_t {
     TriangleMesh = (1u << GEOMETRY_TYPE_TRIANGLE_MESH),
     DisplacedTriangleMesh = (1u << GEOMETRY_TYPE_DISPLACED_TRIANGLE_MESH),
     Curve = (1u << GEOMETRY_TYPE_CURVE),
+    Light = (1u << GEOMETRY_TYPE_LIGHT),
     SDFGrid = (1u << GEOMETRY_TYPE_SDF_GRID),
     Custom = (1u << GEOMETRY_TYPE_CUSTOM),
 };

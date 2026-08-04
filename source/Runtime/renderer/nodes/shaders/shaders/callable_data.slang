@@ -20,6 +20,11 @@ struct EvalCallableData {
     uint eta_flipped;
     uint material_params_index; // Index into material parameters buffer, set by data fetch callable
     VertexInfo vertexInfo;
+    // BSDF pdf for the NEE light direction L (probability that this BSDF sampler
+    // would have generated L). Used by MIS balance heuristic on the NEE path:
+    // w_light = light_pdf(L) / (light_pdf(L) + bsdf_pdf(L)). The symmetric term
+    // bsdf_pdf(sampledDir) is just `pdf` above (carried via RayPayload.bsdfPdf).
+    float bsdfPdfForLightDir;
 };
 
 struct DomeLightCallableData {

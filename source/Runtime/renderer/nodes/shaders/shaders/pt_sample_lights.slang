@@ -9,6 +9,11 @@ struct LightSample {
     float3 intensity;  // Light intensity
     float pdf;         // PDF of selecting this light and sampling point
     bool valid;        // Whether the sample is valid
+    // True for delta lights (Point/Distant/Directional) that have no finite
+    // geometry and thus can NEVER be hit by a BSDF-sampled ray. For these the
+    // MIS weight must be 1 (no BSDF-hit estimator exists to share with),
+    // otherwise the NEE contribution is wrongly attenuated.
+    bool delta;
 };
 
 struct ShadowPayload {
@@ -97,7 +102,7 @@ LightSample sampleLights(float3 hitPos, float3 hitNormal, inout uint seed)
             TraceRay(
                 SceneBVH,
                 RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES,
-                0xFF,
+                0xFD,  // exclude light instances (mask 0x2) -- lights don't occlude
                 1,
                 0,
                 1,
@@ -110,6 +115,7 @@ LightSample sampleLights(float3 hitPos, float3 hitNormal, inout uint seed)
                 sample.intensity = light.intensity * attenuation;
                 sample.pdf = lightPdf;
                 sample.valid = true;
+                sample.delta = true;  // point light: no BSDF-hit estimator
             }
         }
     }
@@ -131,6 +137,7 @@ LightSample sampleLights(float3 hitPos, float3 hitNormal, inout uint seed)
             sample.intensity = sphereRadiance;
             sample.pdf = lightPdf;
             sample.valid = true;
+            sample.delta = false;
         }
         else {
             float sinThetaMax = min(radius / dist, 1.0);
@@ -183,7 +190,7 @@ LightSample sampleLights(float3 hitPos, float3 hitNormal, inout uint seed)
                 TraceRay(
                     SceneBVH,
                     RAY_FLAG_NONE,
-                    0xFF,
+                    0xFD,  // exclude light instances (mask 0x2) -- lights don't occlude
                     1,
                     1,
                     1,
@@ -197,6 +204,7 @@ LightSample sampleLights(float3 hitPos, float3 hitNormal, inout uint seed)
                     sample.intensity = sphereRadiance;
                     sample.pdf = lightPdf * conePdf;
                     sample.valid = true;
+                    sample.delta = false;
                 }
             }
         }
@@ -221,7 +229,7 @@ LightSample sampleLights(float3 hitPos, float3 hitNormal, inout uint seed)
             TraceRay(
                 SceneBVH,
                 RAY_FLAG_NONE,
-                0xFF,
+                0xFD,  // exclude light instances (mask 0x2) -- lights don't occlude
                 1,
                 1,
                 1,
@@ -234,6 +242,7 @@ LightSample sampleLights(float3 hitPos, float3 hitNormal, inout uint seed)
                 sample.intensity = light.intensity;
                 sample.pdf = lightPdf;
                 sample.valid = true;
+                sample.delta = true;  // distant light: no BSDF-hit estimator
             }
         }
     }
@@ -267,7 +276,7 @@ LightSample sampleLights(float3 hitPos, float3 hitNormal, inout uint seed)
             TraceRay(
                 SceneBVH,
                 RAY_FLAG_NONE,
-                0xFF,
+                0xFD,  // exclude light instances (mask 0x2) -- lights don't occlude
                 1,
                 1,
                 1,
@@ -276,13 +285,23 @@ LightSample sampleLights(float3 hitPos, float3 hitNormal, inout uint seed)
             seed = shadowPayload.seed;
 
             if (shadowPayload.isVisible) {
-                float geometricTerm =
-                    (NdotL * LdotN) / (lightDistance * lightDistance);
+                // Solid-angle measure: intensity is the raw emitted radiance
+                // Le, and pdf is the solid-angle pdf p_A * dist^2 / LdotN
+                // (converting the area sampling to solid angle). NEE estimator
+                // then contributes Le * NdotL * f / pdf_solid — exactly one
+                // NdotL, as the rendering equation requires. This also makes
+                // the MIS weight w_light = pdf_solid/(pdf_solid + bsdf_pdf)
+                // dimensionally consistent with the BSDF-hit estimator (both
+                // solid-angle). The old area-form put NdotL into intensity AND
+                // the main loop multiplied NdotL again (NdotL^2 bug).
                 areaPdf = 1.0 / light.surfaceArea;
+                float solidAnglePdf =
+                    lightPdf * areaPdf * (lightDistance * lightDistance) / LdotN;
                 sample.direction = lightDir;
-                sample.intensity = light.intensity * geometricTerm;
-                sample.pdf = lightPdf * areaPdf;
+                sample.intensity = light.intensity;
+                sample.pdf = solidAnglePdf;
                 sample.valid = true;
+                sample.delta = false;
             }
         }
     }
@@ -316,7 +335,7 @@ LightSample sampleLights(float3 hitPos, float3 hitNormal, inout uint seed)
             TraceRay(
                 SceneBVH,
                 RAY_FLAG_NONE,
-                0xFF,
+                0xFD,  // exclude light instances (mask 0x2) -- lights don't occlude
                 1,
                 1,
                 1,
@@ -326,16 +345,129 @@ LightSample sampleLights(float3 hitPos, float3 hitNormal, inout uint seed)
             seed = shadowPayload.seed;
 
             if (shadowPayload.isVisible) {
-                float geometricTerm =
-                    (NdotL * LdotN) / (lightDistance * lightDistance);
+                // Solid-angle measure (see Rect branch for the rationale).
                 areaPdf = 1.0 / light.surfaceArea;
+                float solidAnglePdf =
+                    lightPdf * areaPdf * (lightDistance * lightDistance) / LdotN;
                 sample.direction = lightDir;
-                sample.intensity = light.intensity * geometricTerm;
-                sample.pdf = lightPdf * areaPdf;
+                sample.intensity = light.intensity;
+                sample.pdf = solidAnglePdf;
                 sample.valid = true;
+                sample.delta = false;
             }
         }
     }
 
     return sample;
+}
+
+// Evaluate the light-sampling pdf for an arbitrary direction `dir` (the
+// BSDF-sampled direction on the BSDF-hit-light MIS path). Returns the SAME pdf
+// convention as sampleLights: for area lights (Rect/Disc) it is
+// selectionPdf * (1/surfaceArea) [area pdf, with the 1/dist^2 geometric term
+// living in intensity, NOT in pdf]; for Sphere it is selectionPdf * conePdf;
+// for Point/Distant/Dome (delta / no geometry) it is 0, because a BSDF-sampled
+// ray can never hit them. This is the cross-term p_light(L_bsdf) needed for the
+// BSDF-hit-light MIS weight: w_bsdf = bsdf_pdf / (light_pdf + bsdf_pdf).
+//
+// `dir` is the world-space ray direction (normalized by caller).
+float lightPdfForDir(float3 hitPos, float3 dir)
+{
+    if (ptConstants.lightCount == 0) return 0.0;
+
+    // Count non-dome lights to match sampleLights' selection probability.
+    uint sampleableLightCount = 0;
+    for (uint i = 0; i < ptConstants.lightCount; i++) {
+        if (lightBuffer[i].type != uint(LightType::Dome))
+            sampleableLightCount++;
+    }
+    if (sampleableLightCount == 0) return 0.0;
+
+    float selectionPdf = 1.0 / float(sampleableLightCount);
+    float totalPdf = 0.0;
+
+    for (uint j = 0; j < ptConstants.lightCount; j++) {
+        LightData light = lightBuffer[j];
+        if (light.type == uint(LightType::Dome)) continue;
+
+        if (light.type == uint(LightType::Rect) ||
+            light.type == uint(LightType::Disc)) {
+            // Ray-plane intersection: plane through light.posW with normal
+            // light.dirW (emission direction). The quad/disc lies in that
+            // plane, spanned by light.tangent / light.bitangent (already
+            // scaled by width/height or radius).
+            //
+            // NOTE: no `abs(denom) < eps` early-skip here. A ray nearly
+            // parallel to the light plane yields a large-but-finite t; the
+            // u/v in-quad test below naturally rejects it (the hit point is
+            // far outside the quad). Skipping on epsilon made lightPdfForDir
+            // return 0 for grazing directions that the BLAS still reports as
+            // hits, so the BSDF-hit MIS weight degenerated to 1 and produced
+            // fireflies.
+            float denom = dot(light.dirW, dir);
+            if (denom == 0.0) continue;
+            float t = dot(light.posW - hitPos, light.dirW) / denom;
+            if (t <= 0.0) continue;
+            float3 p = hitPos + t * dir;
+            float3 d = p - light.posW;
+            // Project onto the tangent/bitangent basis (they are orthogonal &
+            // scaled by extent, so local coords in [-0.5, 0.5] for Rect, inside
+            // unit circle for Disc).
+            float u = dot(d, light.tangent) /
+                      dot(light.tangent, light.tangent);
+            float v = dot(d, light.bitangent) /
+                      dot(light.bitangent, light.bitangent);
+            bool hit = false;
+            if (light.type == uint(LightType::Rect)) {
+                hit = (abs(u) <= 0.5 && abs(v) <= 0.5);
+            }
+            else {  // Disc
+                hit = (u * u + v * v <= 0.25);
+            }
+            if (hit) {
+                // Solid-angle pdf — identical measure to sampleLights'
+                // Rect/Disk solid-angle pdf and to the BSDF pdf, so both MIS
+                // weights (NEE and BSDF-hit) are dimensionally consistent.
+                float LdotN = max(0.0, dot(-dir, light.dirW));
+                if (LdotN > 1e-6) {
+                    float areaPdf = 1.0 / light.surfaceArea;
+                    totalPdf +=
+                        selectionPdf * areaPdf * (t * t) / LdotN;
+                }
+            }
+        }
+        else if (light.type == uint(LightType::Sphere)) {
+            // Ray-sphere intersection test. If the ray hits the sphere, the
+            // pdf is the cone pdf from sampleLights.
+            float3 wc = light.posW - hitPos;
+            float dist = length(wc);
+            float radius = sqrt(light.surfaceArea / (4.0 * 3.14159265359));
+            if (dist <= radius) continue;  // inside: degenerate, skip
+            float3 wcN = wc / dist;
+            float cosTheta = dot(dir, wcN);
+            float sinThetaMax = min(radius / dist, 1.0);
+            float cosThetaMax = sqrt(1.0 - sinThetaMax * sinThetaMax);
+            if (cosTheta >= cosThetaMax) {
+                // Confirm the ray actually reaches the sphere (not just inside
+                // its cone but past it): solve ray-sphere for a real positive t.
+                float3 oc = hitPos - light.posW;
+                float b = dot(oc, dir);
+                float c = dot(oc, oc) - radius * radius;
+                float disc = b * b - c;
+                if (disc >= 0.0) {
+                    float t0 = -b - sqrt(disc);
+                    if (t0 > 0.0) {
+                        float conePdf =
+                            1.0 / (2.0 * 3.14159265359 * (1.0 - cosThetaMax));
+                        totalPdf += selectionPdf * conePdf;
+                    }
+                }
+            }
+        }
+        // Point / Distant / Directional: delta distributions or no geometry.
+        // A BSDF-sampled ray has measure-zero chance of hitting them, so their
+        // pdf contribution for the BSDF direction is 0.
+    }
+
+    return totalPdf;
 }

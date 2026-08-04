@@ -57,6 +57,11 @@ void eval_preview_surface(inout EvalCallableData data)
 
     data.color = Spectrum(bsdf_result.color);
 
+    // bsdf_pdf(L) for MIS balance heuristic on the NEE path.
+    data.bsdfPdfForLightDir = eval_preview_surface_pdf(
+        vd, data.V, data.L, data.eta_flipped, params.diffuseColor,
+        params.metallic, params.roughness, params.ior);
+
     // Sample the BSDF for next direction
     data.sampledDir = sample_preview_surface(
         vd,
@@ -104,6 +109,9 @@ void eval_preview_surface(inout EvalCallableData data)
         params.occlusion,
         weight_result);
 
+    // MaterialX BSDF response already includes NdotL (response = f * NdotL),
+    // so this is the correct throughput for the main loop's
+    // current_throughput *= throughput / pdf update. Do NOT multiply NdotL
+    // again -- that would double-count cos(theta) and darken the image.
     data.throughput = Spectrum(weight_result.color);
-    // data.throughput = Spectrum(float3(1,0,1));
 }

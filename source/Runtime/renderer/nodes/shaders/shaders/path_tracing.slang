@@ -30,6 +30,23 @@ struct RayPayload {
     uint depth;
     uint seed;
     bool hit;  // Whether ray hit geometry (false means miss)
+
+    // Emitted radiance from the hit surface (Le). Non-zero only when the ray
+    // hit a light-geometry instance; the main loop adds it to accumulated_color
+    // and terminates the path (lights are absorbing). This is the channel that
+    // lets BSDF-sampled rays return energy from a light they happen to hit,
+    // which analytical NEE alone cannot do (NEE's shadow ray only tests
+    // visibility of a sampled light point).
+    Spectrum emission;
+
+    // MIS carry (balance heuristic) for the BSDF-hit-light path. Written by the
+    // bounce that LAUNCHED the current ray (it knows bsdf_pdf of the direction
+    // it sampled, and computes light_pdf of that direction), read by this
+    // bounce's emission-accumulation block when the ray hit a light. lightPdf<0
+    // means "no MIS info" (e.g. the launcher was a back-face / non-scattering
+    // hit) -- emission is then taken unweighted (degrades gracefully to no MIS).
+    float bsdfPdf;
+    float lightPdf;
 };
 
 [shader("raygeneration")]
@@ -57,6 +74,11 @@ void RayGen()
 
         uint id = DispatchRaysIndex().x;
 
+        // MIS carry for the primary ray: no launcher exists, so the
+        // BSDF-hit-light weight degrades to 1.0 (lightPdf<0 signals "no MIS").
+        payload.bsdfPdf = 0.0;
+        payload.lightPdf = -1.0;
+
         // Iterative path tracing loop
         for (int depth = 0; depth < max_depth; depth++) {
             payload.depth = depth;
@@ -77,6 +99,32 @@ void RayGen()
                              : 0u);  // Material ID if hit
             ReorderThread(reorderHint, 32);
 #endif
+
+            // If the ray hit a light-geometry instance, accumulate its emitted
+            // radiance (MIS-weighted) and terminate the path. Lights are
+            // absorbing: they emit Le but do not scatter. payload.emission is 0
+            // for non-light hits, so this is a no-op for ordinary geometry.
+            //
+            // MIS (balance heuristic): the BSDF-hit-light estimator must be
+            // weighted against the NEE estimator that also covers this light.
+            // w_bsdf = bsdf_pdf / (light_pdf + bsdf_pdf), where both pdfs are
+            // for THIS ray's direction. payload.bsdfPdf/lightPdf were written by
+            // the bounce that launched this ray. lightPdf<0 means no MIS info
+            // (e.g. primary ray, or launcher was non-scattering) -> weight 1.
+            if (payload.hit && any(payload.emission.toFloat3() > 0.0)) {
+                float misWeight = 1.0;
+                if (payload.lightPdf >= 0.0) {
+                    float denom = payload.lightPdf + payload.bsdfPdf;
+                    misWeight = denom > 0.0
+                                    ? payload.bsdfPdf / denom
+                                    : 0.0;
+                }
+                Spectrum litEmission = mul(
+                    current_throughput,
+                    mul(payload.emission, Spectrum(misWeight)));
+                accumulated_color = add(accumulated_color, litEmission);
+                break;
+            }
 
             // Check if ray missed
             if (!payload.hit) {
@@ -186,22 +234,37 @@ void RayGen()
                     break;
                 }
 
-                // Add direct lighting contribution (same formula as regular path)
+                // Add direct lighting contribution, MIS-weighted (same as the
+                // regular path). bsdf_pdf(L) for Lambertian = NdotL/PI, which
+                // eval_fallback filled into evalData.bsdfPdfForLightDir.
                 if (lightSample.valid) {
+                    float bsdfPdfL = evalData.bsdfPdfForLightDir;
+                    float misWeight = 1.0;
+                    if (!lightSample.delta) {
+                        float denom = lightSample.pdf + bsdfPdfL;
+                        misWeight = denom > 0.0 ? lightSample.pdf / denom : 0.0;
+                    }
                     Spectrum directContrib = div(
                         mul(Spectrum(lightSample.intensity *
                             max(0.0, dot(vertex.normalW, lightSample.direction))),
                             evalData.color),
                         lightSample.pdf);
                     accumulated_color = add(
-                        accumulated_color, mul(current_throughput, directContrib));
+                        accumulated_color,
+                        mul(mul(current_throughput, directContrib),
+                            Spectrum(misWeight)));
                 }
 
                 // Update throughput for next bounce
                 float3 ray_dir = evalData.sampledDir;
                 bool isTransmission = dot(ray_dir, vertex.faceNormalW) < 0.0;
+
                 current_throughput =
                     mul(current_throughput, div(evalData.throughput, pdf));
+
+                // Carry MIS info for the next bounce's BSDF-hit-light estimator.
+                payload.bsdfPdf = pdf;
+                payload.lightPdf = lightPdfForDir(vertex.posW, ray_dir);
 
                 // Russian Roulette path termination
                 if (depth >= 3) {
@@ -308,8 +371,21 @@ void RayGen()
                 break;
             }
 
-            // Add direct lighting contribution
+            // Add direct lighting contribution (NEE), MIS-weighted against the
+            // BSDF-hit-light path. w_light = light_pdf / (light_pdf + bsdf_pdf),
+            // both for the NEE direction. This down-weights NEE when the BSDF
+            // sampler would also readily generate this direction (e.g. a sharp
+            // lobe pointing at the light), preventing double-counting with the
+            // BSDF-hit estimator.
             if (lightSample.valid) {
+                float bsdfPdfL = evalData.bsdfPdfForLightDir;
+                // Delta lights (Point/Distant) have no BSDF-hit estimator, so
+                // NEE takes full weight (the BSDF path can never reach them).
+                float misWeight = 1.0;
+                if (!lightSample.delta) {
+                    float denom = lightSample.pdf + bsdfPdfL;
+                    misWeight = denom > 0.0 ? lightSample.pdf / denom : 0.0;
+                }
                 Spectrum directContrib = div(
                     mul(Spectrum(
                             lightSample.intensity *
@@ -318,7 +394,9 @@ void RayGen()
                         evalData.color),
                     lightSample.pdf);
                 accumulated_color = add(
-                    accumulated_color, mul(current_throughput, directContrib));
+                    accumulated_color,
+                    mul(mul(current_throughput, directContrib),
+                        Spectrum(misWeight)));
             }
 
             // Update throughput for next bounce
@@ -327,6 +405,13 @@ void RayGen()
 
             current_throughput =
                 mul(current_throughput, div(evalData.throughput, pdf));
+
+            // Carry MIS info for the next bounce's BSDF-hit-light estimator:
+            // bsdf_pdf of this sampled direction (= pdf) and the light pdf for
+            // this direction. The next bounce reads these if its ray hits a
+            // light. lightPdf<0 signals "no MIS info".
+            payload.bsdfPdf = pdf;
+            payload.lightPdf = lightPdfForDir(vertex.posW, ray_dir);
 
             // Russian Roulette path termination
             if (depth >= 3) {
@@ -392,6 +477,31 @@ void ClosestHit(
     payload.vertex = vertex;
     payload.materialID = material_id;
     payload.eta_flipped = eta_flipped;
+
+    // If this instance is a light-geometry (e.g. RectLight emissive quad), look
+    // up the analytical LightData and return its emitted radiance Le. The main
+    // loop adds Le * current_throughput to accumulated_color and terminates the
+    // path. geometryID stores the index into lightBuffer (set on the CPU when
+    // the light instance is written to instance_pool).
+    //
+    // Single-sided (USD spec): RectLight emits along -Z in local space, so
+    // light.dirW is the world-space emission direction. A ray can only see the
+    // emission when it arrives from the emitting side, i.e. its direction is
+    // opposite to dirW (dot(WorldRayDirection(), dirW) < 0). Hits from the back
+    // face see no emission (black) -- the quad is opaque geometry that the ray
+    // still stops at (it just carries no Le), so the path terminates there
+    // without contributing light.
+    GeometryInstanceData geomInstance = instanceDescBuffer[instance_id];
+    if (geomInstance.getType() == GeometryType::Light) {
+        LightData light = lightBuffer[geomInstance.geometryID];
+        if (dot(WorldRayDirection(), light.dirW) < 0.0) {
+            payload.emission = Spectrum(light.intensity);
+        } else {
+            payload.emission = Spectrum(0.0);  // back face: no emission
+        }
+    } else {
+        payload.emission = Spectrum(0.0);
+    }
 }
 
 [shader("closesthit")]
@@ -456,6 +566,9 @@ void SphereClosestHit(
     payload.vertex = vertex;
     payload.materialID = material_id;
     payload.eta_flipped = eta_flipped;
+
+    // Sphere points geometry is not a light; no emission.
+    payload.emission = Spectrum(0.0);
 }
 
 [shader("intersection")]

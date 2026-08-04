@@ -2,6 +2,7 @@
 #include "DescriptorTableManager.h"
 #include "api.h"
 #include "internal/memory/DeviceMemoryPool.hpp"
+#include "nvrhi/nvrhi.h"
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/imaging/garch/glApi.h"
 #include "pxr/imaging/hd/light.h"
@@ -9,12 +10,16 @@
 #include "pxr/imaging/hio/image.h"
 #include "pxr/pxr.h"
 #include "pxr/usd/sdf/assetPath.h"
+// SceneTypes (MeshDesc, GeometryInstanceData, GeometryType) -- shared host/
+// device header, included by renderTLAS.h and mesh.h the same way.
+#include "../nodes/shaders/shaders/Scene/SceneTypes.slang"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 
 using namespace pxr;
 // Forward declarations
 struct LightData;
+class Hd_RUZINO_RenderParam;
 // Base light class
 class HD_RUZINO_API Hd_RUZINO_Light : public HdLight {
    public:
@@ -147,6 +152,28 @@ class HD_RUZINO_API Hd_RUZINO_Rect_Light : public Hd_RUZINO_Light {
    private:
     float _width = 1.0f;
     float _height = 1.0f;
+
+    // --- Intersectable light geometry (BSDF-sampled rays can hit the light) ---
+    // A 2-triangle quad in world space (positions only; no normals/tangents --
+    // the light's Le comes from lightBuffer, not from a material). Stored as a
+    // single interleaved buffer: 4 positions (RGB32_FLOAT) + 6 indices
+    // (R32_UINT), mirroring the mesh BLAS layout so it can use the standard
+    // triangle hit group.
+    nvrhi::BufferHandle light_vertex_buffer;
+    nvrhi::rt::AccelStructHandle light_blas;
+    DescriptorHandle light_descriptor_handle;
+    CommandListHandle light_command_list;
+    // Pool slots. These are rebuilt only when geometry actually changes (width/
+    // height/transform), not every dirty tick.
+    DeviceMemoryPool<MeshDesc>::MemoryHandle light_mesh_desc_buffer;
+    DeviceMemoryPool<GeometryInstanceData>::MemoryHandle light_instance_buffer;
+    DeviceMemoryPool<nvrhi::rt::InstanceDesc>::MemoryHandle light_rt_instance_buffer;
+
+    void BuildLightGeometry(
+        Hd_RUZINO_RenderParam* render_param,
+        float3 posW,
+        float3 tangent,
+        float3 bitangent);
 };
 
 // Disk light

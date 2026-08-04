@@ -1,0 +1,49 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Camera "Camera"
+{
+    float2 clippingRange = (0.1, 100)
+    float focalLength = 50
+    float horizontalAperture = 36
+    float verticalAperture = 20.25
+    matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 8, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+def Material "WhiteMat"
+{
+    token outputs:surface.connect = </WhiteMat/Shader.outputs:surface>
+
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (1, 1, 1)
+        float inputs:metallic = 0
+        float inputs:opacity = 1
+        float inputs:roughness = 1
+        token outputs:surface
+    }
+}
+
+def Xform "World"
+{
+    def Sphere "Sphere"
+    {
+        rel material:binding = </WhiteMat>
+        double radius = 1
+        double3 xformOp:translate = (0, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}
+
+def DomeLight "DomeLight"
+{
+    color3f inputs:color = (1, 1, 1)
+    float inputs:exposure = 0
+    float inputs:intensity = 1
+}
+
