@@ -35,13 +35,15 @@ struct MaterialHeader {
     uint material_blob_id;
     uint padding[2];
 };
-StructuredBuffer<MaterialDataBlob> materialBlobBuffer;
-StructuredBuffer<MaterialHeader> materialHeaderBuffer;
+// Use explicit register annotations matching BindlessMaterial.slang (t3/t4)
+// so slang's register allocation is deterministic across VS+PS merge.
+StructuredBuffer<MaterialDataBlob> materialBlobBuffer : register(t3);
+StructuredBuffer<MaterialHeader> materialHeaderBuffer : register(t4);
 // Material-type LUT: maps the pool-index stored in MaterialHeader.material_type_id
 // to the resolved enum (0=standard_surface, 1=UsdPreviewSurface, 2=fallback).
 // Declared here (not in the PS) so both VS and PS see it via the shared import —
 // the merged VS+PS reflection was dropping PS-only resource declarations.
-StructuredBuffer<uint> materialTypeLUT;
+StructuredBuffer<uint> materialTypeLUT : register(t5);
 
 static const uint kMaterialType_StandardSurface = 0;
 static const uint kMaterialType_PreviewSurface  = 1;

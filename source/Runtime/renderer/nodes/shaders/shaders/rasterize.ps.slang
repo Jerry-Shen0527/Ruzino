@@ -5,11 +5,12 @@
 // and PS — the merged VS+PS reflection drops PS-only imported resources, so the
 // module must be imported in both stages for its buffer declarations to appear.
 //
-// STATUS: the material-decode path (reading materialBlobBuffer) currently
-// removes the device intermittently (header read works, blob read is flaky —
-// see rasterization-gbuffer-pipeline memory). Until that's stable, base_color
-// falls back to a constant. The decode call + GBufferMaterialData struct are
-// kept so the path is one line-flip away from active.
+// FIXED: materialBlobBuffer previously read as all-zeros. Root cause: slang's
+// auto register allocation for resources without explicit register() annotations
+// is non-deterministic in VS+PS merged compilation — the merged reflection
+// reported one slot, but the PS shader bytecode bound to a different slot.
+// Fix: explicit register(t3/t4/t5) annotations in MaterialEvaluation.slang
+// (matching BindlessMaterial.slang's conventions) make allocation deterministic.
 #include "utils/view_cb.h"
 import Scene.SceneTypes;
 import Scene.VertexInfo;
@@ -55,37 +56,28 @@ void main(
     vi.coneTexLODValue = 0.0;
     vi.subsetMaterialID = input.materialID;
 
-    // Resolve the material type from the pool-index LUT. (The LUT upload is
-    // currently not reaching the GPU correctly — see memory — so this reads 0.
-    // The decode still runs but may hit the fallback branch.)
+    // Resolve the material type from the pool-index LUT.
     MaterialHeader header = materialHeaderBuffer[input.materialID];
     uint material_type = kMaterialType_Fallback;
     if (header.material_type_id < 65536u) {
         material_type = materialTypeLUT[header.material_type_id];
     }
 
-    // decode_material_surface reads materialBlobBuffer which currently removes
-    // the device — commented out until that's fixed. The GBufferMaterialData
-    // fields below use fallback constants.
-    // GBufferMaterialData m =
-    //     decode_material_surface(header.material_blob_id, material_type, vi);
+    // Decode the full material surface from the blob.
+    GBufferMaterialData m =
+        decode_material_surface(header.material_blob_id, material_type, vi);
 
     // Output world position in the position buffer
     o_pos = float4(input.worldPos, 1.0);
-
-    // Output normalized shading normal vector (geometry normal; m.normal would
-    // be the material-specified normal once decode is stable).
-    o_normal = float4(normalize(input.normal), 1.0);
-
+    // Output normalized shading normal vector (material normal, falling back
+    // to geometry normal).
+    o_normal = float4(m.normal, 1.0);
     // Output depth value
     depth = input.position.z;
 
-    // Output material properties. materialBlobBuffer reads currently remove the
-    // device (see rasterization-gbuffer-pipeline memory), so m.base_color is
-    // unreliable; fall back to a constant red so the G-Buffer renders.
-    // TODO: fix materialBlobBuffer binding/read, then use m.base_color.
-    o_diffuse_color = float4(0.8, 0.2, 0.2, 1.0);
-    o_metallic_roughness = float4(0.0, 0.5, 0.0, 1.0);
+    // Output decoded material properties.
+    o_diffuse_color = float4(m.base_color, 1.0);
+    o_metallic_roughness = float4(m.metalness, m.roughness, 0.0, 1.0);
 
     // Echo the material id (stored as float — see VS comment re: R32_FLOAT).
     o_material_id = float(input.materialID);

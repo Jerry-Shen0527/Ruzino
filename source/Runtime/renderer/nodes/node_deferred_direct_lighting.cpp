@@ -64,11 +64,12 @@ NODE_EXECUTION_FUNCTION(deferred_direct_lighting)
 
     auto size = get_size(params);
 
-    // --- Output texture (linear RGBA16F) ---
+    // --- Output texture (RGBA32_FLOAT to match get_output_texture's hardcoded
+    // 16-bytes/pixel readback assumption — RGBA16_FLOAT causes a segfault) ---
     nvrhi::TextureDesc out_desc;
     out_desc.width = size[0];
     out_desc.height = size[1];
-    out_desc.format = nvrhi::Format::RGBA16_FLOAT;
+    out_desc.format = nvrhi::Format::RGBA32_FLOAT;
     out_desc.dimension = nvrhi::TextureDimension::Texture2D;
     out_desc.initialState = nvrhi::ResourceStates::UnorderedAccess;
     out_desc.keepInitialState = true;
@@ -156,25 +157,29 @@ NODE_EXECUTION_FUNCTION(deferred_direct_lighting)
     }
 
     // --- Binding set (explicit slots, TAA-style) ---
-    // Slot order must match the shader declarations in
-    // deferred_direct_lighting.cs.slang. The bindless buffer table is not
-    // declared by the CS (it reads material data via the named structured
-    // buffers), so only named resources appear here.
+    // Slot numbers MUST match the register() annotations in
+    // deferred_direct_lighting.cs.slang (G-Buffer textures at t10-t15) and
+    // Scene.MaterialEvaluation.slang (materialBlobBuffer t3, materialHeaderBuffer
+    // t4, materialTypeLUT t5). lightBuffer is at t6.
     nvrhi::BindingSetDesc binding_set_desc;
     binding_set_desc.bindings = {
-        nvrhi::BindingSetItem::Texture_SRV(0, g_pos),
-        nvrhi::BindingSetItem::Texture_SRV(1, g_texcoord),
-        nvrhi::BindingSetItem::Texture_SRV(2, g_diffuse),
-        nvrhi::BindingSetItem::Texture_SRV(3, g_mr),
-        nvrhi::BindingSetItem::Texture_SRV(4, g_normal),
-        nvrhi::BindingSetItem::Texture_SRV(5, g_matid),
+        // MaterialEvaluation-declared buffers (t3/t4/t5)
+        nvrhi::BindingSetItem::StructuredBuffer_SRV(
+            3, instance_collection->material_pool.get_device_buffer()),
+        nvrhi::BindingSetItem::StructuredBuffer_SRV(
+            4, instance_collection->material_header_pool.get_device_buffer()),
+        nvrhi::BindingSetItem::StructuredBuffer_SRV(5, material_type_lut),
+        // Light buffer (t6)
         nvrhi::BindingSetItem::StructuredBuffer_SRV(
             6, instance_collection->light_pool.get_device_buffer()),
-        nvrhi::BindingSetItem::StructuredBuffer_SRV(
-            7, instance_collection->material_header_pool.get_device_buffer()),
-        nvrhi::BindingSetItem::StructuredBuffer_SRV(8, material_type_lut),
-        nvrhi::BindingSetItem::StructuredBuffer_SRV(
-            9, instance_collection->material_pool.get_device_buffer()),
+        // G-Buffer texture SRVs (t10-t15)
+        nvrhi::BindingSetItem::Texture_SRV(10, g_pos),
+        nvrhi::BindingSetItem::Texture_SRV(11, g_texcoord),
+        nvrhi::BindingSetItem::Texture_SRV(12, g_diffuse),
+        nvrhi::BindingSetItem::Texture_SRV(13, g_mr),
+        nvrhi::BindingSetItem::Texture_SRV(14, g_normal),
+        nvrhi::BindingSetItem::Texture_SRV(15, g_matid),
+        // Constants + output
         nvrhi::BindingSetItem::ConstantBuffer(0, view_cb),
         nvrhi::BindingSetItem::Texture_UAV(0, output),
         nvrhi::BindingSetItem::ConstantBuffer(1, constants_cb),

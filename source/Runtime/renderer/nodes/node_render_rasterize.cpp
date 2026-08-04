@@ -186,28 +186,17 @@ NODE_EXECUTION_FUNCTION(rasterize)
         instance_collection->material_header_pool.get_device_buffer();
     program_vars["materialTypeLUT"] = storage.materialTypeLUT;
 
-    // Only the bindless BUFFER table is declared (VS imports BindlessVertexBuffer).
-    // t_BindlessTextures is NOT imported (rasterize avoids BindlessMaterial to
-    // dodge the VS+PS root-signature overlap), so do not bind it here.
+    // Bind the bindless BUFFER table (VS imports BindlessVertexBuffer which
+    // declares it). t_BindlessTextures is NOT imported by rasterize (it avoids
+    // BindlessMaterial.slang to dodge the VS+PS root-signature overlap), so do
+    // NOT bind it — a second finish_setting_vars() here previously destroyed
+    // and rebuilt all binding sets, and binding a name absent from reflection
+    // (t_BindlessTextures) is silently dropped. One finish, matching path_tracing.
     program_vars.set_descriptor_table(
         "t_BindlessBuffers",
         instance_collection->bindlessData.bufferDescriptorTableManager
             ->GetDescriptorTable(),
         instance_collection->bindlessData.bufferBindlessLayout);
-
-    program_vars.finish_setting_vars();
-
-    program_vars.set_descriptor_table(
-        "t_BindlessBuffers",
-        instance_collection->bindlessData.bufferDescriptorTableManager
-            ->GetDescriptorTable(),
-        instance_collection->bindlessData.bufferBindlessLayout);
-
-    program_vars.set_descriptor_table(
-        "t_BindlessTextures",
-        instance_collection->bindlessData.textureDescriptorTableManager
-            ->GetDescriptorTable(),
-        instance_collection->bindlessData.textureBindlessLayout);
 
     program_vars.finish_setting_vars();
 
@@ -233,6 +222,30 @@ NODE_EXECUTION_FUNCTION(rasterize)
 
     context.begin();
     context.set_resource_state(device_buffer, ResourceStates::IndirectArgument);
+
+    // Explicitly transition the material/scene SRV buffers into ShaderResource
+    // state. These pools are written via writeBuffer on the Copy queue (see
+    // DeviceMemoryPool::write_data) without a waitForIdle, so the graphics
+    // queue must see a barrier before reading them as SRVs — otherwise the draw
+    // may race ahead of the copy and read uninitialized (zero) data. The
+    // buffers have keepInitialState=true so this is a one-way transition.
+    auto blob_buf = instance_collection->material_pool.get_device_buffer();
+    auto hdr_buf = instance_collection->material_header_pool.get_device_buffer();
+    if (blob_buf)
+        context.set_resource_state(blob_buf, ResourceStates::ShaderResource);
+    if (hdr_buf)
+        context.set_resource_state(hdr_buf, ResourceStates::ShaderResource);
+    context.set_resource_state(
+        instance_collection->instance_pool.get_device_buffer(),
+        ResourceStates::ShaderResource);
+    context.set_resource_state(
+        instance_collection->mesh_pool.get_device_buffer(),
+        ResourceStates::ShaderResource);
+    context.set_resource_state(
+        instance_collection->volume_pool.get_device_buffer(),
+        ResourceStates::ShaderResource);
+    context.set_resource_state(storage.materialTypeLUT,
+                               ResourceStates::ShaderResource);
 
     context.draw_indirect(
         state,
