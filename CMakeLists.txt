@@ -212,28 +212,8 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/source/Plugins)
 
 add_subdirectory(tests)
 
-option(ENABLE_SUBMISSION "Enable USTC Homework Submission" OFF)
 option(RUZINO_INSTALL_TESTS "Install test executables" OFF)
 option(RUZINO_INSTALL_TESTS "Install test executables along with the project" OFF)
-# submission directory
-if (ENABLE_SUBMISSION)
-    set(editor_dir ${CMAKE_CURRENT_SOURCE_DIR}/source/Editor)
-    if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/submissions_inner)
-      add_subdirectory(submissions_inner)
-    endif ()
-
-    if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../submissions)
-      get_filename_component(
-        ABS_SUBMISSION
-        ${CMAKE_CURRENT_SOURCE_DIR}/../submissions
-        ABSOLUTE
-        BASE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-      )
-      message(STATUS "[ABS DIR] " ${ABS_SUBMISSION})
-
-      add_subdirectory(${ABS_SUBMISSION} "OuterSubmissions")
-    endif ()
-endif ()
 
 # ========== Package Configuration for find_package ==========
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
