@@ -75,8 +75,15 @@ NODE_EXECUTION_FUNCTION(brush_wb_bristle)
     blc.num_bristles = Nb;
     blc.samples_per_bristle = S;
     blc.mu = 0.5f;
-    blc.M_max = 2.0f;
-    blc.M_min = 0.1f;
+    // M_max bounds the emission radius R_j = cbrt(3*M_max/(4π*ρ₀)). To keep
+    // paint tight to the brush footprint (radius≈brush_radius=0.02), R_j must
+    // stay ≈ brush_radius, not larger. ρ₀=1e3 (paper's SI paint density) in
+    // these normalized units makes R_j grow fast with M_max, so M_max must be
+    // small: M_max=0.03 → R_j≈0.02 ≈ brush_radius. Larger values (0.5, 2.0)
+    // made R_j=0.05-0.08, scattering emitted particles well past the brush
+    // and producing a wide diffuse blob instead of a stroke.
+    blc.M_max = 0.03f;
+    blc.M_min = 0.005f;
     blc.rho_0 = 1e3f;
     blc.eps_emit = 0.1f;
     blc.max_emit_per_step = 10;

@@ -44,23 +44,22 @@ void main(uint3 tid : SV_DispatchThreadID)
     float bvy = bristle_vel_y[win_idx];
     float bvz = bristle_vel_z[win_idx];
 
-    // VELOCITY-ONLY coupling (FLIP/PIC, paper §4.3 line 209: "we rasterize
-    // them into density and velocity fields, and combine them with the
-    // existing fields"). This merge transfers particle momentum into the
-    // grid velocity field so the joint pressure projection (§4.2) couples
-    // particle and grid liquid. It does NOT transfer paint MASS or pigment —
-    // that is the exclusive job of the §5.2 grid↔particle transfer
-    // (grid_to_particle Eq.15 / particle_to_grid Eq.16), which fires based on
-    // distance to bristles (D0), not every frame for every particle.
+    // VELOCITY-ONLY coupling (paper §4.3 line 209: "we rasterize them into
+    // density and velocity fields, and combine them with the existing
+    // fields"). This merge combines particle momentum into the grid velocity
+    // field so the joint pressure projection (§4.2) couples particle and grid
+    // liquid. It does NOT permanently write paint MASS/pigment into the grid.
     //
-    // The previous version also wrote density/color/wetness/oil here. That
-    // fought the §5.2 transfer: this merge added particle mass into the grid
-    // every frame, then grid_to_particle subtracted it right back (Eq.15),
-    // so paint ping-ponged between particle and grid and never accumulated.
-    // Removing the mass/color/wetness/oil writes lets §5.2 be the sole
-    // paint-mass path: particles carry paint while near the brush, and
-    // deposit it into the grid only when they drift away (particle_to_grid,
-    // §5.2 Eq.16) — exactly the paper's hybrid representation.
+    // Paper §4.3: the density+velocity combine is a TRANSIENT joint field for
+    // pressure projection — "Rather than performing viscosity and pressure
+    // projection steps on the original velocity field, we perform them on the
+    // joint velocity field." The permanent paint→grid transfer is the §5.2
+    // grid↔particle transfer (particle_to_grid Eq.16): a particle deposits
+    // its mass into the grid only when it drifts beyond D0 of the bristles.
+    // Writing density here every frame created a non-conservative loop
+    // (supply refills samples → emit particles → rasterize → += grid density
+    // → grid_to_particle converts back → repeat) that minted mass each frame
+    // and bloomed into an unbounded black blob.
     vel_x[gidx] += bvx * bd;
     vel_y[gidx] += bvy * bd;
     vel_z[gidx] += bvz * bd;

@@ -458,29 +458,24 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
             field->sample_vel,
             field->sample_color,
             field->sample_liquid_b);
-        // sample_liquid starts LOADED: a dipped brush carries paint in its
-        // bristles (paper §5.1 "a brush bristle can keep paint liquid due to
-        // its hydrophilicity"). Initialize each sample's liquid load m_j
-        // ABOVE its (1+ε)M_j overload threshold and its pigment c_j to the
-        // ink color, so the very first §5.1 EMIT pass releases particles and
-        // the paint -> particle -> grid cycle starts. Without this cold-start
-        // the grid is empty, samples cannot overload from supply alone, and
-        // no paint is ever produced. (One-shot: only runs at allocation;
-        // afterward ABSORB/EMIT update sample_liquid every frame.)
+        // sample_liquid starts DRY (m_j = 0). Paper §5.1: a brush carries
+        // paint due to hydrophilicity, but loading happens via ABSORB from the
+        // supply reservoir (the "dip"), NOT by pre-saturating every sample at
+        // allocation. Pre-saturating to M_max caused a cold-start burst: frame
+        // 1 ABSORB pushes every canvas-touching sample past (1+ε)M_j at once
+        // (supply is refilled at stroke_start), they all EMIT simultaneously,
+        // and the brush's static velocity field can't advect the deposit away
+        // → a thick pile at the touchdown point ("落笔处一大坨").
+        //
+        // Starting dry, ABSORB frame 1 fills each sample up to M_j (saturated,
+        // not yet overloaded — m_j ≤ (1+ε)M_j, so EMIT is a no-op). Only from
+        // frame 2 do samples begin to overload and emit, by which time the
+        // brush has started moving, so the first deposit lands along the
+        // stroke rather than piling up at the touchdown point. The pigment c_j
+        // is still seeded to the ink color so ABSORB's color_mix has a base.
         std::vector<float> liquid_init(Nb * S * 4, 0.0f);
         for (int i = 0; i < Nb * S; ++i) {
-            // Initialize each sample LOADED to its free-space capacity M'_j
-            // (= M_max when bristle density ψ=0): a dipped brush's bristles
-            // are saturated with paint. This is NOT an overload by itself —
-            // only samples whose capacity drops (paper Eq.13: those touching
-            // the canvas, where r_j is small) will see m_j > (1+ε)M_j and
-            // emit via §5.1. Samples in free space keep m_j = M'_j and do not
-            // emit. This matches the paper: paint is deposited only where the
-            // brush actually contacts the canvas. Setting mass above M'_j
-            // instead made every sample emit at once on frame 1 and overflowed
-            // the particle pool (262144 particles in one frame → black blob).
-            liquid_init[i * 4 + 0] =
-                2.0f;  // m_j = M_max = M'_j (saturated, not overloaded)
+            liquid_init[i * 4 + 0] = 0.0f;  // m_j = 0 (dry)
             liquid_init[i * 4 + 1] = ink_color.r;
             liquid_init[i * 4 + 2] = ink_color.g;
             liquid_init[i * 4 + 3] = ink_color.b;
@@ -874,16 +869,38 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
     // displacement into <= one brush-diameter steps; deposit at each.
     // ======================================================================
     {
-        // Refill per-sample paint supply reservoir once per frame ("re-dip").
-        std::vector<float> supply(Nb * S, ink_amount);
-        auto cmd = rc.create(CommandListDesc{});
-        cmd->open();
-        cmd->writeBuffer(
-            field->sample_supply, supply.data(), supply.size() * sizeof(float));
-        cmd->close();
-        device->executeCommandList(cmd);
-        device->waitForIdle();
-        rc.destroy(cmd);
+        // Paint supply reservoir — paper §5.1: a dipped brush carries a FINITE
+        // ink charge in its bristles, depleted as paint is emitted. The
+        // previous code refilled EVERY sample to ink_amount EACH frame, an
+        // unbounded source that minted mass continuously (supply → ABSORB →
+        // sample overload → emit particles → particle_to_grid deposit), so
+        // grid density grew without limit and bloomed into a black blob.
+        //
+        // Now the reservoir is refilled ONCE at stroke_start ("re-dip"),
+        // sized for a full stroke. ABSORB drains it sample-by-sample; once it
+        // is exhausted the brush runs dry (as a real brush does), capping the
+        // total paint mass that can enter the grid. The per-sample amount is
+        // ink_amount scaled by a nominal stroke length so a stroke lays down
+        // visible paint before drying out.
+        if (bp.stroke_start) {
+            // dip_charge scales with M_max (MUST match node_brush_wb_bristle's
+            // blc.M_max = 0.03): ABSORB saturates a sample to M_j per frame, so
+            // a charge of M_max*N sustains ~N frames of emission. ink_amount
+            // modulates how heavily loaded the dip is. With M_max=0.03 and
+            // ink_amount=0.8 → 0.72 per sample, ~24 frames of active paint.
+            const float dip_charge = 0.03f * ink_amount * 30.0f;
+            std::vector<float> supply(Nb * S, dip_charge);
+            auto cmd = rc.create(CommandListDesc{});
+            cmd->open();
+            cmd->writeBuffer(
+                field->sample_supply,
+                supply.data(),
+                supply.size() * sizeof(float));
+            cmd->close();
+            device->executeCommandList(cmd);
+            device->waitForIdle();
+            rc.destroy(cmd);
+        }
 
         int n_sub = 1;
         if (field->has_prev_brush_pos) {

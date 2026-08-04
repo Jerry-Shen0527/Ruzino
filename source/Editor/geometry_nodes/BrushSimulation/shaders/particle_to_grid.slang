@@ -12,6 +12,9 @@ StructuredBuffer<float4> ptcl_pos : register(t0);
 StructuredBuffer<float4> ptcl_vel : register(t1);
 StructuredBuffer<float4> ptcl_color : register(t2);
 StructuredBuffer<uint> ptcl_alive : register(t3);
+// Bristle sample positions for the d_{B,k} distance query (paper §5.2 Table 1:
+// d_{B,k} is the particle distance TO BRISTLES, not to the brush center).
+StructuredBuffer<float4> sample_pos : register(t4);
 RWStructuredBuffer<float> density : register(u0);
 RWStructuredBuffer<float> color_r : register(u1);
 RWStructuredBuffer<float> color_y : register(u2);
@@ -28,13 +31,28 @@ void main(uint3 tid : SV_DispatchThreadID)
     float3 pos = ptcl_pos[idx].xyz;
     float3 vel = ptcl_vel[idx].xyz;
     float speed = length(vel);
-    // Distance to brush footprint in XY
-    float d = length(pos.xy - float2(cb.brush_pos_x, cb.brush_pos_y));
+
+    // Paper §5.2 / Table 1: the grid↔particle conversion boundary is d_{B,k},
+    // the particle's distance TO BRISTLES (not to the brush footprint center).
+    // A particle within D0 of any bristle sample stays a particle; one beyond
+    // D0 of every sample is grid-liquid and deposits here. Using the brush
+    // CENTER distance (the old code, d >= D0*1.5) locked particles to the
+    // brush footprint even after the brush moved away, so deposition never
+    // fired. With d_{B,k}, a particle whose nearest bristle has moved more
+    // than D0 away (brush departed) deposits immediately.
+    int num_samples = cb.num_bristles * cb.samples_per_bristle;
+    float best_d2 = 1e30;
+    for (int s = 0; s < num_samples; s++) {
+        float3 d = pos - sample_pos[s].xyz;
+        float d2 = dot(d, d);
+        if (d2 < best_d2) best_d2 = d2;
+    }
+    float d_B = sqrt(best_d2);
 
     // Only transfer particles that are:
-    // 1. Away from brush (distance > D0)
-    // 2. Moving slowly (speed < threshold)
-    if (d < cb.D0 * 1.5 || speed > 0.5) {
+    // 1. Away from bristles (d_{B,k} >= D0)
+    // 2. Moving slowly (speed < threshold) — paper §5.2 "moves slowly"
+    if (d_B < cb.D0 || speed > 0.5) {
         ptcl_alive_out[idx] = 1;
         return;
     }

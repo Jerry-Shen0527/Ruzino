@@ -126,7 +126,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         Ruzino::ParticleConstants pc = {};
         pc.max_particles = max_ptcl;
         pc.dt = 0.016f;
-        pc.D0 = brush_radius * 3.0f;
+        pc.D0 = brush_radius *
+                1.5f;  // tight deposit zone (≈ R_j, paint stays on stroke)
         pc.friction_delta = 5.0f / pc.D0;
         pc.flip_gamma = 0.8f;
         pc.grid_res = field->grid_res;
@@ -541,7 +542,9 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                 Ruzino::ParticleConstants pc = {};
                 pc.max_particles = max_ptcl;
                 pc.dt = sub_dt;
-                pc.D0 = brush_radius * 3.0f;
+                pc.D0 =
+                    brush_radius *
+                    1.5f;  // tight deposit zone (≈ R_j, paint stays on stroke)
                 pc.flip_gamma = 0.8f;
                 pc.grid_res = field->grid_res;
                 pc.grid_res_z = WIN_Z;
@@ -592,7 +595,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         Ruzino::ParticleConstants pc = {};
         pc.max_particles = max_ptcl;
         pc.dt = 0.016f;
-        pc.D0 = brush_radius * 3.0f;
+        pc.D0 = brush_radius *
+                1.5f;  // tight deposit zone (≈ R_j, paint stays on stroke)
         pc.grid_res = field->grid_res;
         pc.grid_res_z = WIN_Z;
         pc.height_extent = field->grid_height;
@@ -615,14 +619,17 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         Ruzino::brush_upload_cb(
             rc, device, &pc, sizeof(pc), "wb_maint_cb", maint_cb);
 
-        // Particle to grid (absorb distant slow particles)
+        // Particle to grid (deposit distant slow particles, §5.2 Eq.16).
+        // Binds sample_pos so the shader can compute d_{B,k} (distance to the
+        // nearest bristle sample) instead of the brush-center distance.
         Ruzino::brush_dispatch(
             rc,
             field->ptcl_to_grid_program,
             { { "ptcl_pos", field->ptcl_pos },
               { "ptcl_vel", field->ptcl_vel },
               { "ptcl_color", field->ptcl_color },
-              { "ptcl_alive", field->ptcl_alive } },
+              { "ptcl_alive", field->ptcl_alive },
+              { "sample_pos", field->sample_pos } },
             { { "density", field->density },
               { "color_r", field->color_r },
               { "color_y", field->color_y },
@@ -641,17 +648,23 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         // (weighted by W) from its 3×3×3 neighborhood, NOT just its emitting
         // cell. The shader writes density_out via RWByteAddressBuffer atomic
         // subtract, so we must seed density_out with the current density
-        // (atomic subtract accumulates on top of the seed).
+        // (atomic subtract accumulates on top of the seed). Color outputs are
+        // seeded the same way so the shader can subtract color in lockstep
+        // with density (§14 TODO #2 — keeps color/density ratio conserved).
         {
+            const size_t grid_bytes = static_cast<size_t>(field->grid_res) *
+                                      field->grid_res_z * field->grid_res *
+                                      sizeof(float);
             auto seed_cmd = rc.create(CommandListDesc{});
             seed_cmd->open();
             seed_cmd->copyBuffer(
-                field->density_tmp,
-                0,
-                field->density,
-                0,
-                static_cast<size_t>(field->grid_res) * field->grid_res_z *
-                    field->grid_res * sizeof(float));
+                field->density_tmp, 0, field->density, 0, grid_bytes);
+            seed_cmd->copyBuffer(
+                field->color_r_tmp, 0, field->color_r, 0, grid_bytes);
+            seed_cmd->copyBuffer(
+                field->color_y_tmp, 0, field->color_y, 0, grid_bytes);
+            seed_cmd->copyBuffer(
+                field->color_b_tmp, 0, field->color_b, 0, grid_bytes);
             seed_cmd->close();
             device->executeCommandList(seed_cmd);
             device->waitForIdle();
@@ -672,10 +685,16 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
               { "ptcl_vel", field->ptcl_vel },
               { "ptcl_color", field->ptcl_color },
               { "ptcl_alive", field->ptcl_alive },
-              { "density_out", field->density_tmp } },
+              { "density_out", field->density_tmp },
+              { "color_r_out", field->color_r_tmp },
+              { "color_y_out", field->color_y_tmp },
+              { "color_b_out", field->color_b_tmp } },
             maint_cb,
             win_n3d);
         std::swap(field->density, field->density_tmp);
+        std::swap(field->color_r, field->color_r_tmp);
+        std::swap(field->color_y, field->color_y_tmp);
+        std::swap(field->color_b, field->color_b_tmp);
 
         // Particle compaction
         Ruzino::brush_reset_counter(rc, device, field->ptcl_counter);

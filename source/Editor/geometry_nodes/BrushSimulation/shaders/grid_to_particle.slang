@@ -33,6 +33,15 @@ RWStructuredBuffer<uint> ptcl_alive : register(u4);
 // Density reduction output (Eq.15). Seeded with current density by the host;
 // this shader subtracts particle contributions via the 3×3×3 neighborhood.
 RWStructuredBuffer<float> density_out : register(u5);
+// Color reduction outputs. Seeded with the current color_r/y/b by the host.
+// When a cell loses density to a new particle (Eq.15), it must lose the SAME
+// fraction of its premultiplied color, otherwise color/density drifts: the
+// grid keeps color while density walks out as particles, and the particle
+// (which reads the cell's absolute color) carries a mis-scaled pigment. This
+// is the §14 TODO #2 fix — color transfers WITH mass, conserving the ratio.
+RWStructuredBuffer<float> color_r_out : register(u6);
+RWStructuredBuffer<float> color_y_out : register(u7);
+RWStructuredBuffer<float> color_b_out : register(u8);
 
 [numthreads(256, 1, 1)]
 void main(uint3 tid : SV_DispatchThreadID)
@@ -79,6 +88,13 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     // Particle mass per sub-cell: equal share of cell density
     float mass_per_candidate = cell_density / 27.0;
+
+    // Normalized pigment of THIS cell (RYB per unit density). Particles
+    // inherit this so their color is a proper 0-1 RYB vector, not the
+    // premultiplied absolute color stored in the grid. particle_to_grid
+    // multiplies it back by mass on deposit, keeping color conserved.
+    float inv_d = 1.0 / max(cell_density, 1e-8f);
+    float3 norm_ryb = float3(color_r[gidx], color_y[gidx], color_b[gidx]) * inv_d;
 
     float dV = cell_sz * cell_sz * cell_z;
 
@@ -130,6 +146,11 @@ void main(uint3 tid : SV_DispatchThreadID)
             // particle_to_grid's Eq.16 add and produces a smooth density field
             // across the D0 boundary. Plain -= races but collisions are rare
             // (see common.slangh note).
+            //
+            // Color subtraction (§14 TODO #2): each neighbor loses the SAME
+            // fraction of its premultiplied color, so its color/density ratio
+            // is preserved. Without this the grid kept color while density
+            // left as particles, diluting the rendered paint toward black.
             int pcx = int(floor((candidate.x - cb.grid_center_x + half_p) / cell_sz));
             int pcy = int(floor((candidate.y - cb.grid_center_y + half_p) / cell_sz));
             int pcz = int(floor((candidate.z - cb.grid_center_z + half_h) / cell_z));
@@ -144,22 +165,35 @@ void main(uint3 tid : SV_DispatchThreadID)
                         (float(nz) + 0.5) * cell_z  - half_h + cb.grid_center_z);
                     float w = W_smooth_3d(candidate - npos, h);
                     uint gi = grid_idx_3d(uint(nx), uint(ny), uint(nz), res, res_z);
-                    density_out[gi] -= m_k * w * dV;
+                    float loss = m_k * w * dV;
+                    density_out[gi] -= loss;
+                    // Neighbor pigment (normalized); fall back to this cell's
+                    // pigment if the neighbor has no density to normalize by.
+                    float nd = density[gi];
+                    float3 n_ryb = (nd > 1e-6f)
+                        ? float3(color_r[gi], color_y[gi], color_b[gi]) / nd
+                        : norm_ryb;
+                    color_r_out[gi] -= n_ryb.x * loss;
+                    color_y_out[gi] -= n_ryb.y * loss;
+                    color_b_out[gi] -= n_ryb.z * loss;
                 }
               }
             }
 
             ptcl_pos[slot] = float4(candidate, 0.0);
             ptcl_vel[slot] = float4(vel_x[gidx], vel_y[gidx], vel_z[gidx], 0.0);
-            ptcl_color[slot] = float4(color_r[gidx], color_y[gidx], color_b[gidx], m_k);
+            ptcl_color[slot] = float4(norm_ryb, m_k);
             ptcl_alive[slot] = 1;
         }
       }
     }
 
     // Clamp own cell to non-negative (neighbors handled by their own threads).
-    // The host seeds density_out with current density, so subtraction may leave
-    // negative values; clamp to 0 here. Neighbor cells are clamped by their
-    // own threads (each thread runs the same shader).
+    // The host seeds density_out/color_*_out with current values, so
+    // subtraction may leave negative values; clamp to 0 here. Neighbor cells
+    // are clamped by their own threads (each thread runs the same shader).
     density_out[gidx] = max(density_out[gidx], 0.0);
+    color_r_out[gidx] = max(color_r_out[gidx], 0.0);
+    color_y_out[gidx] = max(color_y_out[gidx], 0.0);
+    color_b_out[gidx] = max(color_b_out[gidx], 0.0);
 }

@@ -139,22 +139,24 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
         rc.destroy(pack_cb_buf);
 
         // Flush the pack dispatch before registering the buffer. brush_dispatch
-        // only enqueues the compute work; without this flush the registry
-        // would hand the renderer a buffer whose contents are still being
-        // written by the GPU. The setPermanentBufferState + commitBarriers
-        // pair transitions packed_paint from its UnorderedAccess initial state
-        // (set at allocation, keepInitialState=true keeps it tracked there
-        // after each sim command list) into ShaderResource, which is the state
-        // the render rprim's RawBuffer_SRV expects. waitForIdle then drains
-        // the GPU so the interleaved test architecture (sim tick → render
-        // frame) has implicit synchronization without double-buffering.
+        // only enqueues the compute work; without this flush the registry would
+        // hand the renderer a buffer whose contents are still being written.
+        //
+        // We deliberately do NOT call setPermanentBufferState(ShaderResource)
+        // here. That call is IRREVERSIBLE: it flips packed_paint's permanent
+        // state to ShaderResource, but the very next frame's pack dispatch
+        // needs it back in UnorderedAccess. nvrhi then logs "doesn't have the
+        // right state bits. Required: 0x80 (UAV), present: 0x60 (SRV)" and
+        // SKIPS the pack write — so packed_paint keeps stale (frame-1) data
+        // and the renderer shows nothing. Instead the buffer keeps its
+        // allocation-time permanent state (UnorderedAccess, keepInitialState),
+        // and nvrhi's automatic barrier tracking transitions it UAV→SRV when
+        // the render rprim binds it as a RawBuffer_SRV, and back to UAV on the
+        // next pack. waitForIdle gives the cross-command-list synchronization
+        // the interleaved sim-tick → render-frame loop needs.
         {
             auto flush_cmd = rc.create(CommandListDesc{});
             flush_cmd->open();
-            flush_cmd->setPermanentBufferState(
-                field->packed_paint.Get(),
-                nvrhi::ResourceStates::ShaderResource);
-            flush_cmd->commitBarriers();
             flush_cmd->close();
             device->executeCommandList(flush_cmd);
             device->waitForIdle();
@@ -336,9 +338,11 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
     // particles = live particle count. ptcl_mass = summed particle mass.
     // If density stays ~0 the particle path isn't feeding the grid.
     spdlog::info(
-        "wb_diag density={:.4f} color_b={:.4f} particles={} ptcl_mass={:.4f} "
-        "ptcl_d_sum={:.4f}",
+        "wb_diag density={:.4f} color_r={:.4f} color_y={:.4f} color_b={:.4f} "
+        "particles={} ptcl_mass={:.4f} ptcl_d_sum={:.4f}",
         tot_density,
+        tot_r,
+        tot_y,
         tot_b,
         ptcl_count,
         ptcl_mass,

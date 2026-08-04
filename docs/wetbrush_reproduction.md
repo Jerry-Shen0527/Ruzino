@@ -188,6 +188,13 @@ brush 含 40-600 bristles，平滑来自密集采样。NUM_BRISTLES 80 → 600�
 一次彻底的架构排查，发现原实现的 paint 注入机制**整体偏离 paper**，是白色
 膨胀 + 几何变形 + 颜色斑点三个症状的共同根源。
 
+> **状态更新（2026-08-03）**：§14 记录的「粒子不逃逸 → density=0」阻塞已解决，
+> 但诊断中发现这是**多层 bug 链**的表象。完整修复见下方 §15「paint 渲染链路
+> 打通」。核心结论：原阻塞（粒子被锁 D0）只是第一层；其下还有 supply 无限补给
+> 导致 density 暴涨、grid_to_particle color 量纲不一致导致颜色稀释、
+> setPermanentBufferState 不可逆导致渲染读到空 buffer、density 量级与渲染
+> [0,1] 假设不匹配共 5 个独立 bug。逐一修复后 paint 终于稳定渲染（暗红色笔触）。
+
 #### paper 的机制（§4.1/§4.2/§5）
 
 - bristle rasterize 出的 density/velocity **只作 pressure projection 的边界
@@ -251,12 +258,12 @@ paper 的粒子靠真实动力学（惯性/重力/粘度）自然脱离笔刷。
 
 #### 下一步 TODO
 
-1. **粒子逃逸**（最高优先级）：调 `particle_update.slang` 的附着力参数/逻辑，
-   让粒子能离开 D0 范围并触发 particle_to_grid 沉积。可能需要降低 Eq.10 的
-   blend 强度或 D1 距离，或加入重力/惯性的更强作用让 paint 自然脱离笔刷。
-2. **color 守恒**：`grid_to_particle`（Eq.15）减 density 时不同步减 color
-   （line 147 只 `density_out -= ...`），particle_to_grid 又加 color → color
-   双重计数。需在 grid_to_particle 按比例同步减 color_r/y/b。
+1. ~~**粒子逃逸**（最高优先级）~~ **已解决（§15 bug #1）**：改用 `d_{B,k}`
+   （到 bristle 距离）而非笔刷中心距离后，粒子在笔刷移开时能沉积。particle_update
+   的动力学本身未改——粒子仍靠笔刷移动被动脱离，非真实动力学主动脱离（遗留）。
+2. ~~**color 守恒**~~ **已解决（§15 bug #3）**：grid_to_particle emit 归一化
+   RYB + 同步减 color_out。残余：plain `-=` 的 race 导致长时间循环 RYB 轻微
+   漂移，pack_float4 的 clamp 兜底（遗留）。
 3. **wetness/oil 来源**：去掉 bristle_merge 的 wetness/oil 写入后，grid 的
    wetness/oil 无人维护。paper §5.2 说 "other liquid particle variables, such
    as oil density and dryness, can be simply merged into the grid cells"，
@@ -267,14 +274,112 @@ paper 的粒子靠真实动力学（惯性/重力/粘度）自然脱离笔刷。
 
 #### 诊断方法（本轮验证有效）
 
-- `wb_diag` 日志（commit node）：density / color_b / particles / ptcl_mass /
-  ptcl_d_sum。density=0 但 ptcl_d_sum>0 说明 rasterize 写了但 merge 没转进
-  grid（本轮定位到 merge/transfer 乒乓的关键证据）。
+- `wb_diag` 日志（commit node）：density / color_r / color_y / color_b /
+  particles / ptcl_mass / ptcl_d_sum。density=0 但 ptcl_d_sum>0 说明 rasterize
+  写了但 merge 没转进 grid（本轮定位到 merge/transfer 乒乓的关键证据）。
+  color_r/density 比值持续下降说明 color 被稀释（§15 bug #3 的定位证据）。
 - sentinel 测试：临时把 merge 的 density 写入改成 `=999.0`，读回 0.35 →
   证明写入被后续步骤（grid_to_particle）覆盖。
 - 跳过 fluid solve：`if (false && sim_dt > 1e-6f)` 隔离 merge vs advect。
 - 多色对照（render_wetbrush_color.py --ryb）：RYB→RGB 非线性使蓝色斑点最
   明显，黄/红几乎不可见——用多色对照快速定位"颜色问题 vs 通用问题"。
+
+### 15. paint 渲染链路打通（2026-08-03）
+
+§14 的「粒子不逃逸」诊断（`wb_diag density=0 particles=262144 ptcl_d_sum=340`）
+只揭露了第一层。修复 particle_to_grid 的距离判据后 density 开始涨，但暴露出一个
+**5 层 bug 链**，每修一层才看见下一层。最终全部修复后 paint 稳定渲染为暗红色
+笔触（reddish ~9% 画面，RGB≈116,59,59，跨帧稳定）。
+
+#### 5 个独立 bug 及修复
+
+| # | 症状 | 根因 | 修复 |
+|---|---|---|---|
+| 1 | density=0（粒子不沉积） | `particle_to_grid` 用「距笔刷 XY 中心」判据（`d >= D0*1.5`），粒子被附着力锁在 D0 内从不满足 | 改用 paper §5.2 的 `d_{B,k}`（到最近 bristle sample 的距离）；`>= D0` 即沉积。fluid.cpp 给 particle_to_grid dispatch 绑 sample_pos |
+| 2 | density 暴涨到 1000+（黑团） | deposit 每帧 refill `sample_supply = ink_amount` 给全部 76800 samples = 无限墨水源，supply→ABSORB→emit→deposit 循环净注入 | supply 改为 stroke_start 一次性补给（蘸笔模型，`ink_amount * 30` per sample），总量有限。density 现在涨到 ~450 后稳定 |
+| 3 | 颜色稀释消失（color_r 卡在 ~154，color_r/density 从 0.69 降到 0.20） | `grid_to_particle` emit 粒子时 color 读 grid 的**绝对 premultiplied 值**（color_r≈154），但 particle_to_grid 把它当**归一化 RYB** 用，量纲不一致；且减 density 时不同步减 color（§14 TODO #2） | grid_to_particle emit 归一化 RYB（`color/density`）+ 同步减 color_out（按邻居 color/density 比例）；fluid.cpp 加 color_r/y/b_tmp seed + swap |
+| 4 | 渲染读不到 packed_paint（bindless 失效，画面空白） | commit 节点 `setPermanentBufferState(ShaderResource)` **不可逆**；第二帧 pack dispatch 需要 UAV (0x80) 但 permanent state 已是 SRV (0x60)，nvrhi 报错并**跳过 pack 写入**，packed_paint 保持 frame-1 的全 0 | 移除 setPermanentBufferState，依赖 packed_paint 的 `keepInitialState=true` + nvrhi 自动 UAV↔SRV barrier（跨 command list 靠 waitForIdle 同步） |
+| 5 | density 量级与渲染 [0,1] 假设不匹配（sim 单 cell density ~0.002，渲染 kDensitySurface=0.02；AO `min(d,1)` 把大值截断驱 (1-ao)→0 渲染纯黑） | pack_float4 直接打包 raw density + premultiplied RYB，渲染当 RGB 用且无 RYB→RGB 转换 | pack_float4 归一化 density（`clamp(d/0.05, 0, 1)`）+ RYB→RGB 转换（`ryb_to_rgb`）+ clamp RYB 到 [0,1] 防 grid↔particle 循环的 race 漂移 |
+
+#### 关键诊断手段（本轮验证有效）
+
+- **分层隔离**：每修一层 bug，用 `wb_diag`（density/color_r/color_y/color_b/
+  particles/ptcl_mass/ptcl_d_sum）确认该层修好，再看下一层症状。一次全改会
+  淹没因果。
+- **packed_paint readback**：临时在 commit 节点 readback packed_paint 打印
+  first-nonzero voxel 的 (d, rgb, raw d, raw cr)，确认 pack shader 实际写入了
+  什么。定位 bug #4（pack 被跳过，packed 全 0）和 bug #5（density=0.002 远小于
+  渲染阈值 0.02）的关键证据。
+- **PIL 像素分析**：`reddish = (R>30) & (R>B+12) & (lum<240)` 量化渲染输出，
+  跨帧对比 RGB 均值判断颜色是否稳定（clamp 前 frame_0040 漂白，clamp 后稳定）。
+
+#### 遗留问题（非阻塞）
+
+- **颜色偏暗**（RGB 116,59,59 而非鲜红）：AO `min(d,1)` + Lambertian shade
+  (0.4+0.6*facing) 压暗。paper §6 的 AO 是 crevice darkening，当前对平坦笔触
+  也偏强。可调 AO ray 数或 shade 的 ambient floor。
+- **粒子脱离依赖笔刷移动**：粒子仍被 Eq.10 附着力锁定，靠笔刷移开后 d_{B,k}>D0
+  才沉积（bug #1 的修复让这成为可能，但没改 particle_update 的动力学）。paper
+  的粒子靠真实动力学自然脱离；自动 stroke 下笔刷持续移动所以能工作，静止笔刷
+  下 paint 会累积在 D0 边界。
+- **color 守恒不严格**：grid_to_particle 的 plain `-=` 在 RWStructuredBuffer 上
+  race（Slang CAS 不支持 structured-buffer 元素），长时间循环后 RYB 可能漂移。
+  pack_float4 的 clamp 兜底防极端值，但根因（无 atomic）未解决。
+
+#### 参数校准（2026-08-03，修正「paint 一大坨散开」反馈）
+
+§15 修完后 paint 能显示但**散布成一大坨而非笔触**。根因：emit 半径 R_j 远大于
+brush_radius，粒子出生即逸散到笔刷 footprint 外沉积。
+
+R_j = cbrt(3·M_max/(4π·ρ₀))。ρ₀=1e3（paper 的 SI paint 密度）在归一化 sim 单位
+（paper_size=1）下让 R_j 随 M_max 快速膨胀：
+
+| M_max | R_j | 症状 |
+|---|---|---|
+| 2.0（初值） | 0.078 | 粒子出生即沉积（>D0=0.06），paint 散布全屏成 blob |
+| 0.5 | 0.049 | 仍宽，paint bbox 46 cell（≈0.18 世界单位，brush 的 9 倍） |
+| **0.03**（现值） | **0.02** | R_j≈brush_radius，paint bbox 17 cell（≈0.066，brush 的 3 倍），形成横向笔触 |
+
+配套：D0 从 brush_radius×3(0.06) 降到 ×1.5(0.03)；supply dip_charge = M_max·ink·30
+（ABSORB 每帧受 M_j 节流，supply 大不会爆发，只延长笔触持续时间）。结果：frame 2
+不再爆发（particles 受控），paint 沿笔刷轨迹形成笔触（dense paint span 横向 > 纵向），
+无 grid/checkerboard 纹理。
+
+**教训**：paper 的参数（ρ₀=1e3 kg/m³, D0=1cm）是 SI 单位，sim 用归一化单位
+（paper_size=1, brush_radius=0.02）时必须重新校准让 R_j ≈ brush_radius，否则 emit
+范围失控。这是个单位匹配陷阱，不是逻辑 bug。
+
+#### dry-start 冷启动修复（2026-08-03，修正「落笔处一大坨」反馈）
+
+参数校准后笔触成形，但**落笔点（stroke 起点）仍有一大坨高密度堆积**。用户描述
+「笔墨在空中就已经过饱和然后沉积了并且不再被流体仿真了，维持这个高高的一坨」。
+
+根因：sample_liquid 初始化为饱和（m_j = M_max）。frame 1 的 ABSORB 路径
+（bristle_liquid_transfer.slang）对饱和 sample 继续从 supply 吸收（过载 uptake，
+无 M_j×(1+ε) clamp），把所有接触画布的 sample 推过 (1+ε)M_j → 它们**同一帧全部 EMIT**
+→ 粒子在落笔点立即沉积（笔刷静止，速度场≈0）→ 无 scalar diffusion（见下）→
+paint 维持堆积。
+
+修复：sample_liquid 初始化改为 **dry（m_j = 0）**。frame 1 ABSORB 只填到 M_j（饱和
+但不过载，EMIT no-op）；frame 2 起才过载 emit，此时笔刷已开始移动，首笔 deposit
+落在笔触上而非堆在起点。pigment c_j 仍初始化为 ink color 供 color_mix 使用。
+结果：frame 0-1 density=0（之前 frame 1 就一大坨），emit 从 frame 2 渐进开始，
+落笔点堆积明显减轻（1024×1024×64 下可观察到连贯的横向笔触）。
+
+#### 当前遗留的观感问题（下一轮打磨）
+
+1. **落笔点仍有残余堆积**：dry-start 减轻了爆发，但笔刷在 stroke 起点停留期间
+   （速度从 0 加速）仍累积 deposit。paper 靠真实笔刷动力学，自动 stroke 的起点
+   停留是测试脚本的特性。
+2. **粒子立即沉积（particles 全程=0）**：emit 的粒子在笔刷附近一出生就被
+   particle_to_grid 沉积，没有以粒子形式跟随笔刷移动沿途分布。混合表示的粒子相
+   寿命过短。可能需要让粒子在 D0 内存活更久。
+3. **paint 沉积后不铺开**：fluid solve 对 density 有 advect（靠速度场），但**显式
+   移除了 scalar diffusion**（fluid.cpp:515，之前加 diffusion 侵蚀笔触边缘）。所以
+   静止区 paint 维持堆积不扩散。paper 高粘度 paint 确实少扩散，但落笔点需要某种
+   铺展机制。
+4. **颜色偏暗**（RGB≈140,40 而非鲜红）：渲染 AO `min(d,1)` + Lambertian shade
+   (0.4+0.6·facing) 压暗。
 
 ## 关键经验教训
 
