@@ -104,6 +104,15 @@ void GPUSceneAssember::fill_instances(
     ProgramHandle filler_program =
         get_instance().sa_resource_allocator.create(program_desc);
 
+    // DIAGNOSTIC: print the slang compile error if the instancer shader failed.
+    if (!filler_program) {
+        spdlog::error("[fill_instances] instancer.slang program is NULL");
+    }
+    else if (!filler_program->get_error_string().empty()) {
+        spdlog::error("[fill_instances] instancer.slang compile failed: {}",
+                      filler_program->get_error_string());
+    }
+
     MARK_DESTROY_NVRHI_RESOURCE(filler_program);
 
     ProgramVars filler_program_vars(

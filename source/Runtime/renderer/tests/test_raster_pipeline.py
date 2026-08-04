@@ -71,6 +71,118 @@ def _locate_config(binary_dir: Path) -> Path:
     pytest.skip("No render node configuration found")
 
 
+def _build_instancer_scene(path: Path, cols: int = 5, rows: int = 4):
+    """Write a UsdGeomPointInstancer scene (cols x rows spheres) to `path`.
+
+    One sphere prototype under the instancer's Prototypes scope, positions laid
+    out as a cols x rows grid. Uses the same USD API the editor does; the
+    renderer's Hd_RUZINO_Instancer + GPU instancer.slang path turns it into
+    cols*rows GeometryInstanceData entries.
+    """
+    from pxr import Usd, UsdGeom, UsdLux, UsdShade, Sdf, Gf
+    import math
+
+    stage = Usd.Stage.CreateInMemory()
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.y)
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+
+    cam = UsdGeom.Camera.Define(stage, '/Camera')
+    cam.GetFocalLengthAttr().Set(50.0)
+    cam.GetClippingRangeAttr().Set(Gf.Vec2f(0.1, 100.0))
+    cam.GetHorizontalApertureAttr().Set(36.0)
+    cam.GetVerticalApertureAttr().Set(20.25)
+    cam.AddTransformOp().Set(Gf.Matrix4d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0,
+                                         0, 0, 6, 1))
+
+    mat = UsdShade.Material.Define(stage, '/SphereMat')
+    shader = UsdShade.Shader.Define(stage, '/SphereMat/Shader')
+    shader.CreateIdAttr('UsdPreviewSurface')
+    shader.CreateInput('diffuseColor', Sdf.ValueTypeNames.Color3f).Set(
+        Gf.Vec3f(0.8, 0.2, 0.2))
+    shader.CreateInput('roughness', Sdf.ValueTypeNames.Float).Set(0.5)
+    mat.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(),
+                                              'surface')
+
+    # Prototype sphere mesh
+    radius = 0.4
+    N_LAT, N_LON = 12, 16
+    verts = [[0, radius, 0]]
+    normals = [[0, 1, 0]]
+    for i in range(1, N_LAT):
+        theta = math.pi * i / N_LAT
+        y = math.cos(theta) * radius
+        r = math.sin(theta) * radius
+        for j in range(N_LON):
+            phi = 2 * math.pi * j / N_LON
+            verts.append([r * math.cos(phi), y, r * math.sin(phi)])
+            normals.append([math.cos(phi), y / radius, math.sin(phi)])
+    verts.append([0, -radius, 0])
+    normals.append([0, -1, 0])
+
+    def vidx(ring, lon):
+        if ring == 0:
+            return 0
+        if ring == N_LAT:
+            return len(verts) - 1
+        return 1 + (ring - 1) * N_LON + (lon % N_LON)
+
+    counts, indices = [], []
+    for j in range(N_LON):
+        counts.append(3)
+        indices.extend([vidx(0, 0), vidx(1, j + 1), vidx(1, j)])
+    for i in range(1, N_LAT - 1):
+        for j in range(N_LON):
+            counts.append(4)
+            indices.extend([vidx(i, j), vidx(i, j + 1), vidx(i + 1, j + 1),
+                            vidx(i + 1, j)])
+    for j in range(N_LON):
+        counts.append(3)
+        indices.extend([vidx(N_LAT, 0), vidx(N_LAT - 1, j),
+                        vidx(N_LAT - 1, j + 1)])
+
+    proto = UsdGeom.Mesh.Define(stage,
+                                '/World/Instancer/Prototypes/Sphere')
+    proto.CreatePointsAttr().Set([Gf.Vec3f(*v) for v in verts])
+    proto.CreateFaceVertexCountsAttr().Set(counts)
+    proto.CreateFaceVertexIndicesAttr().Set(indices)
+    proto.CreateNormalsAttr().Set([Gf.Vec3f(*n) for n in normals])
+    proto.SetNormalsInterpolation(UsdGeom.Tokens.vertex)
+    proto.GetSubdivisionSchemeAttr().Set('none')
+    UsdShade.MaterialBindingAPI.Apply(proto.GetPrim()).Bind(mat)
+
+    # PointInstancer: cols x rows grid
+    instancer = UsdGeom.PointInstancer.Define(stage, '/World/Instancer')
+    instancer.CreatePrototypesRel().SetTargets(
+        ['/World/Instancer/Prototypes/Sphere'])
+    positions = []
+    xs = [(i - (cols - 1) / 2) * 0.8 for i in range(cols)]
+    ys = [(j - (rows - 1) / 2) * 0.8 for j in range(rows)]
+    for y in ys:
+        for x in xs:
+            positions.append(Gf.Vec3f(x, y, 0.0))
+    instancer.CreatePositionsAttr().Set(positions)
+    instancer.CreateProtoIndicesAttr().Set([0] * (cols * rows))
+
+    # Light from upper-right-front (dirW.Z < 0, see rasterization_pipeline.md)
+    target = Gf.Vec3d(-0.4, -0.5, -0.75).GetNormalized()
+    z_axis = Gf.Vec3d(0, 0, 1)
+    axis = Gf.Cross(z_axis, target)
+    if axis.GetLength() > 1e-9:
+        axis = axis / axis.GetLength()
+        angle = math.acos(max(-1.0, min(1.0, Gf.Dot(z_axis, target))))
+        m = Gf.Matrix4d().SetRotate(
+            Gf.Rotation(axis, math.degrees(angle)))
+    else:
+        m = Gf.Matrix4d().SetIdentity()
+    light = UsdLux.DistantLight.Define(stage, '/Sun')
+    light.GetIntensityAttr().Set(3.0)
+    light.GetExposureAttr().Set(0.0)
+    light.AddTransformOp().Set(m)
+
+    stage.Export(str(path))
+    return cols * rows
+
+
 def _build_raster_gbuffer_graph(hydra, binary_dir: Path):
     """Build a minimal graph: rasterize -> present_color (Albedo).
 
@@ -200,3 +312,70 @@ def test_raster_gbuffer_output_size():
     data = hydra.get_output_texture()
     assert data is not None, "No texture data returned"
     assert len(data) == w * h * 4, f"Expected {w*h*4} floats, got {len(data)}"
+
+
+def test_raster_instancer_renders_grid():
+    """A UsdGeomPointInstancer with a 5x4 grid (20 instances) renders as 20
+    spheres via the GPU instancer path (instancer.slang)."""
+    workspace_root, binary_dir = _prepare_env()
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        scene_path = Path(tmp) / "instancer_grid.usda"
+        n_instances = _build_instancer_scene(scene_path, cols=5, rows=4)
+        assert n_instances == 20
+
+        try:
+            import hd_RUZINO_py as renderer
+        except ImportError as e:
+            pytest.skip(f"hd_RUZINO_py not available: {e}")
+
+        hydra = renderer.HydraRenderer(str(scene_path), 256, 256)
+        _build_raster_gbuffer_graph(hydra, binary_dir)
+        hydra.render()
+        img = np.array(hydra.get_output_texture(),
+                       dtype=np.float32).reshape(256, 256, 4)
+
+        assert np.isfinite(img).all(), "Output contains NaN or Inf"
+        # 20 spheres at radius 0.4 over a 3.2x2.4 grid — substantial coverage.
+        nz = np.any(img[:, :, :3] > 0.001, axis=2)
+        assert nz.sum() > 10000, f"Expected many lit pixels, got {nz.sum()}"
+        # Albedo should be the RedMaterial (0.8, 0.2, 0.2).
+        lit = img[nz]
+        mean_rgb = lit[:, :3].mean(axis=0)
+        assert abs(mean_rgb[0] - 0.8) < 0.05, f"R mean off: {mean_rgb}"
+        assert abs(mean_rgb[1] - 0.2) < 0.05, f"G mean off: {mean_rgb}"
+        assert abs(mean_rgb[2] - 0.2) < 0.05, f"B mean off: {mean_rgb}"
+
+
+def test_raster_instancer_deferred_lit():
+    """The deferred direct-lighting pass shades each instanced sphere with a
+    Lambertian gradient (bright on the light side, dark on the back side)."""
+    workspace_root, binary_dir = _prepare_env()
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        scene_path = Path(tmp) / "instancer_grid.usda"
+        _build_instancer_scene(scene_path, cols=5, rows=4)
+
+        try:
+            import hd_RUZINO_py as renderer
+        except ImportError as e:
+            pytest.skip(f"hd_RUZINO_py not available: {e}")
+
+        hydra = renderer.HydraRenderer(str(scene_path), 256, 256)
+        _build_full_raster_graph(hydra, binary_dir)
+        hydra.render()
+        img = np.array(hydra.get_output_texture(),
+                       dtype=np.float32).reshape(256, 256, 4)
+
+        assert np.isfinite(img).all(), "Output contains NaN or Inf"
+        nz = np.any(img[:, :, :3] > 0.0005, axis=2)
+        assert nz.sum() > 10000, f"Expected lit pixels, got {nz.sum()}"
+        lit = img[nz]
+        # The lit side approaches albedo*NdotL(max)=~0.8*1.0; the back side
+        # approaches 0. A Lambertian gradient means a wide brightness range.
+        bright = lit[:, :3].max()
+        assert bright > 0.5, f"Expected bright side > 0.5, got {bright}"
+        dark = lit[:, :3].min()
+        assert dark < 0.02, f"Expected dark side < 0.02, got {dark}"

@@ -125,6 +125,33 @@ G-Buffer texture `register(t3/t4/t5)` 冲突 → root signature overlap。
     (近似太阳)。`float intensity = 1.0` 会静默变成 50000 → 渲染全白。
     正确写法:`float inputs:intensity = 1.0`。
 
+## USD Instancer(2026-08-04,已验证)
+
+`UsdGeomPointInstancer` → Hydra instancer → `Hd_RUZINO_Instancer` → GPU
+`instancer.slang` 填充 instance_pool 的整条链**已打通并测试**:
+
+- **场景**:5×4=20 球,1 个 prototype(球 mesh,radius 0.4,在 instancer 的
+  `Prototypes` scope 下),`positions` 5×4 网格,`protoIndices` 全 0。
+- **渲染**:rasterize G-Buffer 20 球 albedo=(0.8,0.2,0.2) 均匀;deferred
+  直接光每个球有 Lambertian 明暗渐变(右上亮、左下暗),20 球光照一致。
+- **测试**:`test_raster_instancer_renders_grid` +
+  `test_raster_instancer_deferred_lit`(5 passed)。
+
+### 踩坑:GPUAssembler shader 路径(修了,重要)
+
+`GPUSceneAssember::fill_instances` 用 `get_shader_dir(ShaderDirType::GPUAssembler)`
+定位 `instancer.slang`。**非 installed 分支返回 `source/Runtime/renderer/source`,
+但 instancer.slang 在 `source/Runtime/renderer/source/shaders/`** —— 少了
+`/shaders`,运行时编译失败(`CS = NULL`),20 个实例全黑,且 `fill_instances`
+不检查编译错误(静默)。
+
+**修复**:
+1. `shaderCompiler.cpp` 非 installed 分支 GPUAssembler 路径加 `/shaders`。
+2. `gpu_compute.cpp` `fill_instances` 加编译错误日志(下次失败直接可见)。
+
+**排查方法**:`RZ_RHI_VALIDATION=1` 会打印 `createComputePipeline: CS = NULL`,
+但真正原因是 slang 编译失败 —— 必须加日志看 `error_string`。
+
 ## 文件清单
 
 | 文件 | 类型 | 说明 |

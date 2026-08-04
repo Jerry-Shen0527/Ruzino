@@ -151,7 +151,8 @@ std::filesystem::path SlangShaderCompiler::get_shader_dir(ShaderDirType type)
                 return cached_base_dir / "Runtime" / "renderer" / "nodes" /
                        "shaders";
             case ShaderDirType::GPUAssembler:
-                return cached_base_dir / "Runtime" / "renderer" / "source";
+                return cached_base_dir / "Runtime" / "renderer" / "source" /
+                       "shaders";
             case ShaderDirType::GeomNodes:
                 return cached_base_dir / "Editor" / "geometry_nodes";
             case ShaderDirType::GeomCompute:
