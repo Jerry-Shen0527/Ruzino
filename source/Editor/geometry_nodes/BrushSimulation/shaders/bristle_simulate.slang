@@ -171,6 +171,16 @@ void main(uint3 tid : SV_DispatchThreadID)
         // small brush-frame velocity damping so β_B-induced transients settle.
         float3 external_a = -damping_B * v_B;
 
+        // Gravity (paper §4.1: a_i "including the gravity force and the drag
+        // force due to the grid-based liquid flow"). The particle path uses
+        // -0.2 in Z (particle_update.slang); bristles need the same so they
+        // sag toward the canvas and their tips lie flat instead of being
+        // shaped purely by the splay geometry (which fanned them into a cone).
+        // The paper's bristles are under gravity + drag only; without gravity
+        // the tip shape came entirely from the canvas-collision splay and
+        // produced a pointed "尖尖" brush end.
+        external_a += float3(0.0, 0.0, -0.2);
+
         // Grid-liquid drag (paper §4.1 Eq.2: a_i includes "drag force due to
         // the grid-based liquid flow"; §4.3: "velocity field provides the drag
         // force used for brush simulation"). The surrounding liquid velocity

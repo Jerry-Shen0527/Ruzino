@@ -642,7 +642,15 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         field->prev_angular_vel = glm::vec3(0.0f);
     }
     else if (field->has_prev_brush_pos) {
-        glm::vec3 new_vel = brush_pos_3d - field->prev_brush_pos;
+        // new_vel is the frame displacement; divide by dt to get TRUE velocity
+        // (units/s). The bristle shader uses brush_vel as a velocity
+        // (v_B = vel - brush_vel, vel = v_B + brush_vel) and the paper's Eq.2
+        // Coriolis term is 2ω×v_B — feeding a per-frame displacement here made
+        // v_B 60× too small, so the bristles barely felt the brush's motion
+        // (the Coriolis/centrifugal inertial response was effectively dead).
+        // With velocity units, brush_accel_3d below is a real acceleration
+        // (units/s²) and the rectilinear term a_B in Eq.2 is correct.
+        glm::vec3 new_vel = (brush_pos_3d - field->prev_brush_pos) / dt;
         if (dt > 1e-6f)
             brush_accel_3d = (new_vel - field->prev_brush_vel) / dt;
         brush_vel_3d = new_vel;
