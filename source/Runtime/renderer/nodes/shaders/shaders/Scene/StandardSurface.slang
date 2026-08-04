@@ -121,11 +121,11 @@ void NG_standard_surface_surfaceshader_100(
         }
         return;
     }
-    if (opacity.r < 0.25f) {
-        out1 = surfaceshader(float3(0.0f), float3(1.0));
-        return;
-    }
-
+    // NOTE: the hard cutout (opacity.r<0.25 → fully transparent) was removed
+    // because it overlapped with the path-tracing main loop's stochastic
+    // pass-through. Rays reaching this BSDF eval have already been judged to
+    // hit an existing surface. The final `color *= surfaceOpacity` multiply
+    // is also removed below for the same reason (double attenuation).
     if (transmission > 0.0)
         if (eta_flipped > 0.0)
             specular_IOR = 1.0 / specular_IOR;
@@ -245,8 +245,6 @@ void NG_standard_surface_surfaceshader_100(
         float3 N = normalize(vd.normalWorld);
         float3 P = vd.positionWorld;
         float occlusion = 1.0;
-
-        float surfaceOpacity = opacity_luminance_float_out;
 
         // Shadow occlusion
 
@@ -574,14 +572,10 @@ void NG_standard_surface_surfaceshader_100(
             shader_constructor_out.color += coat_layer_out.response;
         }  // End transmission calculation
 
-        // Compute and apply surface opacity
-        {
-            shader_constructor_out.color *= surfaceOpacity;
-            shader_constructor_out.transparency = lerp(
-                float3(1.0),
-                shader_constructor_out.transparency,
-                surfaceOpacity);
-        }
+        // The former `color *= surfaceOpacity` multiply is removed: it
+        // double-attenuated energy the path-tracing main loop already handles
+        // stochastically. surfaceOpacity (luminance of the float3 opacity) is
+        // now unused here; opacity presence is resolved before BSDF eval.
     }
 
     out1 = shader_constructor_out;
@@ -761,11 +755,9 @@ float3 sample_standard_surface(
         if (eta_flipped > 0.0)
             specular_IOR = 1.0 / specular_IOR;
 
-    if (opacity.r < 0.25f) {
-        pdf = 1.0f;
-        V = normalize(V);
-        return -V;
-    }
+    // The hard cutout (opacity.r<0.25 → return -V) was removed: it overlapped
+    // with the path-tracing main loop's stochastic pass-through. Rays reaching
+    // here hit an existing surface, so sample the BSDF normally.
     // Fix normal orientation if view direction and shading normal are on
     // opposite sides This can happen when normal map causes large perturbations
     float3 shading_normal = normal;

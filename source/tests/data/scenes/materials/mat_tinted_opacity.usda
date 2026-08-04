@@ -1,0 +1,210 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Camera "Camera"
+{
+    float2 clippingRange = (0.1, 100.0)
+    float focalLength = 50.0
+    float horizontalAperture = 36.0
+    float verticalAperture = 20.25
+    matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (0, 0, 4, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+def Material "RedFilter"
+{
+    token outputs:surface.connect = </RedFilter/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 1.0
+        color3f inputs:base_color = (0.9, 0.9, 0.9)
+        float inputs:specular = 0.0
+        float inputs:specular_roughness = 0.5
+        color3f inputs:opacity = (0.1, 1.0, 1.0)
+        token outputs:surface
+    }
+}
+
+def Material "GreyFilter"
+{
+    token outputs:surface.connect = </GreyFilter/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 1.0
+        color3f inputs:base_color = (0.9, 0.9, 0.9)
+        float inputs:specular = 0.0
+        float inputs:specular_roughness = 0.5
+        color3f inputs:opacity = (0.3, 0.3, 0.3)
+        token outputs:surface
+    }
+}
+
+def Material "CheckLight"
+{
+    token outputs:surface.connect = </CheckLight/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (1.0, 1.0, 1.0)
+        float inputs:metallic = 0
+        float inputs:roughness = 0.8
+        float inputs:opacity = 1
+        token outputs:surface
+    }
+}
+
+def Material "CheckDark"
+{
+    token outputs:surface.connect = </CheckDark/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0.12, 0.12, 0.12)
+        float inputs:metallic = 0
+        float inputs:roughness = 0.8
+        float inputs:opacity = 1
+        token outputs:surface
+    }
+}
+
+def Xform "World"
+{
+    def Mesh "RedFilterMesh" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-1.0, -0.8, 0), (-0.2, -0.8, 0), (-0.2, 0.8, 0), (-1.0, 0.8, 0)]
+        rel material:binding = </RedFilter>
+    }
+    def Mesh "GreyFilterMesh" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(0.2, -0.8, 0), (1.0, -0.8, 0), (1.0, 0.8, 0), (0.2, 0.8, 0)]
+        rel material:binding = </GreyFilter>
+    }
+    def Mesh "Bg00" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-1.6, -1.2, -1.5), (-0.8, -1.2, -1.5), (-0.8, -0.4, -1.5), (-1.6, -0.4, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg01" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-0.8, -1.2, -1.5), (0.0, -1.2, -1.5), (0.0, -0.4, -1.5), (-0.8, -0.4, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg02" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(0.0, -1.2, -1.5), (0.8, -1.2, -1.5), (0.8, -0.4, -1.5), (0.0, -0.4, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg03" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(0.8, -1.2, -1.5), (1.6, -1.2, -1.5), (1.6, -0.4, -1.5), (0.8, -0.4, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg10" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-1.6, -0.4, -1.5), (-0.8, -0.4, -1.5), (-0.8, 0.4, -1.5), (-1.6, 0.4, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg11" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-0.8, -0.4, -1.5), (0.0, -0.4, -1.5), (0.0, 0.4, -1.5), (-0.8, 0.4, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg12" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(0.0, -0.4, -1.5), (0.8, -0.4, -1.5), (0.8, 0.4, -1.5), (0.0, 0.4, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg13" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(0.8, -0.4, -1.5), (1.6, -0.4, -1.5), (1.6, 0.4, -1.5), (0.8, 0.4, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg20" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-1.6, 0.4, -1.5), (-0.8, 0.4, -1.5), (-0.8, 1.2, -1.5), (-1.6, 1.2, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg21" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-0.8, 0.4, -1.5), (0.0, 0.4, -1.5), (0.0, 1.2, -1.5), (-0.8, 1.2, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+    def Mesh "Bg22" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(0.0, 0.4, -1.5), (0.8, 0.4, -1.5), (0.8, 1.2, -1.5), (0.0, 1.2, -1.5)]
+        rel material:binding = </CheckLight>
+    }
+    def Mesh "Bg23" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(0.8, 0.4, -1.5), (1.6, 0.4, -1.5), (1.6, 1.2, -1.5), (0.8, 1.2, -1.5)]
+        rel material:binding = </CheckDark>
+    }
+}
+
+def DistantLight "Sun"
+{
+    float inputs:intensity = 3.0
+    matrix4d xformOp:transform = ( (1,0,0,0), (0,-1,0,0), (0,0,-1,0), (0,0,0,1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}

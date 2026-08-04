@@ -6,6 +6,7 @@ struct FetchCallableData {
     uint material_params_index; // Index into material parameters buffer, set by data fetch callable
     uint shader_type_id;
     VertexInfo vertexInfo;
+    float3 opacityColor; // Color3 opacity for tinted presence pass-through (set by opacity fetch callable)
 };
 
 struct EvalCallableData {

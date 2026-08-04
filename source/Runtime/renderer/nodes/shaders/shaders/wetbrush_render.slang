@@ -561,6 +561,7 @@ void ShadowHit(
     opacityFetchData.material_params_index =
         0;  // Will be filled with opacity value
     opacityFetchData.shader_type_id = 0;
+    opacityFetchData.opacityColor = float3(1.0, 1.0, 1.0);
 
     // Call opacity fetch callable (uses fetch_shader_opacity internally)
     CallShader(
@@ -571,42 +572,47 @@ void ShadowHit(
 
     // Extract opacity from material_params_index (reinterpreted as float)
     float opacity = asfloat(opacityFetchData.material_params_index);
-    // Simple stochastic opacity test
-    float opacity_threshold = random_float(payload.seed);
-
-    if (opacity < 0.25) {
-        // Material is transparent, continue tracing shadow ray
+    // Stochastic opacity test — symmetric with the main radiance loop's
+    // presence pass-through. With probability (1-opacity) the shadow ray
+    // passes through and keeps tracing, so a semi-transparent surface casts
+    // a soft partial shadow. Replaces the dead `opacity_threshold` (which
+    // burned a random number but never used it) and the `opacity < 0.25`
+    // binary cutoff.
+    if (random_float(payload.seed) >= opacity) {
+        // Surface is transparent to this shadow ray — continue tracing.
         float3 rayOrigin = vertex.posW;
         float remainingDist = payload.rayTMax - RayTCurrent();
-
-        if (remainingDist > 0.001) {
-            RayDesc continuationRay;
-            continuationRay.Origin = rayOrigin;
-            continuationRay.Direction = WorldRayDirection();
-            continuationRay.TMin = 0.001;
-            continuationRay.TMax = remainingDist;
-
-            ShadowPayload continuationPayload;
-            continuationPayload.isVisible = true;
-            continuationPayload.rayTMax = remainingDist;
-            continuationPayload.recursionDepth = payload.recursionDepth + 1;
-            continuationPayload.seed = payload.seed;
-
-            TraceRay(
-                SceneBVH,
-                RAY_FLAG_NONE,
-                0xFF,
-                1,  // Shadow hit group index
-                1,
-                1,  // Shadow miss shader index
-                continuationRay,
-                continuationPayload);
-            payload.seed = continuationPayload.seed;
-            payload.isVisible = continuationPayload.isVisible;
+        if (remainingDist <= 0.001) {
+            payload.isVisible = true;
             return;
         }
+
+        RayDesc continuationRay;
+        continuationRay.Origin = rayOrigin;
+        continuationRay.Direction = WorldRayDirection();
+        continuationRay.TMin = 0.001;
+        continuationRay.TMax = remainingDist;
+
+        ShadowPayload continuationPayload;
+        continuationPayload.isVisible = true;
+        continuationPayload.rayTMax = remainingDist;
+        continuationPayload.recursionDepth = payload.recursionDepth + 1;
+        continuationPayload.seed = payload.seed;
+
+        TraceRay(
+            SceneBVH,
+            RAY_FLAG_NONE,
+            0xFF,
+            1,  // Shadow hit group index
+            1,
+            1,  // Shadow miss shader index
+            continuationRay,
+            continuationPayload);
+        payload.seed = continuationPayload.seed;
+        payload.isVisible = continuationPayload.isVisible;
+        return;
     }
-    // If we reach here, the surface is opaque
+    // Surface blocks the shadow ray.
     payload.isVisible = false;
 }
 
@@ -650,6 +656,7 @@ void SphereShadowHit(
     opacityFetchData.materialBlobID = material_header.material_blob_id;
     opacityFetchData.material_params_index = 0;
     opacityFetchData.shader_type_id = 0;
+    opacityFetchData.opacityColor = float3(1.0, 1.0, 1.0);
 
     CallShader(
         ptConstants.materialFetchCallableBaseIndex +
@@ -659,40 +666,44 @@ void SphereShadowHit(
 
     float opacity = asfloat(opacityFetchData.material_params_index);
 
-    if (opacity < 0.25) {
-        // Material is transparent, continue tracing shadow ray
+    // Stochastic opacity test — symmetric with ShadowHit above and the main
+    // radiance loop. See ShadowHit for rationale.
+    if (random_float(payload.seed) >= opacity) {
+        // Surface is transparent to this shadow ray — continue tracing.
         float3 hitPoint =
             WorldRayOrigin() + RayTCurrent() * WorldRayDirection();
         float remainingDist = payload.rayTMax - RayTCurrent();
-
-        if (remainingDist > 0.001) {
-            RayDesc continuationRay;
-            continuationRay.Origin = hitPoint;
-            continuationRay.Direction = WorldRayDirection();
-            continuationRay.TMin = 0.001;
-            continuationRay.TMax = remainingDist;
-
-            ShadowPayload continuationPayload;
-            continuationPayload.isVisible = true;
-            continuationPayload.rayTMax = remainingDist;
-            continuationPayload.recursionDepth = payload.recursionDepth + 1;
-            continuationPayload.seed = payload.seed;
-
-            TraceRay(
-                SceneBVH,
-                RAY_FLAG_NONE,
-                0xFF,
-                1,
-                1,
-                1,
-                continuationRay,
-                continuationPayload);
-            payload.seed = continuationPayload.seed;
-            payload.isVisible = continuationPayload.isVisible;
+        if (remainingDist <= 0.001) {
+            payload.isVisible = true;
             return;
         }
+
+        RayDesc continuationRay;
+        continuationRay.Origin = hitPoint;
+        continuationRay.Direction = WorldRayDirection();
+        continuationRay.TMin = 0.001;
+        continuationRay.TMax = remainingDist;
+
+        ShadowPayload continuationPayload;
+        continuationPayload.isVisible = true;
+        continuationPayload.rayTMax = remainingDist;
+        continuationPayload.recursionDepth = payload.recursionDepth + 1;
+        continuationPayload.seed = payload.seed;
+
+        TraceRay(
+            SceneBVH,
+            RAY_FLAG_NONE,
+            0xFF,
+            1,
+            1,
+            1,
+            continuationRay,
+            continuationPayload);
+        payload.seed = continuationPayload.seed;
+        payload.isVisible = continuationPayload.isVisible;
+        return;
     }
-    // If we reach here, the surface is opaque
+    // Surface blocks the shadow ray.
     payload.isVisible = false;
 }
 

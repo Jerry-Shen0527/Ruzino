@@ -296,6 +296,7 @@ void fetch_)" + material.second->GetMaterialName() +
     data.shader_type_id = )" +
                     std::to_string(next_eval_index) + R"(;
     data.material_params_index = asuint(1.0f);
+    data.opacityColor = float3(1.0, 1.0, 1.0);
 }
 )";
                 program_desc.add_source_code(fetch_wrapper);

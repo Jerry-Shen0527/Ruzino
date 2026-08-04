@@ -165,6 +165,7 @@ void ClosureCompoundNodeSlang::emitOpacityFetchFunctionDefinition(
     shadergen.emitLine("void fetch_shader_opacity(", stage, false);
     shadergen.emitLine("    inout uint material_params_index,", stage, false);
     shadergen.emitLine("    inout uint shader_type_id,", stage, false);
+    shadergen.emitLine("    inout float3 opacityColor,", stage, false);
     shadergen.emitLine("    in MaterialDataBlob data,", stage, false);
     shadergen.emitLine("    in VertexInfo vertexInfo)", stage, false);
     shadergen.emitLine("{", stage, false);
@@ -189,7 +190,9 @@ void ClosureCompoundNodeSlang::emitOpacityFetchFunctionDefinition(
         if (input->getName() == "opacity") {
             TypeDesc type = input->getType();
             if (type == Type::COLOR3) {
-                // Emit the color3 expression, then convert to luminance.
+                // Emit the color3 expression, then convert to luminance for
+                // the scalar survival probability. Keep the original color3
+                // as opacityColor so pass-through rays can be tinted.
                 shadergen.emitLineBegin(stage);
                 shadergen.emitString("    float3 opacity_color3 = ", stage);
                 shadergen.emitInput(input, context, stage);
@@ -199,13 +202,20 @@ void ClosureCompoundNodeSlang::emitOpacityFetchFunctionDefinition(
                     "float3(0.212671, 0.715160, 0.072169));",
                     stage,
                     false);
+                shadergen.emitLine(
+                    "    opacityColor = opacity_color3;", stage, false);
             }
             else {
-                // Float (or other scalar) — use directly.
+                // Float (or other scalar) — use directly. No tint (neutral).
                 shadergen.emitLineBegin(stage);
                 shadergen.emitString("    float opacity_value = ", stage);
                 shadergen.emitInput(input, context, stage);
                 shadergen.emitLineEnd(stage, true);
+                shadergen.emitLine(
+                    "    opacityColor = float3(opacity_value, opacity_value, "
+                    "opacity_value);",
+                    stage,
+                    false);
             }
             opacityEmitted = true;
             break;
@@ -213,8 +223,10 @@ void ClosureCompoundNodeSlang::emitOpacityFetchFunctionDefinition(
     }
 
     if (!opacityEmitted) {
-        // No opacity input on this material — fully opaque.
+        // No opacity input on this material — fully opaque, neutral tint.
         shadergen.emitLine("    float opacity_value = 1.0;", stage, false);
+        shadergen.emitLine(
+            "    opacityColor = float3(1.0, 1.0, 1.0);", stage, false);
     }
 
     shadergen.emitLineBreak(stage);

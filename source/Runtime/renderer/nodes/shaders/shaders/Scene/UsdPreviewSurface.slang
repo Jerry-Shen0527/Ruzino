@@ -112,10 +112,14 @@ void IMP_UsdPreviewSurface_surfaceshader(
         out1 = surfaceshader(float3(1.0f), float3(1.0));
         return;
     }
-    if (opacity < 0.25f) {
-        out1 = surfaceshader(float3(0.0f), float3(1.0));
-        return;
-    }
+    // NOTE: the hard cutout (opacity<0.25 → fully transparent) was removed
+    // because it overlapped with the path-tracing main loop's stochastic
+    // pass-through (path_tracing.slang: random > opacity → ray continues).
+    // Rays reaching this BSDF eval have already been judged to hit an existing
+    // surface, so we must not zero them out again here. The opacity→
+    // transmission_mix mapping below is KEPT: that is the surface's own
+    // refraction model (PreviewSurface has no transmission param, so opacity
+    // doubles as the dielectric mix weight), distinct from geometric presence.
 
     float3 geomprop_Tworld_out1 = normalize(vd.tangentWorld);
     const float one_minus_ior_in1_tmp = 1.000000;
@@ -203,8 +207,6 @@ void IMP_UsdPreviewSurface_surfaceshader(
         float3 N = normalize(vd.normalWorld);
         float3 P = vd.positionWorld;
         float occlusion = 1.0;
-
-        float surfaceOpacity = opacity_switch_out;
 
         // Shadow occlusion
 
@@ -486,14 +488,14 @@ void IMP_UsdPreviewSurface_surfaceshader(
         //     surface_constructor_out.color += coat_bsdf_out.response;
         // }
 
-        // Compute and apply surface opacity
+        // Apply emissive only. The former `color *= surfaceOpacity` multiply
+        // was removed: it double-attenuated energy that the path-tracing main
+        // loop already handles stochastically (rays that should pass through
+        // an opacity<1 surface never reach this BSDF eval). The opacity→
+        // transmission_mix weight above is the surface's refraction model and
+        // is intentionally kept.
         {
-            surface_constructor_out.color *= surfaceOpacity;
             surface_constructor_out.color += emissiveColor;
-            surface_constructor_out.transparency = lerp(
-                float3(1.0),
-                surface_constructor_out.transparency,
-                surfaceOpacity);
         }
     }
 
@@ -597,11 +599,9 @@ float3 sample_preview_surface(
     inout uint seed,
     out float pdf)
 {
-    if (opacity < 0.25f) {
-        pdf = 1.0f;
-        V = normalize(V);
-        return -V;
-    }
+    // The hard cutout (opacity<0.25 → return -V) was removed: it overlapped
+    // with the path-tracing main loop's stochastic pass-through. Rays reaching
+    // here hit an existing surface, so sample the BSDF normally.
     // Create shading frame
     bool valid;
     ShadingFrame sf =

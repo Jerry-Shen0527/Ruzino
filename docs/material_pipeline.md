@@ -94,6 +94,96 @@ cutout/presence 处理。
 （opacity 只在 shadow ray 用了 `< 0.25` 二值判断，主 radiance 路径完全不处理）。
 修复后：黄板能透出背后的棋盘格。
 
+### BSDF 内 opacity 双重衰减清理（2026-08-03）
+
+主循环直通（上面那段）接通后，BSDF 内部仍残留两处 opacity 处理，与主循环
+重复衰减能量：硬截断（`opacity<0.25 → return transparent`）和末尾
+`color *= surfaceOpacity`。这次清理掉这两处（UsdPreviewSurface +
+StandardSurface 各删 3 点：eval 硬截断、末尾乘法、sample 早返回），让
+opacity 的几何存在性判定**只发生在主循环**，BSDF eval 一旦被调到就按完整
+表面求值。
+
+**关键教训**：原 TODO-1 建议把 `transmission_mix = (threshold>0)?1:opacity`
+也删掉是**错的**——那是 PreviewSurface 的折射模型（无 transmission 参数，
+opacity 兼任 dielectric mix 权重），不是 presence 衰减。首版照做导致
+opacity=1 的材质也崩溃（mix 从 1.0 → 0.0，折射层消失，transmission 场景
+mean 0.647 → 0.347）。区分"几何存在性（presence）"和"表面折射模型"是关键。
+
+### shadow ray opacity 概率化（2026-08-03）
+
+主循环直通是概率性的（`random > opacity`），但 shadow ray 一直是**硬二值
+截断** `if (opacity < 0.25)`——opacity 在 [0.25, 1.0] 的半透明表面会投射
+**完全不透明的硬阴影**，与 radiance 侧的软透射矛盾。半透明黄板（opacity=0.4）
+原本投的是和实心板一样的深阴影。
+
+**修复**：把 4 个 shadow hit shader（`path_tracing.slang` + `wetbrush_render.slang`
+的 `ShadowHit` + `SphereShadowHit`）的 `if (opacity < 0.25)` 改成与主循环
+对称的概率测试 `if (random_float(payload.seed) >= opacity)`。opacity=0.4 的
+表面有 40% 概率挡住 shadow ray → 投射淡阴影。基础设施本就齐备（opacity
+callable 返回连续 float、payload 带 seed 且在 continuation ray 间传递、
+`MAX_SHADOW_OPACITY=4` 递归上限），只改判定逻辑。
+
+**顺带修的 bug**：triangle shadow 里原有 `float opacity_threshold =
+random_float(payload.seed)` 算了随机数却**从没用在比较里**，白白消耗 seed
+污染下游 RNG 序列；sphere shadow 连这行都没有。概率化后这个随机数真正
+参与判定，dead code 也清掉了。
+
+**边界修复**：原代码 `opacity<0.25` 且剩余距离 ≤0.001 时会落到块外执行
+`isVisible=false`（透明表面却挡光，逻辑矛盾）。新版此时正确返回
+`isVisible=true`（距离太短说明已接近光源，无遮挡）。
+
+**验证**（5 测试全 PASSED，`conservative` vs `shadow_fix` 像素级对比）：
+- opacity=1 材质**精确零回归**：transmission 全图 delta ±0.0000。
+- preview_surface 半透明黄板（opacity=0.4）阴影区变亮 +0.06~0.07（4×4
+  网格右上象限），正是阴影投射位置。
+- standard_surface 绿板（opacity=0.6）变化被噪声淹没（~-0.002~0.009）。
+
+### 染色 opacity（color3 presence 染色直通，2026-08-03）
+
+`standard_surface.opacity` 本身是 `color3`（三通道），但 opacity fetch
+callable 把它 **luminance 降级成标量** 塞进 `material_params_index`，导致主
+循环直通时透过光**不带颜色**（红滤光片透出的光是白的）。这次让 fetch 同时
+返回 color3，主循环穿过时对 throughput 做无偏染色。
+
+**改动**（7 文件）：
+1. `callable_data.slang` + `material.cpp`：`FetchCallableData` 加
+   `float3 opacityColor` 字段（CallShader payload，双向同步）。
+2. `ClosureCompoundNodeSlang.cpp::emitOpacityFetchFunctionDefinition`：签名
+   加 `inout float3 opacityColor`；color3 分支传原色，float 分支标量化，
+   默认 `(1,1,1)`。
+3. `material.cpp`：fallback `fetch_shader_opacity` + `$getOpacity` wrapper
+   更新。
+4. `path_tracing.cpp` + `wetbrush_render.cpp`：custom shader 的
+   `fetch_<name>_opacity` wrapper 设 `opacityColor = (1,1,1)`。
+5. `path_tracing.slang` 主循环：直通分支从 `throughput 不变` 改成
+   `throughput *= (1 - opacityColor) / (1 - surviveProb)`（无偏）。
+6. shadow hits（path_tracing + wetbrush 各 2 处）：初始化 `opacityColor`
+   字段（shadow 本身不染色，只读标量 opacity 做概率测试）。
+
+**无偏性**：生存概率 P = luminance(opacityColor)（标量），穿透时 throughput
+乘 `(1 - opacityColor) / (1 - P)`。分母补偿概率，保证每通道期望无偏。对纯
+标量 opacity（UsdPreviewSurface），opacityColor=(v,v,v)，P=v，
+`(1-v)/(1-v)=1`，throughput 不变 → 和旧行为一致（零回归）。
+
+**验证**：
+- 5 个现有测试全 PASSED，transmission 球 mean=0.6470 精确回归。
+- 新场景 `mat_tinted_opacity.usda`：红滤光片 opacity=(0.1,1,1)（R 透明、
+  G/B 挡）透过光 RGB=(0.900,0.829,0.830) R>>G,B ✓ 染色生效；灰对照
+  opacity=(0.3,0.3,0.3) RGB=(0.748,0.748,0.748) 无染色 ✓。
+
+**opacity color3 语义提醒**：`opacity=(0.1, 1, 1)` 表示 **R 通道半透明**
+（红光透过）、G/B 通道不透明（挡住），所以是**透红滤光片**，不是"红色板"。
+"红色半透明板"（板本身是红色 + 半透明）需要用 `base_color` 设红色 +
+`opacity` 设标量。
+
+### 三种"透明"机制对比（当前实现状态）
+
+| 机制 | 适用 | 方向 | 染色 | 折射 | 状态 |
+|---|---|---|---|---|---|
+| **opacity（presence）** | 树叶/铁丝网/cutout | 主循环直通 | ✓（color3，本次加） | ✗ | ✅ 完成 |
+| **transmission（折射）** | 玻璃球/水（封闭体） | BSDF Snell 折射 | ✓（transmission_color） | ✓ | ✅ 完成（球场景验证） |
+| **thin_walled transmission（薄壁）** | 薄片/玻璃纸（单面开放） | 应直通不折射 | ✓ | ✗ | ⚠️ WIP（sample/eval 方向问题未解） |
+
 ## 材质测试基线
 
 `source/tests/test_material_coverage.py` + `source/tests/data/scenes/materials/`：
@@ -123,26 +213,38 @@ python -m pytest ../../source/tests/test_material_coverage.py::test_material_tra
 
 ## 已知问题与 TODO
 
-### TODO-1：UsdPreviewSurface opacity 语义重叠（中优先级）
+### TODO-1：opacity BSDF 内双重衰减（已完成 ✅，2026-08-03）
 
-`UsdPreviewSurface.slang:138-141` 仍用 opacity 做 diffuse↔dielectric mix 权重：
+**原描述**（已过时，见下方"修正"）：`UsdPreviewSurface.slang:138-141` 用 opacity
+做 diffuse↔dielectric mix 权重，与主循环 opacity presence 穿透语义重叠。
 
-```slang
-float transmission_mix_amount_out =
-    (opacityThreshold > 0.0) ? 1.0 : opacity;
-```
+**修正后的正确判断**：原 TODO 把 opacity→transmission_mix 映射也当成"重叠"是
+**错的**。实际上 BSDF 内部有**三类** opacity 处理点，只有两类是真重叠：
 
-这与主循环新加的 opacity presence 穿透（P0 改动 [3]）**语义重叠**——
-opacity 被算了两次（一次主循环直通，一次 BSDF 内 mix）。对 preview surface
-目前"歪打正着"（preview 没有 transmission 参数，透明只能靠 opacity，BSDF 内
-mix 反而补偿了效果），但不干净。
+| 处理点 | 性质 | 是否删 |
+|---|---|---|
+| 硬截断 `if(opacity<0.25) return transparent` | 与主循环直通**真重叠** | ✅ 删 |
+| 末尾 `color *= surfaceOpacity` | 与主循环直通**真重叠**（双重扣减能量） | ✅ 删 |
+| `transmission_mix = (threshold>0)?1:opacity` | **PreviewSurface 折射模型本身**（无 transmission 参数，opacity 兼任） | ❌ 保留 |
 
-**正确做法**：opacity 应该只在主循环做 presence（直通），BSDF 内部不该再用
-opacity 做 mix 权重。需修改 `UsdPreviewSurface.slang` 去掉 :138-141 的
-opacity→transmission_mix 映射，让 opacity<1 的 BSDF 求值完全等同于 opacity=1
-（因为穿过的那部分光线在主循环已经处理了）。
+把第三类也删掉（首版尝试）会让 opacity=1 的不透明材质也崩溃——因为它把
+`transmission_mix` 从 1.0（有 dielectric 折射层）变成 0.0（纯 diffuse），
+彻底移除了 PreviewSurface 唯一的透射能力。实测 transmission 测试场景 mean
+0.6470 → 0.3472（棋盘格背景 CheckLight/CheckDark 是 UsdPreviewSurface）。
 
-**风险**：需对比修改前后 preview_surface 渲染图，确认视觉一致或更好。
+**最终改动**（2 文件，净减 8 行）：
+- `UsdPreviewSurface.slang`：删 eval 硬截断 + 末尾 `color *= surfaceOpacity` +
+  sample 早返回；**保留** `transmission_mix` 映射。
+- `StandardSurface.slang`：同样删硬截断 + 末尾乘法 + sample 早返回（它本来
+  就没有 opacity→mix 映射，用 `transmission` 参数）。
+
+**验证**（5 个材质测试全 PASSED，与改动前 baseline 像素级对比）：
+- opacity=1 材质**零回归**：fallback 0.0% 像素变化、transmission 1.5%、
+  mixed 2.0%（后两者是蒙特卡洛噪声边界）。
+- opacity<1 材质**集中变化**：preview_surface 30.7% 像素变化
+  （黄板 opacity=0.4 区域变亮，去掉双重扣减）、standard_surface 7.0%
+  （绿板 opacity=0.6）。
+- 改动只影响 opacity<1 的表面，符合预期。
 
 ### TODO-2：DomeLight `inputs:shader_path` 未生效（低优先级）
 

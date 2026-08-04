@@ -106,6 +106,7 @@ void fetch_shader_data(
 void fetch_shader_opacity(
     inout uint material_params_index,
     inout uint shader_type_id,
+    inout float3 opacityColor,
     in MaterialDataBlob data,
     in VertexInfo vertexInfo
     )
@@ -113,6 +114,7 @@ void fetch_shader_opacity(
     shader_type_id = 2; // Fallback shader type id
     // Fallback: fully opaque
     material_params_index = asuint(1.0f);
+    opacityColor = float3(1.0, 1.0, 1.0);
 }
 )";
 
@@ -127,6 +129,7 @@ struct FetchCallableData {
     uint material_params_index; // Index into material parameters buffer, set by data fetch callable. Or you can reinterpret it as opacity.
     uint shader_type_id;
     VertexInfo vertexInfo;
+    float3 opacityColor; // Color3 opacity for tinted presence pass-through (set by opacity fetch callable)
 };
 
 [shader("callable")]
@@ -141,7 +144,7 @@ void $getColor(inout FetchCallableData data)
 void $getOpacity(inout FetchCallableData data)
 {
     MaterialDataBlob blob_data = materialBlobBuffer[data.materialBlobID];
-    fetch_shader_opacity(data.material_params_index, data.shader_type_id, blob_data, data.vertexInfo);
+    fetch_shader_opacity(data.material_params_index, data.shader_type_id, data.opacityColor, blob_data, data.vertexInfo);
 }
 
 )";
