@@ -157,3 +157,27 @@ def test_material_transmission():
     # Higher SPP for transmission: refraction needs more samples to converge.
     img = _render_scene(scene, "mat_transmission_sphere", spp=128)
     _assert_finite_nonblank(img, "transmission")
+
+
+def test_material_thin_walled():
+    """thin_walled path: two yellow-tinted sheets over a diffuse wall.
+
+    Expected (once thin_walled transmission is implemented): the LEFT sheet
+    (thin_walled=true) shows the white wall behind it tinted YELLOW by
+    transmission_color=(0.95,0.85,0.10), with NO refraction distortion
+    (straight-through). The RIGHT sheet (thin_walled=false, solid) shows the
+    same wall but with Snell-refraction artifacts on an open surface.
+
+    Lighting note: RectLight is now an intersectable emissive quad in the
+    TLAS (commit a03535a), so a BSDF ray can hit the light geometry directly.
+    The thin_walled tint itself, however, is not yet implemented — until it
+    is, this test only guards that the scene renders finite and non-blank.
+    """
+    scene = SCENES_DIR / "mat_thin_walled.usda"
+    if not scene.exists():
+        pytest.skip(f"{scene} not found")
+    # Higher SPP: the tint arrives via a diffuse bounce (indirect), which is
+    # noisier than direct illumination. 256 to keep the oblique-bend comparison
+    # legible.
+    img = _render_scene(scene, "mat_thin_walled", spp=256)
+    _assert_finite_nonblank(img, "thin_walled")
