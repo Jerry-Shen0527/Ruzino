@@ -390,11 +390,11 @@ struct WetbrushSimState {
     // --- Bristle chain state (spring positions + samples + liquid) ---
     // NUM_BRISTLES: paper §6 says brushes contain "40 to 600 bristles". 80 was
     // the lower end and left the XY footprint sparsely sampled at 1024 grid
-    // (footprint ~20 cells, 80 roots → visible grain in the rasterized density).
-    // 200 helped but close-up views still show grain. Paper's own smoothness
-    // source is dense bristle sampling (up to 600×128 = 76800 samples), so use
-    // the paper's upper bound — fully paper-faithful, no XY splat kernel (which
-    // the paper doesn't specify).
+    // (footprint ~20 cells, 80 roots → visible grain in the rasterized
+    // density). 200 helped but close-up views still show grain. Paper's own
+    // smoothness source is dense bristle sampling (up to 600×128 = 76800
+    // samples), so use the paper's upper bound — fully paper-faithful, no XY
+    // splat kernel (which the paper doesn't specify).
     static constexpr int NUM_BRISTLES = 600;
     static constexpr int VERTS_PER_BRISTLE = 10;
     static constexpr int SAMPLES_PER_BRISTLE = 128;
@@ -422,7 +422,12 @@ struct WetbrushSimState {
     nvrhi::BufferHandle bristle_color_b;
 
     // --- FLIP/PIC particle buffers ---
-    static constexpr int MAX_PARTICLES = 262144;
+    // 262144 saturated in ~4 frames at the 73k/frame emission rate (60fps
+    // stroke); the paper allows up to 1M particles (§4.3 "200K to 1M").
+    // Memory: 6 float4 buffers (pos/vel/color + ping-pong) + 2 uint buffers ≈
+    // 1M × (6×16 + 2×4) B ≈ 104 MB — acceptable. The pool is only fully used
+    // while particles outpace deposition; compact keeps it tight.
+    static constexpr int MAX_PARTICLES = 1048576;
 
     nvrhi::BufferHandle ptcl_pos;
     nvrhi::BufferHandle ptcl_vel;
@@ -474,6 +479,10 @@ struct WetbrushSimState {
     ProgramHandle ptcl_compact_program;
     ProgramHandle ptcl_to_grid_program;
     ProgramHandle grid_to_ptcl_program;
+    // Window region copy (vel → vel_old FLIP snapshot). The active window is a
+    // non-contiguous block inside the global buffer, so the snapshot cannot be
+    // a plain copyBuffer(..., win_n3d) — that copies the corner at offset 0.
+    ProgramHandle field_copy_window_program;
 
     // --- Control / grid bookkeeping (read by all nodes to set shader CBs) ---
     int grid_res = 0;
@@ -666,6 +675,7 @@ struct WetbrushSimState {
         destroy_prog(ptcl_compact_program);
         destroy_prog(ptcl_to_grid_program);
         destroy_prog(grid_to_ptcl_program);
+        destroy_prog(field_copy_window_program);
         destroy_prog(pack_program);
     }
 };

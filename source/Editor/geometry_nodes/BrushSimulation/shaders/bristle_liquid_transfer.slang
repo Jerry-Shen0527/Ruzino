@@ -253,26 +253,30 @@ void main(uint3 tid : SV_DispatchThreadID)
     // ================================================================
     // ABSORB: Load paint into sample (Section 5.1, Eq.14).
     //
-    // Color source priority (closest to paper semantics in the hybrid
-    // representation): if the sample touches grid paint (grid-fluid surface),
-    // absorb that real paint color — this is the Eq.14 "particle absorbed"
-    // behavior mapped onto the density field. Otherwise fall back to the
-    // supply reservoir (the brush's own loaded ink). Mass is conserved in
-    // both cases: the supply is decremented; the grid-density subtraction
-    // happens in the grid→particle/merge step.
+    // CONSERVATION (corrected): mass enters the simulation ONLY from the dip
+    // supply — the finite ink charge loaded into the bristles at stroke_start
+    // ("a dipped brush"). A brush that drags until the supply runs dry lays
+    // down progressively less paint, exactly as a real brush does. The supply
+    // is decremented here for every unit of mass the sample takes up; nothing
+    // else mints mass.
+    //
+    // Grid paint near the sample influences COLOR only (§5.1 color bleeding:
+    // a brush wiping through existing paint picks up its hue). It does NOT
+    // contribute mass — the previous code did `take = min(M_j, supply +
+    // grid_paint.a)` then only subtracted from supply, copying grid mass into
+    // the sample without removing it from the grid. That created a supply →
+    // sample → emit → deposit → grid → ABSORB → sample loop that minted mass
+    // and drove density from ~200 to ~1000.
     // ================================================================
 
-    // Real paint near the sample in the grid (density-weighted RYB).
+    // Real paint near the sample in the grid (density-weighted RYB). Color
+    // source only — a brush through wet paint picks up its hue (§5.1 color
+    // bleeding), but the grid keeps its mass.
     float4 grid_paint = sample_grid_paint(s_pos);
     bool has_grid_paint = grid_paint.a > 0.05;
 
     // Absorb color: grid paint if present, else the brush supply color.
     float3 absorb_color = has_grid_paint ? grid_paint.rgb : s_color.rgb;
-    // Absorb mass source: grid paint density drives absorption rate when
-    // present (the brush is wiping through actual paint), capped by supply.
-    float absorb_rate = has_grid_paint
-        ? min(grid_paint.a, 1.0)   // rich paint nearby → fast pickup
-        : (avail_supply * 0.05 * M_j);  // else draw from the dipped supply
 
     SampleLiquid result;
     result.pigment = c_j;
@@ -281,49 +285,39 @@ void main(uint3 tid : SV_DispatchThreadID)
     // Paper §5.1: "a brush bristle can keep paint liquid due to its
     // hydrophilicity." A dipped brush's samples are kept loaded by capillary
     // action from the ink supply — they saturate toward their capacity M_j
-    // each frame, not at a slow fixed rate. The supply IS the paint source
-    // for the initial stroke (the palette dip); once grid paint exists the
-    // sample also absorbs from it (has_grid_paint path below). Without this
-    // saturation the sample never reaches M_j, never overloads, and §5.1
-    // emission never fires — the particle path produces zero paint (cold-start
-    // deadlock). This matches the paper's implicit assumption that a loaded
-    // brush carries paint in its bristles before the first stroke.
-    if (m_j < 0.01 && (avail_supply > 0.01 || has_grid_paint)) {
-        // Dry sample — seed/saturate from the paint source up to M_j.
-        float take = min(M_j, avail_supply + grid_paint.a);
-        result.mass = take;
-        result.pigment = absorb_color;
-        sample_supply[idx] = max(avail_supply - take, 0.0);
-    } else if (m_j >= 0.01 && m_j < M_j && (avail_supply > 0.01 || has_grid_paint)) {
-        // Below capacity — saturate up to M_j from the paint source (capillary
-        // refill), capped by what the source can supply this frame.
+    // each frame. The supply IS the sole mass source. Without this saturation
+    // the sample never reaches M_j, never overloads, and §5.1 EMIT never fires
+    // (cold-start deadlock). This matches the paper's implicit assumption that
+    // a loaded brush carries paint in its bristles before the first stroke.
+    if (m_j < M_j && avail_supply > 1e-5) {
+        // Dry or below-capacity — saturate up to M_j from the supply (capillary
+        // refill), capped by what the supply can give this frame.
         float room = M_j - m_j;
-        float take = min(room, avail_supply + grid_paint.a);
+        float take = min(room, avail_supply);
         float new_mass = m_j + take;
 
-        // Brightness-preserving color mix (Algorithm 2)
+        // Brightness-preserving color mix (Algorithm 2). The incoming paint's
+        // color is the grid-bleed color if present, else the supply (ink)
+        // color — but the MASS always comes from the supply.
         result.pigment = color_mix(absorb_color, c_j, take, m_j);
         result.mass = new_mass;
         sample_supply[idx] = max(avail_supply - take, 0.0);
-    } else if (m_j >= M_j && (avail_supply > 0.01 || has_grid_paint)) {
+    } else if (m_j >= M_j && avail_supply > 1e-5) {
         // Saturated sample (paper §5.1: color bleeding + overload). A
         // hydrophilic bristle keeps taking up liquid past its static capacity
         // M_j when the supply is rich (a dipped brush). This overload is
         // exactly what §5.1 EMIT consumes (m_j > (1+ε)M_j → release
-        // particles). The previous code clamped m_j to M_j*(1+ε) here, which
-        // made overload impossible and EMIT never fired. Allow continued
-        // uptake so the supply can push m_j into the overload region; EMIT
-        // will then drain the excess back toward the threshold.
-        float bleed_weight = (has_grid_paint ? grid_paint.a : avail_supply * 0.02) * m_j;
+        // particles). Allow continued uptake so the supply can push m_j into
+        // the overload region; EMIT drains the excess each frame.
+        float bleed_weight = avail_supply * 0.02 * m_j;
         result.pigment = color_mix(absorb_color, c_j, bleed_weight, m_j);
-        // Keep absorbing mass from the supply past M_j (overload uptake).
         float take = min(avail_supply, cb.M_max);
         result.mass = m_j + take;
         sample_supply[idx] = max(avail_supply - take, 0.0);
     }
-
-    // No clamp: overload (m_j > M_j) is the legitimate trigger for §5.1 EMIT.
-    // EMIT drains the excess each frame, so m_j is bounded by the per-frame
+    // else: no supply left (brush ran dry) → sample keeps its current load,
+    // EMIT drains it toward (1+ε)M_j and no new mass enters. This is the
+    // "dragged until out of paint" behavior.
     // supply uptake, not by an artificial cap here.
     sample_liquid_out[idx] = result;
 

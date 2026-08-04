@@ -1,14 +1,14 @@
 // Damp velocity and increase dryness — 3D version
 // Wetbrush Section 4.2: "we also increase the dryness of every grid cell
 // by a small amount. Once the dryness reaches a threshold, we ignore its velocity."
-// §6: oil density controls viscosity — higher oil density → less viscous drag
-// (thinner, flatter paint); lower oil density → more drag (thicker paint).
 
 #include "common.slangh"
 
 ConstantBuffer<SimConstants> cb : register(b0);
 
-StructuredBuffer<float> oil_density : register(t0);  // §6 per-cell oil density
+// oil_density was declared here as an SRV but never sampled — removed (dead
+// binding). If §6 oil-density viscosity coupling is ever implemented, it
+// belongs in the fluid solve (jacobi), not here.
 
 RWStructuredBuffer<float> vel_x   : register(u0);
 RWStructuredBuffer<float> vel_y   : register(u1);

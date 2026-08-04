@@ -116,6 +116,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
     ensure_prog(field->ptcl_compact_program, "particle_compact.slang");
     ensure_prog(field->ptcl_to_grid_program, "particle_to_grid.slang");
     ensure_prog(field->grid_to_ptcl_program, "grid_to_particle.slang");
+    ensure_prog(field->field_copy_window_program, "field_copy_window.slang");
 
     // ======================================================================
     // PARTICLE EMIT + UPDATE (brush_paint_sim ~1614-1833)
@@ -127,7 +128,11 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         pc.max_particles = max_ptcl;
         pc.dt = 0.016f;
         pc.D0 = brush_radius *
-                1.5f;  // tight deposit zone (≈ R_j, paint stays on stroke)
+                1.5f;  // deposit boundary (§5.2). Now that num_bristles is set
+                       // in this CB (was 0 → d_B=∞ → instant deposit), d_{B,k}
+                       // is real. 1.5× (0.03) is just above R_j (0.019), so
+                       // newborns live ~1-2 frames trailing the brush then
+                       // deposit, spreading paint along the stroke.
         pc.friction_delta = 5.0f / pc.D0;
         pc.flip_gamma = 0.8f;
         pc.grid_res = field->grid_res;
@@ -147,6 +152,13 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         pc.brush_pos_y = brush_pos_3d.y;
         pc.brush_pos_z = brush_pos_3d.z;
         pc.brush_radius = brush_radius;
+        // Adhesion range (§4.3 Eq.10): blend = max(1 - d_B/D1, 0). Low (0.9× <
+        // R_j) so emitted particles (d_B≈R_j at birth) have ~zero adhesion —
+        // they stay where emitted instead of clinging to the brush. The brush
+        // moves on, d_B grows past D0, and they deposit in place along the
+        // stroke path (spread out), not piled at the touchdown. Higher D1
+        // glued particles to the brush → they never lagged past D0 → never
+        // deposited → pool saturated → no paint on grid.
         pc.D1 = brush_radius * 0.9f;
         pc.num_bristles = Nb;
         pc.samples_per_bristle = S;
@@ -258,19 +270,10 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
             { { "bristle_density", field->ptcl_density },
               { "bristle_vel_x", field->ptcl_vel_x },
               { "bristle_vel_y", field->ptcl_vel_y },
-              { "bristle_vel_z", field->ptcl_vel_z },
-              { "bristle_color_r", field->ptcl_rast_r },
-              { "bristle_color_y", field->ptcl_rast_y },
-              { "bristle_color_b", field->ptcl_rast_b } },
-            { { "density", field->density },
-              { "color_r", field->color_r },
-              { "color_y", field->color_y },
-              { "color_b", field->color_b },
-              { "vel_x", field->vel_x },
+              { "bristle_vel_z", field->ptcl_vel_z } },
+            { { "vel_x", field->vel_x },
               { "vel_y", field->vel_y },
-              { "vel_z", field->vel_z },
-              { "wetness", field->wetness },
-              { "oil_density", field->oil_density } },
+              { "vel_z", field->vel_z } },
             merge_cb,
             win_n3d);
         rc.destroy(merge_cb);
@@ -326,33 +329,39 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
             Ruzino::brush_upload_cb(
                 rc, device, &fluid_cb, sizeof(fluid_cb), "wb_fluid_cb", cb_buf);
 
-            // Snapshot velocity for FLIP
-            {
-                auto snap_cmd = rc.create(CommandListDesc{});
-                snap_cmd->open();
-                snap_cmd->copyBuffer(
-                    field->vel_x_old,
-                    0,
-                    field->vel_x,
-                    0,
-                    win_n3d * sizeof(float));
-                snap_cmd->copyBuffer(
-                    field->vel_y_old,
-                    0,
-                    field->vel_y,
-                    0,
-                    win_n3d * sizeof(float));
-                snap_cmd->copyBuffer(
-                    field->vel_z_old,
-                    0,
-                    field->vel_z,
-                    0,
-                    win_n3d * sizeof(float));
-                snap_cmd->close();
-                device->executeCommandList(snap_cmd);
-                device->waitForIdle();
-                rc.destroy(snap_cmd);
-            }
+            // Snapshot velocity for FLIP (Eq.11 needs pre-projection vel).
+            // The active window is a NON-CONTIGUOUS block inside the global
+            // buffer (each row of WIN_XY cells is separated by res−WIN_XY
+            // stride cells), so a plain copyBuffer(src, dst, win_n3d) would
+            // copy the CORNER block at offset 0 — wrong once the window moves
+            // off the corner. The previous code did exactly that, so FLIP read
+            // stale corner velocities at particle positions (vel_old was only
+            // ever valid at the grid corner). field_copy_window maps each
+            // window cell to its global index and copies that exact cell.
+            Ruzino::brush_dispatch(
+                rc,
+                field->field_copy_window_program,
+                { { "src_field", field->vel_x } },
+                { { "dst_field", field->vel_x_old } },
+                cb_buf,
+                win_n3d);
+            Ruzino::brush_dispatch(
+                rc,
+                field->field_copy_window_program,
+                { { "src_field", field->vel_y } },
+                { { "dst_field", field->vel_y_old } },
+                cb_buf,
+                win_n3d);
+            Ruzino::brush_dispatch(
+                rc,
+                field->field_copy_window_program,
+                { { "src_field", field->vel_z } },
+                { { "dst_field", field->vel_z_old } },
+                cb_buf,
+                win_n3d);
+            // brush_dispatch submits internally; ensure the snapshot lands
+            // before the solve dispatches read vel_*_old.
+            device->waitForIdle();
 
             // Velocity diffuse (Jacobi, mode 0)
             fluid_cb.jacobi_mode = 0;
@@ -529,7 +538,9 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
             Ruzino::brush_dispatch(
                 rc,
                 field->damp_dry_program,
-                { { "oil_density", field->oil_density } },
+                // oil_density was bound here but the shader never samples it
+                // (dead binding) — removed.
+                {},
                 { { "vel_x", field->vel_x },
                   { "vel_y", field->vel_y },
                   { "vel_z", field->vel_z },
@@ -542,9 +553,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                 Ruzino::ParticleConstants pc = {};
                 pc.max_particles = max_ptcl;
                 pc.dt = sub_dt;
-                pc.D0 =
-                    brush_radius *
-                    1.5f;  // tight deposit zone (≈ R_j, paint stays on stroke)
+                pc.D0 = brush_radius * 1.5f;  // match particle/maintenance D0
                 pc.flip_gamma = 0.8f;
                 pc.grid_res = field->grid_res;
                 pc.grid_res_z = WIN_Z;
@@ -595,8 +604,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         Ruzino::ParticleConstants pc = {};
         pc.max_particles = max_ptcl;
         pc.dt = 0.016f;
-        pc.D0 = brush_radius *
-                1.5f;  // tight deposit zone (≈ R_j, paint stays on stroke)
+        pc.D0 = brush_radius * 1.5f;  // match particle-section D0
         pc.grid_res = field->grid_res;
         pc.grid_res_z = WIN_Z;
         pc.height_extent = field->grid_height;
@@ -614,6 +622,14 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         pc.brush_pos_y = brush_pos_3d.y;
         pc.brush_pos_z = brush_pos_3d.z;
         pc.brush_radius = brush_radius;
+        // num_bristles / samples_per_bristle: REQUIRED by particle_to_grid's
+        // d_{B,k} nearest-sample query (§5.2). Without these, num_samples = 0,
+        // the scan finds no bristle, d_B defaults to sqrt(1e30)≈3e15, and
+        // EVERY particle reads as "far from bristles" → instant deposit,
+        // regardless of D0. This was the hidden reason widening D0/D1 had no
+        // effect: the d_B was always astronomically larger than any D0.
+        pc.num_bristles = Nb;
+        pc.samples_per_bristle = S;
 
         nvrhi::BufferHandle maint_cb;
         Ruzino::brush_upload_cb(
@@ -634,7 +650,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
               { "color_r", field->color_r },
               { "color_y", field->color_y },
               { "color_b", field->color_b },
-              { "ptcl_alive_out", field->ptcl_alive_b } },
+              { "ptcl_alive_out", field->ptcl_alive_b },
+              { "wetness", field->wetness } },
             maint_cb,
             max_ptcl);
         std::swap(field->ptcl_alive, field->ptcl_alive_b);

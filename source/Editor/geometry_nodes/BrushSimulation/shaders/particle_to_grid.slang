@@ -20,6 +20,13 @@ RWStructuredBuffer<float> color_r : register(u1);
 RWStructuredBuffer<float> color_y : register(u2);
 RWStructuredBuffer<float> color_b : register(u3);
 RWStructuredBuffer<uint> ptcl_alive_out : register(u4);
+// Wetness: depositing paint is WET paint. damp_dry only ever DECREASES
+// wetness, so without a writer that sets it high on deposition, every painted
+// cell reads as dried-solid (wetness < 0.01) the moment it lands — the fluid
+// solve then treats fresh paint as an immovable wall and it never spreads.
+// Set the receiving cells to fully wet here (the only place mass enters the
+// grid).
+RWStructuredBuffer<float> wetness : register(u5);
 
 [numthreads(256, 1, 1)]
 void main(uint3 tid : SV_DispatchThreadID)
@@ -68,19 +75,15 @@ void main(uint3 tid : SV_DispatchThreadID)
     int cy = int(floor((pos.y - cb.grid_center_y + half_p) / cb.cell_size));
     int cz = int(floor((pos.z - cb.grid_center_z + half_h) / cell_z));
 
-    // 3. AND whose target cell falls inside the active window. grid_to_particle
-    // (the conservation partner, Eq.15) only runs inside the window, so a
-    // particle→grid transfer OUTSIDE the window would inject mass/color that
-    // nothing subtracts back — breaking conservation and, when particles drift
-    // slightly frame to frame, making the injected mix oscillate (the
-    // post-stroke red/blue flicker). Keep such particles alive until the window
-    // moves over them.
-    if (cx < cb.window_origin_x || cx >= cb.window_origin_x + cb.window_size_x ||
-        cy < cb.window_origin_y || cy >= cb.window_origin_y + cb.window_size_x ||
-        cz < cb.window_origin_z || cz >= cb.window_origin_z + cb.window_size_z) {
-        ptcl_alive_out[idx] = 1;
-        return;
-    }
+    // Deposit anywhere in the GLOBAL grid. The previous "keep alive if outside
+    // the active window" check (for conservation symmetry with grid_to_particle)
+    // stranded every particle the brush left behind: the brush window is ~125
+    // cells wide but the stroke is ~300 cells long, so after a few frames
+    // nearly all emitted particles were outside the window, never depositing,
+    // and the pool saturated at 262k with ~0 grid density. Paint left behind
+    // by a moving brush SHOULD deposit onto the grid and stay — that is the
+    // persistent canvas. Only deposit into valid global-grid cells (the bounds
+    // check in the neighborhood loop below handles out-of-grid).
 
     // 3×3×3 neighborhood with kernel weights (Eq.16)
     [unroll] for (int dz = -1; dz <= 1; dz++) {
@@ -114,6 +117,11 @@ void main(uint3 tid : SV_DispatchThreadID)
             color_r[gi] += col.x * w_new;
             color_y[gi] += col.y * w_new;
             color_b[gi] += col.z * w_new;
+            // Freshly deposited paint is fully wet; drying (damp_dry) brings
+            // it down over time. max() so re-depositing on an existing cell
+            // keeps it wet (a re-stroke wets the paint again, as a real brush
+            // would).
+            wetness[gi] = max(wetness[gi], 1.0f);
         }
       }
     }

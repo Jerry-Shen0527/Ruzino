@@ -8,18 +8,14 @@ StructuredBuffer<float> bristle_density : register(t0);
 StructuredBuffer<float> bristle_vel_x : register(t1);
 StructuredBuffer<float> bristle_vel_y : register(t2);
 StructuredBuffer<float> bristle_vel_z : register(t3);
-StructuredBuffer<float> bristle_color_r : register(t4);
-StructuredBuffer<float> bristle_color_y : register(t5);
-StructuredBuffer<float> bristle_color_b : register(t6);
-RWStructuredBuffer<float> density : register(u0);
-RWStructuredBuffer<float> color_r : register(u1);
-RWStructuredBuffer<float> color_y : register(u2);
-RWStructuredBuffer<float> color_b : register(u3);
-RWStructuredBuffer<float> vel_x : register(u4);
-RWStructuredBuffer<float> vel_y : register(u5);
-RWStructuredBuffer<float> vel_z : register(u6);
-RWStructuredBuffer<float> wetness : register(u7);
-RWStructuredBuffer<float> oil_density : register(u8);  // §6 oil density (per-cell)
+// Only velocity UAVs. The density/color/wetness/oil_density UAVs previously
+// declared here were never written by the body (this merge is intentionally
+// VELOCITY-ONLY — see the comment below); leaving them bound was dead weight
+// and implied the merge wrote mass it doesn't. Same for bristle_color_* SRVs,
+// which the body never read.
+RWStructuredBuffer<float> vel_x : register(u0);
+RWStructuredBuffer<float> vel_y : register(u1);
+RWStructuredBuffer<float> vel_z : register(u2);
 
 [numthreads(256, 1, 1)]
 void main(uint3 tid : SV_DispatchThreadID)
