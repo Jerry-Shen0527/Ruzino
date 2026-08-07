@@ -17,7 +17,7 @@
 #include "material/material.h"
 #include "nodes/core/def/node_def.hpp"
 #include "nvrhi/nvrhi.h"
-#include "shaders/shaders/utils/HitObject.h"
+#include "shaders/utils/HitObject.h"
 
 // A traditional path tracing node
 
@@ -170,7 +170,7 @@ NODE_EXECUTION_FUNCTION(path_tracing)
             spdlog::info("Creating path tracing shader program");
         }
         ProgramDesc program_desc;
-        program_desc.set_path("shaders/path_tracing.slang");
+        program_desc.set_path("path_tracing.slang");
         program_desc.shaderType = nvrhi::ShaderType::AllRayTracing;
 #if 0
 
@@ -203,9 +203,9 @@ NODE_EXECUTION_FUNCTION(path_tracing)
         }
 
         // Add callable shader files
-        program_desc.add_path("shaders/callables/eval_fallback.slang");
-        program_desc.add_path("shaders/callables/eval_standard_surface.slang");
-        program_desc.add_path("shaders/callables/eval_preview_surface.slang");
+        program_desc.add_path("callables/eval_fallback.slang");
+        program_desc.add_path("callables/eval_standard_surface.slang");
+        program_desc.add_path("callables/eval_preview_surface.slang");
 
         // Add dome light custom shader if it exists
         if (found_dome_shader) {

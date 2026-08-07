@@ -3,7 +3,7 @@
 #include "hd_RUZINO/render_node_base.h"
 #include "nodes/core/def/node_def.hpp"
 #include "nvrhi/nvrhi.h"
-#include "shaders/shaders/utils/motion_vec_cb.h"
+#include "shaders/utils/motion_vec_cb.h"
 #include "spdlog/spdlog.h"
 #include "utils/math.h"
 NODE_DEF_OPEN_SCOPE
@@ -38,7 +38,7 @@ NODE_EXECUTION_FUNCTION(motion_vec)
     auto compute_shader = shader_factory.compile_shader(
         "main",
         nvrhi::ShaderType::Compute,
-        "shaders/motion_vec.slang",
+        "motion_vec.slang",
         reflection,
         error_string);
     nvrhi::BindingLayoutDescVector binding_layout_desc_vec =

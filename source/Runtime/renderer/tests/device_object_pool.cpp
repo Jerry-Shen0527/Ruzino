@@ -7,7 +7,7 @@
 #include <mutex>
 #include <random>
 
-#include "../nodes/shaders/shaders/Scene/SceneTypes.slang"
+#include "../nodes/shaders/Scene/SceneTypes.slang"
 
 using namespace Ruzino;
 

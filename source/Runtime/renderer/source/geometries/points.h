@@ -12,7 +12,7 @@
 #include "pxr/imaging/hd/points.h"
 #include "pxr/pxr.h"
 // SceneTypes
-#include "../nodes/shaders/shaders/Scene/SceneTypes.slang"
+#include "../nodes/shaders/Scene/SceneTypes.slang"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 class Hd_RUZINO_RenderParam;

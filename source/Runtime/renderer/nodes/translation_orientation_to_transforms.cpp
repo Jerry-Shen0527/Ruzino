@@ -22,7 +22,7 @@ NODE_EXECUTION_FUNCTION(translation_orientation_to_transforms)
 {
     ProgramDesc cs_program_desc =
         ProgramDesc()
-            .set_path("shaders/translation_orientation_to_transforms.slang")
+            .set_path("translation_orientation_to_transforms.slang")
             .set_entry_name("main")
             .set_shader_type(nvrhi::ShaderType::Compute);
 

@@ -12,7 +12,7 @@
 #include "pxr/usd/sdf/assetPath.h"
 // SceneTypes (MeshDesc, GeometryInstanceData, GeometryType) -- shared host/
 // device header, included by renderTLAS.h and mesh.h the same way.
-#include "../nodes/shaders/shaders/Scene/SceneTypes.slang"
+#include "../nodes/shaders/Scene/SceneTypes.slang"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 

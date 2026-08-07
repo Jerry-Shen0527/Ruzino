@@ -39,7 +39,7 @@ NODE_EXECUTION_FUNCTION(rng_buffer)
         ProgramDesc program_desc;
         ProgramHandle compute_shader;
 
-        program_desc.set_path("shaders/utils/random_init_buffer.slang")
+        program_desc.set_path("utils/random_init_buffer.slang")
             .set_entry_name("main")
             .shaderType = nvrhi::ShaderType::Compute;
 

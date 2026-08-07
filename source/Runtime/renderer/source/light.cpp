@@ -5,7 +5,7 @@
 #include <filesystem>
 
 #include "RHI/shaderCompiler.h"
-#include "../nodes/shaders/shaders/Scene/Lights/LightData.slang"
+#include "../nodes/shaders/Scene/Lights/LightData.slang"
 #include "RHI/Hgi/format_conversion.hpp"
 #include "nvrhi/utils.h"
 #include "pxr/imaging/glf/simpleLight.h"

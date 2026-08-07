@@ -1,5 +1,5 @@
 add_library(shaders_interface INTERFACE)
-target_include_directories(shaders_interface INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/nodes/shaders/shaders)
+target_include_directories(shaders_interface INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/nodes/shaders)
 target_include_directories(shaders_interface INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/nodes/render_node_base)
 target_include_directories(shaders_interface INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/nodes/)
 target_compile_definitions(shaders_interface INTERFACE NOMINMAX)
@@ -27,12 +27,12 @@ target_compile_definitions(hd_RUZINO PRIVATE HOST_CODE=1 _USE_MATH_DEFINES)
 target_compile_definitions(hd_RUZINO PUBLIC RUZINO_BACKEND_NVRHI)
 target_compile_definitions(hd_RUZINO_py PRIVATE NOMINMAX)
 target_link_libraries(hd_RUZINO_py PRIVATE shaders_interface OpenGL32)
-target_include_directories(hd_RUZINO PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/nodes/shaders/shaders)
+target_include_directories(hd_RUZINO PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/nodes/shaders)
 target_include_directories(hd_RUZINO PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/source)
 
 # Install renderer shader files
-install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/nodes/shaders/shaders/
-	DESTINATION bin/shaders/renderer/shaders
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/nodes/shaders/
+	DESTINATION bin/shaders/renderer
 	PATTERN ".git" EXCLUDE
 )
 

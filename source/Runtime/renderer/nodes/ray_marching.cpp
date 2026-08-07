@@ -3,7 +3,7 @@
 #include "hd_RUZINO/render_node_base.h"
 #include "nodes/core/def/node_def.hpp"
 #include "nvrhi/nvrhi.h"
-#include "shaders/shaders/utils/HitObject.h"
+#include "shaders/utils/HitObject.h"
 
 NODE_DEF_OPEN_SCOPE
 NODE_DECLARATION_FUNCTION(ray_marching)
@@ -20,7 +20,7 @@ NODE_EXECUTION_FUNCTION(ray_marching)
     using namespace nvrhi;
 
     ProgramDesc program_desc;
-    program_desc.set_path("shaders/sdf.slang");
+    program_desc.set_path("sdf.slang");
     program_desc.shaderType = nvrhi::ShaderType::AllRayTracing;
     program_desc.nvapi_support = true;
 

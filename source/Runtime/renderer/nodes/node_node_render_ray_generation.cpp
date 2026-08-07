@@ -3,9 +3,9 @@
 #include "hd_RUZINO/render_node_base.h"
 #include "nodes/core/def/node_def.hpp"
 #include "nvrhi/nvrhi.h"
-#include "shaders/shaders/utils/CameraParameters.h"
-#include "shaders/shaders/utils/ray.slang"
-#include "shaders/shaders/utils/view_cb.h"
+#include "shaders/utils/CameraParameters.h"
+#include "shaders/utils/ray.slang"
+#include "shaders/utils/view_cb.h"
 #include "spdlog/spdlog.h"
 #include "utils/cam_to_view_contants.h"
 #include "utils/math.h"
@@ -70,7 +70,7 @@ NODE_EXECUTION_FUNCTION(node_render_ray_generation)
         // Prepare the shader using reflection
         ProgramDesc cs_program_desc;
         cs_program_desc.shaderType = nvrhi::ShaderType::Compute;
-        cs_program_desc.set_path("shaders/raygen.slang").set_entry_name("main");
+        cs_program_desc.set_path("raygen.slang").set_entry_name("main");
 
         std::vector<ShaderMacro> macro_defines;
         if (params.get_input<bool>("Scatter Rays"))

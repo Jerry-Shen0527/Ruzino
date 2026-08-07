@@ -42,7 +42,7 @@ NODE_EXECUTION_FUNCTION(rasterize)
 
     ProgramDesc vs_program_desc;
     vs_program_desc.shaderType = nvrhi::ShaderType::Vertex;
-    vs_program_desc.set_path("shaders/rasterize.vs.slang")
+    vs_program_desc.set_path("rasterize.vs.slang")
         .set_entry_name("main")
         .define(macros);
 
@@ -52,7 +52,7 @@ NODE_EXECUTION_FUNCTION(rasterize)
 
     ProgramDesc ps_program_desc;
     ps_program_desc.shaderType = nvrhi::ShaderType::Pixel;
-    ps_program_desc.set_path("shaders/rasterize.ps.slang")
+    ps_program_desc.set_path("rasterize.ps.slang")
         .set_entry_name("main")
         .define(macros);
 

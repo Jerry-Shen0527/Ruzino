@@ -33,7 +33,7 @@
 #include "pxr/imaging/hd/volume.h"
 #include "pxr/pxr.h"
 // SceneTypes (VolumeDesc, GeometryInstanceData)
-#include "../nodes/shaders/shaders/Scene/SceneTypes.slang"
+#include "../nodes/shaders/Scene/SceneTypes.slang"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 class Hd_RUZINO_RenderParam;

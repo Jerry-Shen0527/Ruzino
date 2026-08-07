@@ -115,7 +115,7 @@ NODE_EXECUTION_FUNCTION(material_brdf_analyzer)
 
     // ===== BRDF Eval Shader =====
     ProgramDesc eval_program_desc;
-    eval_program_desc.set_path("shaders/material_brdf_eval.slang");
+    eval_program_desc.set_path("material_brdf_eval.slang");
     eval_program_desc.shaderType = ShaderType::AllRayTracing;
     eval_program_desc.nvapi_support = true;
 
@@ -216,7 +216,7 @@ NODE_EXECUTION_FUNCTION(material_brdf_analyzer)
 
     // ===== BRDF Sample Shader =====
     ProgramDesc sample_program_desc;
-    sample_program_desc.set_path("shaders/material_brdf_sample.slang");
+    sample_program_desc.set_path("material_brdf_sample.slang");
     sample_program_desc.shaderType = ShaderType::AllRayTracing;
     sample_program_desc.nvapi_support = true;
 
@@ -343,7 +343,7 @@ NODE_EXECUTION_FUNCTION(material_brdf_analyzer)
 
     // ===== Normalize Sample Buffer to Texture =====
     ProgramDesc normalize_program_desc;
-    normalize_program_desc.set_path("shaders/material_brdf_normalize.slang");
+    normalize_program_desc.set_path("material_brdf_normalize.slang");
     normalize_program_desc.shaderType = ShaderType::Compute;
 
     auto normalize_compiled = resource_allocator.create(normalize_program_desc);
@@ -394,7 +394,7 @@ NODE_EXECUTION_FUNCTION(material_brdf_analyzer)
     // Sample from BRDF and divide by PDF to check uniformity
     ProgramDesc importance_program_desc;
     importance_program_desc.set_path(
-        "shaders/material_brdf_importance_sample.slang");
+        "material_brdf_importance_sample.slang");
     importance_program_desc.shaderType = ShaderType::AllRayTracing;
     importance_program_desc.nvapi_support = true;
 

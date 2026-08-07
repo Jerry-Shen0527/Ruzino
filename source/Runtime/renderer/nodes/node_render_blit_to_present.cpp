@@ -4,7 +4,7 @@
 #include "nodes/core/def/node_def.hpp"
 #include "nvrhi/nvrhi.h"
 #include "pxr/base/gf/range2f.h"
-#include "shaders/shaders/utils/blit_cb.h"
+#include "shaders/utils/blit_cb.h"
 #include "spdlog/spdlog.h"
 
 NODE_DEF_OPEN_SCOPE
@@ -109,7 +109,7 @@ NODE_EXECUTION_FUNCTION(blit_to_present)
         "main",
         nvrhi::ShaderType::Vertex,
         SlangShaderCompiler::get_shader_dir(ShaderDirType::Renderer).string() +
-            "/shaders/utils/" + vs_name,
+            "/utils/" + vs_name,
         vs_reflection_info,
         error_string,
         macro_defines);
@@ -121,7 +121,7 @@ NODE_EXECUTION_FUNCTION(blit_to_present)
         "main",
         nvrhi::ShaderType::Pixel,
         SlangShaderCompiler::get_shader_dir(ShaderDirType::Renderer).string() +
-            "/shaders/utils/" + ps_name,
+            "/utils/" + ps_name,
         ps_reflection_info,
         error_string,
         macro_defines);

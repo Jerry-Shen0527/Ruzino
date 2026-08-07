@@ -32,7 +32,7 @@
 #include "pxr/pxr.h"
 
 // Include slang types for GeometryInstanceData
-#include "../nodes/shaders/shaders/Scene/SceneTypes.slang"
+#include "../nodes/shaders/Scene/SceneTypes.slang"
 #include "internal/memory/DeviceMemoryPool.hpp"
 #include "nvrhi/nvrhi.h"
 

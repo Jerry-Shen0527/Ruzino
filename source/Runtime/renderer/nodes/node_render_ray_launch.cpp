@@ -3,8 +3,8 @@
 
 #include "hd_RUZINO/render_node_base.h"
 #include "nvrhi/nvrhi.h"
-#include "shaders/shaders/utils/HitObject.h"
-#include "shaders/shaders/utils/ray.slang"
+#include "shaders/utils/HitObject.h"
+#include "shaders/utils/ray.slang"
 
 #define WITH_NVAPI 1
 
@@ -104,7 +104,7 @@ NODE_EXECUTION_FUNCTION(scene_ray_launch)
     // 2. Prepare the shader
 
     ProgramDesc shader_compile_desc;
-    shader_compile_desc.set_path("shaders/ray_launch.slang");
+    shader_compile_desc.set_path("ray_launch.slang");
     shader_compile_desc.shaderType = nvrhi::ShaderType::AllRayTracing;
 
     auto raytrace_compiled = resource_allocator.create(shader_compile_desc);

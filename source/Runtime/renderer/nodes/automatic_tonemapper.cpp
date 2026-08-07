@@ -16,7 +16,7 @@ NODE_EXECUTION_FUNCTION(automatic_tonemapper)
 {
     ProgramDesc cs_program_desc;
     cs_program_desc.shaderType = nvrhi::ShaderType::Compute;
-    cs_program_desc.set_path("shaders/tonemapper.slang").set_entry_name("main");
+    cs_program_desc.set_path("tonemapper.slang").set_entry_name("main");
     ProgramHandle cs_program = resource_allocator.create(cs_program_desc);
     MARK_DESTROY_NVRHI_RESOURCE(cs_program);
     CHECK_PROGRAM_ERROR(cs_program);

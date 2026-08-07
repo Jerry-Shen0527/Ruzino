@@ -870,7 +870,10 @@ void ShaderFactory::SlangCompile(
 
     std::vector<std::string> searchPaths = { shader_search_path };
     searchPaths.push_back("./");
-    searchPaths.push_back(shader_search_path + "/shaders/");
+    // Note: previously also pushed shader_search_path + "/shaders/" to find
+    // shaders under a nested shaders/shaders/ subdir. That nesting was flattened
+    // (nodes/shaders/shaders/* -> nodes/shaders/*), so the root search path
+    // above now contains the files directly.
 
     for (auto& search_path : search_paths) {
         searchPaths.push_back(search_path);

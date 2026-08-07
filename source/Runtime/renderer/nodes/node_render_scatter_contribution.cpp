@@ -9,7 +9,7 @@
 #include "hd_RUZINO/render_node_base.h"
 #include "nodes/core/def/node_def.hpp"
 #include "nvrhi/nvrhi.h"
-#include "shaders/shaders/utils/cpp_shader_macro.h"
+#include "shaders/utils/cpp_shader_macro.h"
 #include "utils/math.h"
 
 NODE_DEF_OPEN_SCOPE
@@ -33,7 +33,7 @@ NODE_EXECUTION_FUNCTION(scatter_contribution)
     unsigned length = params.get_input<int>("Buffer Size");
     if (length > 0) {
         ProgramDesc atomic_scatter_desc;
-        atomic_scatter_desc.set_path("shaders/atomic_scatter.slang")
+        atomic_scatter_desc.set_path("atomic_scatter.slang")
             .set_entry_name("main")
             .set_shader_type(ShaderType::Compute);
 
@@ -93,7 +93,7 @@ NODE_EXECUTION_FUNCTION(scatter_contribution)
         }
 
         ProgramDesc add_desc;
-        add_desc.set_path("shaders/add_scatter.slang")
+        add_desc.set_path("add_scatter.slang")
             .set_entry_name("main")
             .set_shader_type(ShaderType::Compute);
         auto add_program = resource_allocator.create(add_desc);

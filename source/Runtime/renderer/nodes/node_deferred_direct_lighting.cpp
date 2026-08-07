@@ -20,7 +20,7 @@
 #include "nvrhi/nvrhi.h"
 #include "nvrhi/utils.h"
 #include "renderTLAS.h"
-#include "shaders/shaders/utils/view_cb.h"
+#include "shaders/utils/view_cb.h"
 #include "spdlog/spdlog.h"
 #include "utils/math.h"
 
@@ -84,7 +84,7 @@ NODE_EXECUTION_FUNCTION(deferred_direct_lighting)
     auto cs_shader = shader_factory.compile_shader(
         "main",
         nvrhi::ShaderType::Compute,
-        "shaders/deferred_direct_lighting.cs.slang",
+        "deferred_direct_lighting.cs.slang",
         reflection,
         error_string);
     MARK_DESTROY_NVRHI_RESOURCE(cs_shader);

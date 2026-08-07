@@ -6,7 +6,7 @@
 #include "nodes/core/def/node_def.hpp"
 #include "nvrhi/nvrhi.h"
 #include "nvrhi/utils.h"
-#include "shaders/shaders/utils/HitObject.h"
+#include "shaders/utils/HitObject.h"
 #include "spdlog/spdlog.h"
 #include "utils/math.h"
 NODE_DEF_OPEN_SCOPE
@@ -36,7 +36,7 @@ NODE_EXECUTION_FUNCTION(material_eval_sample_pdf)
     using namespace nvrhi;
 
     ProgramDesc program_desc;
-    program_desc.set_path("shaders/material_eval_sample_pdf.slang");
+    program_desc.set_path("material_eval_sample_pdf.slang");
     program_desc.shaderType = nvrhi::ShaderType::AllRayTracing;
     program_desc.nvapi_support = true;
 

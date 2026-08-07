@@ -42,7 +42,7 @@ NODE_EXECUTION_FUNCTION(rng_texture)
         compute_shader = shader_factory.compile_shader(
             "main",
             nvrhi::ShaderType::Compute,
-            "shaders/utils/random_init.slang",
+            "utils/random_init.slang",
             reflection,
             error_string);
 

@@ -4,9 +4,9 @@
 #include "nvrhi/nvrhi.h"
 
 // SceneTypes
-#include "../nodes/shaders/shaders/Scene/BindlessMaterial.slang"
-#include "../nodes/shaders/shaders/Scene/Lights/LightData.slang"
-#include "../nodes/shaders/shaders/Scene/SceneTypes.slang"
+#include "../nodes/shaders/Scene/BindlessMaterial.slang"
+#include "../nodes/shaders/Scene/Lights/LightData.slang"
+#include "../nodes/shaders/Scene/SceneTypes.slang"
 #include "internal/memory/DeviceMemoryPool.hpp"
 
 RUZINO_NAMESPACE_OPEN_SCOPE

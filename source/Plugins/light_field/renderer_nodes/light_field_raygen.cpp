@@ -2,7 +2,7 @@
 #include <pxr/base/gf/vec3f.h>
 
 #include "GPUContext/compute_context.hpp"
-#include "shaders/shaders/utils/ray.slang"
+#include "shaders/utils/ray.slang"
 
 // Use the actual OpenUSD internal namespace
 using namespace pxr;

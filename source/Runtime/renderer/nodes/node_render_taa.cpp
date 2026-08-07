@@ -3,7 +3,7 @@
 #include "nodes/core/def/node_def.hpp"
 #include "nvrhi/nvrhi.h"
 #include "nvrhi/utils.h"
-#include "shaders/shaders/utils/taa_cb.h"
+#include "shaders/utils/taa_cb.h"
 #include "spdlog/spdlog.h"
 #include "utils/math.h"
 NODE_DEF_OPEN_SCOPE
@@ -44,7 +44,7 @@ NODE_EXECUTION_FUNCTION(taa)
     auto compute_shader = shader_factory.compile_shader(
         "main",
         nvrhi::ShaderType::Compute,
-        "shaders/TAA.slang",
+        "TAA.slang",
         reflection,
         error_string);
     MARK_DESTROY_NVRHI_RESOURCE(compute_shader);

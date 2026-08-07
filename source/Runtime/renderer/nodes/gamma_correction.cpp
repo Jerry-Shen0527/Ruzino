@@ -60,7 +60,7 @@ NODE_EXECUTION_FUNCTION(gamma_correction)
     if (!storage.cached_program) {
         ProgramDesc cs_program_desc;
         cs_program_desc.shaderType = nvrhi::ShaderType::Compute;
-        cs_program_desc.set_path("shaders/gamma_correction.slang")
+        cs_program_desc.set_path("gamma_correction.slang")
             .set_entry_name("main");
         storage.cached_program = resource_allocator.create(cs_program_desc);
         CHECK_PROGRAM_ERROR(storage.cached_program);

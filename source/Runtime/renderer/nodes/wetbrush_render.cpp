@@ -6,7 +6,7 @@
 //
 // This node is a faithful copy of path_tracing.cpp's pipeline (program build,
 // material-callable registration, SBT, bindings, dispatch) with the additions:
-//   * program_desc also adds "shaders/volume_intersection.slang";
+//   * program_desc also adds "volume_intersection.slang";
 //   * the SBT registers two more hit groups at slots 4/5 routed to the volume
 //     intersection/closest-hit/shadow shaders;
 //   * program_vars binds the new volumeDescBuffer.
@@ -33,7 +33,7 @@
 #include "material/material.h"
 #include "nodes/core/def/node_def.hpp"
 #include "nvrhi/nvrhi.h"
-#include "shaders/shaders/utils/HitObject.h"
+#include "shaders/utils/HitObject.h"
 
 NODE_DEF_OPEN_SCOPE
 
@@ -190,8 +190,8 @@ NODE_EXECUTION_FUNCTION(wetbrush_render)
         // same translation unit as RayPayload / ShadowPayload / the Scene
         // imports. path_tracing.slang is NOT modified; volume_intersection.slang
         // holds the importable helpers (samplePaintField, intersectSlab, etc.).
-        program_desc.set_path("shaders/wetbrush_render.slang");
-        program_desc.add_path("shaders/volume_intersection.slang");
+        program_desc.set_path("wetbrush_render.slang");
+        program_desc.add_path("volume_intersection.slang");
         program_desc.shaderType = nvrhi::ShaderType::AllRayTracing;
 
         if (use_sampled_spectrum) {
@@ -208,9 +208,9 @@ NODE_EXECUTION_FUNCTION(wetbrush_render)
             program_desc.define("USE_DOME_LIGHT_CALLABLE", "0");
         }
 
-        program_desc.add_path("shaders/callables/eval_fallback.slang");
-        program_desc.add_path("shaders/callables/eval_standard_surface.slang");
-        program_desc.add_path("shaders/callables/eval_preview_surface.slang");
+        program_desc.add_path("callables/eval_fallback.slang");
+        program_desc.add_path("callables/eval_standard_surface.slang");
+        program_desc.add_path("callables/eval_preview_surface.slang");
 
         if (found_dome_shader) {
             std::filesystem::path shader_path(current_dome_shader_path);

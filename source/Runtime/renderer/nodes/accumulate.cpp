@@ -55,7 +55,7 @@ NODE_EXECUTION_FUNCTION(accumulate)
         storage.cached_program->get_desc().check_shader_updated()) {
         ProgramDesc cs_program_desc;
         cs_program_desc.shaderType = nvrhi::ShaderType::Compute;
-        cs_program_desc.set_path("shaders/accumulate.slang")
+        cs_program_desc.set_path("accumulate.slang")
             .set_entry_name("main");
         storage.cached_program = resource_allocator.create(cs_program_desc);
         CHECK_PROGRAM_ERROR(storage.cached_program);

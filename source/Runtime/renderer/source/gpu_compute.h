@@ -10,7 +10,7 @@
 #include "pxr/base/vt/array.h"
 
 // Forward declarations to avoid including slang file
-#include "../nodes/shaders/shaders/Scene/SceneTypes.slang"
+#include "../nodes/shaders/Scene/SceneTypes.slang"
 #include "internal/memory/DeviceMemoryPool.hpp"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
