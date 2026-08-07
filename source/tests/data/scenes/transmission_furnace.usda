@@ -1,0 +1,61 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Camera "Camera"
+{
+    float2 clippingRange = (0.1, 100)
+    float focalLength = 50
+    float horizontalAperture = 36
+    float verticalAperture = 20.25
+    matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 8, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+# Rough glass sphere in a uniform environment. specular=1 lets the reflection
+# lobe carry the Fresnel-reflected energy (F) so it is not silently lost (which
+# would happen with specular=0 and pollute the jacobian measurement). With
+# transmission=1, transmission_color=white, no absorption, a correct path tracer
+# returns all incident radiance: the sphere integrates to the environment's Le,
+# so sphere_mean / environment_mean == 1.0 (the transmission white furnace).
+#
+# roughness=0.5 (not a perfect mirror, not diffuse) gives a strong, well-defined
+# GGX transmission lobe that exercises the BTDF Jacobian across many
+# VdotH/LdotH configurations -- the dimension the pre-fix code got wrong.
+def Material "RoughGlass"
+{
+    token outputs:surface.connect = </RoughGlass/Shader.outputs:surface>
+
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 0.0
+        float inputs:specular = 1.0
+        float inputs:specular_roughness = 0.5
+        float inputs:specular_IOR = 1.5
+        float inputs:transmission = 1.0
+        color3f inputs:transmission_color = (1.0, 1.0, 1.0)
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+def Xform "World"
+{
+    def Sphere "Sphere"
+    {
+        rel material:binding = </RoughGlass>
+        double radius = 1
+        double3 xformOp:translate = (0, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}
+
+def DomeLight "DomeLight"
+{
+    color3f inputs:color = (1, 1, 1)
+    float inputs:exposure = 0
+    float inputs:intensity = 1
+}

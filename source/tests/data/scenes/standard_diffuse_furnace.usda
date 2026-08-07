@@ -1,0 +1,57 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Camera "Camera"
+{
+    float2 clippingRange = (0.1, 100)
+    float focalLength = 50
+    float horizontalAperture = 36
+    float verticalAperture = 20.25
+    matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 8, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+# Standard_surface diffuse white furnace: pure diffuse (base=1, roughness=1, no
+# specular/transmission) in a uniform environment. Companion to white_furnace.usda
+# (UsdPreviewSurface) — this exercises the NG_standard_surface_surfaceshader_100
+# path, specifically the eval_standard_surface throughput. If that callable
+# double-counts cos(theta), this sphere will read dark (ratio < 1.0); if it's
+# correct, ratio == 1.0 like the preview furnace.
+def Material "DiffuseMat"
+{
+    token outputs:surface.connect = </DiffuseMat/Shader.outputs:surface>
+
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 1.0
+        color3f inputs:base_color = (1, 1, 1)
+        float inputs:diffuse_roughness = 1.0
+        float inputs:specular = 0.0
+        float inputs:transmission = 0.0
+        float inputs:metalness = 0.0
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+def Xform "World"
+{
+    def Sphere "Sphere"
+    {
+        rel material:binding = </DiffuseMat>
+        double radius = 1
+        double3 xformOp:translate = (0, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}
+
+def DomeLight "DomeLight"
+{
+    color3f inputs:color = (1, 1, 1)
+    float inputs:exposure = 0
+    float inputs:intensity = 1
+}

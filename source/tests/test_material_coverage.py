@@ -36,8 +36,9 @@ BINARY_DIR = PROJECT_ROOT / "Binaries" / "Release"
 SCENES_DIR = Path(__file__).resolve().parent / "data" / "scenes" / "materials"
 OUTPUT_DIR = Path(TEST_OUTPUT_DIR) / "material_coverage"
 
-RENDER_SIZE = 256
-RENDER_SPP = 64
+RENDER_WIDTH = 800
+RENDER_HEIGHT = 600
+RENDER_SPP = 256
 
 
 def _save_png(img, name):
@@ -55,7 +56,7 @@ def _save_png(img, name):
         print(f"Saved: {OUTPUT_DIR / (name + '.npy')} (PIL missing, no PNG)")
 
 
-def _render_scene(scene_path, name, width=RENDER_SIZE, height=RENDER_SIZE, spp=RENDER_SPP):
+def _render_scene(scene_path, name, width=RENDER_WIDTH, height=RENDER_HEIGHT, spp=RENDER_SPP):
     """Render a scene at fixed SPP and write a PNG. Returns the image array."""
     try:
         import hd_RUZINO_py as renderer
@@ -154,8 +155,8 @@ def test_material_transmission():
     scene = SCENES_DIR / "mat_transmission_sphere.usda"
     if not scene.exists():
         pytest.skip(f"{scene} not found")
-    # Higher SPP for transmission: refraction needs more samples to converge.
-    img = _render_scene(scene, "mat_transmission_sphere", spp=128)
+    # Refraction needs more samples to converge — the default SPP 256 covers this.
+    img = _render_scene(scene, "mat_transmission_sphere")
     _assert_finite_nonblank(img, "transmission")
 
 
@@ -176,8 +177,8 @@ def test_material_thin_walled():
     scene = SCENES_DIR / "mat_thin_walled.usda"
     if not scene.exists():
         pytest.skip(f"{scene} not found")
-    # Higher SPP: the tint arrives via a diffuse bounce (indirect), which is
-    # noisier than direct illumination. 256 to keep the oblique-bend comparison
-    # legible.
-    img = _render_scene(scene, "mat_thin_walled", spp=256)
+    # The tint arrives via a diffuse bounce (indirect), which is noisier than
+    # direct illumination — the default SPP 256 keeps the oblique-bend
+    # comparison legible.
+    img = _render_scene(scene, "mat_thin_walled")
     _assert_finite_nonblank(img, "thin_walled")

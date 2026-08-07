@@ -5,26 +5,17 @@
 )
 
 # =============================================================================
-# thin_walled tint test scene — v4: overhead area light, light passes through
+# thin_walled tint test — ISOLATION: camera looks through sheet at a light
 #
-# Goal (per user): a RectLight overhead (camera-side, pointing down at the
-# scene center) shines through the sheets; the light that passes through
-# lands on the surface just below/behind the sheets, carrying the sheet's
-# transmission_color tint.
+# Simplest possible setup to verify thin_walled transmission + tint:
+#   Camera → thin_walled sheet → RectLight (emissive geometry, directly behind)
 #
-# Key physics: the renderer's shadow rays test ONLY opacity (not transmission).
-# So for light to pass through the sheet via NEE, the sheet needs opacity < 1.
-# This scene sets opacity=0.6 so ~60% of shadow rays pass (stochastic), AND
-# thin_walled=true so the BSDF samples straight-through (L=-V) with tint.
-# Both mechanisms cooperate: the shadow path lets light reach the wall behind,
-# and the camera path tints the view through the sheet.
+# If thin_walled works: camera sees the light tinted by transmission_color.
+# If broken: camera sees black or dim (transmission throughput zeroed).
 #
-# Layout (camera head-on at z=+4 looking -Z):
-#   - Floor/checkerboard at y=-1.0 (horizontal, facing up) — catches the light
-#     that comes through the sheets from above.
-#   - Two vertical sheets at z=0: LEFT thin_walled, RIGHT solid (both opacity
-#     0.6 so light passes through both for fair comparison).
-#   - RectLight overhead at y=+4, pointing down (-Y), centered.
+# The RectLight is placed directly behind the sheet, facing the camera. Its
+# emissive geometry (added by the light-intersection feature) is hit by the
+# straight-through BSDF ray (L=-V), returning Le which carries the tint back.
 # =============================================================================
 
 def Camera "Camera"
@@ -33,11 +24,11 @@ def Camera "Camera"
     float focalLength = 50.0
     float horizontalAperture = 36.0
     float verticalAperture = 20.25
-    matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (0, 1.0, 5, 1) )
+    matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (0, 0, 4, 1) )
     uniform token[] xformOpOrder = ["xformOp:transform"]
 }
 
-# --- thin_walled yellow sheet (opacity<1 so light passes through) ---
+# --- thin_walled yellow sheet ---
 def Material "ThinSheet"
 {
     token outputs:surface.connect = </ThinSheet/Shader.outputs:surface>
@@ -50,9 +41,7 @@ def Material "ThinSheet"
         float inputs:specular_IOR = 1.5
         float inputs:transmission = 0.85
         color3f inputs:transmission_color = (0.95, 0.85, 0.10)
-        # opacity<1: lets the overhead light's shadow rays pass through
-        # probabilistically, so a tinted pool of light lands on the floor.
-        float inputs:opacity = 0.6
+        float inputs:opacity = 1.0
         bool inputs:thin_walled = true
         token outputs:surface
     }
@@ -71,36 +60,7 @@ def Material "SolidSheet"
         float inputs:specular_IOR = 1.5
         float inputs:transmission = 0.85
         color3f inputs:transmission_color = (0.95, 0.85, 0.10)
-        float inputs:opacity = 0.6
-        token outputs:surface
-    }
-}
-
-# --- floor checkerboard materials ---
-def Material "CheckLight"
-{
-    token outputs:surface.connect = </CheckLight/Shader.outputs:surface>
-    def Shader "Shader"
-    {
-        uniform token info:id = "UsdPreviewSurface"
-        color3f inputs:diffuseColor = (0.9, 0.9, 0.9)
-        float inputs:metallic = 0
-        float inputs:roughness = 0.9
-        float inputs:opacity = 1
-        token outputs:surface
-    }
-}
-
-def Material "CheckDark"
-{
-    token outputs:surface.connect = </CheckDark/Shader.outputs:surface>
-    def Shader "Shader"
-    {
-        uniform token info:id = "UsdPreviewSurface"
-        color3f inputs:diffuseColor = (0.1, 0.1, 0.1)
-        float inputs:metallic = 0
-        float inputs:roughness = 0.9
-        float inputs:opacity = 1
+        float inputs:opacity = 1.0
         token outputs:surface
     }
 }
@@ -114,7 +74,7 @@ def Xform "World"
         int[] faceVertexCounts = [4]
         int[] faceVertexIndices = [0, 1, 2, 3]
         normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
-        point3f[] points = [(-1.0, -0.5, 0), (-0.2, -0.5, 0), (-0.2, 0.9, 0), (-1.0, 0.9, 0)]
+        point3f[] points = [(-1.0, -0.8, 0), (-0.2, -0.8, 0), (-0.2, 0.8, 0), (-1.0, 0.8, 0)]
         rel material:binding = </ThinSheet>
     }
 
@@ -125,173 +85,22 @@ def Xform "World"
         int[] faceVertexCounts = [4]
         int[] faceVertexIndices = [0, 1, 2, 3]
         normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
-        point3f[] points = [(0.2, -0.5, 0), (1.0, -0.5, 0), (1.0, 0.9, 0), (0.2, 0.9, 0)]
+        point3f[] points = [(0.2, -0.8, 0), (1.0, -0.8, 0), (1.0, 0.8, 0), (0.2, 0.8, 0)]
         rel material:binding = </SolidSheet>
-    }
-
-    # --- horizontal floor at y=-1.0, checkerboard, facing up (+Y normal) ---
-    # spans x=[-2,2], z=[-2,2], 4x4 tiles. The light from above lands here.
-    # Normals point +Y (up). Tiles alternate light/dark.
-    def Mesh "Floor00" ( apiSchemas = ["MaterialBindingAPI"] )
-    {
-        uniform token subdivisionScheme = "none"
-        int[] faceVertexCounts = [4]
-        int[] faceVertexIndices = [0, 1, 2, 3]
-        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
-        point3f[] points = [(-2, -1, 2), (-1, -1, 2), (-1, -1, 1), (-2, -1, 1)]
-        rel material:binding = </CheckLight>
-    }
-    def Mesh "Floor01" ( apiSchemas = ["MaterialBindingAPI"] )
-    {
-        uniform token subdivisionScheme = "none"
-        int[] faceVertexCounts = [4]
-        int[] faceVertexIndices = [0, 1, 2, 3]
-        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
-        point3f[] points = [(-1, -1, 2), (0, -1, 2), (0, -1, 1), (-1, -1, 1)]
-        rel material:binding = </CheckDark>
-    }
-    def Mesh "Floor02" ( apiSchemas = ["MaterialBindingAPI"] )
-    {
-        uniform token subdivisionScheme = "none"
-        int[] faceVertexCounts = [4]
-        int[] faceVertexIndices = [0, 1, 2, 3]
-        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
-        point3f[] points = [(0, -1, 2), (1, -1, 2), (1, -1, 1), (0, -1, 1)]
-        rel material:binding = </CheckLight>
-    }
-    def Mesh "Floor03" ( apiSchemas = ["MaterialBindingAPI"] )
-    {
-        uniform token subdivisionScheme = "none"
-        int[] faceVertexCounts = [4]
-        int[] faceVertexIndices = [0, 1, 2, 3]
-        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
-        point3f[] points = [(1, -1, 2), (2, -1, 2), (2, -1, 1), (1, -1, 1)]
-        rel material:binding = </CheckDark>
-    }
-    def Mesh "Floor10" ( apiSchemas = ["MaterialBindingAPI"] )
-    {
-        uniform token subdivisionScheme = "none"
-        int[] faceVertexCounts = [4]
-        int[] faceVertexIndices = [0, 1, 2, 3]
-        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
-        point3f[] points = [(-2, -1, 1), (-1, -1, 1), (-1, -1, 0), (-2, -1, 0)]
-        rel material:binding = </CheckDark>
-    }
-    def Mesh "Floor11" ( apiSchemas = ["MaterialBindingAPI"] )
-    {
-        uniform token subdivisionScheme = "none"
-        int[] faceVertexCounts = [4]
-        int[] faceVertexIndices = [0, 1, 2, 3]
-        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
-        point3f[] points = [(-1, -1, 1), (0, -1, 1), (0, -1, 0), (-1, -1, 0)]
-        rel material:binding = </CheckLight>
-    }
-    def Mesh "Floor12" ( apiSchemas = ["MaterialBindingAPI"] )
-    {
-        uniform token subdivisionScheme = "none"
-        int[] faceVertexCounts = [4]
-        int[] faceVertexIndices = [0, 1, 2, 3]
-        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
-        point3f[] points = [(0, -1, 1), (1, -1, 1), (1, -1, 0), (0, -1, 0)]
-        rel material:binding = </CheckDark>
-    }
-    def Mesh "Floor13" ( apiSchemas = ["MaterialBindingAPI"] )
-    {
-        uniform token subdivisionScheme = "none"
-        int[] faceVertexCounts = [4]
-        int[] faceVertexIndices = [0, 1, 2, 3]
-        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
-        point3f[] points = [(1, -1, 1), (2, -1, 1), (2, -1, 0), (1, -1, 0)]
-        rel material:binding = </CheckLight>
-    }
-    def Mesh "Floor20" ( apiSchemas = ["MaterialBindingAPI"] )
-    {
-        uniform token subdivisionScheme = "none"
-        int[] faceVertexCounts = [4]
-        int[] faceVertexIndices = [0, 1, 2, 3]
-        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
-        point3f[] points = [(-2, -1, 0), (-1, -1, 0), (-1, -1, -1), (-2, -1, -1)]
-        rel material:binding = </CheckLight>
-    }
-    def Mesh "Floor21" ( apiSchemas = ["MaterialBindingAPI"] )
-    {
-        uniform token subdivisionScheme = "none"
-        int[] faceVertexCounts = [4]
-        int[] faceVertexIndices = [0, 1, 2, 3]
-        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
-        point3f[] points = [(-1, -1, 0), (0, -1, 0), (0, -1, -1), (-1, -1, -1)]
-        rel material:binding = </CheckDark>
-    }
-    def Mesh "Floor22" ( apiSchemas = ["MaterialBindingAPI"] )
-    {
-        uniform token subdivisionScheme = "none"
-        int[] faceVertexCounts = [4]
-        int[] faceVertexIndices = [0, 1, 2, 3]
-        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
-        point3f[] points = [(0, -1, 0), (1, -1, 0), (1, -1, -1), (0, -1, -1)]
-        rel material:binding = </CheckLight>
-    }
-    def Mesh "Floor23" ( apiSchemas = ["MaterialBindingAPI"] )
-    {
-        uniform token subdivisionScheme = "none"
-        int[] faceVertexCounts = [4]
-        int[] faceVertexIndices = [0, 1, 2, 3]
-        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
-        point3f[] points = [(1, -1, 0), (2, -1, 0), (2, -1, -1), (1, -1, -1)]
-        rel material:binding = </CheckDark>
-    }
-    def Mesh "Floor30" ( apiSchemas = ["MaterialBindingAPI"] )
-    {
-        uniform token subdivisionScheme = "none"
-        int[] faceVertexCounts = [4]
-        int[] faceVertexIndices = [0, 1, 2, 3]
-        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
-        point3f[] points = [(-2, -1, -1), (-1, -1, -1), (-1, -1, -2), (-2, -1, -2)]
-        rel material:binding = </CheckDark>
-    }
-    def Mesh "Floor31" ( apiSchemas = ["MaterialBindingAPI"] )
-    {
-        uniform token subdivisionScheme = "none"
-        int[] faceVertexCounts = [4]
-        int[] faceVertexIndices = [0, 1, 2, 3]
-        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
-        point3f[] points = [(-1, -1, -1), (0, -1, -1), (0, -1, -2), (-1, -1, -2)]
-        rel material:binding = </CheckLight>
-    }
-    def Mesh "Floor32" ( apiSchemas = ["MaterialBindingAPI"] )
-    {
-        uniform token subdivisionScheme = "none"
-        int[] faceVertexCounts = [4]
-        int[] faceVertexIndices = [0, 1, 2, 3]
-        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
-        point3f[] points = [(0, -1, -1), (1, -1, -1), (1, -1, -2), (0, -1, -2)]
-        rel material:binding = </CheckDark>
-    }
-    def Mesh "Floor33" ( apiSchemas = ["MaterialBindingAPI"] )
-    {
-        uniform token subdivisionScheme = "none"
-        int[] faceVertexCounts = [4]
-        int[] faceVertexIndices = [0, 1, 2, 3]
-        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
-        point3f[] points = [(1, -1, -1), (2, -1, -1), (2, -1, -2), (1, -1, -2)]
-        rel material:binding = </CheckLight>
     }
 }
 
-# --- RectLight overhead, pointing straight down (-Y) ---
-# RectLight emits along -Z in local space (light.cpp:426). dirW = -GetRow(2).
-# To emit downward (dirW = (0,-1,0)), need GetRow(2) = (0,1,0,0), i.e. local
-# +Z axis points to world +Y. That is Rx(+90°): local +Z -> world +Y.
-# Rx(+90°) matrix (rows = transformed basis vectors):
-#   row0 (X'): (1, 0, 0, 0)
-#   row1 (Y'): (0, 0,-1, 0)
-#   row2 (Z'): (0, 1, 0, 0)
-# Position (0, 4, 1): high above, centered, slightly toward camera.
-def RectLight "Key"
+# --- RectLight directly behind sheets at z=-1.5, facing camera (+Z) ---
+# RectLight emits along -Z local; dirW = -GetRow(2). To face +Z (toward camera
+# at z=4), need dirW=(0,0,1), so GetRow(2)=(0,0,-1): rotate 180° around Y.
+# Ry(180°): row0=(-1,0,0), row1=(0,1,0), row2=(0,0,-1).
+# Width/height large enough to cover both sheets. This is both the NEE light
+# AND has emissive geometry the BSDF ray can hit (light-intersection feature).
+def RectLight "BackLight"
 {
-    float inputs:intensity = 40.0
+    float inputs:intensity = 3.0
     float inputs:width = 3.0
     float inputs:height = 3.0
-    matrix4d xformOp:transform = ( (1,0,0,0), (0,0,-1,0), (0,1,0,0), (0,4,1,1) )
+    matrix4d xformOp:transform = ( (-1,0,0,0), (0,1,0,0), (0,0,-1,0), (0,0,-1.5,1) )
     uniform token[] xformOpOrder = ["xformOp:transform"]
 }

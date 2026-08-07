@@ -873,8 +873,17 @@ void Hd_RUZINO_Dome_Light::Sync(
 
     // Always check shader_path — custom attribute changes don't trigger DirtyParams
     {
+        // USD's LookupLightParamAttribute only maps KNOWN light params
+        // (intensity, color, ...) from "inputs:X" to the light container key "X".
+        // Custom params fall back to a BARE attribute lookup (no "inputs:" prefix),
+        // so a scene that writes "inputs:shader_path" (the natural convention,
+        // matching inputs:intensity) will NOT be found. Try both forms.
         VtValue shaderPathValue =
             sceneDelegate->GetLightParamValue(id, TfToken("shader_path"));
+        if (shaderPathValue.IsEmpty()) {
+            shaderPathValue =
+                sceneDelegate->GetLightParamValue(id, TfToken("inputs:shader_path"));
+        }
         this->has_valid_shader = false;
         if (shaderPathValue.IsHolding<std::string>()) {
             shader_path = shaderPathValue.UncheckedGet<std::string>();

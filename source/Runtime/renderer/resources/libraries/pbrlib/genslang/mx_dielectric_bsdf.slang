@@ -67,12 +67,15 @@ void mx_dielectric_bsdf(
         float D = mx_ggx_NDF(Ht, safeAlpha);
         float G = mx_ggx_smith_G2(NdotL, NdotV, avgAlpha);
 
-        float3 comp = mx_ggx_energy_compensation(NdotV, avgAlpha, F);
-        comp = 1.0f;
-        float3 dirAlbedo = mx_ggx_dir_albedo(NdotV, avgAlpha, F0, 1.0) * comp;
+        // Multi-scatter GGX energy compensation is intentionally disabled here
+        // (comp forced to 1.0). It was found to over-brighten in this pipeline;
+        // re-enabling requires a separate validation pass. Keeping the dirAlbedo
+        // throughput term (used so layered lobes below know how much energy this
+        // lobe does NOT absorb), but without the comp multiplier.
+        float3 dirAlbedo = mx_ggx_dir_albedo(NdotV, avgAlpha, F0, 1.0);
         bsdf.throughput = 1.0 - dirAlbedo * weight;
 
-        bsdf.response = D * F * G * comp * safeTint * closureData.occlusion *
+        bsdf.response = D * F * G * safeTint * closureData.occlusion *
                         weight / (4.0 * NdotV);
     }
     else if (closureData.closureType == CLOSURE_TYPE_TRANSMISSION) {
@@ -86,9 +89,8 @@ void mx_dielectric_bsdf(
 
         float3 F = mx_compute_fresnel(NdotV, fd);
 
-        float3 comp = mx_ggx_energy_compensation(NdotV, avgAlpha, F);
-        comp = 1.0f;
-        float3 dirAlbedo = mx_ggx_dir_albedo(NdotV, avgAlpha, F0, 1.0) * comp;
+        // Multi-scatter energy compensation disabled (see reflection branch above).
+        float3 dirAlbedo = mx_ggx_dir_albedo(NdotV, avgAlpha, F0, 1.0);
         bsdf.throughput = 1.0 - dirAlbedo * weight;
 
         if (scatter_mode != 0) {
