@@ -1,6 +1,13 @@
 import pt_constants;
 __exported import Scene.Lights.LightData;
+__exported import Scene.Lights.HosekSkyState;
 StructuredBuffer<LightData> lightBuffer;
+
+// Per-Hosek-dome-light cooked polynomial state (CPU-cooked from turbidity,
+// albedo, solar elevation). Indexed by LightData.hosekStateIndex. Bound by
+// path_tracing.cpp / wetbrush_render.cpp alongside lightBuffer. Stays empty
+// (one dummy row) in scenes with no Hosek sky.
+StructuredBuffer<HosekSkyState> hosekStateBuffer;
 
 #include "utils/random.slangh"
 

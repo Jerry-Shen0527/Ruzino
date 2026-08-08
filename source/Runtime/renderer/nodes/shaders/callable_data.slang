@@ -34,6 +34,13 @@ struct DomeLightCallableData {
     float3 intensity;        // Dome light intensity
     int textureIndex;        // Bindless texture index
     uint seed;               // Random seed for sampling
+
+    // Hosek-Wilkie analytic sky parameters (set by the dome miss handler when
+    // the dome's shader_path points at eval_dome_light_hosek_wilkie.slang).
+    // sunDirLocal is the sun direction in the dome's LOCAL space (+Y up),
+    // derived from the scene's DistantLight so the sun and sky stay aligned.
+    uint   hosekStateIndex;  // Index into hosekStateBuffer (0 if not a Hosek sky)
+    float3 sunDirLocal;      // Sun direction in dome-local space (+Y up)
 };
 
 struct OpacityTestCallableData {

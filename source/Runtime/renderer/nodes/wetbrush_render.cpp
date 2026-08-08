@@ -1,8 +1,8 @@
 // wetbrush_render — a path-tracing render node that adds TWO extra hit groups
 // (VolumeClosestHit / VolumeShadowHit with the VolumeIntersection procedural
 // intersection shader) on top of the standard path_tracing node, so the
-// Hd_RUZINO_WetbrushVolume density-slab rprim can be raymarched by the path
-// tracer.
+// Hd_RUZINO_Volume (WetbrushVolumeImpl) density-slab rprim can be raymarched
+// by the path tracer.
 //
 // This node is a faithful copy of path_tracing.cpp's pipeline (program build,
 // material-callable registration, SBT, bindings, dispatch) with the additions:
@@ -21,11 +21,11 @@
 #include <filesystem>
 #include <memory>
 
-#include "RHI/shaderCompiler.h"
 #include "../source/renderTLAS.h"
 #include "GPUContext/program_vars.hpp"
 #include "GPUContext/raytracing_context.hpp"
 #include "RHI/internal/resources.hpp"
+#include "RHI/shaderCompiler.h"
 #include "Scene/MaterialParamsBuffer.slang"
 #include "camera.h"
 #include "hd_RUZINO/render_node_base.h"
@@ -188,8 +188,9 @@ NODE_EXECUTION_FUNCTION(wetbrush_render)
         // Use wetbrush_render.slang (a copy of path_tracing.slang + the 3
         // volume hit-group entry points) so the volume entry points share the
         // same translation unit as RayPayload / ShadowPayload / the Scene
-        // imports. path_tracing.slang is NOT modified; volume_intersection.slang
-        // holds the importable helpers (samplePaintField, intersectSlab, etc.).
+        // imports. path_tracing.slang is NOT modified;
+        // volume_intersection.slang holds the importable helpers
+        // (samplePaintField, intersectSlab, etc.).
         program_desc.set_path("wetbrush_render.slang");
         program_desc.add_path("volume_intersection.slang");
         program_desc.shaderType = nvrhi::ShaderType::AllRayTracing;
@@ -291,8 +292,7 @@ void fetch_)" + material.second->GetMaterialName() +
                 next_eval_index++;
             }
             else {
-                auto shader_source =
-                    material.second->GetShader(shader_factory);
+                auto shader_source = material.second->GetShader(shader_factory);
                 auto mat_name = material.second->GetMaterialName();
 
                 if (mat_name.empty() || shader_source.empty()) {
@@ -392,11 +392,15 @@ void fetch_)" + material.second->GetMaterialName() +
         }
 
         instance_collection->light_pool.compress();
-        uint32_t lightCount = static_cast<uint32_t>(
-            instance_collection->light_pool.count());
+        uint32_t lightCount =
+            static_cast<uint32_t>(instance_collection->light_pool.count());
 
         program_vars["lightBuffer"] =
             instance_collection->light_pool.get_device_buffer();
+        // hosekStateBuffer: see path_tracing.cpp — declared unconditionally in
+        // pt_sample_lights.slang, must always be bound.
+        program_vars["hosekStateBuffer"] =
+            instance_collection->hosek_state_pool.get_device_buffer();
 
         struct PathTracingConstants {
             uint32_t lightCount;
@@ -452,7 +456,7 @@ void fetch_)" + material.second->GetMaterialName() +
             "SphereShadowHit", "", "SphereIntersection", 3);
         // Volume hit groups (slots 4/5) — the addition over path_tracing.
         // Routed only to instances whose instanceContributionToHitGroupIndex
-        // is 4 (Hd_RUZINO_WetbrushVolume).
+        // is 4 (a WetbrushVolumeImpl via Hd_RUZINO_Volume).
         context.announce_hitgroup(
             "VolumeClosestHit", "", "VolumeIntersection", 4);
         context.announce_hitgroup(

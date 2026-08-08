@@ -46,6 +46,7 @@ struct EmissiveTriangle
     float   area;               ///< Triangle area in world space.
     uint    materialID;         ///< Material ID.
     uint    lightIdx;           ///< Index into global mesh lights array.
+    uint    textureIndex;       ///< Bindless texture index for emission texture (0xffffffff = no texture, use constant emission).
 
     /** Returns the interpolated position.
         \param[in] barycentrics Barycentric coordinates.
@@ -83,6 +84,8 @@ struct PackedEmissiveTriangle
     uint    area;               ///< Triangle area in world space (encoded in fp32 format).
     uint    materialID;         ///< Material ID.
     uint    lightIdx;           ///< Index into global mesh lights array.
+    uint    textureIndex;       ///< Bindless texture index for emission texture (0xffffffff = no texture).
+    uint    _pad;               ///< Padding to maintain 16-byte alignment (struct is now 80B).
 
     uint encodeTexCoord(float2 t) CONST_FUNCTION
     {
@@ -111,6 +114,7 @@ struct PackedEmissiveTriangle
         area = asuint(tri.area);
         materialID = tri.materialID;
         lightIdx = tri.lightIdx;
+        textureIndex = tri.textureIndex;
     }
 
     EmissiveTriangle unpack()
@@ -126,6 +130,7 @@ struct PackedEmissiveTriangle
         tri.area = asfloat(area);
         tri.materialID = materialID;
         tri.lightIdx = lightIdx;
+        tri.textureIndex = textureIndex;
         return tri;
     }
 #else
@@ -142,6 +147,7 @@ struct PackedEmissiveTriangle
         tri.area = asfloat(area);
         tri.materialID = materialID;
         tri.lightIdx = lightIdx;
+        tri.textureIndex = textureIndex;
         return tri;
     }
 #endif

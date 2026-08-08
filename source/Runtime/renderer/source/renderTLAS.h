@@ -1,7 +1,9 @@
 #pragma once
+#include "Lights/EmissiveMeshRegistry.h"
 #include "api.h"
 #include "geometries/mesh.h"
 #include "nvrhi/nvrhi.h"
+#include "sky/hosek_sky_model.h"
 
 // SceneTypes
 #include "../nodes/shaders/Scene/BindlessMaterial.slang"
@@ -36,6 +38,18 @@ class HD_RUZINO_API Hd_RUZINO_RenderInstanceCollection {
     DeviceMemoryPool<MaterialHeader> material_header_pool;
     DeviceMemoryPool<nvrhi::DrawIndirectArguments> draw_indirect_pool;
     DeviceMemoryPool<LightData> light_pool;
+    // Per-Hosek-dome-light cooked sky state (CPU-cooked turbidity/albedo/
+    // elevation -> 30 floats). Indexed by LightData.hosekStateIndex. Stays a
+    // single (zeroed) row when no Hosek dome light is present, so the
+    // StructuredBuffer<HosekSkyState> is always bound (slang declares it
+    // unconditionally, like volumeDescBuffer).
+    DeviceMemoryPool<ruzino::HosekSkyState> hosek_state_pool;
+
+    /// Emissive mesh light registry: collects emissive triangles from
+    /// Hd_RUZINO_Mesh::Sync() registrations and produces GPU buffers for NEE
+    /// sampling + BSDF-hit-emissive MIS. Lives here alongside the other pools.
+    EmissiveMeshRegistry emissive_registry;
+
     CommandListHandle command_list;
 
     struct BindlessData {

@@ -120,6 +120,9 @@ void RayGen()
                     domeData.intensity = domeLight.intensity;
                     domeData.textureIndex = domeLight.textureIndex;
                     domeData.seed = payload.seed;
+                    // Hosek analytic sky fields (ignored by non-Hosek callables).
+                    domeData.hosekStateIndex = domeLight.hosekStateIndex;
+                    domeData.sunDirLocal = domeLight.dirW;
 
                     CallShader(ptConstants.domeLightCallableIndex, domeData);
 

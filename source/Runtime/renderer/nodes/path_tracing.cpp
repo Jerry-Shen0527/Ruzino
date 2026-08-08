@@ -119,6 +119,21 @@ NODE_EXECUTION_FUNCTION(path_tracing)
 
     storage.rc = &(resource_allocator);
 
+    // Build emissive mesh GPU buffers when geometry or material changes.
+    // The registry collects emissive triangle entries from Hd_RUZINO_Mesh::Sync
+    // (main thread); this call flattens them into the 4 StructuredBuffers the
+    // path tracer binds for NEE sampling + BSDF-hit-emissive MIS.
+    static uint32_t last_emissive_version = 0;
+    uint32_t emissive_version =
+        instance_collection->emissive_registry.get_version();
+    if ((geom_dirty || mat_dirty) &&
+        emissive_version != last_emissive_version) {
+        instance_collection->emissive_registry.build_gpu_buffers(
+            instance_collection,
+            &global_payload.get_materials());
+        last_emissive_version = emissive_version;
+    }
+
     // Check for dome light with valid custom shader
     std::string current_dome_shader_path;
     bool found_dome_shader = false;
@@ -429,6 +444,27 @@ void fetch_)" + material.second->GetMaterialName() +
 
         program_vars["lightBuffer"] =
             instance_collection->light_pool.get_device_buffer();
+        // hosekStateBuffer: per-Hosek-dome cooked sky state. Declared
+        // unconditionally in pt_sample_lights.slang (like lightBuffer), so it
+        // must always be bound; the pool always has a dummy zero row at index 0.
+        program_vars["hosekStateBuffer"] =
+            instance_collection->hosek_state_pool.get_device_buffer();
+
+        // Bind emissive mesh light buffers (valid even when empty — the pool's
+        // device buffer always exists; the shader checks emissiveTriangleCount
+        // == 0 before accessing them).
+        program_vars["emissiveTriangleData"] =
+            instance_collection->emissive_registry.emissiveTrianglePool
+                .get_device_buffer();
+        program_vars["emissiveFluxData"] =
+            instance_collection->emissive_registry.emissiveFluxPool
+                .get_device_buffer();
+        program_vars["emissiveMeshData"] =
+            instance_collection->emissive_registry.emissiveMeshPool
+                .get_device_buffer();
+        program_vars["emissivePerMeshInstanceOffset"] =
+            instance_collection->emissive_registry
+                .emissivePerInstanceOffsetPool.get_device_buffer();
 
         // Create unified path tracing constants buffer
         struct PathTracingConstants {
@@ -436,10 +472,16 @@ void fetch_)" + material.second->GetMaterialName() +
             uint32_t domeLightCallableIndex;
             uint32_t materialFetchCallableBaseIndex;
             uint32_t materialOpacityCallableOffset;
+            uint32_t emissiveTriangleCount;
+            uint32_t emissiveMeshCount;
         };
 
         PathTracingConstants constants;
         constants.lightCount = lightCount;
+        constants.emissiveTriangleCount =
+            instance_collection->emissive_registry.get_triangle_count();
+        constants.emissiveMeshCount =
+            instance_collection->emissive_registry.get_mesh_count();
 
         // Calculate indices based on custom shader materials
         int num_custom_evals = storage.custom_shader_eval_indices.size();
@@ -599,6 +641,20 @@ void fetch_)" + material.second->GetMaterialName() +
             instance_collection->mesh_pool.get_device_buffer();
         program_vars["volumeDescBuffer"] =
             instance_collection->volume_pool.get_device_buffer();
+
+        // Re-bind emissive mesh buffers (their contents change with geometry).
+        program_vars["emissiveTriangleData"] =
+            instance_collection->emissive_registry.emissiveTrianglePool
+                .get_device_buffer();
+        program_vars["emissiveFluxData"] =
+            instance_collection->emissive_registry.emissiveFluxPool
+                .get_device_buffer();
+        program_vars["emissiveMeshData"] =
+            instance_collection->emissive_registry.emissiveMeshPool
+                .get_device_buffer();
+        program_vars["emissivePerMeshInstanceOffset"] =
+            instance_collection->emissive_registry
+                .emissivePerInstanceOffsetPool.get_device_buffer();
 
         program_vars.finish_setting_vars();
 

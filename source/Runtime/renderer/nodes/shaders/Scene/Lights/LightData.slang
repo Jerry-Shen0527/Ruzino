@@ -68,7 +68,8 @@ struct LightData
 
     // Dome light specific parameters
     int      textureIndex       = -1;               ///< Bindless texture index for dome light environment map (-1 if no texture)
-    uint3    _pad2;                                 ///< Padding for alignment
+    uint     hosekStateIndex    = 0;                ///< Index into hosekStateBuffer (Hosek-Wilkie analytic sky); 0 if unused
+    uint2    _pad2;                                 ///< Padding for alignment
 };
 
 RUZINO_NAMESPACE_CLOSE_SCOPE

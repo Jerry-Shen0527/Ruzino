@@ -10,6 +10,7 @@
 #include "pxr/imaging/hio/image.h"
 #include "pxr/pxr.h"
 #include "pxr/usd/sdf/assetPath.h"
+#include "sky/hosek_sky_model.h"
 // SceneTypes (MeshDesc, GeometryInstanceData, GeometryType) -- shared host/
 // device header, included by renderTLAS.h and mesh.h the same way.
 #include "../nodes/shaders/Scene/SceneTypes.slang"
@@ -153,10 +154,10 @@ class HD_RUZINO_API Hd_RUZINO_Rect_Light : public Hd_RUZINO_Light {
     float _width = 1.0f;
     float _height = 1.0f;
 
-    // --- Intersectable light geometry (BSDF-sampled rays can hit the light) ---
-    // A 2-triangle quad in world space (positions only; no normals/tangents --
-    // the light's Le comes from lightBuffer, not from a material). Stored as a
-    // single interleaved buffer: 4 positions (RGB32_FLOAT) + 6 indices
+    // --- Intersectable light geometry (BSDF-sampled rays can hit the light)
+    // --- A 2-triangle quad in world space (positions only; no normals/tangents
+    // -- the light's Le comes from lightBuffer, not from a material). Stored as
+    // a single interleaved buffer: 4 positions (RGB32_FLOAT) + 6 indices
     // (R32_UINT), mirroring the mesh BLAS layout so it can use the standard
     // triangle hit group.
     nvrhi::BufferHandle light_vertex_buffer;
@@ -167,7 +168,8 @@ class HD_RUZINO_API Hd_RUZINO_Rect_Light : public Hd_RUZINO_Light {
     // height/transform), not every dirty tick.
     DeviceMemoryPool<MeshDesc>::MemoryHandle light_mesh_desc_buffer;
     DeviceMemoryPool<GeometryInstanceData>::MemoryHandle light_instance_buffer;
-    DeviceMemoryPool<nvrhi::rt::InstanceDesc>::MemoryHandle light_rt_instance_buffer;
+    DeviceMemoryPool<nvrhi::rt::InstanceDesc>::MemoryHandle
+        light_rt_instance_buffer;
 
     void BuildLightGeometry(
         Hd_RUZINO_RenderParam* render_param,
@@ -279,6 +281,16 @@ class HD_RUZINO_API Hd_RUZINO_Dome_Light : public Hd_RUZINO_Light {
     std::string shader_path;
     bool has_valid_shader =
         false;  // True only if shader_path points to a valid file
+
+    // Hosek-Wilkie analytic sky: cooked polynomial state, uploaded once per
+    // (turbidity, albedo, sun direction) change. hosek_state_index is the row
+    // into hosek_state_pool / hosekStateBuffer that the dome callable reads.
+    // Only used when shader_path points at the Hosek callable.
+    DeviceMemoryPool<ruzino::HosekSkyState>::MemoryHandle hosek_state_handle;
+    uint32_t hosek_state_index = 0;  // 0 = the dummy zero row (no Hosek)
+    float hosek_turbidity = -1.0f;   // cached params to detect changes
+    float hosek_albedo = -1.0f;
+    GfVec3f hosek_sun_dir{ 0.0f };  // dome-local, +Y up
 };
 
 RUZINO_NAMESPACE_CLOSE_SCOPE

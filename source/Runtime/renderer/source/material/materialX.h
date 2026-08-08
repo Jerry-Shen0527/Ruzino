@@ -28,15 +28,36 @@ class HD_RUZINO_API Hd_RUZINO_MaterialX : public Hd_RUZINO_Material {
     // Upload material data to GPU after texture loading is complete
     void upload_material_data();
 
+    /// Returns true if this MaterialX material has emission > 0
+    /// (standard_surface) or emissiveColor > 0 (UsdPreviewSurface). Inspects
+    /// cached_parameter_mappings and reads the scalar emission value from
+    /// material_data. Used by LightCollection to decide whether a mesh
+    /// instance's triangles should be registered as emissive.
+    bool isEmissive() const override;
+
+    /// Returns emission_color * emission (standard_surface) or emissiveColor
+    /// (UsdPreviewSurface) as RGB. Returns black if not emissive. The CPU-side
+    /// estimate used for per-triangle flux in the LightBVH (no texture
+    /// integration; for textured emission this returns the emission_color tint
+    /// scaled by the scalar emission strength, which is a coarse flux
+    /// estimate).
+    GfVec3f getEmissionRadiance() const override;
+
+    /// Returns the bindless texture descriptor index for the emission_color /
+    /// emissiveColor texture, or 0xffffffff if emission is constant. Searched
+    /// in texture_id_locations by the emission parameter's data location.
+    uint32_t getEmissionTextureIndex() const override;
+
     // Tear down the process-global MaterialX state that persists across render
     // delegates: the shared_document (which every material's node graph gets
-    // added to and is never cleared) and the nodedef lookup cache. Without this,
-    // a second Hd_RUZINO_RenderDelegate built in the same process sees a
-    // document still carrying the previous scene's material/shader nodes, so the
-    // new scene's shader generation runs over stale state and the render comes
-    // out black. `libraries` (the read-only stdlib) is intentionally preserved —
-    // it's scene-independent — and shared_document is rebuilt from it. Called
-    // from ~Hd_RUZINO_RenderDelegate so the next delegate starts clean.
+    // added to and is never cleared) and the nodedef lookup cache. Without
+    // this, a second Hd_RUZINO_RenderDelegate built in the same process sees a
+    // document still carrying the previous scene's material/shader nodes, so
+    // the new scene's shader generation runs over stale state and the render
+    // comes out black. `libraries` (the read-only stdlib) is intentionally
+    // preserved — it's scene-independent — and shared_document is rebuilt from
+    // it. Called from ~Hd_RUZINO_RenderDelegate so the next delegate starts
+    // clean.
     static void reset_shared_state();
 
    protected:

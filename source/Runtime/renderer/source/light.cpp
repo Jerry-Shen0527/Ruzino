@@ -2,11 +2,14 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
+#include <string>
 
-#include "RHI/shaderCompiler.h"
 #include "../nodes/shaders/Scene/Lights/LightData.slang"
 #include "RHI/Hgi/format_conversion.hpp"
+#include "RHI/shaderCompiler.h"
 #include "nvrhi/utils.h"
 #include "pxr/imaging/glf/simpleLight.h"
 #include "pxr/imaging/hd/changeTracker.h"
@@ -530,10 +533,10 @@ void Hd_RUZINO_Rect_Light::BuildLightGeometry(
         positions[i * 3 + 1] = corners[i].y;
         positions[i * 3 + 2] = corners[i].z;
     }
-    uint indices[6] = {0, 1, 2, 0, 2, 3};
+    uint indices[6] = { 0, 1, 2, 0, 2, 3 };
 
-    const size_t positions_bytes = sizeof(positions);   // 48
-    const size_t indices_bytes = sizeof(indices);       // 24
+    const size_t positions_bytes = sizeof(positions);  // 48
+    const size_t indices_bytes = sizeof(indices);      // 24
     const size_t index_offset = positions_bytes;
     const size_t total_bytes = positions_bytes + indices_bytes;
 
@@ -594,8 +597,7 @@ void Hd_RUZINO_Rect_Light::BuildLightGeometry(
         // Register the vertex/index buffer in the bindless descriptor table so
         // the hit shaders can fetch positions via MeshDesc.bindlessIndex.
         light_descriptor_handle = descriptor_table->CreateDescriptorHandle(
-            nvrhi::BindingSetItem::RawBuffer_SRV(
-                0, light_vertex_buffer.Get()));
+            nvrhi::BindingSetItem::RawBuffer_SRV(0, light_vertex_buffer.Get()));
     }
 
     // Write a MeshDesc so the standard BindlessVertexBuffer fetch path works.
@@ -646,9 +648,9 @@ void Hd_RUZINO_Rect_Light::BuildLightGeometry(
     rt_instance.blasDeviceAddress = light_blas->getDeviceAddress();
     // Light geometry is a NON-OCCLUDER: a light does not block light (it would
     // be nonsensical for a light to shadow itself, or to block another light's
-    // illumination in a way its own surface already accounts for). We give light
-    // instances a dedicated instanceMask bit (0x2) so that shadow rays can
-    // exclude them via InstanceInclusionMask = 0xFF & ~0x2 = 0xFD, while
+    // illumination in a way its own surface already accounts for). We give
+    // light instances a dedicated instanceMask bit (0x2) so that shadow rays
+    // can exclude them via InstanceInclusionMask = 0xFF & ~0x2 = 0xFD, while
     // radiance rays keep 0xFF so BSDF-sampled rays still hit the light and
     // return Le. Meshes use mask 0x1, so the two namespaces don't collide.
     rt_instance.instanceMask = 0x2;
@@ -871,18 +873,20 @@ void Hd_RUZINO_Dome_Light::Sync(
     const SdfPath& id = GetId();
     HdDirtyBits bits = *dirtyBits;
 
-    // Always check shader_path — custom attribute changes don't trigger DirtyParams
+    // Always check shader_path — custom attribute changes don't trigger
+    // DirtyParams
     {
         // USD's LookupLightParamAttribute only maps KNOWN light params
-        // (intensity, color, ...) from "inputs:X" to the light container key "X".
-        // Custom params fall back to a BARE attribute lookup (no "inputs:" prefix),
-        // so a scene that writes "inputs:shader_path" (the natural convention,
-        // matching inputs:intensity) will NOT be found. Try both forms.
+        // (intensity, color, ...) from "inputs:X" to the light container key
+        // "X". Custom params fall back to a BARE attribute lookup (no "inputs:"
+        // prefix), so a scene that writes "inputs:shader_path" (the natural
+        // convention, matching inputs:intensity) will NOT be found. Try both
+        // forms.
         VtValue shaderPathValue =
             sceneDelegate->GetLightParamValue(id, TfToken("shader_path"));
         if (shaderPathValue.IsEmpty()) {
-            shaderPathValue =
-                sceneDelegate->GetLightParamValue(id, TfToken("inputs:shader_path"));
+            shaderPathValue = sceneDelegate->GetLightParamValue(
+                id, TfToken("inputs:shader_path"));
         }
         this->has_valid_shader = false;
         if (shaderPathValue.IsHolding<std::string>()) {
@@ -945,6 +949,83 @@ void Hd_RUZINO_Dome_Light::Sync(
         LightData lightData;
         lightData.type = (uint32_t)LightType::Dome;
         lightData.intensity = float3(radiance[0], radiance[1], radiance[2]);
+
+        // Hosek-Wilkie analytic sky: if this dome points at the Hosek callable,
+        // read turbidity / groundAlbedo / sunDirection, cook the polynomial
+        // state, and stamp the row index into the light data. The shader-side
+        // hosekStateBuffer is always bound (a dummy zero row lives at index 0),
+        // so non-Hosek domes just leave hosekStateIndex = 0 and dirW = default.
+        if (this->has_valid_shader) {
+            auto readFloat = [&](const char* name, float def) -> float {
+                VtValue v =
+                    sceneDelegate->GetLightParamValue(id, TfToken(name));
+                if (v.IsEmpty())
+                    v = sceneDelegate->GetLightParamValue(
+                        id, TfToken(std::string("inputs:") + name));
+                if (v.IsHolding<float>())
+                    return v.UncheckedGet<float>();
+                if (v.IsHolding<double>())
+                    return float(v.UncheckedGet<double>());
+                return def;
+            };
+
+            float turbidity = readFloat("turbidity", 3.0f);
+            float albedo = readFloat("groundAlbedo", 0.3f);
+
+            // Sun direction in dome-local space (+Y up). Default ~45 deg.
+            GfVec3f sunDir(0.5f, 0.7f, 0.5f);
+            VtValue sunV =
+                sceneDelegate->GetLightParamValue(id, TfToken("sunDirection"));
+            if (sunV.IsEmpty())
+                sunV = sceneDelegate->GetLightParamValue(
+                    id, TfToken("inputs:sunDirection"));
+            if (sunV.IsHolding<GfVec3f>())
+                sunDir = sunV.UncheckedGet<GfVec3f>();
+            else if (sunV.IsHolding<GfVec3d>()) {
+                GfVec3d d = sunV.UncheckedGet<GfVec3d>();
+                sunDir = GfVec3f(float(d[0]), float(d[1]), float(d[2]));
+            }
+            // Clamp to above horizon (Hosek is undefined for sun below 0).
+            if (sunDir[1] < 0.0f)
+                sunDir[1] = 0.0f;
+            float len = std::sqrt(
+                sunDir[0] * sunDir[0] + sunDir[1] * sunDir[1] +
+                sunDir[2] * sunDir[2]);
+            if (len > 1e-6f)
+                sunDir /= len;
+
+            // Re-cook only when a parameter changed.
+            if (turbidity != hosek_turbidity || albedo != hosek_albedo ||
+                sunDir != hosek_sun_dir || !hosek_state_handle) {
+                hosek_turbidity = turbidity;
+                hosek_albedo = albedo;
+                hosek_sun_dir = sunDir;
+
+                float elevation = std::asin(std::clamp(sunDir[1], -1.0f, 1.0f));
+                ruzino::HosekSkyState state =
+                    ruzino::hosek_cook(turbidity, albedo, elevation);
+
+                if (!hosek_state_handle) {
+                    hosek_state_handle = render_param->InstanceCollection
+                                             ->hosek_state_pool.allocate(1);
+                }
+                hosek_state_handle->write_data(&state);
+                hosek_state_index = hosek_state_handle->index();
+                spdlog::info(
+                    "DomeLight {}: cooked Hosek sky (turbidity={}, albedo={}, "
+                    "elev={:.1f} deg, stateIndex={})",
+                    id.GetText(),
+                    turbidity,
+                    albedo,
+                    elevation * 180.0 / 3.14159265358979,
+                    hosek_state_index);
+            }
+
+            lightData.hosekStateIndex = hosek_state_index;
+            // dirW carries the dome-local sun direction for the miss handler to
+            // forward to the callable as sunDirLocal.
+            lightData.dirW = float3(sunDir[0], sunDir[1], sunDir[2]);
+        }
 
         // Get transform with domeOffset
         auto transform =

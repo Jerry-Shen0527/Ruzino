@@ -209,6 +209,12 @@ void RayGen()
                     domeData.intensity = domeLight.intensity;
                     domeData.textureIndex = domeLight.textureIndex;
                     domeData.seed = payload.seed;
+                    // Hosek analytic sky: forward the cooked-state row index and
+                    // the dome-local sun direction (dirW) so the callable can
+                    // evaluate the sky model. Harmless for non-Hosek callables
+                    // (they ignore these fields).
+                    domeData.hosekStateIndex = domeLight.hosekStateIndex;
+                    domeData.sunDirLocal = domeLight.dirW;
 
                     CallShader(ptConstants.domeLightCallableIndex, domeData);
 

@@ -5,13 +5,13 @@
 #include <algorithm>
 #include <fstream>
 
-#include "RHI/shaderCompiler.h"
 #include "MaterialX/SlangShaderGenerator.h"
 #include "MaterialXCore/Document.h"
 #include "MaterialXFormat/Util.h"
 #include "MaterialXGenShader/Shader.h"
 #include "MaterialXGenShader/Util.h"
 #include "RHI/Hgi/format_conversion.hpp"
+#include "RHI/shaderCompiler.h"
 #include "bindlessContext.h"
 #include "hdMtlxFast.h"
 #include "materialFilter.h"
@@ -101,18 +101,19 @@ void Hd_RUZINO_MaterialX::Sync(
     HdMaterialNetwork2Interface netInterface = FetchMaterialNetwork(
         sceneDelegate, hdNetwork, materialPath, surfTerminalPath, surfTerminal);
 
-    // Read shader_path from config dict (populated by config:shader_path attribute
-    // on the material prim). This uses USD's built-in forwarding mechanism and works
-    // in both USD 25.05 and 26.x.
+    // Read shader_path from config dict (populated by config:shader_path
+    // attribute on the material prim). This uses USD's built-in forwarding
+    // mechanism and works in both USD 25.05 and 26.x.
     VtValue customParamValue;
     auto configIt = hdNetwork.config.find("shader_path");
     if (configIt != hdNetwork.config.end()) {
         customParamValue = configIt->second;
     }
 
-    spdlog::debug("Material {}: shader_path lookup result: {}",
-                  id.GetText(),
-                  customParamValue.IsEmpty() ? "EMPTY" : "found");
+    spdlog::debug(
+        "Material {}: shader_path lookup result: {}",
+        id.GetText(),
+        customParamValue.IsEmpty() ? "EMPTY" : "found");
 
     // If previously using a custom shader, force a full MaterialX shader
     // regeneration because the cached state is stale.
@@ -738,6 +739,105 @@ void Hd_RUZINO_MaterialX::upload_material_data()
         material_data_handle->write_data(&material_data);
         material_data_dirty = false;
     }
+}
+
+bool Hd_RUZINO_MaterialX::isEmissive() const
+{
+    // MaterialX standard_surface: scalar "emission" > 0 (regardless of color).
+    // UsdPreviewSurface: "emissiveColor" with any non-zero channel.
+    // We check both parameter name conventions. The mappings are populated
+    // after shader generation (MtlxGenerateShader); if empty, the material
+    // hasn't been finalized yet and we conservatively return false.
+    if (cached_parameter_mappings.empty())
+        return false;
+
+    // standard_surface: emission (scalar float)
+    auto itEmission = cached_parameter_mappings.find("emission");
+    if (itEmission != cached_parameter_mappings.end()) {
+        float emissionStrength = reinterpret_cast<const float&>(
+            material_data.data[itEmission->second.dataLocation]);
+        if (emissionStrength > 0.0f)
+            return true;
+    }
+    // UsdPreviewSurface: emissiveColor (color3f) — any channel > 0
+    auto itEmissiveColor = cached_parameter_mappings.find("emissiveColor");
+    if (itEmissiveColor != cached_parameter_mappings.end()) {
+        unsigned int loc = itEmissiveColor->second.dataLocation;
+        for (int c = 0; c < 3; c++) {
+            float ch =
+                reinterpret_cast<const float&>(material_data.data[loc + c]);
+            if (ch > 0.0f)
+                return true;
+        }
+    }
+    return false;
+}
+
+GfVec3f Hd_RUZINO_MaterialX::getEmissionRadiance() const
+{
+    if (cached_parameter_mappings.empty())
+        return GfVec3f(0.0f);
+
+    GfVec3f radiance(0.0f);
+
+    // standard_surface: emission_color (color3f) * emission (scalar float)
+    auto itEmission = cached_parameter_mappings.find("emission");
+    auto itEmissionColor = cached_parameter_mappings.find("emission_color");
+    if (itEmission != cached_parameter_mappings.end() &&
+        itEmissionColor != cached_parameter_mappings.end()) {
+        float strength = reinterpret_cast<const float&>(
+            material_data.data[itEmission->second.dataLocation]);
+        unsigned int colorLoc = itEmissionColor->second.dataLocation;
+        radiance[0] =
+            reinterpret_cast<const float&>(material_data.data[colorLoc + 0]) *
+            strength;
+        radiance[1] =
+            reinterpret_cast<const float&>(material_data.data[colorLoc + 1]) *
+            strength;
+        radiance[2] =
+            reinterpret_cast<const float&>(material_data.data[colorLoc + 2]) *
+            strength;
+        return radiance;
+    }
+
+    // UsdPreviewSurface: emissiveColor (color3f)
+    auto itEmissiveColor = cached_parameter_mappings.find("emissiveColor");
+    if (itEmissiveColor != cached_parameter_mappings.end()) {
+        unsigned int loc = itEmissiveColor->second.dataLocation;
+        radiance[0] =
+            reinterpret_cast<const float&>(material_data.data[loc + 0]);
+        radiance[1] =
+            reinterpret_cast<const float&>(material_data.data[loc + 1]);
+        radiance[2] =
+            reinterpret_cast<const float&>(material_data.data[loc + 2]);
+        return radiance;
+    }
+
+    return GfVec3f(0.0f);
+}
+
+uint32_t Hd_RUZINO_MaterialX::getEmissionTextureIndex() const
+{
+    // The emission texture, if any, is registered in texture_id_locations under
+    // the texture variable name derived from the emission_color/emissiveColor
+    // input. For standard_surface the MaterialX texture node feeding
+    // emission_color is named like "emission_color" (the uniform variable);
+    // for UsdPreviewSurface it is "emissiveColor". We search
+    // texture_id_locations for any key containing these tokens.
+    if (texture_id_locations.empty())
+        return 0xffffffffu;
+
+    // Look for a texture variable matching the emission inputs. The exact key
+    // depends on the shader generator's variable naming, so we do a substring
+    // search to be robust.
+    for (const auto& [name, loc] : texture_id_locations) {
+        if (name.find("emission") != std::string::npos ||
+            name.find("emissive") != std::string::npos) {
+            uint32_t texIdx = material_data.data[loc];
+            return texIdx;
+        }
+    }
+    return 0xffffffffu;
 }
 
 size_t Hd_RUZINO_MaterialX::compute_network_hash(

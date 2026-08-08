@@ -4,6 +4,8 @@ struct PathTracingConstants {
     uint materialFetchCallableBaseIndex;
     uint materialOpacityCallableOffset;  // Offset to add to fetch index for
                                          // opacity callables
+    uint emissiveTriangleCount;  // Total emissive triangles (0 = no emissive mesh)
+    uint emissiveMeshCount;      // Number of emissive mesh lights
 };
 
 ConstantBuffer<PathTracingConstants> ptConstants;

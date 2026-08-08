@@ -84,6 +84,13 @@ class HD_RUZINO_API Hd_RUZINO_Mesh final : public HdMesh {
         HdSceneDelegate* sceneDelegate,
         HdDirtyBits* dirtyBits);
 
+    /// Register (or deregister) this mesh's emissive triangles with the
+    /// EmissiveMeshRegistry. Called at the end of updateTLAS when geometry
+    /// and material data are fresh. Filters by isEmissive() at build time;
+    /// non-emissive meshes still register their geometry so that a material
+    /// change (non-emissive → emissive) is picked up without re-syncing.
+    void updateEmissiveEntry(Hd_RUZINO_RenderParam* render_param);
+
     uint32_t _dirtyBits;
 
     void _InitRepr(const TfToken& reprToken, HdDirtyBits* dirtyBits) override;

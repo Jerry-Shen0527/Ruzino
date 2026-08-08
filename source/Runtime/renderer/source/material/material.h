@@ -66,6 +66,36 @@ class HD_RUZINO_API Hd_RUZINO_Material : public HdMaterial {
         return has_valid_shader;
     }
 
+    /// Returns true if this material emits light (emission > 0 in
+    /// standard_surface, or emissiveColor > 0 in UsdPreviewSurface). Used by
+    /// LightCollection to decide whether a mesh instance's triangles should be
+    /// registered as emissive for NEE sampling. Base implementation returns
+    /// false; MaterialX subclass inspects cached_parameter_mappings.
+    virtual bool isEmissive() const
+    {
+        return false;
+    }
+
+    /// Returns the emission radiance color (RGB) and scalar strength if the
+    /// material is emissive. For standard_surface: emission_color * emission.
+    /// For UsdPreviewSurface: emissiveColor. Returns (0,0,0) if not emissive.
+    /// Used by LightCollection to compute per-triangle flux for BVH importance
+    /// sampling (CPU-side estimate, no texture integration).
+    virtual GfVec3f getEmissionRadiance() const
+    {
+        return GfVec3f(0.0f);
+    }
+
+    /// Returns the bindless texture descriptor index for the emission texture,
+    /// or 0xffffffff if emission is a constant (no texture). For
+    /// standard_surface this is the texture connected to emission_color; for
+    /// UsdPreviewSurface, to emissiveColor. Used by LightCollection to let the
+    /// NEE sampler query textured emission radiance at the sampled point.
+    virtual uint32_t getEmissionTextureIndex() const
+    {
+        return 0xffffffffu;
+    }
+
    protected:
     HdMaterialNetwork2 surfaceNetwork;
 

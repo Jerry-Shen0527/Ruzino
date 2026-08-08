@@ -467,6 +467,46 @@ void Hd_RUZINO_Mesh::updateTLAS(
     args.startInstanceLocation = instanceBuffer->index();
 
     draw_indirect->write_data(&args);
+
+    // Register emissive geometry for NEE sampling. This registers only
+    // lightweight metadata (instanceSlot, meshDescIndex, triangleCount,
+    // materialLocation) — the GPU compute pass reads the actual vertex/index
+    // data from the mesh's existing bindless vertexBuffer (zero CPU copies).
+    // We always register so material changes (non-emissive -> emissive) are
+    // picked up; the actual isEmissive() filtering happens at build time.
+    updateEmissiveEntry(render_param);
+}
+
+void Hd_RUZINO_Mesh::updateEmissiveEntry(Hd_RUZINO_RenderParam* render_param)
+{
+    if (!instanceBuffer)
+        return;
+
+    // If the mesh has no triangles, deregister any previous entry.
+    if (triangulatedIndices.empty()) {
+        render_param->InstanceCollection->emissive_registry.deregister_mesh(
+            instanceBuffer->index());
+        return;
+    }
+
+    EmissiveMeshEntry entry;
+    entry.instanceSlot = instanceBuffer->index();
+    entry.meshDescIndex = mesh_desc_buffer->index();
+    entry.triangleCount = static_cast<uint32_t>(triangulatedIndices.size());
+
+    // Resolve default material location (mesh-level).
+    auto material_id = GetMaterialId();
+    auto material_map = render_param->material_map;
+    entry.defaultMaterialLocation = 0xffffffffu;
+    if (!material_id.IsEmpty() && material_map) {
+        auto it = material_map->find(material_id);
+        if (it != material_map->end() && it->second) {
+            entry.defaultMaterialLocation = it->second->GetMaterialLocation();
+        }
+    }
+
+    render_param->InstanceCollection->emissive_registry.register_mesh(
+        instanceBuffer->index(), std::move(entry));
 }
 
 void Hd_RUZINO_Mesh::_InitRepr(const TfToken& reprToken, HdDirtyBits* dirtyBits)
@@ -506,8 +546,7 @@ void Hd_RUZINO_Mesh::Sync(
         _SetMaterialId(sceneDelegate, this);
         // Notify renderer that material assignments changed so path tracing
         // rebuilds the shader pipeline.
-        auto render_param =
-            static_cast<Hd_RUZINO_RenderParam*>(renderParam);
+        auto render_param = static_cast<Hd_RUZINO_RenderParam*>(renderParam);
         render_param->InstanceCollection->mark_materials_dirty();
     }
 
@@ -575,11 +614,12 @@ void Hd_RUZINO_Mesh::Sync(
                                     expected_face_vertex_size,
                                     original_size);
                             }
-                            (void)meshUtil.ComputeTriangulatedFaceVaryingPrimvar(
-                                value.Get<VtVec3fArray>().data(),
-                                value.GetArraySize(),
-                                HdTypeFloatVec3,
-                                &primvar.second.data);
+                            (void)
+                                meshUtil.ComputeTriangulatedFaceVaryingPrimvar(
+                                    value.Get<VtVec3fArray>().data(),
+                                    value.GetArraySize(),
+                                    HdTypeFloatVec3,
+                                    &primvar.second.data);
                         }
                         else if (value.IsHolding<VtVec2fArray>()) {
                             if (original_size != expected_face_vertex_size) {
@@ -590,11 +630,12 @@ void Hd_RUZINO_Mesh::Sync(
                                     expected_face_vertex_size,
                                     original_size);
                             }
-                            (void)meshUtil.ComputeTriangulatedFaceVaryingPrimvar(
-                                value.Get<VtVec2fArray>().data(),
-                                value.GetArraySize(),
-                                HdTypeFloatVec2,
-                                &primvar.second.data);
+                            (void)
+                                meshUtil.ComputeTriangulatedFaceVaryingPrimvar(
+                                    value.Get<VtVec2fArray>().data(),
+                                    value.GetArraySize(),
+                                    HdTypeFloatVec2,
+                                    &primvar.second.data);
                         }
                         else if (value.IsHolding<VtVec4fArray>()) {
                             if (original_size != expected_face_vertex_size) {
@@ -608,11 +649,12 @@ void Hd_RUZINO_Mesh::Sync(
                             spdlog::info(
                                 "Get a VtVec4fArray, named {}",
                                 primvar.first.GetText());
-                            (void)meshUtil.ComputeTriangulatedFaceVaryingPrimvar(
-                                value.Get<VtVec4fArray>().data(),
-                                value.GetArraySize(),
-                                HdTypeFloatVec4,
-                                &primvar.second.data);
+                            (void)
+                                meshUtil.ComputeTriangulatedFaceVaryingPrimvar(
+                                    value.Get<VtVec4fArray>().data(),
+                                    value.GetArraySize(),
+                                    HdTypeFloatVec4,
+                                    &primvar.second.data);
                         }
 
                         size_t triangulated_size =
@@ -1145,6 +1187,12 @@ void Hd_RUZINO_Mesh::Finalize(HdRenderParam* renderParam)
     // Mark the geom flag as dirty
     auto render_param = static_cast<Hd_RUZINO_RenderParam*>(renderParam);
     render_param->InstanceCollection->mark_geometry_dirty();
+
+    // Deregister from the emissive registry so stale entries don't linger.
+    if (instanceBuffer) {
+        render_param->InstanceCollection->emissive_registry.deregister_mesh(
+            instanceBuffer->index());
+    }
 
     vertexBuffer = nullptr;
     BLAS = nullptr;
