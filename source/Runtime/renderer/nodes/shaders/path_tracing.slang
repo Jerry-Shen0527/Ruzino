@@ -14,6 +14,7 @@ import utils.Math.MathHelpers;
 
 import pt_constants;
 import pt_sample_lights;
+import cloud_intersection;  // procedural cloud density + light-march helpers
 
 RWStructuredBuffer<uint> random_seeds;
 RWTexture2D<float4> output;
@@ -47,6 +48,21 @@ struct RayPayload {
     // hit) -- emission is then taken unweighted (degrades gracefully to no MIS).
     float bsdfPdf;
     float lightPdf;
+
+    // Volumetric cloud hit. When true, the ray hit a Cloud volume (hit group
+    // 6); CloudClosestHit integrated Beer-Lambert extinction + single-scatter
+    // in-scattering along the segment and wrote:
+    //   volumeColor        — accumulated in-scattered radiance (sun + ambient)
+    //   volumeTransmittance— remaining transmittance through the segment [0,1]
+    //   volumeTEnd         — ray param at the segment exit (to continue past)
+    // The RayGen loop adds volumeColor, attenuates throughput by
+    // volumeTransmittance, and continues the ray from volumeTEnd so terrain /
+    // sky behind the cloud shows through (attenuated). Mirrors wetbrush_render's
+    // isVolume/volumeColor, extended with transmittance for true clouds.
+    bool isVolume;
+    float3 volumeColor;
+    float volumeTransmittance;
+    float volumeTEnd;
 };
 
 [shader("raygeneration")]
@@ -83,6 +99,7 @@ void RayGen()
         for (int depth = 0; depth < max_depth; depth++) {
             payload.depth = depth;
             payload.hit = false;
+            payload.isVolume = false;
 
             // Trace ray to get geometry information
             TraceRay(
@@ -124,6 +141,39 @@ void RayGen()
                     mul(payload.emission, Spectrum(misWeight)));
                 accumulated_color = add(accumulated_color, litEmission);
                 break;
+            }
+
+            // Volumetric cloud hit: CloudClosestHit integrated the Beer-Lambert
+            // extinction + single-scatter in-scattering along the segment and
+            // returned (volumeColor, volumeTransmittance, volumeTEnd). Add the
+            // in-scattered radiance, attenuate the path throughput by the
+            // segment transmittance, and CONTINUE the ray from the segment exit
+            // so terrain/sky behind the cloud shows through (this is what makes
+            // clouds transparent rather than opaque slabs). When transmittance
+            // ~0 the throughput collapses and Russian roulette ends the path.
+            if (payload.isVolume) {
+                accumulated_color = add(
+                    accumulated_color,
+                    mul(current_throughput, Spectrum(payload.volumeColor)));
+                current_throughput = mul(
+                    current_throughput,
+                    Spectrum(payload.volumeTransmittance));
+
+                // Early-out if the cloud fully absorbed the ray.
+                float3 thr = current_throughput.toFloat3();
+                if (max(thr.x, max(thr.y, thr.z)) < 1e-3)
+                    break;
+
+                // Continue past the cloud without spending a bounce depth
+                // (the medium is non-scattering from here; this is a free
+                // continuation, like the surface-ray offset below).
+                float3 dir = normalize(current_ray.Direction);
+                current_ray.Origin = current_ray.Origin
+                    + dir * payload.volumeTEnd
+                    + dir * 1e-3;
+                current_ray.TMin = 0.0;
+                current_ray.TMax = 3000.0;
+                continue;
             }
 
             // Check if ray missed
@@ -852,3 +902,163 @@ void ShadowMiss(inout ShadowPayload payload)
 // - callables/eval_standard_surface.slang
 // - callables/eval_preview_surface.slang
 // They are linked via add_source_code() in the C++ code.
+
+
+// ============================================================================
+// Volumetric Cloud hit groups (SBT slots 6/7)
+// ============================================================================
+// A Cloud volume is a procedural UsdVol.Volume whose density is fbm+Worley
+// noise sampled on the fly (no stored grid). It rides the standard
+// path_tracing node: any scene with a cloud volume renders it for free.
+//
+//   CloudIntersection  (slot 6, procedural) — reports the full slab crossing.
+//   CloudClosestHit    (slot 6)            — Beer-Lambert + HG + light-march.
+//   CloudShadowHit     (slot 7)            — attenuates shadow-ray transmittance.
+//
+// The closest-hit does the ENTIRE volumetric integral for the segment and
+// returns in-scattered radiance + remaining transmittance; the RayGen loop
+// composites it and continues past the cloud (see the isVolume branch above).
+
+[shader("intersection")]
+void CloudIntersection()
+{
+    uint instance_id = InstanceID();
+    GeometryInstanceData inst = instanceDescBuffer[instance_id];
+    VolumeDesc vd = volumeDescBuffer[inst.geometryID];
+
+    // Clouds are continuous media: report EVERY slab crossing (unlike the
+    // wetbrush slab, which gates on a density threshold).
+    float tEnter, tExit;
+    if (!cloudIntersectSlab(vd, tEnter, tExit))
+        return;
+
+    CloudHitAttributes attr;
+    attr.tEnter = tEnter;
+    attr.tExit = tExit;
+    ReportHit(tEnter, 0u, attr);
+}
+
+// Find the sun (DistantLight) in the scene, returning its world direction and
+// intensity. Returns false if no sun; the closest-hit then shades ambient-only.
+bool findSun(out float3 sunDirW, out float3 sunColor)
+{
+    sunDirW = float3(0, 1, 0);
+    sunColor = float3(0);
+    bool found = false;
+    for (uint i = 0; i < ptConstants.lightCount; ++i) {
+        LightData light = lightBuffer[i];
+        if (light.type == uint(LightType::Distant) ||
+            light.type == uint(LightType::Directional)) {
+            // dirW is the direction the light points TOWARD (from the scene).
+            sunDirW = -normalize(light.dirW);
+            sunColor = light.intensity;
+            found = true;
+            break;
+        }
+    }
+    return found;
+}
+
+[shader("closesthit")]
+void CloudClosestHit(inout RayPayload payload, in CloudHitAttributes attr)
+{
+    uint instance_id = InstanceID();
+    GeometryInstanceData inst = instanceDescBuffer[instance_id];
+    VolumeDesc vd = volumeDescBuffer[inst.geometryID];
+
+    float3 rayOrg = WorldRayOrigin();
+    float3 rayDir = WorldRayDirection();
+
+    // Sun + a constant ambient (approximates multi-scattered skylight).
+    float3 sunDirW, sunColor;
+    bool hasSun = findSun(sunDirW, sunColor);
+    float3 ambient = float3(0.25, 0.30, 0.40);  // cool sky ambient fallback
+
+    // March the view segment accumulating Beer-Lambert extinction and
+    // in-scattered sunlight (NEE via a per-step light march toward the sun,
+    // with the HZD beer-powder term for dark bases / bright rims).
+    const int MAX_STEPS = 96;
+    float segLen = attr.tExit - attr.tEnter;
+    int steps = clamp(int(segLen / max(vd.boundsMax.x - vd.boundsMin.x, 1.0) * 48.0),
+                      32, MAX_STEPS);
+    float step = segLen / float(steps);
+
+    float T_view = 1.0;
+    float3 L = float3(0.0);
+
+    // Henyey-Greenstein phase for the sun direction (water-cloud forward peak).
+    float g = vd.phaseG;
+
+    for (int i = 0; i < steps; ++i) {
+        float t = attr.tEnter + (float(i) + 0.5) * step;
+        float3 p = rayOrg + rayDir * t;
+        float d = cloudDensity(vd, p);
+        if (d <= 0.0)
+            continue;
+
+        float sigmaT = d * vd.densityScale;
+        float localT = exp(-sigmaT * step);
+
+        // Phase: view ray comes in along -rayDir, scatters toward camera along
+        // -rayDir; the sun is at sunDirW. cos = dot(-rayDir, sunDirW).
+        float cosTheta = dot(-rayDir, sunDirW);
+        float phase = evalHenyeyGreenstein(cosTheta, g);
+
+        // NEE: transmittance to the sun through the SAME procedural field.
+        // March a short distance (sunDist ~ through the AABB toward the sun).
+        float sunDist = (vd.boundsMax.x - vd.boundsMin.x) * 0.5;  // ~half-width
+        float powder;
+        float T_sun = 1.0;
+        float3 sunContrib = float3(0.0);
+        if (hasSun) {
+            T_sun = cloudLightMarch(vd, p, sunDirW, sunDist, powder);
+            // beer-powder blend: darken dense back-facing regions.
+            float bp = T_sun * (0.75 + 0.25 * powder);
+            sunContrib = sunColor * bp * phase;
+        }
+
+        float3 li = sunContrib + ambient * (0.5 + 0.5 * phase);
+        // Energy-conserving in-scatter for this step:
+        L += T_view * (1.0 - localT) * li;
+        T_view *= localT;
+        if (T_view < 0.01)
+            break;
+    }
+
+    payload.isVolume = true;
+    payload.volumeColor = L;
+    payload.volumeTransmittance = T_view;
+    payload.volumeTEnd = attr.tExit;
+}
+
+[shader("closesthit")]
+void CloudShadowHit(inout ShadowPayload payload, in CloudHitAttributes attr)
+{
+    uint instance_id = InstanceID();
+    GeometryInstanceData inst = instanceDescBuffer[instance_id];
+    VolumeDesc vd = volumeDescBuffer[inst.geometryID];
+
+    // Accumulate Beer-Lambert transmittance for soft cloud shadows on the
+    // terrain below. payload.transmittance starts at 1.0 (set by the NEE
+    // launcher); multiply it down through the cloud segment.
+    float3 rayOrg = WorldRayOrigin();
+    float3 rayDir = WorldRayDirection();
+
+    const int STEPS = 32;
+    float segLen = attr.tExit - attr.tEnter;
+    float step = segLen / float(STEPS);
+    float T = payload.transmittance;
+    for (int i = 0; i < STEPS; ++i) {
+        float t = attr.tEnter + (float(i) + 0.5) * step;
+        float3 p = rayOrg + rayDir * t;
+        float d = cloudDensity(vd, p);
+        T *= exp(-d * vd.densityScale * step);
+        if (T < 1e-3)
+            break;
+    }
+    payload.transmittance = T;
+    // The light is still "visible" in the binary sense (the NEE path multiplies
+    // by transmittance); only fully-opaque absorption sets isVisible=false.
+    if (payload.transmittance < 1e-3)
+        payload.isVisible = false;
+}

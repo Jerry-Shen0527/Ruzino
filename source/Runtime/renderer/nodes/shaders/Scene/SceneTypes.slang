@@ -152,7 +152,8 @@ struct GeometryInstanceData {
     }
 };
 
-/** Volume descriptor for a raymarchable 3D density grid (Wetbrush paper §6).
+/** Volume descriptor for a raymarchable 3D density grid (Wetbrush paper §6),
+  and for procedural path-traced clouds.
 
   Carries everything the volume intersection / closest-hit shaders need to
   sample the paint density + color: the bindless index of a Float4 buffer
@@ -164,7 +165,21 @@ struct GeometryInstanceData {
   accumulated by the render driver across frames into one large field). The
   renderer raymarches the grid's world AABB, sampling the density every quarter
   of cellSize (paper §6).
+
+  When volumeKind == Cloud, bindlessIndex/gridRes/cellSize/gridMin are unused:
+  the cloud's density is procedural (fbm + Worley noise sampled in the
+  cloud_intersection.slang helpers), and only boundsMin/boundsMax + the cloud*
+  fields below drive rendering.
 */
+// Discriminator for which hit-group family a volume routes to.
+//   Wetbrush = the paint density slab (hit groups 4/5, emission+terminate).
+//   Cloud    = procedural path-traced cloud (hit groups 6/7, Beer-Lambert +
+//              Henyey-Greenstein + light-march NEE, transmits through).
+enum class VolumeKind : uint32_t {
+    Wetbrush = 0,
+    Cloud    = 1,
+};
+
 struct VolumeDesc {
     uint bindlessIndex;  ///< Index into t_BindlessBuffers for the Float4
                          ///< (density, r, g, b) per-voxel array.
@@ -175,7 +190,21 @@ struct VolumeDesc {
     float3 gridMin;      ///< World-space min corner of the grid (voxel 0,0,0).
     float3 boundsMin;    ///< World-space grid AABB min (for intersection).
     float3 boundsMax;    ///< World-space grid AABB max.
-    uint padding;        ///< Keep the struct 16-byte aligned for the pool.
+    uint volumeKind;     ///< VolumeKind (0=Wetbrush, 1=Cloud).
+
+    // --- Cloud parameters (used only when volumeKind == Cloud) ---
+    // Density shaping: noise is sampled in a NORMALIZED space [0,1]^3 over the
+    // AABB, then fbm/Worley frequencies are in that space. layerMin/layerMax
+    // are the cloud-layer height fraction within [0,1] (0=AABB bottom, 1=top).
+    float coverage;        ///< [0,1] cloud coverage threshold (higher = more cloud).
+    float densityScale;    ///< Extinction coefficient multiplier (sigma_t = densityScale*density).
+    float phaseG;          ///< Henyey-Greenstein anisotropy (~0.6-0.8 for water clouds).
+    float layerTop;        ///< Height fraction (in AABB [0,1]) of cloud top.
+    float layerBottom;     ///< Height fraction of cloud base.
+    float noiseFreq;       ///< Base fbm frequency multiplier.
+    float worleyFreq;      ///< Worley erosion frequency multiplier.
+    float detailErosion;   ///< [0,1] how much the Worley detail erodes the base shape.
+    float2 _cloudPad;      ///< Keep 16-byte aligned.
 };
 
 enum class MeshFlags : uint32_t {

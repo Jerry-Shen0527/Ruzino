@@ -23,6 +23,11 @@ struct ShadowPayload {
     uint recursionDepth;  // Current recursion depth for opacity testing
     uint seed;
     bool isVisible;  // Whether light is visible or occluded
+    // Volumetric Beer-Lambert transmittance accumulated by a cloud shadow
+    // hit (CloudShadowHit). Defaults to 1.0 (fully transparent) for surface
+    // shadow rays, so existing surface lighting is unaffected; cloud segments
+    // multiply it down. Read by the NEE path to attenuate direct light.
+    float transmittance = 1.0;
 };
 
 // Cosine-weighted hemisphere sampling around normal

@@ -84,6 +84,21 @@ void RaytracingContext::announce_hitgroup(
     }
 
     hitgroup_programs[position] = handle_hg;
+
+    // For middle slots with holes (e.g. slots 4/5 unused when 6/7 are used),
+    // fill them with this hit group so there are no empty SBT entries. An empty
+    // closestHitShader name makes D3D12 reject the PSO ("Failed to create a DXR
+    // pipeline state object"). Mirrors the hole-filling already done for
+    // callables above. The hole entries are never routed to (no instance sets
+    // their contribution to those slot indices), so their content is inert.
+    for (size_t i = 0; i < hitgroup_names.size(); ++i) {
+        if (std::get<0>(hitgroup_names[i]).empty()) {
+            hitgroup_names[i] =
+                std::make_tuple(closesthit, anyhit, intercestion);
+            if (i < hitgroup_programs.size())
+                hitgroup_programs[i] = handle_hg;
+        }
+    }
 }
 
 void RaytracingContext::announce_callable(

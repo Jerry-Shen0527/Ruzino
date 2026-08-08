@@ -171,6 +171,10 @@ NODE_EXECUTION_FUNCTION(path_tracing)
         }
         ProgramDesc program_desc;
         program_desc.set_path("path_tracing.slang");
+        // cloud_intersection.slang holds the importable cloud helpers (density,
+        // light-march, slab test); the Cloud* hit-group entry points live inside
+        // path_tracing.slang (same TU, so they see file-level RayPayload).
+        program_desc.add_path("cloud_intersection.slang");
         program_desc.shaderType = nvrhi::ShaderType::AllRayTracing;
 #if 0
 
@@ -499,6 +503,14 @@ void fetch_)" + material.second->GetMaterialName() +
             "",
             "SphereIntersection",
             3);  // Sphere shadow ray with custom intersection
+        // Volumetric cloud hit groups (slots 6/7). A Cloud volume rprim sets
+        // instanceContributionToHitGroupIndex=6, so radiance rays route to slot
+        // 6 (CloudClosestHit + CloudIntersection) and shadow rays to slot 7
+        // (CloudShadowHit + CloudIntersection). These coexist with wetbrush's
+        // 4/5 slots; the plain path_tracing node only announces 6/7 (wetbrush
+        // is rendered by the wetbrush_render node variant).
+        context.announce_hitgroup("CloudClosestHit", "", "CloudIntersection", 6);
+        context.announce_hitgroup("CloudShadowHit", "", "CloudIntersection", 7);
         context.announce_miss("Miss", 0);  // Primary ray miss shader at index 0
         context.announce_miss(
             "ShadowMiss", 1);  // Shadow ray miss shader at index 1
