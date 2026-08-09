@@ -107,7 +107,8 @@ def _build_sky_scene(path, sun_elev_deg, sun_az_deg, turbidity, albedo):
 
 def _build_render_graph(hydra, samples):
     """Standard path-tracing graph: rng → raygen → path_tracing → accumulate
-    → lpm → gamma → present_color. (Same as test_render_materials.)"""
+    → lpm → present_color. LPM is the sole tone mapper (HDR→LDR + display
+    gamma); no separate gamma_correction node — that would double-gamma."""
     import nodes_core_py as core
 
     node_system = hydra.get_node_system()
@@ -123,8 +124,10 @@ def _build_render_graph(hydra, samples):
     accumulate = tree.add_node("accumulate")
     rng_buffer = tree.add_node("rng_buffer")
     lpm = tree.add_node("lpm")
-    gamma = tree.add_node("gamma_correction")
     present = tree.add_node("present_color")
+    # NOTE: no gamma_correction node here. LPM already applies the display
+    # gamma (color^(1/2.2)) in LDR mode (Display Mode=0), so chaining a
+    # second gamma_correction would apply gamma twice and wash the image out.
 
     tree.add_link(rng.get_output_socket("Random Number"),
                   ray_gen.get_input_socket("random seeds"))
@@ -139,8 +142,6 @@ def _build_render_graph(hydra, samples):
     tree.add_link(accumulate.get_output_socket("Accumulated"),
                   lpm.get_input_socket("Input Color"))
     tree.add_link(lpm.get_output_socket("Output Color"),
-                  gamma.get_input_socket("Texture"))
-    tree.add_link(gamma.get_output_socket("Corrected"),
                   present.get_input_socket("Color"))
 
     vec_params = {(lpm, "Crosstalk"): [0.471, 0.49, 0.504]}
@@ -155,9 +156,13 @@ def _build_render_graph(hydra, samples):
         (ray_gen, "Focus Distance"): 2.0,
         (ray_gen, "Scatter Rays"): False,
         (accumulate, "Max Samples"): samples,
-        (gamma, "Gamma"): 2.2,
-        (lpm, "LPM Exposure"): 0.0,
-        (lpm, "HDR Max"): 4.0,
+        # LPM is the sole tone mapper: it does the HDR->LDR curve AND the
+        # display gamma. With the old double-gamma (LPM + gamma_correction)
+        # removed, midtones came out too dark — recover them with a positive
+        # LPM Exposure (larger = brighter midtones) and a low HDR Max matching
+        # the sky's near-1.0 linear range. The shoulder still softens the top.
+        (lpm, "HDR Max"): 1.5,
+        (lpm, "LPM Exposure"): 1.5,
         (lpm, "Contrast"): 1.0,
         (lpm, "Shoulder"): 1.0,
         (lpm, "Shoulder Contrast"): 1.0,

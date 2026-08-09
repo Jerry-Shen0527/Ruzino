@@ -37,7 +37,7 @@ def _locate_render_cfg():
         ROOT / "Assets" / "Hd_RUZINO_RendererPlugin" / "render_nodes_save.json")
 
 
-from pxr import Usd, UsdGeom, UsdLux, UsdVol, Sdf, Gf
+from pxr import Usd, UsdGeom, UsdLux, UsdShade, UsdVol, Sdf, Gf
 
 
 def _look_at(eye, target, up_world=(0.0, 1.0, 0.0)):
@@ -58,16 +58,53 @@ def _build_scene(path, coverage=0.35, density=1.2, sun_elev_deg=45.0):
         path.unlink()
     stage = Usd.Stage.CreateNew(str(path))
 
-    # A ground plane so we can see soft cloud shadows. (No material binding:
-    # uses the path tracer's fallback shader — isolates whether a MaterialX
-    # material is causing the flat render.)
+    # A ground plane so we can see soft cloud shadows. Enlarged to ±5000 so
+    # the far edge is well off-frame (a small plane left an empty black band
+    # where rays miss everything). Subdividing into a 10×10 grid satisfies
+    # "not just one quad"; the checkerboard itself is drawn by the shader
+    # below from world XZ, so mesh density doesn't change the pattern.
     plane = UsdGeom.Mesh.Define(stage, "/Ground")
-    plane.CreatePointsAttr().Set([
-        (-50, 0, -50), (50, 0, -50), (50, 0, 50), (-50, 0, 50)])
-    plane.CreateFaceVertexCountsAttr().Set([4])
-    plane.CreateFaceVertexIndicesAttr().Set([0, 1, 2, 3])
-    plane.CreateNormalsAttr().Set([(0, 1, 0)] * 4)
-    plane.SetNormalsInterpolation("constant")
+    DIV = 10
+    HALF = 5000.0
+    step = (2.0 * HALF) / DIV
+    pts = []
+    idx = []
+    for iz in range(DIV + 1):
+        for ix in range(DIV + 1):
+            pts.append((ix * step - HALF, 0.0, iz * step - HALF))
+    for iz in range(DIV):
+        for ix in range(DIV):
+            base = iz * (DIV + 1) + ix
+            idx.append(base)
+            idx.append(base + 1)
+            idx.append(base + (DIV + 1) + 1)
+            idx.append(base + (DIV + 1))
+    plane.CreatePointsAttr().Set(pts)
+    plane.CreateFaceVertexCountsAttr().Set([4] * (DIV * DIV))
+    plane.CreateFaceVertexIndicesAttr().Set(idx)
+    plane.CreateNormalsAttr().Set([(0, 1, 0)] * len(pts))
+    plane.SetNormalsInterpolation("vertex")
+
+    # Procedural checkerboard material (shader-path EVAL callable). The
+    # attribute is config:shader_path on the MATERIAL prim — the renderer
+    # reads it out of the Hydra material-network config dict (NOT inputs:,
+    # which is the dome-light convention) and bypasses MaterialX generation
+    # entirely, compiling eval_checkerboard_ground.slang directly.
+    ground_mat = UsdShade.Material.Define(stage, "/GroundChecker")
+    ground_mat.GetPrim().CreateAttribute(
+        "config:shader_path", Sdf.ValueTypeNames.String).Set(
+        "callables/checkerboard_ground.slang")
+    # A surface output terminal is required for Hydra to treat this as a
+    # bound-able material; the network is bypassed when shader_path is valid.
+    surface_out = ground_mat.CreateSurfaceOutput()
+    dummy = UsdShade.Shader.Define(stage, "/GroundChecker/PreviewSurface")
+    dummy.CreateIdAttr("UsdPreviewSurface")
+    dummy.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(
+        Gf.Vec3f(0.5, 0.5, 0.5))
+    surface_out.ConnectToSource(dummy.ConnectableAPI(),
+                                "surface", UsdShade.AttributeType.Output)
+    plane.GetPrim().ApplyAPI("MaterialBindingAPI")
+    UsdShade.MaterialBindingAPI(plane).Bind(ground_mat)
 
     # Camera: looking up across the cloud layer.
     cam = UsdGeom.Camera.Define(stage, "/Camera")
@@ -136,8 +173,10 @@ def _build_render_graph(hydra, samples):
     accumulate = tree.add_node("accumulate")
     rng_buffer = tree.add_node("rng_buffer")
     lpm = tree.add_node("lpm")
-    gamma = tree.add_node("gamma_correction")
     present = tree.add_node("present_color")
+    # NOTE: no gamma_correction node here. LPM already applies the display
+    # gamma (color^(1/2.2)) in LDR mode (Display Mode=0), so chaining a
+    # second gamma_correction would apply gamma twice and wash the image out.
 
     tree.add_link(rng.get_output_socket("Random Number"),
                   ray_gen.get_input_socket("random seeds"))
@@ -152,8 +191,6 @@ def _build_render_graph(hydra, samples):
     tree.add_link(accumulate.get_output_socket("Accumulated"),
                   lpm.get_input_socket("Input Color"))
     tree.add_link(lpm.get_output_socket("Output Color"),
-                  gamma.get_input_socket("Texture"))
-    tree.add_link(gamma.get_output_socket("Corrected"),
                   present.get_input_socket("Color"))
 
     vec_params = {(lpm, "Crosstalk"): [0.471, 0.49, 0.504]}
@@ -166,8 +203,13 @@ def _build_render_graph(hydra, samples):
     scalar_params = {
         (ray_gen, "Aperture"): 0.0, (ray_gen, "Focus Distance"): 2.0,
         (ray_gen, "Scatter Rays"): False,
-        (accumulate, "Max Samples"): samples, (gamma, "Gamma"): 2.2,
-        (lpm, "LPM Exposure"): 0.0, (lpm, "HDR Max"): 4.0,
+        (accumulate, "Max Samples"): samples,
+        # LPM is the sole tone mapper: it does the HDR->LDR curve AND the
+        # display gamma (no separate gamma_correction node — that would
+        # double-gamma). With the double-gamma removed, midtones came out too
+        # dark — recover them with a positive LPM Exposure (larger = brighter
+        # midtones). HDR Max=2.0 fits the wider range (sunlit ground + sky).
+        (lpm, "HDR Max"): 2.0, (lpm, "LPM Exposure"): 2.0,
         (lpm, "Contrast"): 1.0, (lpm, "Shoulder"): 1.0,
         (lpm, "Shoulder Contrast"): 1.0, (lpm, "Soft Gap"): 0.0,
         (lpm, "Color Space"): 0, (lpm, "Display Mode"): 0,
