@@ -252,10 +252,12 @@ void WetbrushVolumeImpl::fillVolumeDesc(VolumeDesc& vd) const
     vd.phaseG = 0.0f;
     vd.layerTop = 0.0f;
     vd.layerBottom = 0.0f;
-    vd.noiseFreq = 0.0f;
-    vd.worleyFreq = 0.0f;
+    vd.noiseFreq = float3(0.0f);
+    vd.worleyFreq = float3(0.0f);
     vd.detailErosion = 0.0f;
-    vd._cloudPad = float2(0.0f, 0.0f);
+    vd._cloudPad0 = 0.0f;
+    vd._cloudPad1 = 0.0f;
+    vd._cloudPad2 = float2(0.0f, 0.0f);
 }
 
 RUZINO_NAMESPACE_CLOSE_SCOPE

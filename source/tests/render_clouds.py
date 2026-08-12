@@ -112,8 +112,15 @@ def _build_scene(path, coverage=0.35, density=1.2, sun_elev_deg=45.0):
     cam.GetHorizontalApertureAttr().Set(36.0)
     cam.GetVerticalApertureAttr().Set(20.25)
     cam.GetClippingRangeAttr().Set((0.1, 1e5))
+    # Camera at human eye height (y=8) framing physically-scaled clouds
+    # (base ~1 km up). Standing on the ground looking at 1 km-high clouds,
+    # a normal-FOV camera can't hold BOTH the ground (horizon ~0 deg) and the
+    # near cloud base (~40 deg) in one frame — near clouds are overhead. So
+    # pitch to just above the horizon: frame shows the ground in the lower
+    # portion and the cloud layer receding toward the horizon above it.
+    # eye z=1200, target y=280 -> ~13 deg pitch, horizon sits in the lower frame.
     UsdGeom.Xformable(cam).AddTransformOp().Set(
-        _look_at(eye=(0.0, 8.0, 30.0), target=(0.0, 12.0, 0.0)))
+        _look_at(eye=(0.0, 8.0, 1200.0), target=(0.0, 280.0, 0.0)))
 
     # Hosek sky (dome-local sun dir, +Y up).
     elev = math.radians(sun_elev_deg)
@@ -136,7 +143,7 @@ def _build_scene(path, coverage=0.35, density=1.2, sun_elev_deg=45.0):
     sun_xf = Gf.Matrix4d(); sun_xf.SetIdentity()
     sun_xf.SetRow(2, Gf.Vec4d(sun_shine[0], sun_shine[1], sun_shine[2], 0.0))
     sun = UsdLux.DistantLight.Define(stage, "/Sun")
-    sun.CreateIntensityAttr().Set(5.0)
+    sun.CreateIntensityAttr().Set(1.5)  # was 5.0 — far too bright, blew out the ground
     sun.CreateAngleAttr().Set(0.53)
     UsdGeom.Xformable(sun).AddTransformOp().Set(sun_xf)
 
@@ -144,15 +151,27 @@ def _build_scene(path, coverage=0.35, density=1.2, sun_elev_deg=45.0):
     vol = UsdVol.Volume.Define(stage, "/CloudLayer")
     pv = UsdGeom.PrimvarsAPI(vol)
     pv.CreatePrimvar("volumeType", Sdf.ValueTypeNames.Token).Set("cloud")
-    pv.CreatePrimvar("boundsMin", Sdf.ValueTypeNames.Float3).Set(Gf.Vec3f(-40.0, 6.0, -40.0))
-    pv.CreatePrimvar("boundsMax", Sdf.ValueTypeNames.Float3).Set(Gf.Vec3f(40.0, 22.0, 40.0))
+    # Physically-scaled cloud layer (1 unit = 1 meter): base at 1 km (typical
+    # cumulus condensation level), top at 2.5 km (~1.5 km thick — real cumulus
+    # congestus depth). Horizontal extent ±5000 matches the ground so clouds
+    # reach the horizon.
+    pv.CreatePrimvar("boundsMin", Sdf.ValueTypeNames.Float3).Set(Gf.Vec3f(-5000.0, 1000.0, -5000.0))
+    pv.CreatePrimvar("boundsMax", Sdf.ValueTypeNames.Float3).Set(Gf.Vec3f(5000.0, 2500.0, 5000.0))
     pv.CreatePrimvar("coverage", Sdf.ValueTypeNames.Float).Set(float(coverage))
     pv.CreatePrimvar("densityScale", Sdf.ValueTypeNames.Float).Set(float(density))
     pv.CreatePrimvar("phaseG", Sdf.ValueTypeNames.Float).Set(0.7)
     pv.CreatePrimvar("layerTop", Sdf.ValueTypeNames.Float).Set(1.0)
     pv.CreatePrimvar("layerBottom", Sdf.ValueTypeNames.Float).Set(0.0)
-    pv.CreatePrimvar("noiseFreq", Sdf.ValueTypeNames.Float).Set(3.0)
-    pv.CreatePrimvar("worleyFreq", Sdf.ValueTypeNames.Float).Set(3.0)
+    # Per-axis noise frequencies (.x=horizX, .y=vertical, .z=horizZ), tuned to
+    # physical cloud scale. Individual cumulus clouds are ~1 km across, and the
+    # layer is ~1.5 km thick, so: horizontal 10000m/1000m = 10 cells, vertical
+    # 1500m/~500m = 3 cells. This 10:3 anisotropy matches real cloud aspect —
+    # not the extreme 60:7 that made clouds look flat. cloud_intersection.slang
+    # multiplies each normalized axis by these.
+    pv.CreatePrimvar("noiseFreq", Sdf.ValueTypeNames.Float3).Set(
+        Gf.Vec3f(10.0, 3.0, 10.0))
+    pv.CreatePrimvar("worleyFreq", Sdf.ValueTypeNames.Float3).Set(
+        Gf.Vec3f(10.0, 3.0, 10.0))
     pv.CreatePrimvar("detailErosion", Sdf.ValueTypeNames.Float).Set(0.6)
 
     stage.GetRootLayer().Save()
@@ -234,8 +253,13 @@ def main():
     WIDTH, HEIGHT, SPP = 640, 480, 64
 
     cases = [
-        ("cloud_sunny", 0.15, 3.0, 55.0),
-        ("cloud_overcast", 0.35, 4.5, 35.0),
+        # (name, coverage, density, sun_elev_deg)
+        # NOTE: coverage is SUBTRACTED as a density threshold in the shader
+        # (cloud_intersection.slang: shape -= coverage), so LOWER coverage =
+        # MORE cloud. Higher Y noise freq also lowers average density, so
+        # overcast needs a lower threshold than sunny to still show cloud.
+        ("cloud_sunny", 0.32, 3.0, 55.0),   # sparse, scattered clouds
+        ("cloud_overcast", 0.05, 4.5, 35.0),  # near-full cover
     ]
 
     for name, cov, dens, elev in cases:

@@ -45,8 +45,8 @@ bool CloudVolumeImpl::parsePrimvars(
     cloud_phaseG = readFloat("phaseG", 0.7f);
     cloud_layerTop = readFloat("layerTop", 1.0f);
     cloud_layerBottom = readFloat("layerBottom", 0.0f);
-    cloud_noiseFreq = readFloat("noiseFreq", 4.0f);
-    cloud_worleyFreq = readFloat("worleyFreq", 4.0f);
+    cloud_noiseFreq = readVec3f("noiseFreq", GfVec3f(4.0f));
+    cloud_worleyFreq = readVec3f("worleyFreq", GfVec3f(4.0f));
     cloud_detailErosion = readFloat("detailErosion", 0.7f);
 
     spdlog::info(
@@ -83,10 +83,14 @@ void CloudVolumeImpl::fillVolumeDesc(VolumeDesc& vd) const
     vd.phaseG = cloud_phaseG;
     vd.layerTop = cloud_layerTop;
     vd.layerBottom = cloud_layerBottom;
-    vd.noiseFreq = cloud_noiseFreq;
-    vd.worleyFreq = cloud_worleyFreq;
+    vd.noiseFreq =
+        float3(cloud_noiseFreq[0], cloud_noiseFreq[1], cloud_noiseFreq[2]);
+    vd.worleyFreq =
+        float3(cloud_worleyFreq[0], cloud_worleyFreq[1], cloud_worleyFreq[2]);
     vd.detailErosion = cloud_detailErosion;
-    vd._cloudPad = float2(0.0f, 0.0f);
+    vd._cloudPad0 = 0.0f;
+    vd._cloudPad1 = 0.0f;
+    vd._cloudPad2 = float2(0.0f, 0.0f);
 }
 
 RUZINO_NAMESPACE_CLOSE_SCOPE

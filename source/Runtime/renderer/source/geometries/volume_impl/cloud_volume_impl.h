@@ -59,8 +59,8 @@ class CloudVolumeImpl : public VolumeImpl {
     float cloud_phaseG = 0.7f;
     float cloud_layerTop = 1.0f;
     float cloud_layerBottom = 0.0f;
-    float cloud_noiseFreq = 4.0f;
-    float cloud_worleyFreq = 4.0f;
+    GfVec3f cloud_noiseFreq = GfVec3f(4.0f);   ///< per-axis (.x=horizX, .y=vert, .z=horizZ)
+    GfVec3f cloud_worleyFreq = GfVec3f(4.0f);  ///< per-axis
     float cloud_detailErosion = 0.7f;
 };
 

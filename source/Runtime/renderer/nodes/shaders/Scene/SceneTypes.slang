@@ -201,10 +201,12 @@ struct VolumeDesc {
     float phaseG;          ///< Henyey-Greenstein anisotropy (~0.6-0.8 for water clouds).
     float layerTop;        ///< Height fraction (in AABB [0,1]) of cloud top.
     float layerBottom;     ///< Height fraction of cloud base.
-    float noiseFreq;       ///< Base fbm frequency multiplier.
-    float worleyFreq;      ///< Worley erosion frequency multiplier.
     float detailErosion;   ///< [0,1] how much the Worley detail erodes the base shape.
-    float2 _cloudPad;      ///< Keep 16-byte aligned.
+    float _cloudPad0;      ///< Keep 16-byte aligned (row with the scalars above).
+    float _cloudPad1;      ///<
+    float3 noiseFreq;      ///< Per-axis fbm frequency (.x=horizontal X, .y=vertical, .z=horizontal Z). Allows anisotropic clouds over thin/wide slabs.
+    float3 worleyFreq;     ///< Per-axis Worley erosion frequency.
+    float2 _cloudPad2;     ///< Keep 16-byte aligned.
 };
 
 enum class MeshFlags : uint32_t {

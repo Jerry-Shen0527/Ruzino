@@ -18,7 +18,11 @@ import utils.Spectrum;
 [shader("callable")]
 void eval_checkerboard_ground(inout EvalCallableData data)
 {
-    const float cellSize = 8.0;
+    // Cell size in world meters. Scaled to match the physically-sized cloud
+    // scene (~1 km altitude, camera ~1 km away) so the checker is still legible
+    // at distance — an 8 m cell aliases to grey from 1 km. 200 m ≈ a field
+    // block, readable across the whole frame.
+    const float cellSize = 200.0;
     float3 pos = data.vertexInfo.posW;
     float cx = floor(pos.x / cellSize);
     float cz = floor(pos.z / cellSize);
