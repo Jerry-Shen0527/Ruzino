@@ -1,0 +1,72 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+# =============================================================================
+# Plan A baseline: RectLight illuminating a diffuse floor.
+#
+# The light is a 2m×2m rectangle at height 4m, facing straight down.
+# intensity = 5.0, color = white, so Le = (5, 5, 5).
+#
+# Paired with emissive_vs_rectlight_emissive.usda, which replaces this RectLight
+# with an emissive mesh rectangle of the same size and Le. The floor brightness
+# must match between the two scenes.
+# =============================================================================
+
+def Camera "Camera"
+{
+    float2 clippingRange = (0.1, 100.0)
+    float focalLength = 35.0
+    float horizontalAperture = 36.0
+    float verticalAperture = 20.25
+    # Camera at floor level, looking slightly up to see the floor plane
+    matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (0, 0.3, 8, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+def Material "FloorMat"
+{
+    token outputs:surface.connect = </FloorMat/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 0.9
+        color3f inputs:base_color = (0.8, 0.8, 0.8)
+        float inputs:specular = 0.0
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+def Xform "World"
+{
+    # Large diffuse floor (8m × 8m)
+    def Mesh "FloorMesh" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
+        point3f[] points = [(-4, 0, 4), (4, 0, 4), (4, 0, -4), (-4, 0, -4)]
+        rel material:binding = </FloorMat>
+    }
+}
+
+# RectLight: 2m × 2m, centered at origin, at y=4, facing DOWN (-Y).
+# Transform: scale by (2, 2, 1) then rotate so local -Z points to world -Y.
+# The rotation that maps local -Z to world -Y is: rotate 90° around X.
+# Matrix rows: X=(1,0,0)*2, Y=(0,0,-1)*2, Z=(0,1,0), translation=(0,4,0)
+# lightData.dirW = -Z_row = (0,-1,0) → emits straight down. ✓
+# tangent = X_row normalized * width = (1,0,0)*2, bitangent = Y_row * height = (0,0,-1)*2
+# surfaceArea = width*height = 2*2 = 4
+# intensity = color * diffuse * (intensity_param * 2^exposure) = (1,1,1) * 1 * 5 = Le
+def RectLight "TestLight"
+{
+    float inputs:intensity = 5.0
+    float inputs:width = 2.0
+    float inputs:height = 2.0
+    matrix4d xformOp:transform = ( (2,0,0,0), (0,0,-2,0), (0,1,0,0), (0,4,0,1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}

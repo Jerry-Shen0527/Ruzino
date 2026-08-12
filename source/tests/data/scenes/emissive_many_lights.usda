@@ -1,0 +1,337 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+# =============================================================================
+# Emissive mesh multi-light stress scene.
+#
+# A Cornell-box-style room with FIVE separate emissive panels on the walls
+# and ceiling, each a different color and intensity. This stresses the
+# LightBVH importance sampler:
+#   - Many emissive triangles (5 panels × 2 triangles = 10 emissive tris)
+#   - Varying flux (different intensities + orientations)
+#   - Partial occlusion (panels face away from parts of the floor)
+#   - The BVH should preferentially sample the brighter / closer panels
+#
+# This scene exists to verify:
+#   1. BVH importance traversal picks lights proportional to their contribution
+#   2. Multiple emissive meshes are correctly registered and sampled
+#   3. The floor is lit by all visible panels (no missed contributions)
+# =============================================================================
+
+def Camera "Camera"
+{
+    float2 clippingRange = (0.1, 100.0)
+    float focalLength = 35.0
+    float horizontalAperture = 36.0
+    float verticalAperture = 20.25
+    matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (0, 1.5, 5.5, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+# --- Floor ---
+def Material "FloorMat"
+{
+    token outputs:surface.connect = </FloorMat/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 0.8
+        color3f inputs:base_color = (0.6, 0.6, 0.6)
+        float inputs:specular = 0.0
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+# --- Ceiling (dark, diffuse) ---
+def Material "CeilingMat"
+{
+    token outputs:surface.connect = </CeilingMat/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 0.5
+        color3f inputs:base_color = (0.3, 0.3, 0.3)
+        float inputs:specular = 0.0
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+# --- Left wall (red) ---
+def Material "LeftWallMat"
+{
+    token outputs:surface.connect = </LeftWallMat/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 0.8
+        color3f inputs:base_color = (0.7, 0.1, 0.1)
+        float inputs:specular = 0.0
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+# --- Right wall (green) ---
+def Material "RightWallMat"
+{
+    token outputs:surface.connect = </RightWallMat/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 0.8
+        color3f inputs:base_color = (0.1, 0.7, 0.1)
+        float inputs:specular = 0.0
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+# --- Back wall ---
+def Material "BackWallMat"
+{
+    token outputs:surface.connect = </BackWallMat/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 0.8
+        color3f inputs:base_color = (0.5, 0.5, 0.5)
+        float inputs:specular = 0.0
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+# --- Diffuse sphere (to catch light from panels) ---
+def Material "SphereMat"
+{
+    token outputs:surface.connect = </SphereMat/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 0.9
+        color3f inputs:base_color = (0.8, 0.8, 0.8)
+        float inputs:specular = 0.1
+        float inputs:specular_roughness = 0.5
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+# =============================================================================
+# Emissive panel materials (5 panels, varied color + intensity)
+# =============================================================================
+
+# Panel 1: Ceiling panel — bright white (dominant light)
+def Material "EmitCeiling"
+{
+    token outputs:surface.connect = </EmitCeiling/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 0.0
+        float inputs:specular = 0.0
+        float inputs:emission = 8.0
+        color3f inputs:emission_color = (1.0, 1.0, 0.9)
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+# Panel 2: Left wall accent — dim red
+def Material "EmitRed"
+{
+    token outputs:surface.connect = </EmitRed/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 0.0
+        float inputs:specular = 0.0
+        float inputs:emission = 3.0
+        color3f inputs:emission_color = (1.0, 0.2, 0.1)
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+# Panel 3: Right wall accent — medium green
+def Material "EmitGreen"
+{
+    token outputs:surface.connect = </EmitGreen/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 0.0
+        float inputs:specular = 0.0
+        float inputs:emission = 4.0
+        color3f inputs:emission_color = (0.1, 1.0, 0.3)
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+# Panel 4: Back wall — dim blue
+def Material "EmitBlue"
+{
+    token outputs:surface.connect = </EmitBlue/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 0.0
+        float inputs:specular = 0.0
+        float inputs:emission = 2.0
+        color3f inputs:emission_color = (0.2, 0.4, 1.0)
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+# Panel 5: Small bright yellow strip near the floor — warm accent
+def Material "EmitYellow"
+{
+    token outputs:surface.connect = </EmitYellow/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 0.0
+        float inputs:specular = 0.0
+        float inputs:emission = 6.0
+        color3f inputs:emission_color = (1.0, 0.9, 0.3)
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+def Xform "World"
+{
+    # --- Room geometry (Cornell box: 6m × 4m × 6m) ---
+
+    # Floor
+    def Mesh "FloorMesh" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
+        point3f[] points = [(-3, 0, 3), (3, 0, 3), (3, 0, -3), (-3, 0, -3)]
+        rel material:binding = </FloorMat>
+    }
+
+    # Ceiling
+    def Mesh "CeilingMesh" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0)]
+        point3f[] points = [(-3, 4, -3), (3, 4, -3), (3, 4, 3), (-3, 4, 3)]
+        rel material:binding = </CeilingMat>
+    }
+
+    # Left wall (at x=-3, facing +x)
+    def Mesh "LeftWallMesh" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0)]
+        point3f[] points = [(-3, 0, -3), (-3, 0, 3), (-3, 4, 3), (-3, 4, -3)]
+        rel material:binding = </LeftWallMat>
+    }
+
+    # Right wall (at x=3, facing -x)
+    def Mesh "RightWallMesh" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (-1, 0, 0)]
+        point3f[] points = [(3, 0, 3), (3, 0, -3), (3, 4, -3), (3, 4, 3)]
+        rel material:binding = </RightWallMat>
+    }
+
+    # Back wall (at z=-3, facing +z)
+    def Mesh "BackWallMesh" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(3, 0, -3), (-3, 0, -3), (-3, 4, -3), (3, 4, -3)]
+        rel material:binding = </BackWallMat>
+    }
+
+    # --- Diffuse box on the floor (catches light from all panels) ---
+    def Mesh "BoxMesh" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 1, 2, 3, 4, 5, 6, 7, 0, 3, 7, 4, 1, 5, 6, 2, 0, 4, 5, 1, 3, 2, 6, 7]
+        normal3f[] normals = [(0,0,-1), (0,0,-1), (0,0,-1), (0,0,-1), (0,0,1), (0,0,1), (0,0,1), (0,0,1), (0,-1,0), (0,-1,0), (0,-1,0), (0,-1,0), (0,1,0), (0,1,0), (0,1,0), (0,1,0), (-1,0,0), (-1,0,0), (-1,0,0), (-1,0,0), (1,0,0), (1,0,0), (1,0,0), (1,0,0)]
+        point3f[] points = [(-0.6, 0.0, -0.6), (0.6, 0.0, -0.6), (0.6, 1.2, -0.6), (-0.6, 1.2, -0.6), (-0.6, 0.0, 0.6), (0.6, 0.0, 0.6), (0.6, 1.2, 0.6), (-0.6, 1.2, 0.6)]
+        rel material:binding = </SphereMat>
+    }
+
+    # =============================================================================
+    # Emissive panels
+    # =============================================================================
+
+    # Panel 1: Ceiling panel (2×2m, faces down) — brightest
+    def Mesh "EmitCeilingMesh" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0)]
+        point3f[] points = [(-1, 3.99, -1), (1, 3.99, -1), (1, 3.99, 1), (-1, 3.99, 1)]
+        rel material:binding = </EmitCeiling>
+    }
+
+    # Panel 2: Left wall accent (1×2m, faces +x) — dim red
+    def Mesh "EmitRedMesh" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0)]
+        point3f[] points = [(-2.99, 1, -0.5), (-2.99, 1, 0.5), (-2.99, 3, 0.5), (-2.99, 3, -0.5)]
+        rel material:binding = </EmitRed>
+    }
+
+    # Panel 3: Right wall accent (1×2m, faces -x) — medium green
+    def Mesh "EmitGreenMesh" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(-1, 0, 0), (-1, 0, 0), (-1, 0, 0), (-1, 0, 0)]
+        point3f[] points = [(2.99, 1, 0.5), (2.99, 1, -0.5), (2.99, 3, -0.5), (2.99, 3, 0.5)]
+        rel material:binding = </EmitGreen>
+    }
+
+    # Panel 4: Back wall accent (1.5×1m, faces +z) — dim blue
+    def Mesh "EmitBlueMesh" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-0.75, 2.5, -2.99), (0.75, 2.5, -2.99), (0.75, 3.5, -2.99), (-0.75, 3.5, -2.99)]
+        rel material:binding = </EmitBlue>
+    }
+
+    # Panel 5: Small bright yellow strip near floor on back wall
+    def Mesh "EmitYellowMesh" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-1, 0.1, -2.99), (1, 0.1, -2.99), (1, 0.4, -2.99), (-1, 0.4, -2.99)]
+        rel material:binding = </EmitYellow>
+    }
+}

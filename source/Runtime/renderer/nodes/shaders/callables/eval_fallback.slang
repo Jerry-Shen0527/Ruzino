@@ -37,4 +37,7 @@ void eval_fallback(inout EvalCallableData data)
     // bsdf_pdf(L): cosine-weighted hemisphere, pdf = max(0, NdotL) / PI.
     float NdotL = max(0.0, dot(data.vertexInfo.normalW, data.L));
     data.bsdfPdfForLightDir = NdotL / 3.14159265359;
+
+    // Fallback material (no material assigned) is never emissive.
+    data.emissionLe = Spectrum(0.0);
 }

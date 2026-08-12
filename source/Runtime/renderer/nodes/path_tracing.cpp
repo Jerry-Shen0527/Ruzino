@@ -466,6 +466,18 @@ void fetch_)" + material.second->GetMaterialName() +
             instance_collection->emissive_registry
                 .emissivePerInstanceOffsetPool.get_device_buffer();
 
+        // Bind LightBVH buffers (for NEE importance sampling of emissive
+        // triangles). Built CPU-side by LightBVHBuilder after the compute pass.
+        program_vars["bvhNodes"] =
+            instance_collection->emissive_registry.bvhNodePool
+                .get_device_buffer();
+        program_vars["bvhTriangleIndices"] =
+            instance_collection->emissive_registry.bvhTriangleIndexPool
+                .get_device_buffer();
+        program_vars["bvhTriangleBitmasks"] =
+            instance_collection->emissive_registry.bvhTriangleBitmaskPool
+                .get_device_buffer();
+
         // Create unified path tracing constants buffer
         struct PathTracingConstants {
             uint32_t lightCount;
@@ -655,6 +667,19 @@ void fetch_)" + material.second->GetMaterialName() +
         program_vars["emissivePerMeshInstanceOffset"] =
             instance_collection->emissive_registry
                 .emissivePerInstanceOffsetPool.get_device_buffer();
+
+        // Re-bind LightBVH buffers (rebuilt on geom/mat dirty, same as the
+        // emissive buffers above — missing these caused the shader to read
+        // stale BVH nodes after a geometry-only change).
+        program_vars["bvhNodes"] =
+            instance_collection->emissive_registry.bvhNodePool
+                .get_device_buffer();
+        program_vars["bvhTriangleIndices"] =
+            instance_collection->emissive_registry.bvhTriangleIndexPool
+                .get_device_buffer();
+        program_vars["bvhTriangleBitmasks"] =
+            instance_collection->emissive_registry.bvhTriangleBitmaskPool
+                .get_device_buffer();
 
         program_vars.finish_setting_vars();
 

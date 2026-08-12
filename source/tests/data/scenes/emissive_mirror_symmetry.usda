@@ -1,0 +1,121 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+# =============================================================================
+# Plan B: mirror-floor reflection symmetry test.
+#
+# Camera looks slightly DOWN at a mirror floor. An emissive box floats above
+# the floor in front of the camera. The camera frames:
+#   - Upper half: the box directly (primary ray hits emissive -> Le)
+#   - Lower half: the box's reflection in the mirror floor (primary ray hits
+#     mirror -> specular bounce up -> hits emissive -> Le)
+#
+# Camera tilt is done by a simple RotX matrix (USD camera looks down -z; a
+# positive rotation about X tilts the -z forward axis downward). No lookAt
+# helper needed.
+#
+# Direct box and its reflection should be nearly equal brightness (roughness
+# 0.02 keeps the mirror near-perfect).
+# =============================================================================
+
+def Camera "Camera"
+{
+    float2 clippingRange = (0.1, 100.0)
+    float focalLength = 28.0
+    float horizontalAperture = 36.0
+    float verticalAperture = 20.25
+    # Steep down-looking camera (~28deg): eye=(0,3.5,5) -> (0,0.8,0). Sees the
+    # box's TOP + front faces (so it reads as a 3D box, not a flat square),
+    # and the floor reflection shows the same. Matrix via Gf SetLookAt inverse.
+    matrix4d xformOp:transform = ( (1.0, -0.0, 0.0, -0.0), (0.0, 0.8799053976571926, -0.475148914734884, 0.0), (0.0, 0.47514891473488396, 0.8799053976571924, -0.0), (0.0, 3.5, 4.999999999999999, 1.0) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+# --- Mirror floor material (metallic, near-zero roughness) ---
+def Material "MirrorFloor"
+{
+    token outputs:surface.connect = </MirrorFloor/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 1.0
+        color3f inputs:base_color = (0.95, 0.95, 0.95)
+        float inputs:specular = 1.0
+        color3f inputs:specular_color = (1.0, 1.0, 1.0)
+        float inputs:metalness = 1.0
+        float inputs:specular_roughness = 0.02
+        float inputs:specular_IOR = 1.5
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+# --- Emissive box material ---
+def Material "EmitBox"
+{
+    token outputs:surface.connect = </EmitBox/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 0.0
+        float inputs:specular = 0.0
+        float inputs:emission = 0.6
+        color3f inputs:emission_color = (1.0, 0.9, 0.7)
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+# --- Diffuse back wall ---
+def Material "BackWall"
+{
+    token outputs:surface.connect = </BackWall/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 1.0
+        color3f inputs:base_color = (0.25, 0.25, 0.3)
+        float inputs:specular = 0.0
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+def Xform "World"
+{
+    # Mirror floor: 14m × 14m, normal +y
+    def Mesh "FloorMesh" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
+        point3f[] points = [(-7, 0, 7), (7, 0, 7), (7, 0, -7), (-7, 0, -7)]
+        rel material:binding = </MirrorFloor>
+    }
+
+    # Emissive box 1.2m cube at y=0.4..1.6, z=0. Steep camera sees top + front.
+    def Mesh "EmitBoxMesh" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 1, 2, 3, 4, 5, 6, 7, 0, 3, 7, 4, 1, 5, 6, 2, 0, 4, 5, 1, 3, 2, 6, 7]
+        normal3f[] normals = [(0,0,-1), (0,0,-1), (0,0,-1), (0,0,-1), (0,0,1), (0,0,1), (0,0,1), (0,0,1), (0,-1,0), (0,-1,0), (0,-1,0), (0,-1,0), (0,1,0), (0,1,0), (0,1,0), (0,1,0), (-1,0,0), (-1,0,0), (-1,0,0), (-1,0,0), (1,0,0), (1,0,0), (1,0,0), (1,0,0)]
+        point3f[] points = [(-0.6, 0.4, -0.6), (0.6, 0.4, -0.6), (0.6, 1.6, -0.6), (-0.6, 1.6, -0.6), (-0.6, 0.4, 0.6), (0.6, 0.4, 0.6), (0.6, 1.6, 0.6), (-0.6, 1.6, 0.6)]
+        rel material:binding = </EmitBox>
+    }
+
+    # Back wall at z=-4
+    def Mesh "BackWallMesh" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+        point3f[] points = [(-7, 0, -4), (7, 0, -4), (7, 6, -4), (-7, 6, -4)]
+        rel material:binding = </BackWall>
+    }
+}

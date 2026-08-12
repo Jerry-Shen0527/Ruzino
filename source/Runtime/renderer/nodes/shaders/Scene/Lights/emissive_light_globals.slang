@@ -37,6 +37,14 @@ StructuredBuffer<MeshLightData> emissiveMeshData;
 /// index for the BSDF-hit-emissive MIS path.
 StructuredBuffer<uint> emissivePerMeshInstanceOffset;
 
+// LightBVH buffers for NEE importance sampling of emissive triangles.
+// Built CPU-side by LightBVHBuilder (Conty-Kulla SAOH). The sampler
+// traverses bvhNodes from root (index 0), picking children by importance.
+import Scene.Lights.LightBVHTypes;
+StructuredBuffer<PackedNode> bvhNodes;
+StructuredBuffer<uint> bvhTriangleIndices;
+StructuredBuffer<uint2> bvhTriangleBitmasks;
+
 /// Returns the emissive triangle index for a hit, or kInvalidIndex if the hit
 /// instance/primitive is not emissive. This is the BSDF-hit-emissive reverse
 /// lookup (Falcor's getTriangleIndex equivalent). The triangle count check is

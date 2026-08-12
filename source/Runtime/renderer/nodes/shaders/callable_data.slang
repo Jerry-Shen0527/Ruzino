@@ -25,6 +25,13 @@ struct EvalCallableData {
     // w_light = light_pdf(L) / (light_pdf(L) + bsdf_pdf(L)). The symmetric term
     // bsdf_pdf(sampledDir) is just `pdf` above (carried via RayPayload.bsdfPdf).
     float bsdfPdfForLightDir;
+
+    // Emitted radiance Le from the surface. For standard_surface this is
+    // emission_color * emission; for UsdPreviewSurface it is emissiveColor.
+    // The eval callable fills this after unpacking material params (texture
+    // values are already resolved by the fetch callable). The main loop reads
+    // it to accumulate emissive-mesh Le when a BSDF-sampled ray hits one.
+    Spectrum emissionLe;
 };
 
 struct DomeLightCallableData {

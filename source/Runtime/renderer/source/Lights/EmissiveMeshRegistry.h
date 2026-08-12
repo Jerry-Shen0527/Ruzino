@@ -19,6 +19,7 @@
 // / CLOSE_SCOPE, so they must be included OUTSIDE any open namespace.
 #include "../../nodes/shaders/Scene/Lights/LightCollectionShared.slang"
 #include "../../nodes/shaders/Scene/Lights/MeshLightData.slang"
+#include "../../nodes/shaders/Scene/Lights/LightBVHTypes.slang"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
@@ -97,10 +98,19 @@ class HD_RUZINO_API EmissiveMeshRegistry {
     DeviceMemoryPool<MeshLightData> emissiveMeshPool;
     DeviceMemoryPool<uint32_t> emissivePerInstanceOffsetPool;
 
+    // LightBVH buffers (built CPU-side from the emissive triangle data after
+    // the GPU compute pass, then uploaded for NEE importance sampling).
+    DeviceMemoryPool<PackedNode> bvhNodePool;
+    DeviceMemoryPool<uint32_t> bvhTriangleIndexPool;
+    DeviceMemoryPool<uint2> bvhTriangleBitmaskPool;
+
     DeviceMemoryPool<PackedEmissiveTriangle>::MemoryHandle triHandle;
     DeviceMemoryPool<EmissiveFlux>::MemoryHandle fluxHandle;
     DeviceMemoryPool<MeshLightData>::MemoryHandle meshHandle;
     DeviceMemoryPool<uint32_t>::MemoryHandle offsetHandle;
+    DeviceMemoryPool<PackedNode>::MemoryHandle bvhNodeHandle;
+    DeviceMemoryPool<uint32_t>::MemoryHandle bvhTriIdxHandle;
+    DeviceMemoryPool<uint2>::MemoryHandle bvhBitmaskHandle;
 
    private:
     std::unordered_map<uint32_t, EmissiveMeshEntry> entries_;

@@ -1,0 +1,85 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+# =============================================================================
+# Plan A test: emissive mesh rectangle illuminating a diffuse floor.
+#
+# Identical geometry to emissive_vs_rectlight_rect.usda, but the RectLight is
+# replaced by an emissive mesh rectangle of the same 2m×2m size, same position
+# (y=4, centered), facing down. emission = 5.0, emission_color = (1,1,1),
+# so Le = (5, 5, 5) — matching the RectLight's Le exactly.
+#
+# The floor brightness must match the RectLight scene (within MC noise).
+# =============================================================================
+
+def Camera "Camera"
+{
+    float2 clippingRange = (0.1, 100.0)
+    float focalLength = 35.0
+    float horizontalAperture = 36.0
+    float verticalAperture = 20.25
+    matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (0, 0.3, 8, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+def Material "FloorMat"
+{
+    token outputs:surface.connect = </FloorMat/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 0.9
+        color3f inputs:base_color = (0.8, 0.8, 0.8)
+        float inputs:specular = 0.0
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+# Emissive material: Le = emission_color * emission = (1,1,1) * 5 = (5,5,5)
+def Material "EmitMat"
+{
+    token outputs:surface.connect = </EmitMat/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 0.0
+        float inputs:specular = 0.0
+        float inputs:emission = 5.0
+        color3f inputs:emission_color = (1.0, 1.0, 1.0)
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+def Xform "World"
+{
+    # Large diffuse floor (8m × 8m) — identical to rect version
+    def Mesh "FloorMesh" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
+        point3f[] points = [(-4, 0, 4), (4, 0, 4), (4, 0, -4), (-4, 0, -4)]
+        rel material:binding = </FloorMat>
+    }
+
+    # Emissive rectangle: 2m × 2m, at y=4, facing DOWN (normal = (0,-1,0)).
+    # Two triangles. The RectLight version uses the same quad geometry.
+    # Vertices: (-1, 3.99, -1), (1, 3.99, -1), (1, 3.99, 1), (-1, 3.99, 1)
+    # (y=3.99 instead of 4.0 to avoid z-fighting with a theoretical ceiling;
+    #  there is no ceiling here so 4.0 would be fine, but keep it consistent)
+    def Mesh "EmitRectMesh" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [3, 3]
+        int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+        normal3f[] normals = [(0, -1, 0), (0, -1, 0), (0, -1, 0), (0, -1, 0)]
+        point3f[] points = [(-1, 4, -1), (1, 4, -1), (1, 4, 1), (-1, 4, 1)]
+        rel material:binding = </EmitMat>
+    }
+}

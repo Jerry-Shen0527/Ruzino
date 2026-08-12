@@ -49,6 +49,18 @@ struct RayPayload {
     float bsdfPdf;
     float lightPdf;
 
+    // BSDF-hit-emissive-mesh MIS. Set by ClosestHit to the global emissive
+    // triangle index when the hit surface is an emissive mesh triangle, or
+    // kInvalidEmissiveIndex otherwise. The main loop computes the NEE pdf
+    // (evalEmissivePdf) here — not in ClosestHit — because the pdf depends on
+    // the SHADING normal at the ray ORIGIN (previous bounce's surface), which
+    // ClosestHit does not have access to.
+    uint hitEmissiveTriIdx;
+    // Shading normal at the ORIGIN of the current ray (the previous bounce's
+    // hit surface). Written by the bounce that LAUNCHES this ray, read here to
+    // evaluate the emissive NEE pdf for the BSDF-hit-emissive MIS weight.
+    float3 prevShadingNormal;
+
     // Volumetric cloud hit. When true, the ray hit a Cloud volume (hit group
     // 6); CloudClosestHit integrated Beer-Lambert extinction + single-scatter
     // in-scattering along the segment and wrote:
@@ -94,12 +106,20 @@ void RayGen()
         // BSDF-hit-light weight degrades to 1.0 (lightPdf<0 signals "no MIS").
         payload.bsdfPdf = 0.0;
         payload.lightPdf = -1.0;
+        // No previous shading normal for the camera ray — emissive hits on the
+        // primary ray take full weight (no BSDF estimator launched them). A
+        // zero normal makes evalEmissivePdf return 0 -> misWeight=1 (correct).
+        payload.prevShadingNormal = float3(0.0);
 
         // Iterative path tracing loop
         for (int depth = 0; depth < max_depth; depth++) {
             payload.depth = depth;
             payload.hit = false;
             payload.isVolume = false;
+            // Reset BSDF-hit-emissive triangle index before tracing; ClosestHit
+            // sets it only when the new hit is an emissive mesh triangle. A
+            // stale value from a previous bounce would corrupt the MIS weight.
+            payload.hitEmissiveTriIdx = kInvalidEmissiveIndex;
 
             // Trace ray to get geometry information
             TraceRay(
@@ -172,11 +192,9 @@ void RayGen()
                     + dir * payload.volumeTEnd
                     + dir * 1e-3;
                 current_ray.TMin = 0.0;
-                current_ray.TMax = 3000.0;
+                current_ray.TMax = 50000.0;  // was 3000 — clipped distant ground/clouds seen through the cloud
                 continue;
             }
-
-            // Check if ray missed
             if (!payload.hit) {
                 // Environment lighting (same as Miss shader)
                 float3 rayDir = current_ray.Direction;
@@ -311,6 +329,14 @@ void RayGen()
                             Spectrum(misWeight)));
                 }
 
+                // Fallback material is never emissive (eval_fallback sets
+                // emissionLe=0), so this is a no-op — included for symmetry.
+                if (any(evalData.emissionLe.toFloat3() > 0.0)) {
+                    accumulated_color = add(
+                        accumulated_color,
+                        mul(current_throughput, evalData.emissionLe));
+                }
+
                 // Update throughput for next bounce
                 float3 ray_dir = evalData.sampledDir;
                 bool isTransmission = dot(ray_dir, vertex.faceNormalW) < 0.0;
@@ -341,7 +367,7 @@ void RayGen()
                 current_ray.Origin = vertex.posW + ray_offset;
                 current_ray.Direction = ray_dir;
                 current_ray.TMin = 0.0;
-                current_ray.TMax = 3000.0;
+                current_ray.TMax = 50000.0;  // was 3000 — bounce rays should reach the full scene
                 continue;
             }
 
@@ -455,6 +481,44 @@ void RayGen()
                         Spectrum(misWeight)));
             }
 
+            // Emissive mesh Le accumulation (BSDF-hit-emissive path, MIS-weighted).
+            // When a BSDF-sampled ray hits an emissive mesh surface, the surface
+            // emits Le that must be added to the accumulated color. Unlike
+            // analytic light geometry (RectLight), emissive meshes are ALSO
+            // scattering surfaces — the path does NOT terminate here (no break);
+            // it continues to bounce.
+            //
+            // MIS (balance heuristic): the BSDF-hit-emissive estimator is one
+            // of two ways to find this radiance — the NEE estimator (sampling
+            // the emissive triangle directly via the LightBVH) is the other.
+            // To avoid double-counting, weight this contribution:
+            //   w_bsdf = bsdf_pdf / (emis_pdf + bsdf_pdf),
+            // where bsdf_pdf = evalData.pdf (the pdf of THIS bounce's BSDF
+            // sample that produced the ray), and emis_pdf is the NEE pdf of the
+            // ray direction under the emissive BVH distribution. When emis_pdf
+            // <= 0 the NEE estimator essentially never samples this direction
+            // (e.g. zero-importance, or a primary camera ray with no BSDF
+            // launcher), so the BSDF estimator takes full weight (w_bsdf = 1).
+            // This is the Phase 4.3 completion of the emissive-mesh MIS
+            // (replaces the old weight=1 path).
+            if (any(evalData.emissionLe.toFloat3() > 0.0) &&
+                payload.hitEmissiveTriIdx != kInvalidEmissiveIndex) {
+                float3 rayDir = normalize(current_ray.Direction);
+                float dist = length(vertex.posW - current_ray.Origin);
+                float emisPdf = evalEmissivePdf(
+                    current_ray.Origin, payload.prevShadingNormal,
+                    payload.hitEmissiveTriIdx, rayDir, dist);
+                float misWeight = 1.0;
+                if (emisPdf > 0.0) {
+                    float denom = emisPdf + pdf;
+                    misWeight = denom > 0.0 ? pdf / denom : 0.0;
+                }
+                Spectrum emissiveContrib = mul(
+                    mul(current_throughput, evalData.emissionLe),
+                    Spectrum(misWeight));
+                accumulated_color = add(accumulated_color, emissiveContrib);
+            }
+
             // Update throughput for next bounce
             float3 ray_dir = evalData.sampledDir;
             bool isTransmission = dot(ray_dir, vertex.faceNormalW) < 0.0;
@@ -468,6 +532,10 @@ void RayGen()
             // light. lightPdf<0 signals "no MIS info".
             payload.bsdfPdf = pdf;
             payload.lightPdf = lightPdfForDir(vertex.posW, ray_dir);
+            // Carry the shading normal at this launch point for the next
+            // bounce's BSDF-hit-emissive MIS (evalEmissivePdf needs the origin
+            // normal, which is THIS surface's shading normal).
+            payload.prevShadingNormal = vertex.normalW;
 
             // Russian Roulette path termination
             if (depth >= 3) {
@@ -558,6 +626,13 @@ void ClosestHit(
     } else {
         payload.emission = Spectrum(0.0);
     }
+
+    // BSDF-hit-emissive-mesh MIS: record which emissive triangle was hit (or
+    // kInvalidEmissiveIndex if not emissive). The main loop computes the NEE
+    // pdf from this, using the SHADING normal at the ray origin (previous
+    // bounce's surface), which ClosestHit cannot access.
+    payload.hitEmissiveTriIdx = getEmissiveTriangleIndex(
+        instance_id, prim_id, ptConstants.emissiveTriangleCount);
 }
 
 [shader("closesthit")]
@@ -975,10 +1050,22 @@ void CloudClosestHit(inout RayPayload payload, in CloudHitAttributes attr)
     float3 rayOrg = WorldRayOrigin();
     float3 rayDir = WorldRayDirection();
 
-    // Sun + a constant ambient (approximates multi-scattered skylight).
+    // Sun + sky ambient. The ambient approximates the multi-scattered SKYLIGHT
+    // entering the cloud from above (blueish, directional-ish via phase below).
     float3 sunDirW, sunColor;
     bool hasSun = findSun(sunDirW, sunColor);
-    float3 ambient = float3(0.25, 0.30, 0.40);  // cool sky ambient fallback
+    float3 ambient = float3(0.4, 0.45, 0.55);  // cool sky light from above
+
+    // Multi-scattering approximation (Hillaire/HZD family). Real clouds are
+    // bright white because light bounces many times inside the droplet volume,
+    // losing its direction and blue tint. Single-scatter NEE (sunContrib below)
+    // only captures one bounce — without this term clouds render as thin blue
+    // haze (the sun + blue sky showing through) instead of opaque white volumes.
+    // Model it as a second, near-isotropic lobe of neutral white light whose
+    // strength grows with local density (denser = more internal bounces).
+    // Direction-weighted by a reduced-phase blend so it is mostly isotropic but
+    // still slightly brighter toward the sun (forward multi-scatter peak).
+    float3 multiScatterColor = float3(0.9, 0.92, 0.95);  // warm-neutral white
 
     // March the view segment accumulating Beer-Lambert extinction and
     // in-scattered sunlight (NEE via a per-step light march toward the sun,
@@ -1024,6 +1111,17 @@ void CloudClosestHit(inout RayPayload payload, in CloudHitAttributes attr)
         }
 
         float3 li = sunContrib + ambient * (0.5 + 0.5 * phase);
+
+        // Multi-scatter lobe: a second isotropic-ish phase of neutral-white
+        // light. This is the radiance from light bouncing many times inside
+        // the cloud (what makes it read as an opaque white volume instead of
+        // blue-tinted haze). li is a RADIANCE value (like sunContrib/ambient);
+        // the (1-localT) scatter fraction is applied by the accumulator below,
+        // so do NOT multiply by sigmaT*step here — that double-counts density
+        // and blows dense clouds out to pure white.
+        float phaseMs = evalHenyeyGreenstein(cosTheta, g * 0.25);  // nearly isotropic
+        li += multiScatterColor * phaseMs * 0.15;  // modest constant radiance
+
         // Energy-conserving in-scatter for this step:
         L += T_view * (1.0 - localT) * li;
         T_view *= localT;
@@ -1063,8 +1161,10 @@ void CloudShadowHit(inout ShadowPayload payload, in CloudHitAttributes attr)
             break;
     }
     payload.transmittance = T;
-    // The light is still "visible" in the binary sense (the NEE path multiplies
-    // by transmittance); only fully-opaque absorption sets isVisible=false.
-    if (payload.transmittance < 1e-3)
-        payload.isVisible = false;
+    // Leave isVisible=true so the NEE path applies the (possibly small)
+    // transmittance as a soft Beer-Lambert shadow. Previously this flipped
+    // isVisible=false at T<1e-3, which produced a hard-edged binary shadow
+    // since the transmittance itself was never read. With the launcher now
+    // multiplying intensity by transmittance, a near-zero T already reads as
+    // near-black without needing the hard cutoff.
 }

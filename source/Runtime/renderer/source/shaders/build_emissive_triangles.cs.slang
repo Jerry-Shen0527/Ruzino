@@ -74,6 +74,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     // (meshCount is typically small — single digits).
     EmissiveMeshWorkItem item;
     uint localTriIdx = 0;
+    uint meshIdx = 0;
     bool found = false;
     [loop]
     for (uint m = 0; m < g_MeshCount; m++) {
@@ -81,6 +82,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
             globalTriIdx < g_MeshWorkList[m].triangleOffset + g_MeshWorkList[m].triangleCount) {
             item = g_MeshWorkList[m];
             localTriIdx = globalTriIdx - item.triangleOffset;
+            meshIdx = m;
             found = true;
             break;
         }
@@ -123,7 +125,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     packed.normal = encodeNormal2x16(normal);
     packed.area = asuint(area);
     packed.materialID = item.materialLocation;
-    packed.lightIdx = m;
+    packed.lightIdx = meshIdx;
     packed.textureIndex = item.emissionTextureIndex;
     packed._pad = 0;
 

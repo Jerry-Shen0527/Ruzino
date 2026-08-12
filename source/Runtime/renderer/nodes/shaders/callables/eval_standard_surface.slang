@@ -96,6 +96,12 @@ void eval_standard_surface(inout EvalCallableData data)
     float3 L_local = lctx.sf.toLocal(data.L);
     data.bsdfPdfForLightDir = _layered_pdf(lctx, L_local);
 
+    // Emitted radiance Le = emission_color * emission. The params are already
+    // unpacked (texture values resolved by the fetch callable), so this is a
+    // direct multiply. The main loop accumulates this when a BSDF-sampled ray
+    // hits an emissive mesh surface (BSDF-hit-emissive path).
+    data.emissionLe = Spectrum(params.emission_color * params.emission);
+
     // Sample the BSDF for next direction
     data.sampledDir = sample_standard_surface(
         vd,
@@ -197,21 +203,14 @@ void eval_standard_surface(inout EvalCallableData data)
         params.tangent,
         weight_result);
 
-    // Throughput = f * |NdotSampled|. NG_standard_surface evaluates the full
-    // layered BSDF under BOTH closure types (REFLECTION for dot(N,L)>0 lobes,
-    // TRANSMISSION for dot(N,L)<0 lobes) and sums both responses into
-    // surfaceshader.color. So weight_result.color is the correct BSDF value
-    // f(L,V) for any direction — reflection, refraction, or thin_walled
-    // straight-through. The main loop divides by the sampling pdf, and the
-    // rendering equation's cosθ factor must be folded in here.
-    //
-    // abs() not max(0,...): transmission directions (thin_walled L=-V, Snell
-    // refraction) lie on the opposite side of the normal (NdotL<0). The
-    // rendering equation's cosθ for transmission uses |NdotL|; max(0,...)
-    // would zero the throughput and silently kill all transmission paths.
-    // For reflection/diffuse (NdotL>0) abs() is identical to max(0,...), so
-    // the white-furnace result is unchanged.
-    float NdotSampled =
-        abs(dot(data.vertexInfo.normalW, data.sampledDir));
-    data.throughput = Spectrum(weight_result.color * NdotSampled);
+    // Throughput for the main loop's `current_throughput *= throughput / pdf`.
+    // MaterialX's mx_*_bsdf functions return the PREMULTIPLIED BSDF response
+    // f(L,V) * NdotL (the GGX denominator is 4*NdotV only — NdotL is folded
+    // into the numerator; diffuse lobes multiply by NdotL explicitly).
+    // So weight_result.color already IS f*NdotL, and we must NOT multiply
+    // by NdotSampled again — that would double-count cos(theta) and darken
+    // every standard_surface render (the bug that made mirror reflections
+    // read ~23% too dark). This matches eval_preview_surface's convention
+    // (see its comment at the equivalent position).
+    data.throughput = Spectrum(weight_result.color);
 }

@@ -1,8 +1,10 @@
 #include "EmissiveMeshRegistry.h"
+#include "LightBVHBuilder.h"
 
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 #include "GPUContext/compute_context.hpp"
@@ -20,6 +22,13 @@ namespace {
 auto& res_alloc()
 {
     return GPUSceneAssember::get_instance().sa_resource_allocator;
+}
+
+float3 minF3(const float3& a, const float3& b) {
+    return float3(std::min(a.x, b.x), std::min(a.y, b.y), std::min(a.z, b.z));
+}
+float3 maxF3(const float3& a, const float3& b) {
+    return float3(std::max(a.x, b.x), std::max(a.y, b.y), std::max(a.z, b.z));
 }
 
 /// Work item matching the GPU shader's EmissiveMeshWorkItem struct.
@@ -249,6 +258,83 @@ bool EmissiveMeshRegistry::build_gpu_buffers(
     compute_ctx.dispatch({}, vars, triOffset, 64);
     compute_ctx.finish();
     device->waitForIdle();
+
+    // --- Build LightBVH (CPU) ---
+    // Read back the emissive triangle data from the GPU, compute per-triangle
+    // sort data (AABB, centroid, normal, flux), build the BVH, and upload the
+    // node/triangleIndex/triangleBitmask buffers.
+    auto bvh_t0 = std::chrono::high_resolution_clock::now();
+    {
+        std::vector<PackedEmissiveTriangle> readbackTris(triOffset);
+        triHandle->read_data(readbackTris.data());
+
+        std::vector<EmissiveFlux> readbackFlux(triOffset);
+        fluxHandle->read_data(readbackFlux.data());
+
+        auto readback_t1 = std::chrono::high_resolution_clock::now();
+
+        std::vector<TriangleSortData> sortData(triOffset);
+        for (uint32_t i = 0; i < triOffset; i++) {
+            EmissiveTriangle et = readbackTris[i].unpack();
+
+            float3 bmin = minF3(
+                minF3(et.posW[0], et.posW[1]), et.posW[2]);
+            float3 bmax = maxF3(
+                maxF3(et.posW[0], et.posW[1]), et.posW[2]);
+            sortData[i].boundsMin = bmin;
+            sortData[i].boundsMax = bmax;
+            sortData[i].center = (bmin + bmax) * 0.5f;
+            sortData[i].coneDirection = et.normal;
+            sortData[i].cosConeAngle = 1.0f;
+            sortData[i].flux = readbackFlux[i].flux;
+            sortData[i].triangleIndex = i;
+        }
+
+        auto sort_t1 = std::chrono::high_resolution_clock::now();
+
+        std::vector<PackedNode> bvhNodes;
+        std::vector<uint32_t> bvhTriIndices;
+        std::vector<uint2> bvhBitmasks;
+
+        LightBVHBuildOptions bvhOpts;
+        bvhOpts.maxTriangleCountPerLeaf = 4;  // split early for deeper BVH
+        LightBVHBuilder builder;
+        if (builder.build(sortData, bvhOpts, bvhNodes, bvhTriIndices, bvhBitmasks)) {
+            auto build_t1 = std::chrono::high_resolution_clock::now();
+
+            bvhNodePool.clear();
+            bvhTriangleIndexPool.clear();
+            bvhTriangleBitmaskPool.clear();
+
+            bvhNodeHandle = bvhNodePool.allocate(
+                static_cast<uint32_t>(bvhNodes.size()));
+            bvhTriIdxHandle = bvhTriangleIndexPool.allocate(
+                static_cast<uint32_t>(bvhTriIndices.size()));
+            bvhBitmaskHandle = bvhTriangleBitmaskPool.allocate(
+                static_cast<uint32_t>(bvhBitmasks.size()));
+
+            bvhNodeHandle->write_data(bvhNodes.data());
+            bvhTriIdxHandle->write_data(bvhTriIndices.data());
+            bvhBitmaskHandle->write_data(bvhBitmasks.data());
+
+            auto upload_t1 = std::chrono::high_resolution_clock::now();
+
+            auto ms = [](auto a, auto b) {
+                return std::chrono::duration<double, std::milli>(b - a).count();
+            };
+            spdlog::info(
+                "[EmissiveMeshRegistry] BVH build timing for {} triangles: "
+                "readback={:.2f}ms sortdata={:.2f}ms bvh_build={:.2f}ms "
+                "upload={:.2f}ms total={:.2f}ms ({} nodes)",
+                triOffset,
+                ms(bvh_t0, readback_t1),
+                ms(readback_t1, sort_t1),
+                ms(sort_t1, build_t1),
+                ms(build_t1, upload_t1),
+                ms(bvh_t0, upload_t1),
+                bvhNodes.size());
+        }
+    }
 
     return true;
 }

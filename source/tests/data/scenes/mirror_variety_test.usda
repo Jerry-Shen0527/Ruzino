@@ -1,0 +1,265 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+# =============================================================================
+# Mirror / metallic reflection — comprehensive correctness test.
+#
+# Five upright panels in a row, all lit by the same overhead RectLight.
+# Each panel uses CORRECT metal parameters (the bug in earlier scenes was
+# base=0 / diffuseColor=0, which physically means a zero-reflectivity metal
+# and correctly renders black).
+#
+#   Panel A (x=-4): standard_surface mirror. base=1, base_color=(0.95),
+#       metalness=1, specular_roughness=0.01. Should be a near-perfect
+#       neutral mirror reflecting the colored wall behind camera.
+#   Panel B (x=-2): standard_surface brushed metal. base=1,
+#       base_color=(0.95,0.6,0.3) (copper), metalness=1, roughness=0.25.
+#       Should show a warm copper tint with blurry reflection.
+#   Panel C (x= 0): UsdPreviewSurface mirror. diffuseColor=(0.95),
+#       metallic=1, roughness=0.01. Should match panel A (neutral mirror).
+#   Panel D (x= 2): UsdPreviewSurface colored metal. diffuseColor=(0.8,0.1,0.1)
+#       metallic=1, roughness=0.2. Should show a red-tinted blurry metal.
+#   Panel E (x= 4): diffuse white reference. metallic=0, roughness=0.5.
+#       Sanity-check brightness floor; not a mirror.
+#
+# A red wall sits behind the camera. Neutral mirrors (A, C) should pick up
+# the red wall in their reflection. The diffuse panel E should NOT show any
+# reflection, only direct+ambient lighting.
+#
+# Success criteria (visual + numeric):
+#   - Panels A and C look nearly identical (neutral mirror, both material
+#     systems converge).
+#   - Panels A/C reflect the red wall -> their reflection region is reddish.
+#   - Panel E (diffuse) is the brightest directly-lit panel, no red tint.
+#   - No panel is pure black (mean > 0.01).
+# =============================================================================
+
+def Camera "Camera"
+{
+    float2 clippingRange = (0.1, 100.0)
+    float focalLength = 24.0
+    float horizontalAperture = 36.0
+    float verticalAperture = 20.25
+    # Camera at y=1.5, z=8, looking toward -z (panels at z=0, wall at z=12).
+    # 24mm lens -> half-FOV atan(18/24)=36.9deg -> at 8m, visible half-width
+    # = 8*tan(36.9)=6.0m, so all 5 panels (x in [-4.75,4.75]) are in frame.
+    matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (0, 1.5, 8, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+# --- Panel A: standard_surface neutral mirror ---
+def Material "MatA_SS_Mirror"
+{
+    token outputs:surface.connect = </MatA_SS_Mirror/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 1.0
+        color3f inputs:base_color = (0.95, 0.95, 0.95)
+        float inputs:specular = 1.0
+        color3f inputs:specular_color = (1.0, 1.0, 1.0)
+        float inputs:metalness = 1.0
+        float inputs:specular_roughness = 0.01
+        float inputs:specular_IOR = 1.5
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+# --- Panel B: standard_surface copper brushed metal ---
+def Material "MatB_SS_Copper"
+{
+    token outputs:surface.connect = </MatB_SS_Copper/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 1.0
+        color3f inputs:base_color = (0.95, 0.6, 0.3)
+        float inputs:specular = 1.0
+        color3f inputs:specular_color = (1.0, 1.0, 1.0)
+        float inputs:metalness = 1.0
+        float inputs:specular_roughness = 0.25
+        float inputs:specular_IOR = 1.5
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+# --- Panel C: UsdPreviewSurface neutral mirror ---
+def Material "MatC_PV_Mirror"
+{
+    token outputs:surface.connect = </MatC_PV_Mirror/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0.95, 0.95, 0.95)
+        float inputs:metallic = 1.0
+        float inputs:roughness = 0.01
+        color3f inputs:specularColor = (1.0, 1.0, 1.0)
+        float inputs:ior = 1.5
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+# --- Panel D: UsdPreviewSurface red metal ---
+def Material "MatD_PV_Red"
+{
+    token outputs:surface.connect = </MatD_PV_Red/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0.8, 0.1, 0.1)
+        float inputs:metallic = 1.0
+        float inputs:roughness = 0.2
+        color3f inputs:specularColor = (1.0, 1.0, 1.0)
+        float inputs:ior = 1.5
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+# --- Panel E: diffuse white reference ---
+def Material "MatE_Diffuse"
+{
+    token outputs:surface.connect = </MatE_Diffuse/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0.85, 0.85, 0.85)
+        float inputs:metallic = 0.0
+        float inputs:roughness = 0.5
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+# --- Floor + back wall ---
+def Material "FloorMat"
+{
+    token outputs:surface.connect = </FloorMat/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0.3, 0.3, 0.3)
+        float inputs:metallic = 0.0
+        float inputs:roughness = 0.6
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+def Material "RedWallMat"
+{
+    token outputs:surface.connect = </RedWallMat/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0.9, 0.1, 0.1)
+        float inputs:metallic = 0.0
+        float inputs:roughness = 0.6
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+def Material "SideWallMat"
+{
+    token outputs:surface.connect = </SideWallMat/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0.1, 0.5, 0.9)
+        float inputs:metallic = 0.0
+        float inputs:roughness = 0.6
+        float inputs:opacity = 1.0
+        token outputs:surface
+    }
+}
+
+def Xform "World"
+{
+    # Five panels: 2m tall, 1.5m wide, at z=0, facing +z (toward camera).
+    # front face normal = +z.
+    def Mesh "PanelA" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 1, 2, 3, 4, 5, 6, 7, 0, 3, 7, 4, 1, 5, 6, 2, 0, 4, 5, 1, 3, 2, 6, 7]
+        normal3f[] normals = [(0,0,-1), (0,0,-1), (0,0,-1), (0,0,-1), (0,0,1), (0,0,1), (0,0,1), (0,0,1), (0,-1,0), (0,-1,0), (0,-1,0), (0,-1,0), (0,1,0), (0,1,0), (0,1,0), (0,1,0), (-1,0,0), (-1,0,0), (-1,0,0), (-1,0,0), (1,0,0), (1,0,0), (1,0,0), (1,0,0)]
+        point3f[] points = [(-4.75, 0, -0.1), (-3.25, 0, -0.1), (-3.25, 2, -0.1), (-4.75, 2, -0.1), (-4.75, 0, 0.1), (-3.25, 0, 0.1), (-3.25, 2, 0.1), (-4.75, 2, 0.1)]
+        rel material:binding = </MatA_SS_Mirror>
+    }
+    def Mesh "PanelB" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 1, 2, 3, 4, 5, 6, 7, 0, 3, 7, 4, 1, 5, 6, 2, 0, 4, 5, 1, 3, 2, 6, 7]
+        normal3f[] normals = [(0,0,-1), (0,0,-1), (0,0,-1), (0,0,-1), (0,0,1), (0,0,1), (0,0,1), (0,0,1), (0,-1,0), (0,-1,0), (0,-1,0), (0,-1,0), (0,1,0), (0,1,0), (0,1,0), (0,1,0), (-1,0,0), (-1,0,0), (-1,0,0), (-1,0,0), (1,0,0), (1,0,0), (1,0,0), (1,0,0)]
+        point3f[] points = [(-2.75, 0, -0.1), (-1.25, 0, -0.1), (-1.25, 2, -0.1), (-2.75, 2, -0.1), (-2.75, 0, 0.1), (-1.25, 0, 0.1), (-1.25, 2, 0.1), (-2.75, 2, 0.1)]
+        rel material:binding = </MatB_SS_Copper>
+    }
+    def Mesh "PanelC" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 1, 2, 3, 4, 5, 6, 7, 0, 3, 7, 4, 1, 5, 6, 2, 0, 4, 5, 1, 3, 2, 6, 7]
+        normal3f[] normals = [(0,0,-1), (0,0,-1), (0,0,-1), (0,0,-1), (0,0,1), (0,0,1), (0,0,1), (0,0,1), (0,-1,0), (0,-1,0), (0,-1,0), (0,-1,0), (0,1,0), (0,1,0), (0,1,0), (0,1,0), (-1,0,0), (-1,0,0), (-1,0,0), (-1,0,0), (1,0,0), (1,0,0), (1,0,0), (1,0,0)]
+        point3f[] points = [(-0.75, 0, -0.1), (0.75, 0, -0.1), (0.75, 2, -0.1), (-0.75, 2, -0.1), (-0.75, 0, 0.1), (0.75, 0, 0.1), (0.75, 2, 0.1), (-0.75, 2, 0.1)]
+        rel material:binding = </MatC_PV_Mirror>
+    }
+    def Mesh "PanelD" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 1, 2, 3, 4, 5, 6, 7, 0, 3, 7, 4, 1, 5, 6, 2, 0, 4, 5, 1, 3, 2, 6, 7]
+        normal3f[] normals = [(0,0,-1), (0,0,-1), (0,0,-1), (0,0,-1), (0,0,1), (0,0,1), (0,0,1), (0,0,1), (0,-1,0), (0,-1,0), (0,-1,0), (0,-1,0), (0,1,0), (0,1,0), (0,1,0), (0,1,0), (-1,0,0), (-1,0,0), (-1,0,0), (-1,0,0), (1,0,0), (1,0,0), (1,0,0), (1,0,0)]
+        point3f[] points = [(1.25, 0, -0.1), (2.75, 0, -0.1), (2.75, 2, -0.1), (1.25, 2, -0.1), (1.25, 0, 0.1), (2.75, 0, 0.1), (2.75, 2, 0.1), (1.25, 2, 0.1)]
+        rel material:binding = </MatD_PV_Red>
+    }
+    def Mesh "PanelE" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 1, 2, 3, 4, 5, 6, 7, 0, 3, 7, 4, 1, 5, 6, 2, 0, 4, 5, 1, 3, 2, 6, 7]
+        normal3f[] normals = [(0,0,-1), (0,0,-1), (0,0,-1), (0,0,-1), (0,0,1), (0,0,1), (0,0,1), (0,0,1), (0,-1,0), (0,-1,0), (0,-1,0), (0,-1,0), (0,1,0), (0,1,0), (0,1,0), (0,1,0), (-1,0,0), (-1,0,0), (-1,0,0), (-1,0,0), (1,0,0), (1,0,0), (1,0,0), (1,0,0)]
+        point3f[] points = [(3.25, 0, -0.1), (4.75, 0, -0.1), (4.75, 2, -0.1), (3.25, 2, -0.1), (3.25, 0, 0.1), (4.75, 0, 0.1), (4.75, 2, 0.1), (3.25, 2, 0.1)]
+        rel material:binding = </MatE_Diffuse>
+    }
+
+    # Floor: 12m wide, spans z=-2..12
+    def Mesh "FloorMesh" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)]
+        point3f[] points = [(-6, 0, -2), (6, 0, -2), (6, 0, 12), (-6, 0, 12)]
+        rel material:binding = </FloorMat>
+    }
+
+    # Red wall BEHIND camera (z=12, camera at z=8 looking -z).
+    # Mirrors (A, C) facing -z will reflect backward (+z) and see this wall.
+    def Mesh "RedWallMesh" ( apiSchemas = ["MaterialBindingAPI"] )
+    {
+        uniform token subdivisionScheme = "none"
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        normal3f[] normals = [(0, 0, -1), (0, 0, -1), (0, 0, -1), (0, 0, -1)]
+        point3f[] points = [(-6, 0, 12), (6, 0, 12), (6, 4, 12), (-6, 4, 12)]
+        rel material:binding = </RedWallMat>
+    }
+}
+
+# Overhead RectLight at y=5, facing down, covering all panels.
+def RectLight "KeyLight"
+{
+    float inputs:intensity = 8.0
+    float inputs:width = 10.0
+    float inputs:height = 4.0
+    matrix4d xformOp:transform = ( (4,0,0,0), (0,0,-5,0), (0,1,0,0), (0,5,4,1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}

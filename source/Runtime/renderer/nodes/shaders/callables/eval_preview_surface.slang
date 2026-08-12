@@ -62,6 +62,11 @@ void eval_preview_surface(inout EvalCallableData data)
         vd, data.V, data.L, data.eta_flipped, params.diffuseColor,
         params.metallic, params.roughness, params.ior);
 
+    // Emitted radiance Le for UsdPreviewSurface = emissiveColor (already
+    // texture-resolved by the fetch callable). The main loop accumulates this
+    // when a BSDF-sampled ray hits an emissive mesh surface.
+    data.emissionLe = Spectrum(params.emissiveColor);
+
     // Sample the BSDF for next direction
     data.sampledDir = sample_preview_surface(
         vd,
