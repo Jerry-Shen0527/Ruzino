@@ -49,14 +49,15 @@ void main(uint3 tid : SV_DispatchThreadID)
         rgb = ryb_to_rgb(ryb.x, ryb.y, ryb.z);
     }
     // Linear-normalize raw mass-per-cell into [0,1] for the volume renderer.
-    // The sim stores density as accumulated paint mass per cell; a single
-    // particle deposit contributes ~mass·W(0)·dV ≈ 0.002, and a dense stroke
-    // center accumulates to ~0.05. The render shaders assume a [0,1] fill
-    // fraction (kDensitySurface = 0.02; AO min(d,1); penetration scales by d).
-    // D_MAX maps the dense-center value to ~1.0 so first-cross fires (0.05 >
-    // 0.02 after norm → 1.0 > 0.02) while sparse cells (0.002 → 0.04) read as
-    // faint surface. Tuned to the observed single-cell range.
-    float d_norm = clamp(d / 0.05, 0.0, 1.0);
+    // Measured per-voxel density for a 1024²×64 stroke: min 0.001, median
+    // 0.041, p90 0.109, max ~0.285. D_MAX=0.05 saturated 43% of the painted
+    // voxels to 1.0, flattening the field the renderer shades — gradient
+    // normals, AO and penetration all read a uniform slab. D_MAX=0.3 maps the
+    // measured max to ~0.95 and keeps the interior (0.04-0.28) spread across
+    // [0.13,0.95], so the density gradient carries spatial variation again.
+    // First-cross still fires: kDensitySurface=0.02 now ⟺ raw d ≈ 0.006, well
+    // below the interior floor (~0.04).
+    float d_norm = clamp(d / 0.3, 0.0, 1.0);
 
     packed_out[tid.x] = float4(d_norm, rgb);
 }

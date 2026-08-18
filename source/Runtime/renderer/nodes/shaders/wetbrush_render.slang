@@ -918,7 +918,28 @@ void VolumeClosestHit(inout RayPayload payload, in VolumeHitAttributes attr)
     // sampling darkens crevices and dense pigment pockets.
     float ao = ambientOcclusion(vd, surfP, nrm, payload.seed);
 
-    payload.volumeColor = paintColor * shade * (1.0 - ao);
+    // Wet-gloss specular from the primary distant light. The diffuse-only
+    // Lambertian term leaves the paint matte; wet paint reads glossy (the
+    // paper's figures show the same sheen; §6 text only specifies the
+    // first-cross / penetration / AO pipeline, not the BRDF). Blinn-Phong on
+    // the density-gradient normal — the glint rides the surface curvature,
+    // which only carries variation once the packed field does (pack_float4
+    // D_MAX). Additive on top of the diffuse; shadowing is already handled by
+    // VolumeShadowHit for the main NEE, this is just a sheen.
+    float3 viewDir = -dir;
+    float3 specular = float3(0.0);
+    for (uint li = 0; li < ptConstants.lightCount; ++li) {
+        LightData light = lightBuffer[li];
+        if (light.type == uint(LightType::Distant)) {
+            float3 L = -light.dirW;  // direction to the light (NEE convention)
+            float3 H = normalize(L + viewDir);
+            float gloss = pow(max(dot(nrm, H), 0.0), 48.0);
+            specular = light.intensity * gloss * 0.4;
+            break;  // single key light is enough for the sheen
+        }
+    }
+
+    payload.volumeColor = paintColor * shade * (1.0 - ao) + specular;
 }
 
 [shader("closesthit")]
