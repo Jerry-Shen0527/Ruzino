@@ -15,6 +15,7 @@ import utils.Math.MathHelpers;
 import pt_constants;
 import pt_sample_lights;
 import cloud_intersection;  // procedural cloud density + light-march helpers
+import cloud_unbiased;      // delta/ratio tracking for the unbiased cloud pipeline (slots 8/9)
 
 RWStructuredBuffer<uint> random_seeds;
 RWTexture2D<float4> output;
@@ -75,6 +76,17 @@ struct RayPayload {
     float3 volumeColor;
     float volumeTransmittance;
     float volumeTEnd;
+
+    // Unbiased-cloud scatter continuation (volumeType="cloud_unbiased", hit
+    // groups 8/9). When true, the delta-tracking hit shader found a real
+    // scatter event: the path continues from volumeTEnd along scatterDir.
+    // Throughput is unchanged — the free-flight pdf cancelled the attenuation
+    // and the phase direction was sampled exactly — so volumeTransmittance is
+    // 1.0 in this case (the transmittance channel is only used when the ray
+    // escapes the cloud without scattering).
+    bool volumeScatter;
+    float3 scatterDir;
+    float _volumePad;
 };
 
 [shader("raygeneration")]
@@ -116,6 +128,7 @@ void RayGen()
             payload.depth = depth;
             payload.hit = false;
             payload.isVolume = false;
+            payload.volumeScatter = false;
             // Reset BSDF-hit-emissive triangle index before tracing; ClosestHit
             // sets it only when the new hit is an emissive mesh triangle. A
             // stale value from a previous bounce would corrupt the MIS weight.
@@ -175,6 +188,32 @@ void RayGen()
                 accumulated_color = add(
                     accumulated_color,
                     mul(current_throughput, Spectrum(payload.volumeColor)));
+
+                // Unbiased cloud scatter continuation: the delta-tracking hit
+                // shader found a real scatter event. The free-flight pdf
+                // cancelled the attenuation (volumeTransmittance == 1) and the
+                // continuation direction was sampled exactly from the phase
+                // function, so the throughput is unchanged. Russian roulette
+                // bounds the number of intra-cloud bounces (a conservative
+                // albedo-1 medium would otherwise never terminate).
+                if (payload.volumeScatter) {
+                    if (random_float(payload.seed) > 0.8)
+                        break;
+                    current_throughput = div(current_throughput, 0.8);
+                    // volumeTEnd is the distance along the TRACED direction,
+                    // so the scatter event is at Origin + dir*volumeTEnd; the
+                    // continuation then offsets along the NEW direction to
+                    // leave the event point (see the escape branch below).
+                    float3 dir = normalize(current_ray.Direction);
+                    current_ray.Origin = current_ray.Origin
+                        + dir * payload.volumeTEnd
+                        + payload.scatterDir * 1e-3;
+                    current_ray.Direction = payload.scatterDir;
+                    current_ray.TMin = 0.0;
+                    current_ray.TMax = 50000.0;
+                    continue;
+                }
+
                 current_throughput = mul(
                     current_throughput,
                     Spectrum(payload.volumeTransmittance));
@@ -1050,31 +1089,42 @@ void CloudClosestHit(inout RayPayload payload, in CloudHitAttributes attr)
     float3 rayOrg = WorldRayOrigin();
     float3 rayDir = WorldRayDirection();
 
-    // Sun + sky ambient. The ambient approximates the multi-scattered SKYLIGHT
-    // entering the cloud from above (blueish, directional-ish via phase below).
+    // Sun + sky ambient. The ambient approximates skylight entering the cloud
+    // from above (blueish, attenuated by the same in-and-out absorption as
+    // the sun march below).
     float3 sunDirW, sunColor;
     bool hasSun = findSun(sunDirW, sunColor);
-    float3 ambient = float3(0.4, 0.45, 0.55);  // cool sky light from above
+    // Neutral-white ambient: the light that fills a cloud interior has
+    // scattered many times and lost its blue sky tint; a blue ambient here
+    // is what made the clouds read blue-gray instead of white.
+    float3 ambient = float3(0.6, 0.63, 0.68);  // diffuse fill from above
 
     // Multi-scattering approximation (Hillaire/HZD family). Real clouds are
     // bright white because light bounces many times inside the droplet volume,
-    // losing its direction and blue tint. Single-scatter NEE (sunContrib below)
-    // only captures one bounce — without this term clouds render as thin blue
-    // haze (the sun + blue sky showing through) instead of opaque white volumes.
-    // Model it as a second, near-isotropic lobe of neutral white light whose
-    // strength grows with local density (denser = more internal bounces).
-    // Direction-weighted by a reduced-phase blend so it is mostly isotropic but
-    // still slightly brighter toward the sun (forward multi-scatter peak).
+    // losing its direction and blue tint. Single-scatter NEE only captures one
+    // bounce, so a SMALL near-isotropic white lobe is added whose strength
+    // grows with local density and sun penetration (denser/sunlit = brighter).
+    // Kept deliberately weak so the single-scatter sun term — and with it the
+    // lit-rim / dark-base shading that reads as "cloud" — dominates. (The
+    // previous tuning scaled this term so high it flooded every cloud pixel to
+    // the same white and erased all structure.)
     float3 multiScatterColor = float3(0.9, 0.92, 0.95);  // warm-neutral white
 
     // March the view segment accumulating Beer-Lambert extinction and
-    // in-scattered sunlight (NEE via a per-step light march toward the sun,
-    // with the HZD beer-powder term for dark bases / bright rims).
-    const int MAX_STEPS = 96;
+    // in-scattered sunlight. sigma_t is PHYSICAL: d * densityScale with
+    // densityScale in 1/m (~0.06 = mean free path ~17 m for cumulus).
+    const int MAX_STEPS = 128;
     float segLen = attr.tExit - attr.tEnter;
-    int steps = clamp(int(segLen / max(vd.boundsMax.x - vd.boundsMin.x, 1.0) * 48.0),
-                      32, MAX_STEPS);
+    int steps = clamp(int(segLen / max(vd.boundsMax.x - vd.boundsMin.x, 1.0) * 96.0),
+                      48, MAX_STEPS);
     float step = segLen / float(steps);
+
+    // Jitter the sample grid per ray so the discrete marching cannot produce
+    // coherent light/dark bands; the accumulation averages the noise out.
+    // (Copy the seed to a local first: taking an SV_RayPayload member as an
+    // inout param ICEs the slang compiler in hit shaders.)
+    uint seed = payload.seed;
+    float jitter = random_float(seed);
 
     float T_view = 1.0;
     float3 L = float3(0.0);
@@ -1083,7 +1133,7 @@ void CloudClosestHit(inout RayPayload payload, in CloudHitAttributes attr)
     float g = vd.phaseG;
 
     for (int i = 0; i < steps; ++i) {
-        float t = attr.tEnter + (float(i) + 0.5) * step;
+        float t = attr.tEnter + (float(i) + jitter) * step;
         float3 p = rayOrg + rayDir * t;
         float d = cloudDensity(vd, p);
         if (d <= 0.0)
@@ -1097,30 +1147,37 @@ void CloudClosestHit(inout RayPayload payload, in CloudHitAttributes attr)
         float cosTheta = dot(-rayDir, sunDirW);
         float phase = evalHenyeyGreenstein(cosTheta, g);
 
-        // NEE: transmittance to the sun through the SAME procedural field.
-        // March a short distance (sunDist ~ through the AABB toward the sun).
-        float sunDist = (vd.boundsMax.x - vd.boundsMin.x) * 0.5;  // ~half-width
-        float powder;
+        float3 li = float3(0.0);
+        float powder = 0.0;
         float T_sun = 1.0;
-        float3 sunContrib = float3(0.0);
         if (hasSun) {
-            T_sun = cloudLightMarch(vd, p, sunDirW, sunDist, powder);
-            // beer-powder blend: darken dense back-facing regions.
-            float bp = T_sun * (0.75 + 0.25 * powder);
-            sunContrib = sunColor * bp * phase;
+            // NEE: transmittance to the sun through the SAME procedural field,
+            // marched out to the AABB exit along the sun direction. The two
+            // jitters decorrelate the discrete march across samples.
+            float sunDist = cloudExitDist(vd, p, sunDirW);
+            float jit0 = random_float(seed);
+            float jit1 = random_float(seed);
+            T_sun = cloudLightMarch(vd, p, sunDirW, sunDist, jit0, jit1, powder);
+            // Beer-powder: darken the deep interior (light absorbed on the way
+            // in AND out), keep sunlit rims bright — the lit/shaded split that
+            // gives cumulus their clumpy 3D read. 0.6 keeps the base gray
+            // rather than black (undersides still read as cloud, not shadow).
+            li += sunColor * phase * T_sun * (1.0 - powder * 0.6);
         }
 
-        float3 li = sunContrib + ambient * (0.5 + 0.5 * phase);
+        // Skylight from above, attenuated by the same in-and-out absorption.
+        li += ambient * (1.0 - powder * 0.35) * (0.4 + 0.6 * phase);
 
-        // Multi-scatter lobe: a second isotropic-ish phase of neutral-white
-        // light. This is the radiance from light bouncing many times inside
-        // the cloud (what makes it read as an opaque white volume instead of
-        // blue-tinted haze). li is a RADIANCE value (like sunContrib/ambient);
-        // the (1-localT) scatter fraction is applied by the accumulator below,
-        // so do NOT multiply by sigmaT*step here — that double-counts density
-        // and blows dense clouds out to pure white.
-        float phaseMs = evalHenyeyGreenstein(cosTheta, g * 0.25);  // nearly isotropic
-        li += multiScatterColor * phaseMs * 0.15;  // modest constant radiance
+        // Multi-scatter lobe: double HG (forward + back) so both the sun side
+        // and the far side receive bounced light. This is what keeps the cloud
+        // interior WHITE instead of blue-gray. It grows with density AND with
+        // how much light the cloud has absorbed (1 - T_sun) — multiple
+        // scattering is strongest deep inside, weakest on the sunlit rim,
+        // where the single-scatter term already shapes the shading.
+        float phaseMs = evalHenyeyGreenstein(cosTheta, g * 0.5)   // forward lobe
+                      + evalHenyeyGreenstein(cosTheta, -g * 0.2); // back lobe
+        float msStrength = (0.25 + 0.75 * d) * (0.4 + 0.6 * (1.0 - T_sun));
+        li += multiScatterColor * phaseMs * msStrength * 2.2;
 
         // Energy-conserving in-scatter for this step:
         L += T_view * (1.0 - localT) * li;
@@ -1133,6 +1190,7 @@ void CloudClosestHit(inout RayPayload payload, in CloudHitAttributes attr)
     payload.volumeColor = L;
     payload.volumeTransmittance = T_view;
     payload.volumeTEnd = attr.tExit;
+    payload.seed = seed;
 }
 
 [shader("closesthit")]
@@ -1151,9 +1209,14 @@ void CloudShadowHit(inout ShadowPayload payload, in CloudHitAttributes attr)
     const int STEPS = 32;
     float segLen = attr.tExit - attr.tEnter;
     float step = segLen / float(STEPS);
+    // Jitter the sample grid per ray so discrete marching noise decorrelates
+    // across samples instead of forming coherent bands on the terrain.
+    // (Local seed copy: SV_RayPayload members cannot be inout params.)
+    uint seed = payload.seed;
+    float jitter = random_float(seed);
     float T = payload.transmittance;
     for (int i = 0; i < STEPS; ++i) {
-        float t = attr.tEnter + (float(i) + 0.5) * step;
+        float t = attr.tEnter + (float(i) + jitter) * step;
         float3 p = rayOrg + rayDir * t;
         float d = cloudDensity(vd, p);
         T *= exp(-d * vd.densityScale * step);
@@ -1161,10 +1224,122 @@ void CloudShadowHit(inout ShadowPayload payload, in CloudHitAttributes attr)
             break;
     }
     payload.transmittance = T;
+    payload.seed = seed;
     // Leave isVisible=true so the NEE path applies the (possibly small)
     // transmittance as a soft Beer-Lambert shadow. Previously this flipped
     // isVisible=false at T<1e-3, which produced a hard-edged binary shadow
     // since the transmittance itself was never read. With the launcher now
     // multiplying intensity by transmittance, a near-zero T already reads as
     // near-black without needing the hard cutoff.
+}
+
+// ============================================================================
+// Unbiased volumetric cloud hit groups (SBT slots 8/9) — delta tracking
+// ============================================================================
+// The unbiased counterpart of the Cloud* hit groups above, selected by the
+// volumeType="cloud_unbiased" primvar (VolumeKind::CloudUnbiased routes the
+// instance to slots 8/9). Same slab intersection (CloudIntersection); the
+// integration is delta tracking + ratio tracking instead of fixed-step
+// quadrature — see cloud_unbiased.slang for the derivation. There is no
+// heuristic multi-scatter/powder term: multiple scattering emerges from the
+// phase-sampled path continuation, and the "dark base" from the unbiased
+// T_sun estimates. Higher variance per sample, zero quadrature bias.
+
+[shader("closesthit")]
+void UnbiasedCloudClosestHit(inout RayPayload payload, in CloudHitAttributes attr)
+{
+    uint instance_id = InstanceID();
+    GeometryInstanceData inst = instanceDescBuffer[instance_id];
+    VolumeDesc vd = volumeDescBuffer[inst.geometryID];
+
+    float3 rayOrg = WorldRayOrigin();
+    float3 rayDir = WorldRayDirection();
+
+    float3 sunDirW, sunColor;
+    bool hasSun = findSun(sunDirW, sunColor);
+    float g = vd.phaseG;
+
+    // Local seed copy (an SV_RayPayload member cannot be an inout param).
+    uint seed = payload.seed;
+
+    // Exact majorant: the density is in [0,1], so sigma_t <= densityScale.
+    float sigmaBar = vd.densityScale;
+
+    // Walk the segment with null-collision free flights. T accumulates the
+    // ratio-tracking transmittance — the unbiased escape transmittance.
+    float T = 1.0;
+    float t = attr.tEnter;
+    while (true) {
+        t += -log(max(1.0 - random_float(seed), 1e-9)) / sigmaBar;
+        if (t >= attr.tExit)
+            break;  // escaped the cloud without a real event
+
+        float3 p = rayOrg + rayDir * t;
+        float d = cloudDensity(vd, p);
+        T *= (1.0 - d);  // null-collision / ratio-tracking factor
+
+        if (random_float(seed) < d) {
+            // REAL scatter event — its position is distributed with pdf
+            // sigma_t * T(t), so the in-scatter estimator needs no
+            // transmittance factor (sigma_s/sigma_t = 1 for clouds).
+            float cosTheta = dot(-rayDir, sunDirW);
+            float3 li = float3(0.0);
+            if (hasSun) {
+                // NEE: unbiased transmittance toward the sun, marched out to
+                // the AABB exit along the sun direction.
+                float sunDist = cloudExitDist(vd, p, sunDirW);
+                float T_sun = cloudRatioTrack(vd, p, sunDirW, sunDist, seed);
+                li += sunColor * evalHenyeyGreenstein(cosTheta, g) * T_sun;
+            }
+            // Environment radiance needs no explicit NEE here: the scattered
+            // continuation picks it up through the miss shader once it escapes
+            // the volume — unbiased, at the cost of multi-bounce variance.
+
+            payload.isVolume = true;
+            payload.volumeColor = li;
+            payload.volumeTransmittance = 1.0;  // attenuation absorbed by the pdf
+            payload.volumeTEnd = t;
+            payload.volumeScatter = true;
+            payload.scatterDir = cloudSampleHG(
+                rayDir, g, random_float(seed), random_float(seed));
+            payload.seed = seed;
+            return;
+        }
+        // Null collision: the path continues straight; nothing else to do.
+    }
+
+    // Escaped without scattering: report the unbiased transmittance so the
+    // terrain/sky behind the cloud shows through correctly attenuated.
+    payload.isVolume = true;
+    payload.volumeColor = float3(0.0);
+    payload.volumeTransmittance = T;
+    payload.volumeTEnd = attr.tExit;
+    payload.volumeScatter = false;
+    payload.seed = seed;
+}
+
+[shader("closesthit")]
+void UnbiasedCloudShadowHit(inout ShadowPayload payload, in CloudHitAttributes attr)
+{
+    uint instance_id = InstanceID();
+    GeometryInstanceData inst = instanceDescBuffer[instance_id];
+    VolumeDesc vd = volumeDescBuffer[inst.geometryID];
+
+    float3 rayOrg = WorldRayOrigin();
+    float3 rayDir = WorldRayDirection();
+
+    uint seed = payload.seed;
+
+    // Ratio tracking along the shadow segment: unbiased Beer-Lambert
+    // transmittance, no fixed step grid, no early-out threshold.
+    float sigmaBar = vd.densityScale;
+    float T = payload.transmittance;
+    float t = attr.tEnter;
+    while (t < attr.tExit) {
+        float d = cloudDensity(vd, rayOrg + rayDir * t);
+        T *= (1.0 - d);
+        t += -log(max(1.0 - random_float(seed), 1e-9)) / sigmaBar;
+    }
+    payload.transmittance = T;
+    payload.seed = seed;
 }

@@ -178,6 +178,7 @@ struct GeometryInstanceData {
 enum class VolumeKind : uint32_t {
     Wetbrush = 0,
     Cloud    = 1,
+    CloudUnbiased = 2,  ///< delta/ratio-tracking cloud (hit-group slots 8/9)
 };
 
 struct VolumeDesc {
@@ -196,8 +197,8 @@ struct VolumeDesc {
     // Density shaping: noise is sampled in a NORMALIZED space [0,1]^3 over the
     // AABB, then fbm/Worley frequencies are in that space. layerMin/layerMax
     // are the cloud-layer height fraction within [0,1] (0=AABB bottom, 1=top).
-    float coverage;        ///< [0,1] cloud coverage threshold (higher = more cloud).
-    float densityScale;    ///< Extinction coefficient multiplier (sigma_t = densityScale*density).
+    float coverage;        ///< [0,1] coverage threshold on the base shape (LOWER = more cloud, soft smoothstep shoulder).
+    float densityScale;    ///< Physical extinction coefficient sigma_t in 1/m (sigma_t = densityScale*density; ~0.05/m for cumulus).
     float phaseG;          ///< Henyey-Greenstein anisotropy (~0.6-0.8 for water clouds).
     float layerTop;        ///< Height fraction (in AABB [0,1]) of cloud top.
     float layerBottom;     ///< Height fraction of cloud base.

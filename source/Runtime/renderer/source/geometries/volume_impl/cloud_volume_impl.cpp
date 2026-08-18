@@ -41,7 +41,11 @@ bool CloudVolumeImpl::parsePrimvars(
         update_gpu_resources = true;
     }
     cloud_coverage = readFloat("coverage", 0.35f);
-    cloud_densityScale = readFloat("densityScale", 1.2f);
+    // densityScale is the PHYSICAL extinction coefficient sigma_t in 1/m
+    // (typical cumulus ~0.05/m, i.e. mean free path ~20 m). See
+    // cloud_intersection.slang for why the old arbitrary multiplier made the
+    // Beer-Lambert integral degenerate into binary light/dark bands.
+    cloud_densityScale = readFloat("densityScale", 0.06f);
     cloud_phaseG = readFloat("phaseG", 0.7f);
     cloud_layerTop = readFloat("layerTop", 1.0f);
     cloud_layerBottom = readFloat("layerBottom", 0.0f);

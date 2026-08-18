@@ -14,7 +14,8 @@
 RUZINO_NAMESPACE_OPEN_SCOPE
 
 // Decide the concrete impl from the `volumeType` primvar.
-//   "cloud"            -> CloudVolumeImpl
+//   "cloud"            -> CloudVolumeImpl (biased quadrature, slots 6/7)
+//   "cloud_unbiased"   -> CloudVolumeImpl (delta tracking, slots 8/9)
 //   absent / "wetbrush" -> WetbrushVolumeImpl (default)
 // If `previous` is already the right type, reuse it so cached primvars /
 // registry versions survive across dirty cycles; otherwise replace it.
@@ -25,25 +26,36 @@ void VolumeImpl::resolve(
 {
     VtValue vt_type = sceneDelegate->Get(id, TfToken("volumeType"));
     bool want_cloud = false;
-    if (vt_type.IsHolding<TfToken>()) {
-        want_cloud = vt_type.UncheckedGet<TfToken>().GetString() == "cloud";
-    }
-    else if (vt_type.IsHolding<std::string>()) {
-        want_cloud = vt_type.UncheckedGet<std::string>() == "cloud";
-    }
+    bool want_unbiased = false;
+    auto readToken = [&]() -> std::string {
+        if (vt_type.IsHolding<TfToken>())
+            return vt_type.UncheckedGet<TfToken>().GetString();
+        if (vt_type.IsHolding<std::string>())
+            return vt_type.UncheckedGet<std::string>();
+        return {};
+    };
+    std::string type = readToken();
+    want_cloud = type == "cloud";
+    want_unbiased = type == "cloud_unbiased";
 
     // Reuse the existing impl if its type still matches — keeps cached state.
     if (previous) {
-        if (want_cloud && dynamic_cast<CloudVolumeImpl*>(previous.get()))
+        if (auto* cloud = dynamic_cast<CloudVolumeImpl*>(previous.get())) {
+            if ((want_cloud && !cloud->unbiased()) ||
+                (want_unbiased && cloud->unbiased()))
+                return;
+        }
+        else if (
+            !want_cloud && !want_unbiased &&
+            dynamic_cast<WetbrushVolumeImpl*>(previous.get())) {
             return;
-        if (!want_cloud && dynamic_cast<WetbrushVolumeImpl*>(previous.get()))
-            return;
+        }
         // Type switched: drop the old impl, fall through to construct fresh.
         previous.reset();
     }
 
-    if (want_cloud)
-        previous = std::make_unique<CloudVolumeImpl>();
+    if (want_cloud || want_unbiased)
+        previous = std::make_unique<CloudVolumeImpl>(want_unbiased);
     else
         previous = std::make_unique<WetbrushVolumeImpl>();
 }

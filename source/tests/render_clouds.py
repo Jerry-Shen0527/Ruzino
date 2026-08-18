@@ -53,19 +53,21 @@ def _look_at(eye, target, up_world=(0.0, 1.0, 0.0)):
     return m
 
 
-def _build_scene(path, coverage=0.35, density=1.2, sun_elev_deg=45.0):
+def _build_scene(path, coverage=0.35, density=0.06, sun_elev_deg=45.0):
     if path.exists():
         path.unlink()
     stage = Usd.Stage.CreateNew(str(path))
 
-    # A ground plane so we can see soft cloud shadows. Enlarged to ±5000 so
-    # the far edge is well off-frame (a small plane left an empty black band
-    # where rays miss everything). Subdividing into a 10×10 grid satisfies
-    # "not just one quad"; the checkerboard itself is drawn by the shader
-    # below from world XZ, so mesh density doesn't change the pattern.
+    # A ground plane so we can see soft cloud shadows. Enlarged to ±8000 so
+    # the far edge stays off-frame even for the horizon-grazing rays of the
+    # lowered camera (a ±5000 plane left a dark band right at the horizon
+    # where low-angle rays missed the ground entirely). Subdividing into a
+    # 10×10 grid satisfies "not just one quad"; the checkerboard itself is
+    # drawn by the shader below from world XZ, so mesh density doesn't change
+    # the pattern.
     plane = UsdGeom.Mesh.Define(stage, "/Ground")
     DIV = 10
-    HALF = 5000.0
+    HALF = 8000.0
     step = (2.0 * HALF) / DIV
     pts = []
     idx = []
@@ -118,9 +120,14 @@ def _build_scene(path, coverage=0.35, density=1.2, sun_elev_deg=45.0):
     # near cloud base (~40 deg) in one frame — near clouds are overhead. So
     # pitch to just above the horizon: frame shows the ground in the lower
     # portion and the cloud layer receding toward the horizon above it.
-    # eye z=1200, target y=280 -> ~13 deg pitch, horizon sits in the lower frame.
+    # eye z=1200. Camera raised to y=200 (from ground level y=8) so we look
+    # ACROSS the cloud field rather than up at it — horizon sits low, the 1 km
+    # cloud base sits mid-frame, and more of the layer's breadth is visible.
+    # Target y=450 pitches the gaze down slightly (~12 deg): the ground plane
+    # fills more of the lower frame than the old y=600 target, while the
+    # cloud layer still spans the upper two thirds.
     UsdGeom.Xformable(cam).AddTransformOp().Set(
-        _look_at(eye=(0.0, 8.0, 1200.0), target=(0.0, 280.0, 0.0)))
+        _look_at(eye=(0.0, 200.0, 1200.0), target=(0.0, 450.0, 0.0)))
 
     # Hosek sky (dome-local sun dir, +Y up).
     elev = math.radians(sun_elev_deg)
@@ -143,7 +150,7 @@ def _build_scene(path, coverage=0.35, density=1.2, sun_elev_deg=45.0):
     sun_xf = Gf.Matrix4d(); sun_xf.SetIdentity()
     sun_xf.SetRow(2, Gf.Vec4d(sun_shine[0], sun_shine[1], sun_shine[2], 0.0))
     sun = UsdLux.DistantLight.Define(stage, "/Sun")
-    sun.CreateIntensityAttr().Set(1.5)  # was 5.0 — far too bright, blew out the ground
+    sun.CreateIntensityAttr().Set(2.0)  # was 1.5 — brightens sky/ground/cloud rims without touching the tone mapper
     sun.CreateAngleAttr().Set(0.53)
     UsdGeom.Xformable(sun).AddTransformOp().Set(sun_xf)
 
@@ -225,9 +232,9 @@ def _build_render_graph(hydra, samples):
         (accumulate, "Max Samples"): samples,
         # LPM is the sole tone mapper: it does the HDR->LDR curve AND the
         # display gamma (no separate gamma_correction node — that would
-        # double-gamma). With the double-gamma removed, midtones came out too
-        # dark — recover them with a positive LPM Exposure (larger = brighter
-        # midtones). HDR Max=2.0 fits the wider range (sunlit ground + sky).
+        # double-gamma). HDR Max=2.0 fits the wider range (sunlit ground +
+        # sky). Exposure is kept at the original 2.0 — brightness is set by
+        # the scene lighting, not the tone mapper.
         (lpm, "HDR Max"): 2.0, (lpm, "LPM Exposure"): 2.0,
         (lpm, "Contrast"): 1.0, (lpm, "Shoulder"): 1.0,
         (lpm, "Shoulder Contrast"): 1.0, (lpm, "Soft Gap"): 0.0,
@@ -254,12 +261,12 @@ def main():
 
     cases = [
         # (name, coverage, density, sun_elev_deg)
-        # NOTE: coverage is SUBTRACTED as a density threshold in the shader
-        # (cloud_intersection.slang: shape -= coverage), so LOWER coverage =
-        # MORE cloud. Higher Y noise freq also lowers average density, so
-        # overcast needs a lower threshold than sunny to still show cloud.
-        ("cloud_sunny", 0.32, 3.0, 55.0),   # sparse, scattered clouds
-        ("cloud_overcast", 0.05, 4.5, 35.0),  # near-full cover
+        # NOTE: coverage is the smoothstep THRESHOLD on the base shape
+        # (cloud_intersection.slang), so LOWER coverage = MORE cloud. density
+        # is the PHYSICAL extinction coefficient sigma_t in 1/m (cumulus
+        # ~0.05/m, mean free path ~20 m) — not the old arbitrary multiplier.
+        ("cloud_sunny", 0.20, 0.06, 55.0),     # scattered cumulus
+        ("cloud_overcast", 0.08, 0.05, 40.0),  # near-full cover w/ structure
     ]
 
     for name, cov, dens, elev in cases:

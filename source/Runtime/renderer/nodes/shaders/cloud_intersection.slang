@@ -6,13 +6,27 @@
 // CloudShadowHit) live inside path_tracing.slang (same translation unit) so
 // they can see the file-level RayPayload and the global buffers.
 //
-// Cloud density model (Horizon: Zero Dawn / Bille / Hillaire family):
-//   - base shape  = Perlin fbm (low-frequency) shaped by an inverted Worley
-//                   "billow" and a height gradient (cumulus: dense bottom,
-//                   wispy top) and a coverage threshold;
-//   - detail      = higher-frequency Worley F1/F2, subtracted to erode edges;
-//   - density     = clamp(shape - erosion, 0, 1) -> [0,1] majorant for the
-//                   Beer-Lambert/HG integration done in the hit shaders.
+// Cloud density model (Hillaire 2020 / Nubis family):
+//   - base      = low-frequency fbm — the large soft billows; the layer spans
+//                 ~noiseFreq cells per axis, so one clump is ~1/noiseFreq of
+//                 the layer width (a real cumulus-sized puff);
+//   - billow    = inverted Worley F1 at cell scale, MULTIPLIED with the fbm
+//                 so the field is low-mean and clumpy (distinct puffs with
+//                 gaps, not one connected mass);
+//   - profile   = vertical cumulus cross-section (flat base, wispy top),
+//                 0 -> 1 -> 0 across the layer;
+//   - coverage  = threshold on that shape remapped with a SOFT smoothstep
+//                 shoulder so puffs fade in/out instead of switching on;
+//   - detail    = higher-frequency Worley F1, subtracted proportionally to
+//                 carve the cauliflower lobes and separate puffs.
+//
+// Extinction is PHYSICAL: sigma_t = density * densityScale, with densityScale
+// interpreted as the extinction coefficient in 1/m (typical cumulus ~0.05/m,
+// i.e. a mean free path of ~20 m). The old arbitrary multiplier (~2.5/m,
+// MFP 0.4 m) made every ray-march step saturate exp(-sigma_t*step) to 0/1,
+// which quantized the transmittance into binary light/dark bands (the NPR
+// look) — with the physically-scaled coefficient and jittered marching the
+// Beer-Lambert integral stays smooth.
 //
 // All noise is sampled in NORMALIZED [0,1]^3 space over the volume AABB, so
 // cloud scale is independent of world size (a 1km and a 10m cloud read the
@@ -66,80 +80,149 @@ float3 cloudNormalizedPos(VolumeDesc vd, float3 p)
     return (p - vd.boundsMin) / max(vd.boundsMax - vd.boundsMin, float3(1e-6));
 }
 
-// Height gradient: dense at the cloud base (layerBottom), wispy at the top
-// (layerTop). A smooth ramp between the two; outside the layer -> 0.
+// Vertical cumulus cross-section: dense just above the base (the flat cloud
+// bottom), thinning to a wispy top (the anvil). Returns 0 outside the
+// [layerBottom, layerTop] band and 0 -> 1 -> 0 across it.
 float cloudHeightGradient(VolumeDesc vd, float h01)
 {
     // h01 is the normalized height fraction within the AABB (y / size).
     float lo = vd.layerBottom;
     float hi = vd.layerTop;
-    if (h01 < lo || h01 > hi)
-        return 0.0;
     float t = (h01 - lo) / max(hi - lo, 1e-4);
-    // Lower-falloff (dense bottom), upper-falloff (wispy top): both smoothstep.
-    float lower = 1.0 - smoothstep(0.0, 0.2, t);   // dense at t<0.2
-    float upper = 1.0 - smoothstep(0.6, 1.0, t);   // thin out near top
-    return max(lower, upper * 0.5 + 0.5);          // combine
+    if (t <= 0.0 || t >= 1.0)
+        return 0.0;
+    // Sharp lower ramp = flat base; long upper falloff = wispy top.
+    float bottom = smoothstep(0.0, 0.15, t);
+    float top = 1.0 - smoothstep(0.55, 1.0, t);
+    return bottom * top;
 }
 
 // Procedural cloud density at a world-space position, in [0,1].
 // Returns 0 outside the cloud layer / where coverage is not met.
 float cloudDensity(VolumeDesc vd, float3 p)
 {
-    float3 q = cloudNormalizedPos(vd, p) * vd.noiseFreq;
-    float3 qw = cloudNormalizedPos(vd, p) * vd.worleyFreq;
+    float3 np = cloudNormalizedPos(vd, p);
 
-    // Base shape: Perlin fbm in [-1,1] -> [0,1].
-    float base = mx_fractal_noise_float(q, 5, 2.0, 0.5);   // ~[-1,1]
-    base = base * 0.5 + 0.5;                               // ->[0,1]
+    // Base macro shape: low-frequency fbm. ~noiseFreq cells span the layer,
+    // so each clump is ~1/noiseFreq of the layer width — the large soft
+    // billows the cloud field is built from.
+    float3 q = np * vd.noiseFreq;
+    float base = mx_fractal_noise_float(q, 4, 2.0, 0.5);   // ~[-1,1]
+    base = base * 0.5 + 0.5;                               // -> [0,1]
 
-    // Inverted Worley "billow": dilates the fbm so clouds look puffy rather
-    // than smoothly gradient. F1 in ~[0,1] cell units; invert so the dense
-    // interior reads high.
-    float worleyF1 = mx_worley_noise_float(qw, 1.0, 0);  // Euclidean F1
-    float billow = 1.0 - clamp(worleyF1, 0.0, 1.0);
+    // Inverted-Worley "billow" at cell scale: round cellular lobes. The
+    // PRODUCT with the fbm keeps the field low-mean and clumpy — distinct
+    // puffs with gaps between them. (The old max() combine biased the field
+    // high, so the coverage threshold left a uniform connected sheet with
+    // barely any structure.)
+    float3 qw = np * vd.worleyFreq;
+    float billow = 1.0 - saturate(mx_worley_noise_float(qw, 1.0, 0));
 
-    float hg = cloudHeightGradient(vd, cloudNormalizedPos(vd, p).y);
+    // Vertical cumulus profile (flat base, wispy top).
+    float profile = cloudHeightGradient(vd, np.y);
 
-    // Coverage: subtract a threshold so coverage controls how much sky is
-    // cloud. Combine base*billow with the height gradient.
-    float shape = base * billow * hg;
-    shape -= vd.coverage;
+    // Coverage: threshold with a SOFT shoulder. smoothstep turns the cutoff
+    // into a gradual 0->1 ramp so puffs fade in/out instead of switching on
+    // at full density — the old hard `shape -= coverage` clip made the field
+    // binary, which produced the uniform "white wall" and the stepwise
+    // light/dark shading bands. Lower coverage = more cloud.
+    float shape = base * billow * profile;
+    shape = smoothstep(vd.coverage, vd.coverage + 0.35, shape);
 
-    // Detail erosion: Worley F1/F2 high-frequency, subtracted to carve wispy
-    // edges (the signature "cloud" silhouette).
+    // Detail erosion: a higher-frequency Worley F1 carves the cauliflower
+    // lobes. F1 is the distance to the nearest cell feature, so it peaks at
+    // cell boundaries — eroding there separates puffs and ruffles the
+    // silhouette. Proportional erosion keeps the field in [0,1] and eats the
+    // soft rim rather than the dense core.
     float2 detail = mx_worley_noise_vec2(qw * 3.0, 1.0, 0);  // (F1, F2)
-    float erode = clamp(detail.x * vd.detailErosion, 0.0, 1.0);
-    shape -= erode * 0.5;
+    float erode = saturate(detail.x * 1.4) * vd.detailErosion;
+    shape -= erode * shape;
+    return saturate(shape);
+}
 
-    return clamp(shape, 0.0, 1.0);
+// Distance from p (inside the AABB) to the AABB exit along the normalized
+// direction L — bounds the light march instead of the old fixed half-width
+// guess, which under/overshot for anisotropic layers.
+float cloudExitDist(VolumeDesc vd, float3 p, float3 L)
+{
+    // Guard exact-zero components so (bound - p) / L cannot produce 0/0 NaN.
+    // (Written with plain ifs: the equivalent select() expression makes slang
+    // ICE with "unknown stage" when the whole module is compiled as a
+    // multi-stage library.)
+    float3 safeL = L;
+    if (abs(safeL.x) < 1e-9)
+        safeL.x = 1e-9;
+    if (abs(safeL.y) < 1e-9)
+        safeL.y = 1e-9;
+    if (abs(safeL.z) < 1e-9)
+        safeL.z = 1e-9;
+    float3 t0 = (vd.boundsMin - p) / safeL;
+    float3 t1 = (vd.boundsMax - p) / safeL;
+    return max(min(max(t0.x, t1.x), min(max(t0.y, t1.y), max(t0.z, t1.z))), 0.0);
 }
 
 // Transmittance toward the sun along direction L from point p, integrated
 // through the SAME procedural density field (the "light march"). Returns the
-// Beer-Lambert transmittance [0,1] and accumulates a powder term.
+// Beer-Lambert transmittance [0,1] and the beer-powder term.
 //
-// This is the HZD/GPU-Pro cheap NEE: 6 short steps toward the sun + one long
-// step for shadows cast by distant clouds. Each step: T *= exp(-sigma_t*d*dt),
-// plus a powder factor (1 - exp(-2*sigma_t*d*dt)) that darkens dense regions
-// facing away from the sun (the dark cloud base).
-float cloudLightMarch(VolumeDesc vd, float3 p, float3 L, float sunDist,
-                      out float powder)
+// The march has two regimes, because it must be cheap but resolve two very
+// different scales:
+//   - NEAR field (first ~320 m, or the whole distance for small clouds):
+//     fine steps ~MFP-scale so the LOCAL extinction — and therefore the
+//     shading gradient on the cloud surface — is smooth. With the physical
+//     sigma_t (~0.05-0.1/m) the mean free path is ~10-20 m, so ~40 m steps
+//     resolve it. This is what removes the old NPR banding.
+//   - FAR field: a few wide samples catch distant puffs that shadow this
+//     point. A puff is opaque, so one hit saturates the optical depth and the
+//     march stops — exactly the hard shadow a real cumulus casts.
+//
+// The whole pattern is JITTERED per ray via jitter0/jitter1 (computed by the
+// caller from its random seed — kept out of this module's signature because
+// slang ICEs on inout seed parameters crossing an import boundary): residual
+// stair-step noise decorrelates across samples and the frame accumulation
+// averages it out. Beer-powder is accumulated as powder = 1 - T^2 (the
+// fraction of light absorbed on the way in AND out again) — high deep inside
+// dense cloud (dark base), low on sunlit rims.
+float cloudLightMarch(VolumeDesc vd, float3 p, float3 L, float maxDist,
+                      float jitter0, float jitter1, out float powder)
 {
-    const int STEPS = 6;
-    float stepLen = sunDist / float(STEPS);
-    float T = 1.0;
-    powder = 0.0;
-    float3 stepP = p + L * (stepLen * 0.5);
-    for (int i = 0; i < STEPS; ++i) {
-        float d = cloudDensity(vd, stepP);
-        float ext = d * vd.densityScale * stepLen;
-        T *= exp(-ext);
-        // Accumulate powder (max over the march gives the strongest darkening).
-        powder = max(powder, 1.0 - exp(-2.0 * ext));
-        stepP += L * stepLen;
-        if (T < 0.01)
+    const float NEAR_STEP = 40.0;  // ~2-3 mean free paths at sigma_t=0.06
+    const int NEAR_N = 8;          // ~320 m of fine resolution
+    const int FAR_N = 3;           // distant shadow samples
+    float sigmaT = vd.densityScale;
+
+    float od = 0.0;  // accumulated optical depth along L
+
+    // Near field: adapt the step so small clouds (maxDist < NEAR_N*NEAR_STEP)
+    // still get the full sample count instead of one giant step.
+    float nearDist = min(maxDist, float(NEAR_N) * NEAR_STEP);
+    float nearStep = nearDist / float(NEAR_N);
+    float t = nearStep * jitter0;
+    for (int i = 0; i < NEAR_N; ++i) {
+        if (t >= nearDist)
             break;
+        float d = cloudDensity(vd, p + L * t);
+        od += d * sigmaT * nearStep;
+        if (od > 6.0)   // T < 0.0025: nothing visible left to lose
+            break;
+        t += nearStep;
     }
+
+    // Far field: wide samples for shadows cast by distant puffs.
+    float farDist = maxDist - nearDist;
+    if (od <= 6.0 && farDist > 0.0) {
+        float farStep = farDist / float(FAR_N);
+        t = nearDist + farStep * jitter1;
+        for (int i = 0; i < FAR_N; ++i) {
+            float d = cloudDensity(vd, p + L * t);
+            od += d * sigmaT * farStep;
+            if (od > 6.0)
+                break;
+            t += farStep;
+        }
+    }
+
+    float T = exp(-od);
+    powder = 1.0 - T * T;
     return T;
 }

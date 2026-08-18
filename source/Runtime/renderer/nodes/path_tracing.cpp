@@ -129,8 +129,7 @@ NODE_EXECUTION_FUNCTION(path_tracing)
     if ((geom_dirty || mat_dirty) &&
         emissive_version != last_emissive_version) {
         instance_collection->emissive_registry.build_gpu_buffers(
-            instance_collection,
-            &global_payload.get_materials());
+            instance_collection, &global_payload.get_materials());
         last_emissive_version = emissive_version;
     }
 
@@ -187,9 +186,13 @@ NODE_EXECUTION_FUNCTION(path_tracing)
         ProgramDesc program_desc;
         program_desc.set_path("path_tracing.slang");
         // cloud_intersection.slang holds the importable cloud helpers (density,
-        // light-march, slab test); the Cloud* hit-group entry points live inside
-        // path_tracing.slang (same TU, so they see file-level RayPayload).
+        // light-march, slab test); the Cloud* hit-group entry points live
+        // inside path_tracing.slang (same TU, so they see file-level
+        // RayPayload). cloud_unbiased.slang is the delta/ratio-tracking module
+        // for the unbiased cloud pipeline (UnbiasedCloud* hit groups, slots
+        // 8/9).
         program_desc.add_path("cloud_intersection.slang");
+        program_desc.add_path("cloud_unbiased.slang");
         program_desc.shaderType = nvrhi::ShaderType::AllRayTracing;
 #if 0
 
@@ -446,7 +449,8 @@ void fetch_)" + material.second->GetMaterialName() +
             instance_collection->light_pool.get_device_buffer();
         // hosekStateBuffer: per-Hosek-dome cooked sky state. Declared
         // unconditionally in pt_sample_lights.slang (like lightBuffer), so it
-        // must always be bound; the pool always has a dummy zero row at index 0.
+        // must always be bound; the pool always has a dummy zero row at index
+        // 0.
         program_vars["hosekStateBuffer"] =
             instance_collection->hosek_state_pool.get_device_buffer();
 
@@ -463,14 +467,13 @@ void fetch_)" + material.second->GetMaterialName() +
             instance_collection->emissive_registry.emissiveMeshPool
                 .get_device_buffer();
         program_vars["emissivePerMeshInstanceOffset"] =
-            instance_collection->emissive_registry
-                .emissivePerInstanceOffsetPool.get_device_buffer();
+            instance_collection->emissive_registry.emissivePerInstanceOffsetPool
+                .get_device_buffer();
 
         // Bind LightBVH buffers (for NEE importance sampling of emissive
         // triangles). Built CPU-side by LightBVHBuilder after the compute pass.
-        program_vars["bvhNodes"] =
-            instance_collection->emissive_registry.bvhNodePool
-                .get_device_buffer();
+        program_vars["bvhNodes"] = instance_collection->emissive_registry
+                                       .bvhNodePool.get_device_buffer();
         program_vars["bvhTriangleIndices"] =
             instance_collection->emissive_registry.bvhTriangleIndexPool
                 .get_device_buffer();
@@ -563,8 +566,16 @@ void fetch_)" + material.second->GetMaterialName() +
         // (CloudShadowHit + CloudIntersection). These coexist with wetbrush's
         // 4/5 slots; the plain path_tracing node only announces 6/7 (wetbrush
         // is rendered by the wetbrush_render node variant).
-        context.announce_hitgroup("CloudClosestHit", "", "CloudIntersection", 6);
+        context.announce_hitgroup(
+            "CloudClosestHit", "", "CloudIntersection", 6);
         context.announce_hitgroup("CloudShadowHit", "", "CloudIntersection", 7);
+        // Unbiased cloud pipeline (volumeType="cloud_unbiased"): same slab
+        // intersection, but delta-tracking integration (cloud_unbiased.slang).
+        // Slots 8 (radiance) / 9 (shadow) keep the biased slots 6/7 untouched.
+        context.announce_hitgroup(
+            "UnbiasedCloudClosestHit", "", "CloudIntersection", 8);
+        context.announce_hitgroup(
+            "UnbiasedCloudShadowHit", "", "CloudIntersection", 9);
         context.announce_miss("Miss", 0);  // Primary ray miss shader at index 0
         context.announce_miss(
             "ShadowMiss", 1);  // Shadow ray miss shader at index 1
@@ -665,15 +676,14 @@ void fetch_)" + material.second->GetMaterialName() +
             instance_collection->emissive_registry.emissiveMeshPool
                 .get_device_buffer();
         program_vars["emissivePerMeshInstanceOffset"] =
-            instance_collection->emissive_registry
-                .emissivePerInstanceOffsetPool.get_device_buffer();
+            instance_collection->emissive_registry.emissivePerInstanceOffsetPool
+                .get_device_buffer();
 
         // Re-bind LightBVH buffers (rebuilt on geom/mat dirty, same as the
         // emissive buffers above — missing these caused the shader to read
         // stale BVH nodes after a geometry-only change).
-        program_vars["bvhNodes"] =
-            instance_collection->emissive_registry.bvhNodePool
-                .get_device_buffer();
+        program_vars["bvhNodes"] = instance_collection->emissive_registry
+                                       .bvhNodePool.get_device_buffer();
         program_vars["bvhTriangleIndices"] =
             instance_collection->emissive_registry.bvhTriangleIndexPool
                 .get_device_buffer();
