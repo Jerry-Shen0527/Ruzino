@@ -1,0 +1,12 @@
+RUZINO_ADD_LIB(
+	character
+	SHARED
+	PUBLIC_LIBS
+		usd_ms
+		EnTT::EnTT
+		input
+	PRIVATE_LIBS
+		spdlog::spdlog
+	COMPILE_DEFS
+		NOMINMAX=1
+)

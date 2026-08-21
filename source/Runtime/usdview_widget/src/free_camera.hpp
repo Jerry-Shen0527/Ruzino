@@ -13,6 +13,9 @@
 #include "widgets/api.h"
 #define GLFW_INCLUDE_NONE
 #include "GLFW/glfw3.h"
+#include "pxr/base/gf/vec2d.h"
+#include "pxr/base/gf/vec3d.h"
+#include "pxr/usd/sdf/path.h"
 #include "pxr/usd/usdGeom/camera.h"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
@@ -281,7 +284,32 @@ class ThirdPersonCamera : public BaseCamera {
     void SaveState();
     void LoadState();
 
+    // Follow mode: keep the orbit target glued (with smoothing) to a prim's
+    // world position, e.g. a walking character root. Mouse orbit, panning
+    // and wheel zoom keep working on top; clearing the path releases the
+    // camera. height_offset lifts the tracked point (chest-height framing).
+    void SetFollowTarget(const pxr::SdfPath& path, double height_offset = 1.0)
+    {
+        if (path != m_FollowTargetPath)
+            m_HadFollowTarget = false;  // snap on (re)acquire
+        m_FollowTargetPath = path;
+        m_FollowHeightOffset = height_offset;
+    }
+    void ClearFollowTarget()
+    {
+        m_FollowTargetPath = pxr::SdfPath();
+    }
+    bool HasFollowTarget() const
+    {
+        return !m_FollowTargetPath.IsEmpty();
+    }
+    const pxr::SdfPath& GetFollowTarget() const
+    {
+        return m_FollowTargetPath;
+    }
+
    private:
+    bool AnimateFollowTarget(double deltaT);
     bool AnimateOrbit(double deltaT);
     bool AnimateTranslation(const pxr::GfMatrix3d& viewMatrix);
 
@@ -329,6 +357,10 @@ class ThirdPersonCamera : public BaseCamera {
     std::array<bool, MouseButtons::MouseButtonCount> mouseButtonState = {
         false
     };
+
+    pxr::SdfPath m_FollowTargetPath;
+    double m_FollowHeightOffset = 1.0;
+    bool m_HadFollowTarget = false;
 };
 
 RUZINO_NAMESPACE_CLOSE_SCOPE

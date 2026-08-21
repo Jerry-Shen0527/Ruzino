@@ -3,6 +3,8 @@ add_subdirectory(basic_nodes)
 # add back the renderer
 add_subdirectory(renderer)
 if(pxr_FOUND)
+    add_subdirectory(input)
+    add_subdirectory(character)
     add_subdirectory(stage)
     add_subdirectory(stage_listener)
 endif()

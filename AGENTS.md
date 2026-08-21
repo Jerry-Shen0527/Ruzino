@@ -119,12 +119,30 @@ Per-frame accumulation across ticks is driven by the **simulation-zone feedback 
   3. `render_time` must stay `>=` accumulated sim time each tick, or `should_simulate()` short-circuits `execute()` after frame 1.
 - Reference end-to-end test: `source/tests/test_sim_gridbox.py` (Python-built zone → 60 ticks → asserts accumulated translate ≈ 6.0). Run it like other tests but from `Binaries/Release` so node-plugin DLLs (e.g. `GPU_sph.dll`) resolve.
 
+## Character walking demo (gameplay layer)
+
+Third-person walking BOT demo — full write-up in `docs/character_walk_demo.md`. Quick facts:
+
+- **Run**: `python scripts/gen_character_walk_scene.py` then `Binaries/Release/Ruzino.exe Binaries/Release/demo_scenes/character_walk.usda` (WASD + Shift run; switch viewport renderer to `Hd_RUZINO_RendererPlugin` for sky/shadows).
+- **Modules**: `source/Runtime/input` (process-wide `InputState`; window publishes raw GLFW events, gameplay consumes) and `source/Runtime/character` (USD-joint-tree skeleton discovery, procedural gait, kinematic `CharacterControllerSystem` called from `Stage::tick` — NOT gated by `should_simulate`).
+- **Character prim**: mark with custom attr `character:controller = true` (+ `character:moveSpeed/runMultiplier/strideLength`); joints are plain Xform prims named `Hips/Spine/.../L_Foot`, meshes parented under joints.
+- **Transform authoring**: single matrix `xformOp:transform` (rotate then translate, Gf row-vector convention) into the session (modifier) layer — multi-op CommonAPI stacks and plain translate ops mis-render in some paths.
+- **Headless**: `stage_py.Stage.set_move_input(x, y)` injects the move axis; `Stage(path)` resumes from the `_modifiers.usda` sidecar (delete it to reset the walk). Test: `source/tests/test_character_walk.py`.
+- **Known offline-renderer bugs** the Z-up scene exposed (interactive path unaffected, see doc): dome transforms ignored (Y-up baked sky frame), prim transforms ignored by the offline HydraRenderer, extent culling on stale bounds, frustum-dependent empty renders.
+
 ## Troubleshooting
 
 ### Build Issues
 - cmake fails → check dependencies (see `README.md`)
 - ninja fails → try `rm -rf build/*` and reconfigure
 - Python must be 3.13
+- **Shader-only edits don't propagate to `Binaries/`** → runtime shaders
+  (e.g. `usd/hd_RUZINO/resources/callables/*.slang`) are copied by a
+  POST_BUILD `copy_directory` on the owning target (e.g. `hd_RUZINO`). If
+  only a `.slang` changed, ninja sees nothing to rebuild, the target doesn't
+  relink, and the POST_BUILD copy never runs — the old shader keeps loading.
+  Workaround: `cmake -E copy_if_different <src.slang> <Binaries/.../dst.slang>`
+  (same command the build runs), or touch a C++ file in the target first.
 - **`build_devshell.ps1` BuildType corruption** → if `CMakeCache.txt` shows `CMAKE_BUILD_TYPE=$BuildType` (literal, not `Release`), the script's `$BuildType` argument was not interpolated into the cmake `-D` flag. This was fixed: the flag is now quoted (`"-DCMAKE_BUILD_TYPE=$BuildType"`). The script also self-checks the cache on configure failure and prints a diagnostic if the build type is non-standard. A corrupted cache requires deleting `build/` and reconfiguring.
 
 ### Test Issues

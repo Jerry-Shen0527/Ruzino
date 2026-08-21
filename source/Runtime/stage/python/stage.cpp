@@ -372,7 +372,24 @@ NB_MODULE(stage_py, m)
             "should_simulate",
             &Stage::should_simulate,
             "Whether the stage still wants more ticks (render_time >= "
-            "current_time).");
+            "current_time).")
+        // ---- Character control (headless / scripting) ----
+        // Inject a movement axis into the stage input state, bypassing the
+        // window: x = strafe (D+), y = forward (W+), normalized. Drives the
+        // character controllers on subsequent tick() calls.
+        .def(
+            "set_move_input",
+            [](Stage& stage, float x, float y) {
+                stage.get_input_state().set_axis_override(x, y);
+            },
+            nb::arg("x"),
+            nb::arg("y"),
+            "Set a movement axis override (x=strafe, y=forward) consumed by "
+            "character controllers each tick.")
+        .def(
+            "clear_move_input",
+            [](Stage& stage) { stage.get_input_state().clear_axis_override(); },
+            "Release the movement axis override (control returns to WASD).");
 
     // USD Stage interoperability functions
 

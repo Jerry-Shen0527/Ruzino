@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "GUI/api.h"
+#include "input/input_state.h"
 #include "widget.h"
 struct GLFWwindow;
 
@@ -75,6 +76,19 @@ class GUI_API Window {
 
     void close();
 
+    // Gameplay input plumbing: the window layer publishes every raw
+    // key/mouse event it receives into this snapshot (before dispatching to
+    // widgets), so consumers like the character controllers see input even
+    // though they live outside the widget tree. The Stage owns the state.
+    void set_input_state(input::InputState* state)
+    {
+        input_state_ = state;
+    }
+    input::InputState* get_input_state()
+    {
+        return input_state_;
+    }
+
     int get_size_x() const;
     int get_size_y() const;
 
@@ -89,6 +103,7 @@ class GUI_API Window {
     float elapsedTimeSeconds = 0.0f;
     WindowEventSystem event_system_;
     std::unordered_map<std::string, std::function<void()>> menu_actions_;
+    input::InputState* input_state_ = nullptr;
     friend class DockingImguiRenderer;
 };
 

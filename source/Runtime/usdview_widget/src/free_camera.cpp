@@ -2,6 +2,7 @@
 
 #include <pxr/base/gf/matrix4d.h>
 #include <pxr/usd/usd/editContext.h>
+#include <pxr/usd/usdGeom/xformCache.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -506,6 +507,40 @@ void ThirdPersonCamera::SetView(const pxr::GfFrustum& view)
     auto viewport = view.GetWindow();
     m_ViewportSize = viewport.GetSize();
 }
+bool ThirdPersonCamera::AnimateFollowTarget(double deltaT)
+{
+    if (m_FollowTargetPath.IsEmpty())
+        return false;
+
+    auto prim = GetPrim().GetStage()->GetPrimAtPath(m_FollowTargetPath);
+    if (!prim || !prim.IsA<pxr::UsdGeomXformable>()) {
+        m_HadFollowTarget = false;
+        return false;
+    }
+
+    pxr::UsdGeomXformCache xform_cache;
+    pxr::GfVec3d target =
+        xform_cache.GetLocalToWorldTransform(prim).ExtractTranslation();
+    target[2] += m_FollowHeightOffset;
+
+    if (!m_HadFollowTarget) {
+        // Snap on (re)acquire instead of swooping across the scene.
+        m_TargetPos = target;
+        m_HadFollowTarget = true;
+        return true;
+    }
+
+    // Exponential follow: stiff enough to keep a walking character framed,
+    // soft enough to swallow the gait bob.
+    const double alpha = 1.0 - std::exp(-8.0 * deltaT);
+    pxr::GfVec3d delta = (target - m_TargetPos) * alpha;
+    if (delta.GetLength() > 1e-9) {
+        m_TargetPos += delta;
+        return true;
+    }
+    return false;
+}
+
 bool ThirdPersonCamera::AnimateOrbit(double deltaT)
 {
     bool hasInteraction = false;
@@ -585,6 +620,10 @@ bool ThirdPersonCamera::AnimateTranslation(const pxr::GfMatrix3d& viewMatrix)
 
 void ThirdPersonCamera::Animate(double deltaT)
 {
+    // Follow-target motion updates the orbit center silently (no USD state
+    // save churn); the actual interaction flag stays user-input-only below.
+    AnimateFollowTarget(deltaT);
+
     bool hasInteraction = AnimateOrbit(deltaT);
 
     // Z-up spherical coordinates: offset from target to camera

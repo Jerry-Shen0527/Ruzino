@@ -4,6 +4,9 @@
 #include <vector>
 #include <pxr/usd/usdLux/sphereLight.h>
 
+#include "character/character_controller.h"
+#include "input/input_state.h"
+
 #include "pxr/usd/usdGeom/cube.h"
 #include "pxr/usd/usdGeom/cylinder.h"
 #include "pxr/usd/usdGeom/mesh.h"
@@ -164,6 +167,23 @@ class STAGE_API Stage {
         return stage_listener_.get();
     }
 
+    // ========================================================================
+    // Gameplay (character controllers)
+    // ========================================================================
+
+    // Process-wide input snapshot owned by the stage. The window layer
+    // publishes raw key/mouse events into it; the character system and the
+    // viewport (view-frame reference) consume it.
+    input::InputState& get_input_state() const
+    {
+        return *input_state_;
+    }
+
+    character::CharacterControllerSystem* get_character_system()
+    {
+        return character_system_.get();
+    }
+
     bool save_on_destruct = true;
 
    private:
@@ -210,6 +230,10 @@ class STAGE_API Stage {
     std::unique_ptr<ecs::UsdSyncSystem> usd_sync_system_;
     std::unique_ptr<ecs::PhysicsSystem> physics_system_;
     std::unique_ptr<ecs::SceneQuerySystem> scene_query_system_;
+
+    // Gameplay systems
+    std::unique_ptr<character::CharacterControllerSystem> character_system_;
+    std::shared_ptr<input::InputState> input_state_;
 
     // Stage listener
     std::unique_ptr<class StageListener> stage_listener_;

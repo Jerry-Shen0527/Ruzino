@@ -6,6 +6,7 @@ RUZINO_ADD_LIB(
 		EnTT::EnTT
 		glm::glm
 		geometry
+		character
 	PYTHON_WRAP_DIR python
 	PRIVATE_LIBS
 		spdlog::spdlog

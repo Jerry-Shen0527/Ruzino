@@ -13,6 +13,7 @@
 #include "GUI/window.h"
 #include "RHI/Hgi/desc_conversion.hpp"
 #include "RHI/rhi.hpp"
+#include "character/character_controller.h"
 #include "free_camera.hpp"
 #include "imgui.h"
 #include "nvrhi/nvrhi.h"
@@ -24,6 +25,8 @@
 #include "pxr/imaging/hgi/blitCmdsOps.h"
 #include "pxr/imaging/hgi/tokens.h"
 #include "pxr/pxr.h"
+#include "pxr/usd/sdf/types.h"
+#include "pxr/usd/usd/editContext.h"
 #include "pxr/usd/usd/primRange.h"
 #include "pxr/usd/usd/stage.h"
 #include "pxr/usd/usdGeom/boundable.h"
@@ -266,6 +269,31 @@ void UsdviewEngine::DrawMenuBar()
                 }
             }
             ImGui::EndMenu();
+        }
+
+        // Scene-driven follow camera: toggle writes the same attribute demo
+        // scenes author, so the choice survives camera re-creation and is
+        // visible in the USD stage.
+        {
+            auto cam_prim = free_camera_->GetPrim();
+            std::string follow_path;
+            cam_prim.GetAttribute(pxr::TfToken("third_person:followTarget"))
+                .Get(&follow_path);
+            bool following = !follow_path.empty();
+            if (ImGui::MenuItem("Follow Character", nullptr, following, true)) {
+                auto stage = stage_->get_usd_stage();
+                pxr::UsdEditContext edit_ctx(stage, stage->GetRootLayer());
+                auto attr = cam_prim.CreateAttribute(
+                    pxr::TfToken("third_person:followTarget"),
+                    pxr::SdfValueTypeNames->String);
+                if (following) {
+                    attr.Set(std::string(""));
+                }
+                else {
+                    auto target = character::find_first_character_path(stage);
+                    attr.Set(target.GetString());
+                }
+            }
         }
         ImGui::EndMenu();
     }
@@ -877,6 +905,48 @@ void UsdviewEngine::Animate(float elapsed_time_seconds)
     // Ensure camera uses the correct time code for any transform updates
     if (free_camera_) {
         free_camera_->SetCurrentTime(stage_->get_render_time());
+    }
+
+    // Publish the ground-projected camera frame so gameplay movement
+    // (character controllers) is camera-relative, like a standard
+    // third-person game. Falls back to the identity frame (+Y forward).
+    if (free_camera_) {
+        pxr::GfVec3d dir = free_camera_->GetDir();
+        dir[2] = 0.0;
+        if (dir.GetLength() < 1e-6) {
+            dir = pxr::GfVec3d(0, 1, 0);
+        }
+        dir.Normalize();
+        pxr::GfVec3d right =
+            pxr::GfCross(dir, pxr::GfVec3d(0, 0, 1)).GetNormalized();
+        auto& input_state = stage_->get_input_state();
+        input_state.set_view_frame(
+            static_cast<float>(dir[0]),
+            static_cast<float>(dir[1]),
+            static_cast<float>(right[0]),
+            static_cast<float>(right[1]));
+    }
+
+    // Scene-driven camera follow: the /FreeCamera prim may carry
+    // `third_person:followTarget = "/Character"` (authored by demo scenes or
+    // toggled from the menu). Read it each frame and hand it to the camera.
+    if (engine_status.cam_type == CamType::Third && free_camera_) {
+        auto* third_camera =
+            static_cast<ThirdPersonCamera*>(free_camera_.get());
+        auto prim = free_camera_->GetPrim();
+        std::string follow_path;
+        double follow_height = 1.0;
+        if (prim.GetAttribute(pxr::TfToken("third_person:followTarget"))
+                .Get(&follow_path) &&
+            !follow_path.empty()) {
+            prim.GetAttribute(pxr::TfToken("third_person:followHeightOffset"))
+                .Get(&follow_height);
+            third_camera->SetFollowTarget(
+                pxr::SdfPath(follow_path), follow_height);
+        }
+        else {
+            third_camera->ClearFollowTarget();
+        }
     }
 
     free_camera_->Animate(elapsed_time_seconds);

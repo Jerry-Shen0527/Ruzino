@@ -160,6 +160,14 @@ bool DockingImguiRenderer::KeyboardUpdate(
     int action,
     int mods)
 {
+    // Publish raw key events into the gameplay input snapshot before any
+    // widget can consume them. Skipped while ImGui owns the keyboard (text
+    // fields / console), mirroring standard game-engine input routing.
+    if (window_ && window_->get_input_state() &&
+        !ImGui::GetIO().WantCaptureKeyboard) {
+        window_->get_input_state()->set_key(key, action);
+    }
+
     for (auto&& widget : widgets_) {
         if (widget->KeyboardUpdate(key, scancode, action, mods)) {
             return true;
@@ -200,6 +208,11 @@ bool DockingImguiRenderer::MouseScrollUpdate(double xoffset, double yoffset)
 
 bool DockingImguiRenderer::MouseButtonUpdate(int button, int action, int mods)
 {
+    if (window_ && window_->get_input_state() &&
+        !ImGui::GetIO().WantCaptureMouse) {
+        window_->get_input_state()->set_mouse_button(button, action);
+    }
+
     for (auto&& widget : widgets_) {
         if (widget->MouseButtonUpdate(button, action, mods)) {
             return true;

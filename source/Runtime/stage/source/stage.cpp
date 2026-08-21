@@ -128,6 +128,18 @@ void Stage::tick(float ellapsed_time)
         physics_system_->update(registry_, ellapsed_time);
     }
 
+    // Update character controllers (gameplay layer). Runs every tick,
+    // independent of the render_time gate: gameplay advances with wall
+    // clock even when the simulation timeline is paused.
+    if (character_system_ && input_state_) {
+        character_system_->update(
+            registry_,
+            stage,
+            get_modifier_layer(),
+            *input_state_,
+            ellapsed_time);
+    }
+
     // Keep legacy animation logic for backward compatibility
     // (can be migrated to ECS gradually)
     for (auto&& prim : stage->Traverse()) {
@@ -802,6 +814,10 @@ void Stage::initialize_ecs_systems()
     physics_system_ = std::make_unique<ecs::PhysicsSystem>();
     scene_query_system_ =
         std::make_unique<ecs::SceneQuerySystem>(physics_system_.get());
+
+    // Gameplay: input snapshot + character controllers
+    input_state_ = std::make_shared<input::InputState>();
+    character_system_ = std::make_unique<character::CharacterControllerSystem>();
 
     // Initialize StageListener - fully depends on USD notice mechanism
     if (stage) {

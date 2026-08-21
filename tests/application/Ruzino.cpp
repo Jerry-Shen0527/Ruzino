@@ -421,6 +421,13 @@ int main(int argc, char* argv[])
         stage = create_global_stage();
     }
 
+    // Route raw window input into the stage's gameplay input snapshot; the
+    // frame boundary callback below must be registered ahead of stage->tick
+    // so "pressed this frame" edges live for exactly one tick.
+    window->set_input_state(&stage->get_input_state());
+    window->register_function_before_frame(
+        [&stage](Window* window) { stage->get_input_state().begin_frame(); });
+
 #ifdef REAL_TIME
     window->register_function_before_frame(
         [&stage](Window* window) { stage->tick(window->get_elapsed_time()); });
