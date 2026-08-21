@@ -2,11 +2,11 @@
 
 #include <spdlog/spdlog.h>
 
-#include "RHI/shaderCompiler.h"
 #include "GPUContext/compute_context.hpp"
 #include "GPUContext/program_vars.hpp"
 #include "RHI/internal/resources.hpp"
 #include "RHI/rhi.hpp"
+#include "RHI/shaderCompiler.h"
 #include "nvrhi/nvrhi.h"
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/matrix4f.h"
@@ -109,8 +109,9 @@ void GPUSceneAssember::fill_instances(
         spdlog::error("[fill_instances] instancer.slang program is NULL");
     }
     else if (!filler_program->get_error_string().empty()) {
-        spdlog::error("[fill_instances] instancer.slang compile failed: {}",
-                      filler_program->get_error_string());
+        spdlog::error(
+            "[fill_instances] instancer.slang compile failed: {}",
+            filler_program->get_error_string());
     }
 
     MARK_DESTROY_NVRHI_RESOURCE(filler_program);
@@ -298,82 +299,151 @@ void GPUSceneAssember::compute_sphere_aabbs(
     uint32_t sphere_count,
     nvrhi::IBuffer* out_aabb_buffer)
 {
-    spdlog::info(
-        "GPUSceneAssember::compute_sphere_aabbs: Computing AABBs for {} "
-        "spheres (posOffset={}, radiiOffset={})",
-        sphere_count,
-        positions_offset,
-        radii_offset);
+    // Hydra SyncAll runs rprim Syncs on parallel tbb workers; the debug
+    // points pipeline can therefore call this concurrently with itself and
+    // with compute_segment_aabbs. The shared sa_resource_allocator's caches
+    // are plain containers — serialize (same as fill_instances).
+    std::lock_guard lock(execution_launch_mutex);
 
-    auto program_desc =
-        ProgramDesc()
-            .add_path(
-                SlangShaderCompiler::get_shader_dir(ShaderDirType::GPUAssembler)
-                    .string() +
-                "/compute_sphere_aabbs.slang")
-            .set_entry_name("main")
-            .set_shader_type(nvrhi::ShaderType::Compute);
-
-    ProgramHandle compute_program =
-        get_instance().sa_resource_allocator.create(program_desc);
-    MARK_DESTROY_NVRHI_RESOURCE(compute_program);
-
-    ProgramVars program_vars(
-        get_instance().sa_resource_allocator, compute_program);
-
+    auto& self = get_instance();
+    auto& rc = self.sa_resource_allocator;
     auto device = RHI::get_device();
 
-    // Create params constant buffer
+    // Program + params buffer are cached on the assembler: the debug points
+    // pipeline calls this every frame, and per-call create/destroy of the
+    // program both stalls (slang recompile + PSO) and trips a use-after-free
+    // in the allocator's program cache after a few cycles.
+    if (!self.sphere_aabb_program) {
+        auto program_desc = ProgramDesc()
+                                .add_path(
+                                    SlangShaderCompiler::get_shader_dir(
+                                        ShaderDirType::GPUAssembler)
+                                        .string() +
+                                    "/compute_sphere_aabbs.slang")
+                                .set_entry_name("main")
+                                .set_shader_type(nvrhi::ShaderType::Compute);
+        self.sphere_aabb_program = rc.create(program_desc);
+    }
+    ProgramHandle compute_program = self.sphere_aabb_program;
+
+    if (!self.sphere_aabb_params) {
+        self.sphere_aabb_params = rc.create(
+            nvrhi::BufferDesc{}
+                .setByteSize(16)
+                .setIsConstantBuffer(true)
+                .setInitialState(nvrhi::ResourceStates::ConstantBuffer)
+                .setKeepInitialState(true)
+                .setDebugName("sphere_aabb_params"));
+    }
+    auto params_buffer = self.sphere_aabb_params;
+
     struct Params {
         uint32_t sphere_count;
         uint32_t positions_offset;
         uint32_t radii_offset;
         uint32_t padding;
     };
-
     Params params;
     params.sphere_count = sphere_count;
     params.positions_offset = static_cast<uint32_t>(positions_offset);
     params.radii_offset = static_cast<uint32_t>(radii_offset);
+    params.padding = 0;
 
-    nvrhi::BufferDesc params_desc =
-        nvrhi::BufferDesc{}
-            .setByteSize(sizeof(Params))
-            .setIsConstantBuffer(true)
-            .setInitialState(nvrhi::ResourceStates::ConstantBuffer)
-            .setKeepInitialState(true)
-            .setDebugName("sphere_aabb_params");
-
-    auto params_buffer =
-        get_instance().sa_resource_allocator.create(params_desc);
-    MARK_DESTROY_NVRHI_RESOURCE(params_buffer);
-
-    auto cmd = get_instance().sa_resource_allocator.create(CommandListDesc{});
+    auto cmd = rc.create(CommandListDesc{});
     MARK_DESTROY_NVRHI_RESOURCE(cmd);
-
     cmd->open();
     cmd->writeBuffer(params_buffer, &params, sizeof(Params));
     cmd->close();
     device->executeCommandList(cmd);
     device->waitForIdle();
 
-    // Set up program variables
+    ProgramVars program_vars(rc, compute_program);
     program_vars["Params"] = params_buffer;
     program_vars["g_VertexBuffer"] = vertex_buffer;
     program_vars["g_OutputAABBs"] = out_aabb_buffer;
-
     program_vars.finish_setting_vars();
 
-    ComputeContext compute_context(
-        get_instance().sa_resource_allocator, program_vars);
+    ComputeContext compute_context(rc, program_vars);
     compute_context.finish_setting_pso();
 
     compute_context.begin();
     compute_context.dispatch({}, program_vars, sphere_count, 64);
     compute_context.finish();
+}
 
-    spdlog::info(
-        "GPUSceneAssember::compute_sphere_aabbs: AABB computation complete");
+void GPUSceneAssember::compute_segment_aabbs(
+    nvrhi::BufferHandle vertex_buffer,
+    size_t endpoints_a_offset,
+    size_t endpoints_b_offset,
+    size_t radii_offset,
+    uint32_t segment_count,
+    nvrhi::IBuffer* out_aabb_buffer)
+{
+    // See compute_sphere_aabbs: Hydra syncs prims in parallel.
+    std::lock_guard lock(execution_launch_mutex);
+
+    auto& self = get_instance();
+    auto& rc = self.sa_resource_allocator;
+    auto device = RHI::get_device();
+
+    // Cached like the sphere variant (per-frame calls from the debug points
+    // pipeline).
+    if (!self.segment_aabb_program) {
+        auto program_desc = ProgramDesc()
+                                .add_path(
+                                    SlangShaderCompiler::get_shader_dir(
+                                        ShaderDirType::GPUAssembler)
+                                        .string() +
+                                    "/compute_segment_aabbs.slang")
+                                .set_entry_name("main")
+                                .set_shader_type(nvrhi::ShaderType::Compute);
+        self.segment_aabb_program = rc.create(program_desc);
+    }
+    ProgramHandle compute_program = self.segment_aabb_program;
+
+    if (!self.segment_aabb_params) {
+        self.segment_aabb_params = rc.create(
+            nvrhi::BufferDesc{}
+                .setByteSize(16)
+                .setIsConstantBuffer(true)
+                .setInitialState(nvrhi::ResourceStates::ConstantBuffer)
+                .setKeepInitialState(true)
+                .setDebugName("segment_aabb_params"));
+    }
+    auto params_buffer = self.segment_aabb_params;
+
+    struct Params {
+        uint32_t segment_count;
+        uint32_t endpoints_a_offset;
+        uint32_t endpoints_b_offset;
+        uint32_t radii_offset;
+    };
+    Params params;
+    params.segment_count = segment_count;
+    params.endpoints_a_offset = static_cast<uint32_t>(endpoints_a_offset);
+    params.endpoints_b_offset = static_cast<uint32_t>(endpoints_b_offset);
+    params.radii_offset = static_cast<uint32_t>(radii_offset);
+
+    auto cmd = rc.create(CommandListDesc{});
+    MARK_DESTROY_NVRHI_RESOURCE(cmd);
+    cmd->open();
+    cmd->writeBuffer(params_buffer, &params, sizeof(Params));
+    cmd->close();
+    device->executeCommandList(cmd);
+    device->waitForIdle();
+
+    ProgramVars program_vars(rc, compute_program);
+    program_vars["Params"] = params_buffer;
+    program_vars["g_VertexBuffer"] = vertex_buffer;
+    program_vars["g_OutputAABBs"] = out_aabb_buffer;
+    program_vars.finish_setting_vars();
+
+    ComputeContext compute_context(rc, program_vars);
+    compute_context.finish_setting_pso();
+
+    compute_context.begin();
+    compute_context.dispatch({}, program_vars, segment_count, 64);
+    compute_context.finish();
 }
 
 RUZINO_NAMESPACE_CLOSE_SCOPE

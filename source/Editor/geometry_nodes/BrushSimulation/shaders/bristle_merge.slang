@@ -56,7 +56,20 @@ void main(uint3 tid : SV_DispatchThreadID)
     // (supply refills samples → emit particles → rasterize → += grid density
     // → grid_to_particle converts back → repeat) that minted mass each frame
     // and bloomed into an unbounded black blob.
-    vel_x[gidx] += bvx * bd;
-    vel_y[gidx] += bvy * bd;
-    vel_z[gidx] += bvz * bd;
+    //
+    // The merge is a RELAXATION toward the mass-weighted AVERAGE particle
+    // velocity (bvx/bd), gated by the rasterized mass fraction (clamped to 1)
+    // and scaled by cb.velocity_inject_scale. The previous form
+    // `vel += bvx * bd` added momentum×mass — quadratic in the particle
+    // density — so the swarm's velocity accumulated without bound each frame
+    // and the window advection smeared the stroke wider and wider (the
+    // rendered stroke visibly inflated over time).
+    float inv_bd = 1.0 / max(bd, 1e-6);
+    float3 v_avg = float3(bvx, bvy, bvz) * inv_bd;
+    float scale = cb.velocity_inject_scale > 0.0 ? cb.velocity_inject_scale
+                                                 : 1.0;
+    float gate = min(bd * scale, 1.0);
+    vel_x[gidx] += (v_avg.x - vel_x[gidx]) * gate;
+    vel_y[gidx] += (v_avg.y - vel_y[gidx]) * gate;
+    vel_z[gidx] += (v_avg.z - vel_z[gidx]) * gate;
 }

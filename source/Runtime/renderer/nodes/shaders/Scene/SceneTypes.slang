@@ -220,6 +220,13 @@ enum class MeshFlags : uint32_t {
                           ///< be flipped due to the instance transform.
     IsDisplaced = 0x8,    ///< Mesh has displacement map.
     IsAnimated = 0x10,    ///< Mesh is affected by vertex-animations.
+    HasPerPointColor =
+        0x20,  ///< Point cloud: a per-point RGB block lives at texCrdOffset;
+               ///< hit groups shade with it directly (debug visualization).
+    IsCapsuleSegments =
+        0x40,  ///< Point cloud: each prim is a capsule segment — endpoint A at
+               ///< vbOffset, endpoint B at normalOffset, radius at ibOffset
+               ///< (debug bristles).
 };
 
 /** Mesh data stored in 32B.

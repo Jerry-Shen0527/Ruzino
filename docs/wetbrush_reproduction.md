@@ -381,7 +381,160 @@ paint 维持堆积。
 4. **颜色偏暗**（RGB≈140,40 而非鲜红）：渲染 AO `min(d,1)` + Lambertian shade
    (0.4+0.6·facing) 压暗。
 
+### 16. 粒子相修复：compact 复活 bug + 笔刷携带 + 发射预算（2026-08-18）
+
+用户在 debug 可视化（`render_wetbrush_debug.py`）里看到「粒子太大、静止不动、
+规则排列在格点上」。排查发现三层叠加根因，全部修复：
+
+#### 1. `particle_compact.slang` ping-pong 复活 bug（质量铸造）
+
+compact 只给打包后的 `[0, live)` 槽写 `alive=1`，死线程在自己旧 idx 写 0，
+但输出缓冲 `[live, max)` 区间**保留 ping-pong 上一轮的 alive=1 + 旧位置**。
+后果：
+
+- **已沉积粒子每帧原地复活**：update 全量写 alive（含已沉积者），to_grid 杀
+  死它们，但 compact 输出的另一块缓冲仍是 update 的旧标志 → 下一帧复活，
+  d_B≥D0 且慢 → **每帧再沉积一次同样的质量**，直到 far+stalled（d_B>2·D0
+  且 speed<0.01）才被 update 杀掉（速度衰减 ~5/s，≈40 帧 → 单粒子质量放大
+  ~40×）。density 爬到 ~600 的一部分就是它。
+- **幸存者随机丢失**：死粒子 idx 落在 `[0, live)` 内时，它的 `alive_out[idx]=0`
+  会把打包到该槽的幸存者清死。
+
+修复：fluid 节点在 compact 前**先把 ptcl_alive_b 清零**（field_clear，
+262k 线程），compact 死线程不写任何东西（只写打包幸存者）。
+
+#### 2. 附着力恢复：笔刷携带粒子（paper §1 / Eq.10）
+
+之前调参把 D1 压到 `0.9×brush_radius < R_j(≈0.97×)`，Eq.10 出生 blend=0，
+笔刷什么都不携带 —— 与 paper §1 "Artists use the brush to carry paint to
+different locations fast" 相悖，也看不到随刷流动的粒子群。现值（fluid.cpp
+统一为一个定义）：
+
+| 参数 | 旧值 | 新值 | 理由 |
+|---|---|---|---|
+| D0 | brush×1.5 | brush×2.0 | D0>D1 恒成立；沉积区在笔刷后缘连续铺 trail |
+| D1 | brush×0.9 | brush×1.6 | 必须 > R_j(0.011-0.019)，出生 blend≈0.4-0.6，粒子群随刷移动 |
+
+#### 3. EMIT 全局出生预算 + ABSORB 上限（防爆池）
+
+supply drip 让全部 76800 sample 每帧过载发射（wb_diag: +70-80k/frame，262k
+池直接 wrap）。paper §5.1 只有 per-sample 上限（max_emit_per_step=10），单
+sample 1 粒/帧 × 76800 仍是洪流。加：
+
+- `BristleLiquidConstants::emit_budget`（默认 12288，env `WB_EMIT_BUDGET`，
+  0=不限）：EMIT pass 用 `emit_budget` buffer（bristle 节点每帧清零）原子
+  预约名额，超预算的 sample **保留负载**（质量不丢，下一帧再试）。
+- ABSORB 过载吸收加上限 `(1+ε)M_j + PER_PARTICLE_FLOOR`：预算阻塞时 m_j 停
+  在上限，不会气球化后在预算放开时倾泻。
+
+#### 4. 格点排列的最后一层：grid_to_particle jitter（同轮，commit 前）
+
+§5.2 的 27 候选分层采样固定在 3×3×3 子格点中心 → 转换出的粒子呈完美子格
+点（debug 渲染直接暴露）。已在每个 stratum 内加 hash jitter（真正的分层采
+样定义）。
+
+#### 5. Debug 可视化半径
+
+三个点云半径全部 env 化并调小（cell 单位）：
+`WB_DEBUG_PTCL_R`(0.25→0.2)、`WB_DEBUG_VOXEL_R`(0.55→0.3)、
+`WB_DEBUG_BRISTLE_R`(0.75→0.45)。0.55-cell 的 voxel 本来就会互相叠成板，
+在数万个点重叠后读作「巨大的粒子」。
+
+#### 验证方法
+
+`render_wetbrush_debug.py` + `wb_diag`/`wb_debug_draw` 日志：粒子数应稳定
+在池内（不再每帧 +70k wrap）、density 单调增长（无铸造）、画面上应有随笔刷
+移动的粒子群 + 笔刷身后连续沉积的 voxel trail。
+
+#### 6. Pen-up 门控（同日第二轮，修复"轨迹耗尽后全画面冻结 + 池只进不出"）
+
+首轮验证暴露两个问题：
+
+- **测试夹具陷阱**：`render_wetbrush_debug.py` 用的是单笔画节点
+  `mock_stroke`（30 点），45/60 帧的 run 中途轨迹耗尽 → emitter 抬笔
+  （active=false）→ deposit/fluid 跳过 → 笔刷、鬃毛、粒子全部冻结。这不是
+  仿真 bug；夹具已改为 `Num Points = NUM_FRAMES`。诊断手段：给 emitter 加
+  逐帧日志（active/cursor/stroke），一眼看出 cursor 停走。
+- **pen-up 时 §5.1 仍在发射**：bristle 节点不接收 BrushPoint，pen-up 期间
+  仍 ABSORB+EMIT（+12288/帧），而 fluid 的 particle maintenance 虽无门控、
+  但粒子都在停滞笔刷的 D0 内不沉积 → 池单方向填充直到 wrap。
+
+修复：`WetbrushSimState::pen_down`（deposit 每帧从 bp.active 写入，早退
+之前）；bristle 节点 pen-up 跳过 ABSORB/EMIT（笔刷动力学在 deposit 节点，
+不受影响）；`ParticleConstants::pen_down`——pen-up 时
+particle_to_grid 忽略 d_{B,k}（抬起笔刷即离开一切 bristle，携带的粒子群整
+体沉降）、grid_to_particle 暂停转换。物理含义：pen-up = 笔刷不在纸上。
+
+### 17. 正式渲染管线修复：笔刷末端断裂 + 笔画中部持续膨胀（2026-08-20）
+
+用户对 `wetbrush_sequence`（正式 volume 渲染，非 debug 点云）报告两个症状：
+笔刷末端笔画断开、笔画中部一直在膨胀。逐层定位后共修复六个问题：
+
+#### 1. 渲染合成缺失粒子群 → 笔刷周围"护城河"（断裂主因）
+
+`grid_to_particle` 每帧把笔刷 D0 范围内的网格密度抽成粒子，但渲染 volume
+只读网格密度场（`pack_float4.slang`）→ 笔刷周围一圈既无网格颜料（被抽走）
+也无渲染（粒子不可见）→ 笔画在笔刷处断开。论文 §6 渲染的活动窗口液体本来就
+是粒子+网格合成。修复：`pack_float4.slang` 把 fluid 节点每帧光栅化的
+`ptcl_density`/`ptcl_rast_*`（窗口 sized）按窗口映射叠加进渲染场
+（`SimConstants::ptcl_render_scale`，env `WB_RENDER_PTCL`，0=关闭）；
+pen-up 帧 fluid 节点清空这些光栅缓冲（避免幽灵粒子群）。
+
+#### 2. `bristle_merge` 二次方动量注入 → 中部膨胀主因
+
+合并公式 `vel += bvx * bd`，`bvx` 已是质量加权动量和，再乘 `bd`（质量和）→
+速度随粒子密度二次增长，注入的速度场在活动窗口里持续半拉格朗日平流密度场
+（res 1024 下每帧几十 cell 回溯的模糊反复叠加）→ 笔画越搅越宽。修复：改成
+朝质量加权平均速度弛豫：`vel += (bvx/bd - vel) * min(bd·scale, 1)`，
+`scale` = `WB_VEL_INJECT`（默认 1.0）。
+
+#### 3. 速度无衰减 → 注入速度 600 帧不散
+
+`fluid_damp_dry` 只在 wetness<0.01 时清零速度（drying_rate 0.1 下要 ~600
+帧）。新增每帧速度衰减 `velocity_damp`（`WB_VEL_DAMP`，默认 0.8/帧，host
+换算成 `pow(frame, 1/substeps)` 保持子步无关）。笔刷过后 ~5-10 帧流体静止，
+与论文 §4.2 "dry 后忽略速度"语义一致。
+
+#### 4. Eq.16 的 dV 尺度灾难 → 沉积密度比阈值低 4 个数量级
+
+`ρ_c += m·W·dV` 在 res 1024 下 dV≈9.3e-10，单粒子沉积 ~4e-6，而渲染阈值
+(raw)≈0.006 → 笔画呈一串勉强过阈值的疙瘩。之前"看起来能用"完全靠 compact
+复活 bug 凭空造质量。修复：p2g/g2p 内核改**离散归一化**（Σw=1，去掉 dV），
+粒子质量=密度单位，round-trip 严格守恒；g2p 的 interp 门（0.02）也因此才能
+在密度单位下正确触发（之前 W·dV 形式下门永远不触发）。
+
+#### 5. 吸附层/转换层比例失衡 → 粒子群不退休 + 笔刷"喝掉"自己喷的颜料
+
+- ρ₀=1e3 使 R_j≈0.95×brush_radius，被迫 D1=1.6R → D1/D0=0.8（论文 0.3），
+  粒子群整个随笔刷走，泄漏率仅 ~3%/帧。ρ₀=2e4 → R_j≈0.38R，D1=0.5R。
+- grid_to_particle 抽干范围从 D0 收窄到 D1：D1..D0 环带保留旧沉积（否则
+  环带既无网格也无粒子，重现护城河）。
+- EMIT 预算原子竞争被 dispatch 顺序前 ~80 个样本每帧垄断 → 颜料从笔刷一个
+  点喷出 → 沿途成串。加概率预门（brush_pos 做逐帧熵，`BristleLiquidConstants`
+  新增 brush_pos_x/y/z），竞争者均匀分布。
+- 预算按沉积率标定：`WB_EMIT_BUDGET` 12288→800（ABSORB 回收 ~70%，目标
+  trail 密度 ~0.2/格）。
+
+#### 6. 渲染首穿阈值偏高 → 薄沉积段不可见
+
+`kDensitySurface` 0.02→0.012：快轨迹段的薄沉积刚好低于阈值，笔画裂成
+3-4 段；降低后最大连通域 4.3k→18.1k px，残余缝隙 ≤6px（≈1.7 格，3px 膨胀
+即合并为单一连通域）——沉积核之间的插值凹陷级别。
+
+另外：`render_wetbrush.py` 夹具 Num Points 30→NUM_FRAMES（同 §16.6 的轨迹
+耗尽问题），并清理陈旧 `_modifiers.usdc` sidecar（首帧 tick 抛
+`json.exception.type_error.302` 的间歇性元凶——旧参数表 socket 值为 null）。
+
+#### 验证
+
+`render_wetbrush.py`（WETBRUSH_RES=1024，60 帧）：笔画从起笔连续到笔刷、
+无孤立色块、无中部膨胀（厚度 5.7→~40px 稳定）；`test_wetbrush_zone.py`
+3 passed；`wb_diag`：density 单调增长至 ~231、粒子 ~5.7k 稳定（≈800/帧 ×
+7 帧寿命）、无 NaN。可调项：`WB_VEL_DAMP`(0.8)、`WB_VEL_INJECT`(1.0)、
+`WB_EMIT_BUDGET`(800)、`WB_RENDER_PTCL`(1.0)。
+
 ## 关键经验教训
+
 
 1. **先量像素再下结论**。"纸是黑的"其实是背景 dome 蓝；"变深"先以为是 sim 累积，
    实际是渲染 accumulate 叠加。用 PIL 采样像素 + ASCII map 比肉眼判断可靠得多。
@@ -495,8 +648,8 @@ Shaders 运行时编译（非 build 时）。编辑 `.slang` 后无需 rebuild�
 | 参数 | Paper | 当前 | 备注 |
 |---|---|---|---|
 | Grid 分辨率 | 4096×4096×64 | 默认 4096（env 可降：1024 ~7GB / 2048 ~28GB） | 全 grid 分配，需稀疏化才能在消费级卡跑满 4096 |
-| D₀ (grid→particle range) | 1 cm 固定 | brush_radius×3.0 | 单位换算，经批准 |
-| D₁ (bristle adhesion) | 0.3 cm | brush_radius×0.9 | 同上 |
+| D₀ (grid→particle range) | 1 cm 固定 | brush_radius×2.0 | 单位换算；§16（须 > D1，R_j≈0.011-0.019） |
+| D₁ (bristle adhesion) | 0.3 cm | brush_radius×1.6 | 同上；必须 > R_j，出生 blend≈0.4-0.6（§16） |
 | γ (FLIP/PIC blend) | 0.8 | 0.8 | ✓ |
 | δ (particle friction) | 1/0.2 cm | 5.0/D₀ | 单位换算后一致 |
 | α (pressure solver) | 1 | 1 | ✓ |

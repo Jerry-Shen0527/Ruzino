@@ -123,6 +123,22 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
         Ruzino::SimConstants pack_cb = {};
         pack_cb.res = field->grid_res;
         pack_cb.res_z = field->grid_res_z;
+        // Swarm composite (see pack_float4.slang): overlay the rasterized
+        // particle swarm on the grid paint so the D0 drain zone around the
+        // brush renders as liquid instead of a moat. WB_RENDER_PTCL=0
+        // restores the grid-only pack.
+        static const float ptcl_render_scale = [] {
+            const char* env = std::getenv("WB_RENDER_PTCL");
+            return env ? std::max(std::atof(env), 0.0) : 1.0;
+        }();
+        pack_cb.ptcl_render_scale = ptcl_render_scale;
+        pack_cb.window_origin_x = field->win_origin_x;
+        pack_cb.window_origin_y = field->win_origin_y;
+        pack_cb.window_origin_z = 0;
+        pack_cb.window_size_x =
+            std::min(WetbrushSimState::WIN_ALLOC_XY, field->grid_res);
+        pack_cb.window_size_y = pack_cb.window_size_x;
+        pack_cb.window_size_z = field->grid_res_z;
         nvrhi::BufferHandle pack_cb_buf;
         Ruzino::brush_upload_cb(
             rc, device, &pack_cb, sizeof(pack_cb), "wb_pack_cb", pack_cb_buf);
@@ -132,7 +148,11 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
             { { "density", field->density },
               { "color_r", field->color_r },
               { "color_y", field->color_y },
-              { "color_b", field->color_b } },
+              { "color_b", field->color_b },
+              { "ptcl_density", field->ptcl_density },
+              { "ptcl_color_r", field->ptcl_rast_r },
+              { "ptcl_color_y", field->ptcl_rast_y },
+              { "ptcl_color_b", field->ptcl_rast_b } },
             { { "packed_out", field->packed_paint } },
             pack_cb_buf,
             grid_n3d);
@@ -331,6 +351,343 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
     params.set_output("Total Color B", static_cast<float>(tot_b));
     params.set_output("Particle Count", ptcl_count);
     params.set_output("Total Particle Mass", ptcl_mass);
+
+    // ======================================================================
+    // DEBUG DRAW PACK: build three debug-visualization buffers (live
+    // active-window particles, non-zero grid voxels, bristle capsule
+    // segments) in the renderer's blocked point/segment layout and register
+    // them in the shared GPU buffer registry. Hd_RUZINO_Points prims whose
+    // "debugKey" primvar names one of these keys consume them zero-copy —
+    // see render_wetbrush_debug.py. Pure visualization: no CPU round-trip
+    // except the 4-byte compacted voxel count.
+    // ======================================================================
+    {
+        // Allocate once; capacity is fixed so buffer block offsets never move.
+        // Flag set mirrors packed_paint's (deposit.cpp): the pack shaders bind
+        // these as RWStructuredBuffer UAVs and the render side reads them as
+        // RawBuffer_SRV — both view kinds must be creatable.
+        auto alloc_debug =
+            [&](nvrhi::BufferHandle& h, size_t n_floats, const char* name) {
+                size_t bytes = n_floats * sizeof(float);
+                if (h && h->getDesc().byteSize == bytes)
+                    return;
+                if (h)
+                    rc.destroy(h);
+                h = rc.create(
+                    nvrhi::BufferDesc{}
+                        .setByteSize(bytes)
+                        .setStructStride(sizeof(float))
+                        .setInitialState(nvrhi::ResourceStates::UnorderedAccess)
+                        .setKeepInitialState(true)
+                        .setCanHaveUAVs(true)
+                        .setCanHaveTypedViews(true)
+                        .setCanHaveRawViews(true)
+                        .setDebugName(name));
+            };
+        alloc_debug(field->debug_ptcl_buf, size_t(max_ptcl) * 7, "wb_dbg_ptcl");
+        alloc_debug(
+            field->debug_voxel_buf,
+            size_t(WetbrushSimState::DEBUG_MAX_VOXELS) * 7,
+            "wb_dbg_voxel");
+        alloc_debug(
+            field->debug_bristle_buf,
+            size_t(WetbrushSimState::NUM_BRISTLES) *
+                (WetbrushSimState::VERTS_PER_BRISTLE - 1) * 10,
+            "wb_dbg_bristle");
+        if (!field->debug_voxel_counter)
+            field->debug_voxel_counter = rc.create(
+                nvrhi::BufferDesc{}
+                    .setByteSize(sizeof(uint32_t))
+                    .setStructStride(sizeof(uint32_t))
+                    .setInitialState(nvrhi::ResourceStates::UnorderedAccess)
+                    .setKeepInitialState(true)
+                    .setCanHaveUAVs(true)
+                    .setCanHaveTypedViews(true)
+                    .setCanHaveRawViews(true)
+                    .setDebugName("wb_dbg_voxel_cnt"));
+
+        if (!field->debug_pack_particles_program)
+            field->debug_pack_particles_program =
+                Ruzino::brush_compile_shader(rc, "debug_pack_particles.slang");
+        if (!field->debug_pack_voxels_program)
+            field->debug_pack_voxels_program =
+                Ruzino::brush_compile_shader(rc, "debug_pack_voxels.slang");
+        if (!field->debug_pack_bristles_program)
+            field->debug_pack_bristles_program =
+                Ruzino::brush_compile_shader(rc, "debug_pack_bristles.slang");
+
+        Ruzino::brush_reset_counter(rc, device, field->debug_voxel_counter);
+
+        // Debug-render radii, in cell-size units. Env-tunable (WB_DEBUG_PTCL_R
+        // / WB_DEBUG_VOXEL_R / WB_DEBUG_BRISTLE_R) for quick visual iteration
+        // without a rebuild. Defaults: particles 0.2 / voxels 0.3 / bristles
+        // 0.45 cell — the previous 0.55-cell voxels deliberately tiled like
+        // cells, which read as "giant particles" once tens of thousands
+        // overlapped into a slab; the smaller radii keep the voxel cloud a
+        // lattice of visibly discrete dots and leave the free-swimming
+        // particle swarm (slightly smaller still) distinguishable from
+        // deposited grid paint.
+        static const float ptcl_radius_cells = [] {
+            const char* env = std::getenv("WB_DEBUG_PTCL_R");
+            return env ? std::max(std::atof(env), 0.05) : 0.2;
+        }();
+        static const float voxel_radius_cells = [] {
+            const char* env = std::getenv("WB_DEBUG_VOXEL_R");
+            return env ? std::max(std::atof(env), 0.05) : 0.3;
+        }();
+        static const float bristle_radius_cells = [] {
+            const char* env = std::getenv("WB_DEBUG_BRISTLE_R");
+            return env ? std::max(std::atof(env), 0.05) : 0.45;
+        }();
+
+        // Live particles (only when the pool exists; register count=0
+        // otherwise so the render prim sees an empty cloud, not a dead key).
+        if (field->ptcl_pos && field->ptcl_color && ptcl_count > 0) {
+            struct {
+                int count;
+                int capacity;
+                float radius;
+                float pad;
+            } cb{};
+            cb.count = ptcl_count;
+            cb.capacity = max_ptcl;
+            cb.radius = cell_sz * ptcl_radius_cells;
+            nvrhi::BufferHandle cb_buf;
+            Ruzino::brush_upload_cb(
+                rc, device, &cb, sizeof(cb), "wb_dbg_ptcl_cb", cb_buf);
+            Ruzino::brush_dispatch(
+                rc,
+                field->debug_pack_particles_program,
+                { { "ptcl_pos", field->ptcl_pos },
+                  { "ptcl_color", field->ptcl_color } },
+                { { "debug_out", field->debug_ptcl_buf } },
+                cb_buf,
+                max_ptcl);
+            rc.destroy(cb_buf);
+        }
+
+        // Non-zero voxels (GPU compaction; same world mapping + threshold as
+        // the Paint Field 3D output above).
+        {
+            struct {
+                int res;
+                int res_z;
+                float cell_sz;
+                float paper;
+                float cx;
+                float cy;
+                float z_floor;
+                float cell_z;
+                float radius;
+                float eps;
+                int max_out;
+                float pad;
+            } cb{};
+            cb.res = field->grid_res;
+            cb.res_z = field->grid_res_z;
+            cb.cell_sz = cell_sz;
+            cb.paper = field->grid_paper;
+            cb.cx = field->grid_center.x;
+            cb.cy = field->grid_center.y;
+            cb.z_floor = field->grid_center_z - field->grid_height * 0.5f;
+            cb.cell_z =
+                field->grid_height / static_cast<float>(field->grid_res_z);
+            cb.radius = cell_sz * voxel_radius_cells;
+            cb.eps = 0.001f;
+            cb.max_out = WetbrushSimState::DEBUG_MAX_VOXELS;
+            nvrhi::BufferHandle cb_buf;
+            Ruzino::brush_upload_cb(
+                rc, device, &cb, sizeof(cb), "wb_dbg_voxel_cb", cb_buf);
+            Ruzino::brush_dispatch(
+                rc,
+                field->debug_pack_voxels_program,
+                { { "density", field->density },
+                  { "color_r", field->color_r },
+                  { "color_y", field->color_y },
+                  { "color_b", field->color_b } },
+                { { "debug_out", field->debug_voxel_buf },
+                  { "counter", field->debug_voxel_counter } },
+                cb_buf,
+                grid_n3d);
+            rc.destroy(cb_buf);
+        }
+
+        // Bristle capsule segments, colored by their current liquid load.
+        if (field->bristle_data && field->bristles_initialized) {
+            // Bristle-chain health diagnostic (cheap: 192KB readback, far
+            // below the 4 grid readbacks above). NaN/degenerate segments are
+            // exactly what the debug renderer needs to surface — degenerate
+            // capsules render as a blob at the origin, NaN would corrupt DXR
+            // traversal. Frame 1 legitimately reports all-zero chains (the
+            // first simulate hasn't run yet).
+            {
+                const int nb = WetbrushSimState::NUM_BRISTLES;
+                const int m = WetbrushSimState::VERTS_PER_BRISTLE;
+                std::vector<float> bd(
+                    size_t(nb) * m * 8);  // 2 float4 per vertex
+                auto rb = rc.create(
+                    nvrhi::BufferDesc{}
+                        .setByteSize(bd.size() * sizeof(float))
+                        .setCpuAccess(nvrhi::CpuAccessMode::Read)
+                        .setDebugName("wb_bristle_rb"));
+                auto cmd = rc.create(CommandListDesc{});
+                cmd->open();
+                cmd->copyBuffer(
+                    rb, 0, field->bristle_data, 0, bd.size() * sizeof(float));
+                cmd->close();
+                device->executeCommandList(cmd);
+                device->waitForIdle();
+                void* mapped =
+                    device->mapBuffer(rb, nvrhi::CpuAccessMode::Read);
+                memcpy(bd.data(), mapped, bd.size() * sizeof(float));
+                device->unmapBuffer(rb);
+                rc.destroy(rb);
+                rc.destroy(cmd);
+                int nan_v = 0, inf_v = 0, degenerate = 0;
+                float lo = 1e30f, hi = -1e30f;
+                for (int i = 0; i < nb * m; ++i) {
+                    float x = bd[i * 8 + 0], y = bd[i * 8 + 1],
+                          z = bd[i * 8 + 2];
+                    if (std::isnan(x) || std::isnan(y) || std::isnan(z)) {
+                        ++nan_v;
+                        continue;
+                    }
+                    if (std::isinf(x) || std::isinf(y) || std::isinf(z)) {
+                        ++inf_v;
+                        continue;
+                    }
+                    lo = std::min({ lo, x, y, z });
+                    hi = std::max({ hi, x, y, z });
+                }
+                for (int b2 = 0; b2 < nb; ++b2)
+                    for (int v2 = 0; v2 + 1 < m; ++v2) {
+                        float ax = bd[(b2 * m + v2) * 8],
+                              ay = bd[(b2 * m + v2) * 8 + 1],
+                              az = bd[(b2 * m + v2) * 8 + 2];
+                        float bx = bd[(b2 * m + v2 + 1) * 8],
+                              by = bd[(b2 * m + v2 + 1) * 8 + 1],
+                              bz = bd[(b2 * m + v2 + 1) * 8 + 2];
+                        if (ax == bx && ay == by && az == bz)
+                            ++degenerate;
+                    }
+                spdlog::info(
+                    "wb_bristle_diag nan={} inf={} degenerate_segs={} "
+                    "range=[{:.4f},{:.4f}]",
+                    nan_v,
+                    inf_v,
+                    degenerate,
+                    lo,
+                    hi);
+            }
+
+            struct {
+                int nb;
+                int m;
+                int s;
+                float radius;
+            } cb{};
+            cb.nb = WetbrushSimState::NUM_BRISTLES;
+            cb.m = WetbrushSimState::VERTS_PER_BRISTLE;
+            cb.s = WetbrushSimState::SAMPLES_PER_BRISTLE;
+            cb.radius = cell_sz * bristle_radius_cells;
+            nvrhi::BufferHandle cb_buf;
+            Ruzino::brush_upload_cb(
+                rc, device, &cb, sizeof(cb), "wb_dbg_bristle_cb", cb_buf);
+            Ruzino::brush_dispatch(
+                rc,
+                field->debug_pack_bristles_program,
+                { { "bristle_data", field->bristle_data },
+                  { "sample_liquid", field->sample_liquid } },
+                { { "debug_out", field->debug_bristle_buf } },
+                cb_buf,
+                cb.nb * (cb.m - 1));
+            rc.destroy(cb_buf);
+        }
+
+        // Flush all three packs before registering — same reason as the
+        // packed_paint flush above: the registry hands the renderer buffers
+        // whose contents must already be written.
+        {
+            auto flush_cmd = rc.create(CommandListDesc{});
+            flush_cmd->open();
+            flush_cmd->close();
+            device->executeCommandList(flush_cmd);
+            device->waitForIdle();
+            rc.destroy(flush_cmd);
+        }
+
+        // Read back the compacted voxel count (4 bytes) for the meta blob.
+        uint32_t voxel_count = 0;
+        {
+            auto rb = rc.create(
+                nvrhi::BufferDesc{}
+                    .setByteSize(sizeof(uint32_t))
+                    .setCpuAccess(nvrhi::CpuAccessMode::Read)
+                    .setDebugName("wb_dbg_voxel_cnt_rb"));
+            auto cmd = rc.create(CommandListDesc{});
+            cmd->open();
+            cmd->copyBuffer(
+                rb, 0, field->debug_voxel_counter, 0, sizeof(uint32_t));
+            cmd->close();
+            device->executeCommandList(cmd);
+            device->waitForIdle();
+            void* mapped = device->mapBuffer(rb, nvrhi::CpuAccessMode::Read);
+            memcpy(&voxel_count, mapped, sizeof(uint32_t));
+            device->unmapBuffer(rb);
+            rc.destroy(rb);
+            rc.destroy(cmd);
+        }
+        voxel_count =
+            std::min(voxel_count, uint32_t(WetbrushSimState::DEBUG_MAX_VOXELS));
+
+        // Layout contract with Hd_RUZINO_Points (points.h registry mode):
+        // sphere points: [C pos float3][C radius][C rgb]; capsule segments:
+        // [C A float3][C B float3][C radius][C rgb]. Blocks are spaced by
+        // CAPACITY so the renderer can compute offsets from this meta alone.
+        struct DebugDrawMeta {
+            uint32_t count;
+            uint32_t capacity;
+            uint32_t isSegments;
+            uint32_t pad;
+        };
+        auto reg = [&](const char* key,
+                       nvrhi::BufferHandle buf,
+                       uint32_t count,
+                       uint32_t capacity,
+                       uint32_t segs) {
+            DebugDrawMeta meta{ count, capacity, segs, 0 };
+            Ruzino::SharedGPUBufferRegistry::get().register_buffer(
+                key,
+                buf,
+                size_t(capacity) * (segs ? 40 : 28),
+                &meta,
+                sizeof(meta));
+        };
+        const uint32_t bristle_segs = uint32_t(
+            WetbrushSimState::NUM_BRISTLES *
+            (WetbrushSimState::VERTS_PER_BRISTLE - 1));
+        reg("wetbrush_debug_particles",
+            field->debug_ptcl_buf,
+            uint32_t(std::max(ptcl_count, 0)),
+            uint32_t(max_ptcl),
+            0);
+        reg("wetbrush_debug_voxels",
+            field->debug_voxel_buf,
+            voxel_count,
+            uint32_t(WetbrushSimState::DEBUG_MAX_VOXELS),
+            0);
+        reg("wetbrush_debug_bristles",
+            field->debug_bristle_buf,
+            field->bristles_initialized ? bristle_segs : 0u,
+            bristle_segs,
+            1);
+
+        spdlog::info(
+            "wb_debug_draw particles={} voxels={} bristle_segs={}",
+            ptcl_count,
+            voxel_count,
+            field->bristles_initialized ? bristle_segs : 0u);
+    }
 
     // DIAGNOSTIC: paint-mass accounting for the paper-faithful particle path.
     // density = grid paint mass (should be injected ONLY by particle

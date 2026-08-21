@@ -383,6 +383,24 @@ void ClosestHit(
     payload.eta_flipped = eta_flipped;
 }
 
+// Debug-draw shading (render_wetbrush_debug.py): simple ambient + Lambertian
+// against the distant lights. Pure visualization — no material system, no
+// shadows. Result is written to payload.volumeColor and rides the volume
+// emission-composite path in RayGen (payload.isVolume = true).
+float3 debugShade(float3 albedo, float3 n)
+{
+    float3 result = albedo * 0.3;  // ambient floor
+    for (uint li = 0; li < ptConstants.lightCount; ++li) {
+        LightData light = lightBuffer[li];
+        if (light.type == uint(LightType::Distant)) {
+            float3 L = -light.dirW;  // direction to the light (NEE convention)
+            float ndotl = max(0.0, dot(n, L));
+            result += albedo * light.intensity * ndotl * 0.3;
+        }
+    }
+    return result;
+}
+
 [shader("closesthit")]
 void SphereClosestHit(
     inout RayPayload payload,
@@ -417,6 +435,20 @@ void SphereClosestHit(
 
     // Compute geometric normal as direction from sphere center to hit point
     float3 normal = normalize(hitPoint - sphereCenterWorld);
+
+    // Debug point clouds (MeshFlags::HasPerPointColor): the buffer carries a
+    // per-point RGB block at texCrdOffset (see points.cpp / debug_pack_*.slang).
+    // Shade directly with it — no material round-trip.
+    if ((mesh_desc.flags & (uint)MeshFlags::HasPerPointColor) != 0) {
+        float3 debugColor = asfloat(
+            t_BindlessBuffers[mesh_desc.bindlessIndex].Load3(
+                mesh_desc.texCrdOffset + position_offset));
+        if (dot(worldRayDirection, normal) >= 0.0)
+            normal = -normal;
+        payload.isVolume = true;  // emission composite path in RayGen
+        payload.volumeColor = debugShade(debugColor, normal);
+        return;
+    }
 
     // Create vertex info for the sphere hit
     VertexInfo vertex;
@@ -512,6 +544,166 @@ void SphereIntersection()
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Capsule segments (debug bristles). Each prim is the capsule around segment
+// [A, B] with a per-prim radius: endpoint A at mesh_desc.vbOffset, endpoint B
+// at mesh_desc.normalOffset, radius at mesh_desc.ibOffset, color at
+// mesh_desc.texCrdOffset (MeshFlags::IsCapsuleSegments | HasPerPointColor).
+// See points.cpp registry mode and debug_pack_bristles.slang.
+// ---------------------------------------------------------------------------
+
+// Nearest positive ray/sphere intersection, or -1.
+float capsuleCapT(
+    float3 ro,
+    float3 rd,
+    float3 ce,
+    float r)
+{
+    float3 oc = ro - ce;
+    float b = dot(oc, rd);
+    float c = dot(oc, oc) - r * r;
+    float h = b * b - c;
+    if (h < 0.0)
+        return -1.0;
+    float t = -b - sqrt(h);
+    if (t < 0.0)
+        t = -b + sqrt(h);
+    return t;
+}
+
+bool capsuleIntersect(
+    float3 ro,
+    float3 rd,
+    float3 pa,
+    float3 pb,
+    float r,
+    out float tOut)
+{
+    tOut = -1.0;
+    float3 ba = pb - pa;
+    float3 oa = ro - pa;
+    float baba = dot(ba, ba);
+    float bard = dot(ba, rd);
+    float baoa = dot(ba, oa);
+    float rdoa = dot(rd, oa);
+    float oaoa = dot(oa, oa);
+    float a = baba - bard * bard;
+    float b = baba * rdoa - baoa * bard;
+    float c = baba * oaoa - baoa * baoa - r * r * baba;
+    float h = b * b - a * c;
+
+    // Cylinder body (ray not parallel to the axis).
+    if (abs(a) > 1e-9 && h >= 0.0) {
+        float t = (-b - sqrt(h)) / a;
+        float y = baoa + t * bard;
+        if (t > 0.0 && y > 0.0 && y < baba)
+            tOut = t;
+    }
+    // Cap spheres (cover the parallel-axis and outside-body cases).
+    float tA = capsuleCapT(ro, rd, pa, r);
+    float tB = capsuleCapT(ro, rd, pb, r);
+    if (tA > 0.0 && (tOut < 0.0 || tA < tOut))
+        tOut = tA;
+    if (tB > 0.0 && (tOut < 0.0 || tB < tOut))
+        tOut = tB;
+    return tOut > 0.0;
+}
+
+[shader("intersection")]
+void CapsuleIntersection()
+{
+    uint instance_id = InstanceID();
+    uint prim_id = PrimitiveIndex();
+
+    uint mesh_id = instanceDescBuffer[instance_id].geometryID;
+    MeshDesc mesh_desc = meshDescBuffer[mesh_id];
+
+    // Read endpoints A (vbOffset) and B (normalOffset), radius (ibOffset).
+    float3 aLocal = asfloat(t_BindlessBuffers[mesh_desc.bindlessIndex].Load3(
+        mesh_desc.vbOffset + prim_id * 12));
+    float3 bLocal = asfloat(
+        t_BindlessBuffers[mesh_desc.bindlessIndex].Load3(
+            mesh_desc.normalOffset + prim_id * 12));
+    float radius = asfloat(
+        t_BindlessBuffers[mesh_desc.bindlessIndex].Load(
+            mesh_desc.ibOffset + prim_id * 4));
+
+    float4x3 objToWorld = ObjectToWorld4x3();
+    float3 aWorld = objToWorld[0] * aLocal.x + objToWorld[1] * aLocal.y +
+                    objToWorld[2] * aLocal.z + objToWorld[3];
+    float3 bWorld = objToWorld[0] * bLocal.x + objToWorld[1] * bLocal.y +
+                    objToWorld[2] * bLocal.z + objToWorld[3];
+
+    float3 rayOrigin = WorldRayOrigin();
+    float3 rayDir = WorldRayDirection();
+
+    float t;
+    if (capsuleIntersect(rayOrigin, rayDir, aWorld, bWorld, radius, t)) {
+        if (t >= RayTMin() && t <= RayTCurrent()) {
+            ReportHit(
+                t,
+                /*hitKind=*/0u,
+                BuiltInTriangleIntersectionAttributes(float2(0, 0)));
+        }
+    }
+}
+
+[shader("closesthit")]
+void CapsuleClosestHit(
+    inout RayPayload payload,
+    in BuiltInTriangleIntersectionAttributes attribs)
+{
+    payload.hit = true;
+    uint instance_id = InstanceID();
+    uint prim_id = PrimitiveIndex();
+
+    float3 worldRayOrigin = WorldRayOrigin();
+    float3 worldRayDirection = WorldRayDirection();
+    float t = RayTCurrent();
+    float3 hitPoint = worldRayOrigin + t * worldRayDirection;
+
+    uint mesh_id = instanceDescBuffer[instance_id].geometryID;
+    MeshDesc mesh_desc = meshDescBuffer[mesh_id];
+
+    float3 aLocal = asfloat(t_BindlessBuffers[mesh_desc.bindlessIndex].Load3(
+        mesh_desc.vbOffset + prim_id * 12));
+    float3 bLocal = asfloat(
+        t_BindlessBuffers[mesh_desc.bindlessIndex].Load3(
+            mesh_desc.normalOffset + prim_id * 12));
+    float3 debugColor = asfloat(
+        t_BindlessBuffers[mesh_desc.bindlessIndex].Load3(
+            mesh_desc.texCrdOffset + prim_id * 12));
+
+    float4x3 objToWorld = ObjectToWorld4x3();
+    float3 aWorld = objToWorld[0] * aLocal.x + objToWorld[1] * aLocal.y +
+                    objToWorld[2] * aLocal.z + objToWorld[3];
+    float3 bWorld = objToWorld[0] * bLocal.x + objToWorld[1] * bLocal.y +
+                    objToWorld[2] * bLocal.z + objToWorld[3];
+
+    // Capsule normal: direction from the closest point on the segment axis.
+    float3 ab = bWorld - aWorld;
+    float s = clamp(
+        dot(hitPoint - aWorld, ab) / max(dot(ab, ab), 1e-12), 0.0, 1.0);
+    float3 normal = normalize(hitPoint - (aWorld + s * ab));
+    if (dot(worldRayDirection, normal) >= 0.0)
+        normal = -normal;
+
+    payload.isVolume = true;  // emission composite path in RayGen
+    payload.volumeColor = debugShade(debugColor, normal);
+}
+
+[shader("closesthit")]
+void CapsuleShadowHit(
+    inout ShadowPayload payload,
+    in BuiltInTriangleIntersectionAttributes attribs)
+{
+    // Bristles cast hard shadows — the brush's shadow on the paint is part
+    // of the debugging value. (Debug POINT clouds are the opposite: their
+    // SphereShadowHit stays transparent — tens of thousands of point-sphere
+    // shadows would speckle everything.)
+    payload.isVisible = false;
 }
 
 [shader("miss")]
@@ -627,6 +819,20 @@ void SphereShadowHit(
     // For shadow rays hitting spheres, check opacity similar to triangle shadow
     // hit
     payload.isVisible = true;
+
+    // Debug point clouds (MeshFlags::HasPerPointColor — sim particles /
+    // voxels) are shadow-TRANSPARENT: tens of thousands of point spheres each
+    // casting a hard shadow speckle the paper with black dots and drown out
+    // the actual geometry. They visualize state, not occlusion.
+    {
+        uint instance_id_dbg = InstanceID();
+        uint mesh_id_dbg =
+            instanceDescBuffer[instance_id_dbg].geometryID;
+        if ((meshDescBuffer[mesh_id_dbg].flags &
+             (uint)MeshFlags::HasPerPointColor) != 0) {
+            return;  // keep isVisible = true
+        }
+    }
 
     // Limit recursion depth
     const uint MAX_SHADOW_OPACITY = 4;

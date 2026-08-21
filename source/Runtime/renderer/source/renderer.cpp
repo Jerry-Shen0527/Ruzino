@@ -10,6 +10,7 @@
 #include "pxr/imaging/hd/renderBuffer.h"
 #include "pxr/imaging/hd/tokens.h"
 #include "RHI/shared_buffer_registry.hpp"  // zero-copy sim buffer version poll
+#include "geometries/points.h"  // debug points per-frame refresh
 #include "renderBuffer.h"
 #include "renderParam.h"
 
@@ -162,6 +163,16 @@ void Hd_RUZINO_Renderer::Render(HdRenderThread* renderThread)
                 render_param->last_wetbrush_registry_version = reg_ver;
             }
         }
+
+        // #2 (debug points): refresh the wetbrush debug point clouds
+        // (particles / voxels / bristles, keys wetbrush_debug_*). Their
+        // positions change every sim frame, so their AABB BLAS must be
+        // rebuilt — unlike the paint volume, whose slab AABB is static and
+        // whose contents flow through the bindless buffer untouched. Runs
+        // here (render-thread callback, outside Hydra SyncAll) because
+        // driving it via change-tracker dirty from inside Sync corrupted the
+        // sync pass (uniform black-pixel speckle).
+        Hd_RUZINO_Points::refresh_debug_prims(render_param);
 
         uint32_t current_light_version =
             global_payload.InstanceCollection->get_light_version();

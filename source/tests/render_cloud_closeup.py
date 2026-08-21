@@ -220,7 +220,7 @@ def main():
     scene_dir = BIN / "cloud_scenes"
     scene_dir.mkdir(parents=True, exist_ok=True)
 
-    WIDTH, HEIGHT, SPP = 640, 480, 128
+    WIDTH, HEIGHT, SPP = 640, 480, 1024
 
     scene = scene_dir / "closeup.usda"
     _build_scene(scene)

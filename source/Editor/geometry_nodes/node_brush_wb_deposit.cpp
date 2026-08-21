@@ -119,6 +119,13 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         ink_color = bp.color;
     }
 
+    // Pen state for downstream nodes (§5.1 absorb/emit gating + §5.2
+    // conversion gating): a pen-up brush is not painting — no sample uptake,
+    // no emission, and no grid↔particle conversion zone around it. Recorded
+    // every frame BEFORE any early return so it never goes stale.
+    if (field)
+        field->pen_down = bp.active;
+
     auto& rc = get_resource_allocator();
     auto device = RHI::get_device();
     auto payload = params.get_global_payload<GeomPayload>();
@@ -537,6 +544,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
             field->ptcl_color,
             field->ptcl_alive,
             field->ptcl_counter,
+            field->emit_budget,
             field->ptcl_pos_b,
             field->ptcl_vel_b,
             field->ptcl_color_b,
@@ -552,6 +560,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
             rc, max_ptcl, sizeof(uint32_t), "wb_ptcl_alive");
         field->ptcl_counter = Ruzino::brush_create_byte_buffer(
             rc, sizeof(uint32_t), "wb_ptcl_counter");
+        field->emit_budget = Ruzino::brush_create_byte_buffer(
+            rc, sizeof(uint32_t), "wb_emit_budget");
         field->ptcl_pos_b = Ruzino::brush_create_typed_buffer(
             rc, max_ptcl, sizeof(float) * 4, "wb_ptcl_pos_b");
         field->ptcl_vel_b = Ruzino::brush_create_typed_buffer(
@@ -588,6 +598,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         write_u(field->ptcl_alive, field->ptcl_alive_b);
         uint32_t zero_c = 0;
         cmd->writeBuffer(field->ptcl_counter, &zero_c, sizeof(uint32_t));
+        cmd->writeBuffer(field->emit_budget, &zero_c, sizeof(uint32_t));
         cmd->close();
         device->executeCommandList(cmd);
         device->waitForIdle();

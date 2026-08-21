@@ -45,7 +45,7 @@ def main():
     scene_dir = BIN / "cloud_scenes"
     scene_dir.mkdir(parents=True, exist_ok=True)
 
-    WIDTH, HEIGHT, SPP = 640, 480, 1024
+    WIDTH, HEIGHT, SPP = 640, 480, 4096
 
     cases = [
         # Same shaping params as the biased pipeline so the two are directly

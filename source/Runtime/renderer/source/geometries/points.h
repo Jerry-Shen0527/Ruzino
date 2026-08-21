@@ -4,6 +4,8 @@
 #ifndef Hd_RUZINO_POINTS_H
 #define Hd_RUZINO_POINTS_H
 
+#include <string>
+
 #include "../DescriptorTableManager.h"
 #include "../api.h"
 #include "internal/memory/DeviceMemoryPool.hpp"
@@ -34,6 +36,14 @@ class HD_RUZINO_API Hd_RUZINO_Points final : public HdPoints {
 
     void Finalize(HdRenderParam* renderParam) override;
 
+    // Debug zero-copy refresh, driven OUTSIDE Hydra's SyncAll by
+    // Hd_RUZINO_Renderer::Render each frame (it polls the registry versions,
+    // like the wetbrush_paint_field poll). Self-dirtying from inside Sync
+    // (MarkRprimDirty during SyncAll) corrupted the sync pass — uniform
+    // single-pixel black speckle across the frame — so per-frame rebuilds
+    // must not ride Hydra's dirty propagation.
+    static void refresh_debug_prims(Hd_RUZINO_RenderParam* render_param);
+
     nvrhi::rt::AccelStructHandle BLAS;
     CommandListHandle command_list;
 
@@ -49,8 +59,30 @@ class HD_RUZINO_API Hd_RUZINO_Points final : public HdPoints {
     GfMatrix4f transform;
     VtArray<GfVec3f> points;
     VtFloatArray widths;
+    // CPU path: primvars:displayColor, one RGB per point. Uploaded as a third
+    // block after the radii; hit groups shade with it directly when present
+    // (MeshFlags::HasPerPointColor).
+    VtVec3fArray colors;
+
+    // Debug zero-copy registry mode (render_wetbrush_debug.py): the prim's
+    // "debugKey" primvar names a SharedGPUBufferRegistry entry packed each
+    // frame by brush_wb_commit (debug_pack_*.slang). We never upload point
+    // data; the BLAS is built straight from the shared GPU buffer. Layout
+    // (blocks spaced by capacity, see DebugDrawMeta in node_brush_wb_commit):
+    //   points:   [C pos float3][C radius float][C rgb float3]
+    //   segments: [C A float3][C B float3][C radius float][C rgb float3]
+    std::string debug_key;
+    uint64_t debug_registry_version = 0;
+    nvrhi::BufferHandle debug_buffer;  // keeps the shared buffer alive
+    nvrhi::IBuffer* debug_descriptor_buffer = nullptr;  // last buffer a
+                                                        // bindless descriptor
+                                                        // was created for
+    uint32_t debug_count = 0;
+    uint32_t debug_capacity = 0;
+    bool debug_segments = false;
 
     void create_gpu_resources(Hd_RUZINO_RenderParam* render_param);
+    void create_gpu_resources_registry(Hd_RUZINO_RenderParam* render_param);
     void updateTLAS(
         Hd_RUZINO_RenderParam* render_param,
         HdSceneDelegate* sceneDelegate,

@@ -1,28 +1,34 @@
 #!/usr/bin/env python3
 """
-Render the Wetbrush streaming-zone paint animation with the Ruzino path tracer
-via the ZERO-COPY GPU buffer path (no bake / no CPU readback / no USD primvar).
+Wetbrush DEBUG visualization: render the raw simulation state directly — no
+paper §6 rendering pipeline, no SDF, no volume raymarch.
 
-Architecture (interleaved per-frame animation):
-  Stage 1: build the streaming Wetbrush zone graph (mock_stroke -> simulation_in
-           -> brush_wb_deposit -> bristle -> fluid -> commit -> simulation_out,
-           feedback) and a marker render scene (UsdVolVolume carrying grid
-           metadata primvars but NO paintField, plus the Paper mesh, camera,
-           lights). The graph is NOT driven here.
-  Stage 2: interleave { stage.tick(dt) -> hydra.render(t) x SPP -> save PNG }
-           for NUM_FRAMES. Each tick, the commit node packs density+color into a
-           Float4 GPU buffer and registers it in SharedGPUBufferRegistry under
-           "wetbrush_paint_field"; the Hd_RUZINO_WetbrushVolume rprim's Sync()
-           detects the version bump and rebinds the SAME buffer (zero copy).
-           No data crosses back to the CPU.
+What you see (all zero-copy GPU buffers packed by brush_wb_commit each tick):
 
-The volume is rendered by the custom Hd_RUZINO_WetbrushVolume rprim, raymarched
-by the VolumeClosestHit shader (paper Section 6: first-cross + penetration blend
-+ Lambertian + 64-ray ambient occlusion).
+  /DebugBristles  the 600 bristle chains as capsule segments ("线段/圆柱").
+                  Color = the liquid each segment currently carries: dry =
+                  neutral gray, loaded = pigment color (RYB->RGB).
+  /DebugParticles the active-window FLIP/PIC particles as small spheres,
+                  colored by their pigment.
+  /DebugVoxels    every non-zero global-grid voxel as a small sphere,
+                  colored by its normalized pigment (premultiplied RYB /
+                  density).
 
-Run from Binaries/Release (so node-plugin DLLs resolve):
+Data path: brush_wb_commit -> debug_pack_*.slang -> SharedGPUBufferRegistry
+(keys wetbrush_debug_{bristles,particles,voxels}) -> Hd_RUZINO_Points
+("debugKey" primvar) -> AABB BLAS -> sphere/capsule procedural hit groups
+(inline debugShade, no material system).
 
-    python ../../source/tests/render_wetbrush.py
+Usage (from Binaries/Release):
+
+    python ../../source/tests/render_wetbrush_debug.py
+
+Env knobs:
+    WB_DEBUG_RES=512 WB_DEBUG_RES_Z=32   sim grid resolution (debug default
+                                          512x512x32; paper is 1.0 so a cell
+                                          is 1/512 ~= brush_radius/10)
+    WB_DEBUG_DRAW=bristles,particles,voxels   comma list to include
+    WB_DEBUG_FRAMES=60 WB_DEBUG_SPP=8
 """
 import os
 import sys
@@ -41,40 +47,33 @@ os.environ["PXR_USD_WINDOWS_DLL_PATH"] = str(BIN)
 os.environ["PATH"] = str(BIN) + os.pathsep + os.environ.get("PATH", "")
 os.add_dll_directory(str(BIN))
 
-from pxr import Usd, UsdGeom, UsdLux, UsdShade, UsdVol, Sdf, Gf, Vt  # noqa: E402
+from pxr import Usd, UsdGeom, UsdLux, UsdShade, Sdf, Gf, Vt  # noqa: E402
 
 import stage_py  # noqa: E402
 from ruzino_graph import RuzinoGraph  # noqa: E402
 
-NUM_FRAMES = 60
+NUM_FRAMES = int(os.environ.get("WB_DEBUG_FRAMES", "60"))
 FPS = 60.0
 DT = 1.0 / FPS
+SPP = int(os.environ.get("WB_DEBUG_SPP", "8"))
+DRAW = os.environ.get("WB_DEBUG_DRAW", "bristles,particles,voxels").split(",")
+DRAW = [d.strip() for d in DRAW if d.strip()]
 
-OUTPUT_DIR = BIN / "wetbrush_sequence"
+OUTPUT_DIR = BIN / "wetbrush_debug_sequence"
 
-# Sim grid parameters — MUST match what build_sim_graph configures on the
-# deposit node, because the marker scene's gridResX/Y/Z + cellSize primvars
-# describe the SAME grid the sim packs into the registry buffer.
-#
-# Paper §7 uses 4096×4096×64 (the Group A buffers alone need ~112 GB VRAM at
-# that resolution). Override for a smaller GPU with the WETBRUSH_RES env var,
-# e.g. on a 12 GB card:
-#   WETBRUSH_RES=1024 python ../../source/tests/render_wetbrush_cross.py
-# 1024²×64 fits in ~7 GB; 2048²×64 needs ~28 GB.
-SIM_RES = int(os.environ.get("WETBRUSH_RES", "4096"))
-SIM_RES_Z = int(os.environ.get("WETBRUSH_RES_Z", "64"))
+# Debug-friendly grid: 512x512x32 (cell ~= brush_radius/10) — small enough to
+# iterate fast, fine enough that the brush footprint covers ~10x10 cells.
+SIM_RES = int(os.environ.get("WB_DEBUG_RES", "512"))
+SIM_RES_Z = int(os.environ.get("WB_DEBUG_RES_Z", "32"))
 SIM_PAPER = 1.0
-CELL_SZ = SIM_PAPER / SIM_RES
 
 
 # ---------------------------------------------------------------------------
-# Stage 1a: build the streaming Wetbrush zone graph. Returns (graph, stage,
-# prim_path). The graph is NOT driven — caller interleaves tick()+render().
-# The returned graph must be kept alive for the whole render loop so the sim's
-# GPU buffers (incl. the registry-registered packed_paint) are not freed.
+# Stage 1a: the streaming Wetbrush sim zone (same graph as render_wetbrush.py;
+# the commit node's debug-draw pack runs every tick as part of the zone).
 # ---------------------------------------------------------------------------
 def build_sim_graph(sim_usd: Path):
-    g = RuzinoGraph("WetbrushRender")
+    g = RuzinoGraph("WetbrushDebug")
     g.loadConfiguration(str(BIN / "geometry_nodes.json"))
 
     mock = g.createNode("mock_stroke", name="MockStroke")
@@ -97,25 +96,17 @@ def build_sim_graph(sim_usd: Path):
     g.addEdge(bristle, "State", fluid, "State")
     g.addEdge(fluid, "State", commit, "State")
     g.addEdge(sim_in, "Simulation Out", commit, "Stroke Curves")
-    # commit's Paint Field 3D output still feeds write_usd so the sim USD has
-    # a populated prim for downstream inspection, but the renderer does NOT
-    # read it — it consumes the zero-copy registry buffer.
     g.addEdge(commit, "Paint Field 3D", write, "Geometry")
     g.addEdge(commit, "State", sim_out, "Simulation In")
     g.addEdge(commit, "Stroke Curves", sim_out, "Simulation In")
 
     g.setSocketDefaults({
-        # NUM_FRAMES points so the brush paints for the whole sequence (the
-        # old 30 exhausted the trajectory mid-run: the brush parked, the
-        # carried swarm dumped onto the park spot, and the remaining frames
-        # showed a frozen scene + the parking blot).
+        # One trajectory point per frame (the emitter synthesizes 1/60s
+        # spacing per point): the stroke must span the whole run or the
+        # trajectory exhausts mid-run, the pen lifts, and everything freezes
+        # (that looked like a sim bug on 2026-08-18 — it was the fixture).
         (mock, "Num Points"): NUM_FRAMES, (mock, "Amplitude"): 0.05,
         (mock, "Length"): 0.3,
-        # Resolution 4096 (paper Section 4.2: "we typically set the grid
-        # resolution to 4096x4096x64"). At lower resolutions the brush
-        # footprint covered too few cells, so trilinear filtering + the
-        # 2-cell gradient normal rode cell-boundary density steps and the
-        # Lambertian shading flickered across the stroke.
         (deposit, "Resolution"): SIM_RES, (deposit, "Resolution Z"): SIM_RES_Z,
         (deposit, "Paper Size"): SIM_PAPER,
         (deposit, "Brush Radius"): 0.02, (deposit, "Brush Pressure"): 1.0,
@@ -141,55 +132,65 @@ def build_sim_graph(sim_usd: Path):
 
 
 # ---------------------------------------------------------------------------
-# Stage 1b: build the marker render scene. UsdVolVolume with grid metadata
-# primvars (NO paintField — the rprim reads paint from the registry buffer),
-# plus the Paper mesh, camera, and lights. Returns the scene path.
+# Stage 1b: the marker render scene. Three UsdGeom.Points prims whose
+# "debugKey" primvar routes them to a SharedGPUBufferRegistry buffer; plus the
+# paper quad, camera, and lights. NO volume prim — this is the whole point:
+# we render the raw sim state, not the §6 paint surface.
 # ---------------------------------------------------------------------------
+def add_debug_points(stage, path, key, color):
+    pts = UsdGeom.Points.Define(stage, path)
+    # One placeholder point keeps the USD data valid; the registry buffer
+    # supplies the real geometry once the sim ticks.
+    pts.CreatePointsAttr().Set([Gf.Vec3f(0.0, 0.0, -10.0)])
+    pv = UsdGeom.PrimvarsAPI(pts.GetPrim())
+    pv.CreatePrimvar("debugKey", Sdf.ValueTypeNames.String).Set(key)
+    # Per-frame re-sync driver: time samples on the builtin `widths` attr make
+    # UsdImaging re-dirty this prim at every render-time change, so the
+    # rprim's Sync re-checks the registry version and rebuilds the (moving)
+    # point cloud. Without it Hydra would sync the prim once (the stage
+    # itself never changes) and the debug geometry would freeze at frame 1.
+    # The values are never read — the registry supplies real radii.
+    widths = pts.CreateWidthsAttr()
+    for i in range(NUM_FRAMES):
+        widths.Set(Vt.FloatArray([0.001 * (i + 1)]), (i + 1) * DT)
+    # Neutral material — the debug hit groups never consult it, but the
+    # rprim's TLAS update expects one to exist.
+    mat = UsdShade.Material.Define(stage, f"{path}Material")
+    shader = UsdShade.Shader.Define(stage, f"{path}Material/Shader")
+    shader.CreateIdAttr("UsdPreviewSurface")
+    shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(color)
+    mat.CreateSurfaceOutput().ConnectToSource(
+        UsdShade.ConnectableAPI(shader), "surface",
+        UsdShade.AttributeType.Output)
+    UsdShade.MaterialBindingAPI.Apply(pts.GetPrim()).Bind(mat)
+    return pts
+
+
 def build_marker_scene(scene_path: Path):
     if scene_path.exists():
         scene_path.unlink()
     stage = Usd.Stage.CreateNew(str(scene_path))
 
-    # UsdVolVolume -> Hydra token "volume" -> Hd_RUZINO_WetbrushVolume.
-    # The metadata primvars describe the SAME grid the sim packs. The rprim's
-    # Sync() reads them, then create_gpu_resources() Phase 1 overrides the
-    # buffer source with the registry buffer (and re-asserts the same grid
-    # geometry from the registry metadata blob).
-    vol = UsdVol.Volume.Define(stage, "/BrushPaint")
-    pv = UsdGeom.PrimvarsAPI(vol)
-    pv.CreatePrimvar("gridResX", Sdf.ValueTypeNames.Int).Set(int(SIM_RES))
-    pv.CreatePrimvar("gridResY", Sdf.ValueTypeNames.Int).Set(int(SIM_RES))
-    pv.CreatePrimvar("gridResZ", Sdf.ValueTypeNames.Int).Set(int(SIM_RES_Z))
-    pv.CreatePrimvar("cellSize", Sdf.ValueTypeNames.Float).Set(float(CELL_SZ))
-    # gridMin matches the sim's grid layout EXACTLY — see node_brush_wb_commit.cpp
-    # PaintFieldMeta: gridMinZ = grid_center_z - grid_height/2 = canvas_z (since
-    # grid_center_z = canvas_z + height/2). Canvas Z defaults to 0 in the
-    # deposit node, so paint volume occupies Z in [0, grid_height]. The paper
-    # mesh sits just below at Z = -0.0005. (A previous version used
-    # -grid_height/2 here, which mismatched the registry metadata by 32 cells
-    # in Z and smeared the rendered paint.)
-    grid_height = SIM_PAPER * SIM_RES_Z / SIM_RES
-    canvas_z = 0.0
-    gm = Gf.Vec3f(-SIM_PAPER * 0.5, -SIM_PAPER * 0.5, float(canvas_z))
-    pv.CreatePrimvar("gridMin", Sdf.ValueTypeNames.Float3).Set(gm)
+    if "ghost" in DRAW:
+        # Isolation probe: a debug prim whose registry key never exists. Its
+        # Sync runs + marks geometry dirty every frame but contributes no
+        # geometry — separates "TLAS rebuild churn" effects from actual
+        # capsule/particle rendering.
+        add_debug_points(stage, "/DebugGhost",
+                         "wetbrush_debug_nonexistent", (0.9, 0.9, 0.2))
+    if "bristles" in DRAW:
+        add_debug_points(stage, "/DebugBristles",
+                         "wetbrush_debug_bristles", (0.7, 0.7, 0.75))
+    if "particles" in DRAW:
+        add_debug_points(stage, "/DebugParticles",
+                         "wetbrush_debug_particles", (0.8, 0.3, 0.3))
+    if "voxels" in DRAW:
+        add_debug_points(stage, "/DebugVoxels",
+                         "wetbrush_debug_voxels", (0.3, 0.5, 0.9))
 
-    # Neutral fallback material (the volume hit path colors from the field).
-    mat = UsdShade.Material.Define(stage, "/PaintMaterial")
-    shader = UsdShade.Shader.Define(stage, "/PaintMaterial/Shader")
-    shader.CreateIdAttr("UsdPreviewSurface")
-    shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(
-        (0.85, 0.25, 0.18))
-    shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.55)
-    mat.CreateSurfaceOutput().ConnectToSource(
-        UsdShade.ConnectableAPI(shader), "surface",
-        UsdShade.AttributeType.Output)
-    UsdShade.MaterialBindingAPI.Apply(vol.GetPrim()).Bind(mat)
-
-    # Paper = the whole canvas (not just a frame around the stroke bbox). The
-    # volume's empty cells are transparent (VolumeIntersection only reports on
-    # paint), so the paper underneath shows through and the paint reads as
-    # painted ON the paper.
-    pz = float(canvas_z) - 0.0005
+    # Paper reference plane at the canvas (z = 0, canvas_z default). Slightly
+    # warm gray so pigment colors pop against it.
+    pz = -0.0005
     paper = UsdGeom.Mesh.Define(stage, "/Paper")
     paper.CreatePointsAttr().Set(Vt.Vec3fArray([
         Gf.Vec3f(-SIM_PAPER * 0.5, -SIM_PAPER * 0.5, pz),
@@ -206,29 +207,25 @@ def build_marker_scene(scene_path: Path):
     paper_shader = UsdShade.Shader.Define(stage, "/PaperMaterial/Shader")
     paper_shader.CreateIdAttr("UsdPreviewSurface")
     paper_shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(
-        (0.92, 0.90, 0.85))
+        (0.72, 0.70, 0.66))
     paper_shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.8)
     paper_mat.CreateSurfaceOutput().ConnectToSource(
         UsdShade.ConnectableAPI(paper_shader), "surface",
         UsdShade.AttributeType.Output)
     UsdShade.MaterialBindingAPI.Apply(paper.GetPrim()).Bind(paper_mat)
 
-    # Camera: tight 3/4 view framing the stroke region (the strokes span
-    # ~0.3×0.3 around the origin — `length`=0.3 in mock_strokes). Aiming at the
-    # whole 1.0 canvas from ~2.0 away left the brush a tiny speck; pull in to
-    # ~0.55 distance and target the stroke center so the paint fills the frame.
-    # Paper mesh still extends ±0.5 so it shows as the paper around the stroke.
+    # Camera: 3/4 view of the stroke region. The paint slab is z in
+    # [0, SIM_PAPER*SIM_RES_Z/SIM_RES] and the brush hovers just above it —
+    # aim at the slab mid-height so both brush and paint are in frame.
     cam = UsdGeom.Camera.Define(stage, "/Camera")
     cam.GetFocalLengthAttr().Set(50.0)
     cam.GetHorizontalApertureAttr().Set(36.0)
     cam.GetVerticalApertureAttr().Set(20.25)
     cam.GetClippingRangeAttr().Set((0.1, 100.0))
-    frame_size = 0.35  # roughly the stroke span + a little breathing room
-    cx = cy = cz = 0.0
-    eye = np.array([cx + frame_size * 0.5,
-                    cy - frame_size * 1.1,
-                    cz + frame_size * 1.5])
-    target = np.array([cx, cy, cz])
+    frame_size = 0.35
+    cz = SIM_PAPER * SIM_RES_Z / SIM_RES * 0.5
+    eye = np.array([frame_size * 0.5, -frame_size * 1.1, cz + frame_size * 1.2])
+    target = np.array([0.0, 0.0, cz])
     up = np.array([0.0, 0.0, 1.0])
     fwd = target - eye
     fwd = fwd / np.linalg.norm(fwd)
@@ -241,9 +238,7 @@ def build_marker_scene(scene_path: Path):
     m.SetRow(3, Gf.Vec4d(*eye.tolist(), 1.0))
     UsdGeom.Xformable(cam).AddTransformOp().Set(m)
 
-    # Key DistantLight from above-front. intensity=3.0 — paper reads near its
-    # diffuseColor (0.92,0.90,0.85) without saturating once the dome fill is
-    # added underneath.
+    # Key light + soft dome (same rig as render_wetbrush.py).
     light_xf = Gf.Matrix4d(); light_xf.SetIdentity()
     light_xf.SetRow(2, Gf.Vec4d(-0.3, 0.4, -0.85, 0.0))
     UsdLux.DistantLight.Define(stage, "/Sun")
@@ -251,14 +246,20 @@ def build_marker_scene(scene_path: Path):
     sun.CreateIntensityAttr().Set(3.0)
     UsdGeom.Xformable(sun).AddTransformOp().Set(light_xf)
 
-    # Dome light — fills the background off black; dim so the warm key light
-    # still dominates the paper.
     dome = UsdLux.DomeLight.Define(stage, "/Dome")
     dome.CreateIntensityAttr().Set(0.25)
     dome.CreateColorAttr().Set((0.6, 0.75, 1.0))
 
+    # Declare the stage's animation span so UsdImaging tracks the time-sampled
+    # `widths` on the debug prims as varying (render_gridbox.py does the same;
+    # without it the delegate treats the stage as static and never re-dirties
+    # the prims on render-time changes).
+    stage.SetStartTimeCode(DT)
+    stage.SetEndTimeCode(NUM_FRAMES * DT)
+    stage.SetTimeCodesPerSecond(FPS)
+
     stage.GetRootLayer().Save()
-    print(f"[render] marker scene: {scene_path.name}")
+    print(f"[debug] marker scene: {scene_path.name} (draw={DRAW})")
     return scene_path
 
 
@@ -281,7 +282,7 @@ def run_interleaved(scene_path: Path, stage, sim_graph):
     import nodes_core_py as core
     from PIL import Image
 
-    WIDTH, HEIGHT, SPP = 1280, 960, 32
+    WIDTH, HEIGHT = 1280, 960
     OUTPUT_DIR.mkdir(exist_ok=True)
     for old in OUTPUT_DIR.glob("frame_*.png"):
         old.unlink()
@@ -295,8 +296,8 @@ def run_interleaved(scene_path: Path, stage, sim_graph):
 
     rng = tree.add_node("rng_texture"); rng.ui_name = "RNG"
     ray_gen = tree.add_node("node_render_ray_generation"); ray_gen.ui_name = "RayGen"
-    # wetbrush_render = path_tracing + 2 procedural volume hit groups, so the
-    # Hd_RUZINO_WetbrushVolume density slab is hit.
+    # wetbrush_render carries the debug sphere/capsule hit groups in addition
+    # to triangles + volume.
     path_trace = tree.add_node("wetbrush_render"); path_trace.ui_name = "WetbrushRender"
     accumulate = tree.add_node("accumulate"); accumulate.ui_name = "Accumulate"
     rng_buffer = tree.add_node("rng_buffer"); rng_buffer.ui_name = "RNGBuffer"
@@ -324,19 +325,15 @@ def run_interleaved(scene_path: Path, stage, sim_graph):
         socket = node.get_input_socket(socket_name)
         executor.sync_node_from_external_storage(socket, core.to_meta_any(value))
 
-    print(f"[render] interleaved {NUM_FRAMES} frames "
+    print(f"[debug] interleaved {NUM_FRAMES} frames "
           f"({WIDTH}x{HEIGHT}, {SPP} spp) -> {OUTPUT_DIR.name}/")
     for i in range(NUM_FRAMES):
         t = (i + 1) * DT
-        # Drive one sim step FIRST so the registry holds this frame's packed
-        # paint before the rprim's Sync() runs during render().
+        # Sim first: commit packs the three debug buffers and bumps their
+        # registry versions; the points rprims' per-frame Sync rebuilds.
         stage.set_render_time(t)
         stage.tick(DT)
         stage.finish_tick()
-        # Belt-and-suspenders: the auto path (renderer.cpp polls the registry
-        # version → DirtyGeometry → wetbrush_render geom_dirty → reset) should
-        # already trigger a clean reset for this fresh sim frame. This explicit
-        # host request is the escape hatch in case that auto path ever lags.
         hydra.reset_accumulation()
         for _ in range(SPP):
             hydra.render(float(t))
@@ -355,29 +352,21 @@ def run_interleaved(scene_path: Path, stage, sim_graph):
 
     hydra.stop()
     n = len(list(OUTPUT_DIR.glob("frame_*.png")))
-    print(f"[render] done: {n} frames in {OUTPUT_DIR}")
+    print(f"[debug] done: {n} frames in {OUTPUT_DIR}")
 
 
 def main():
-    sim_usd = BIN / "wetbrush_render_sim.usdc"
+    sim_usd = BIN / "wetbrush_debug_sim.usdc"
     sim_usd.parent.mkdir(parents=True, exist_ok=True)
-    # Also remove the STALE modifiers sidecar: stage_py merges it into the
-    # freshly created sim stage, and a sidecar left by an older/aborted run
-    # (socket values that no longer exist) makes the first tick throw
-    # json.exception.type_error.302 "type must be number, but is null".
-    for stale in (sim_usd, BIN / "wetbrush_render_sim_modifiers.usdc"):
-        if stale.exists():
-            stale.unlink()
-    print("[render] stage 1a: building sim graph (zero-copy, no 60-frame drive)")
+    print("[debug] stage 1a: building sim graph")
     sim_graph, stage, prim_path = build_sim_graph(sim_usd)
 
-    scene = BIN / "wetbrush_render.usdc"
-    print(f"[render] stage 1b: building marker render scene -> {scene.name}")
+    scene = BIN / "wetbrush_debug.usdc"
+    print(f"[debug] stage 1b: building marker render scene -> {scene.name}")
     build_marker_scene(scene)
 
-    print("[render] stage 2: interleaved sim+render loop")
-    # sim_graph MUST stay alive through the loop — it owns the GPU buffers the
-    # rprim reads zero-copy from the registry.
+    print("[debug] stage 2: interleaved sim+render loop")
+    # sim_graph must stay alive — it owns the GPU buffers the rprims read.
     run_interleaved(scene, stage, sim_graph)
 
 

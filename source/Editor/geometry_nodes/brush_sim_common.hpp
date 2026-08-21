@@ -211,7 +211,15 @@ struct SimConstants {
     // §4.2). See common.slangh SimConstants.brush_boundary_gate. Must match the
     // shader layout (replaces the former _pad0).
     float brush_boundary_gate;
-    float _pad1, _pad2;
+    // Per-dispatch velocity damping multiplier (fluid_damp_dry); host sends
+    // pow(frame_damp, 1/substeps). Replaces former _pad1.
+    float velocity_damp;
+    // Scale on the brush velocity injected by brush_deposit. Replaces former
+    // _pad2.
+    float velocity_inject_scale;
+    // Render composite scale for the rasterized swarm in pack_float4.
+    float ptcl_render_scale;
+    float _pad3;
 };
 
 struct BristleConstants {
@@ -291,6 +299,10 @@ struct ParticleConstants {
     int window_origin_z;
     int window_size_x;
     int window_size_z;
+    // Pen state (from deposit's BrushPoint): pen-up means the brush is away
+    // from the canvas — particle_to_grid deposits slow particles regardless
+    // of d_{B,k}, and grid_to_particle suspends conversion.
+    int pen_down;
 };
 
 struct BristleLiquidConstants {
@@ -310,6 +322,12 @@ struct BristleLiquidConstants {
     float grid_center_x, grid_center_y, grid_center_z;
     float D0;
     int max_particles;
+    int emit_budget;  // global per-step particle-creation cap (0 = unlimited)
+    // Brush world position — per-frame entropy for the EMIT budget's
+    // probabilistic pre-gate. Must match common.slangh.
+    float brush_pos_x;
+    float brush_pos_y;
+    float brush_pos_z;
     int window_origin_x;
     int window_origin_y;
     int window_origin_z;
@@ -429,11 +447,23 @@ struct WetbrushSimState {
     // while particles outpace deposition; compact keeps it tight.
     static constexpr int MAX_PARTICLES = 1048576;
 
+    // --- Cross-frame brush state (written by deposit every frame) ---
+    // Pen-down flag from the current BrushPoint. Gates §5.1 absorb/emit in the
+    // bristle node and §5.2 conversions in the fluid node: a pen-up brush is
+    // not painting. Without it, a parked/stalled brush kept emitting
+    // (+emit_budget particles/frame) while the fluid node skipped particle
+    // maintenance — the pool wrapped with nothing depositing.
+    bool pen_down = false;
+
     nvrhi::BufferHandle ptcl_pos;
     nvrhi::BufferHandle ptcl_vel;
     nvrhi::BufferHandle ptcl_color;
     nvrhi::BufferHandle ptcl_alive;
     nvrhi::BufferHandle ptcl_counter;
+    // Global per-step particle-creation budget for the §5.1 EMIT pass
+    // (1 uint, zeroed each frame by the bristle node). See
+    // BristleLiquidConstants::emit_budget.
+    nvrhi::BufferHandle emit_budget;
     nvrhi::BufferHandle ptcl_density;
     nvrhi::BufferHandle ptcl_vel_x;
     nvrhi::BufferHandle ptcl_vel_y;
@@ -455,6 +485,22 @@ struct WetbrushSimState {
     // sized (res³). ---
     nvrhi::BufferHandle packed_paint;
     ProgramHandle pack_program;
+
+    // --- Debug-draw buffers (blocked layouts, see debug_pack_*.slang).
+    // Packed each frame in the commit node and registered into
+    // SharedGPUBufferRegistry for the debug visualization pipeline
+    // (render_wetbrush_debug.py): live particles, non-zero grid voxels
+    // (GPU-compacted, capped at DEBUG_MAX_VOXELS), and bristle capsule
+    // segments. CanHaveRawViews so the render side can bind them
+    // RawBuffer_SRV / ByteAddressBuffer. ---
+    static constexpr int DEBUG_MAX_VOXELS = 1 << 20;  // 1M points, 28 MB
+    nvrhi::BufferHandle debug_ptcl_buf;     // MAX_PARTICLES * 7 floats
+    nvrhi::BufferHandle debug_voxel_buf;    // DEBUG_MAX_VOXELS * 7 floats
+    nvrhi::BufferHandle debug_bristle_buf;  // Nb*(M-1) * 10 floats
+    nvrhi::BufferHandle debug_voxel_counter;  // 1 uint, zeroed each frame
+    ProgramHandle debug_pack_particles_program;
+    ProgramHandle debug_pack_voxels_program;
+    ProgramHandle debug_pack_bristles_program;
 
     // --- Compiled shader programs (lazily built on first use; persist so we
     // don't recompile every frame) ---
@@ -563,6 +609,7 @@ struct WetbrushSimState {
             release(ptcl_color);
             release(ptcl_alive);
             release(ptcl_counter);
+            release(emit_budget);
             release(ptcl_density);
             release(ptcl_vel_x);
             release(ptcl_vel_y);
@@ -578,6 +625,10 @@ struct WetbrushSimState {
             release(ptcl_color_b);
             release(ptcl_alive_b);
             release(packed_paint);
+            release(debug_ptcl_buf);
+            release(debug_voxel_buf);
+            release(debug_bristle_buf);
+            release(debug_voxel_counter);
             return;
         }
 
@@ -632,6 +683,7 @@ struct WetbrushSimState {
         destroy_buf(ptcl_color);
         destroy_buf(ptcl_alive);
         destroy_buf(ptcl_counter);
+        destroy_buf(emit_budget);
         destroy_buf(ptcl_density);
         destroy_buf(ptcl_vel_x);
         destroy_buf(ptcl_vel_y);
@@ -647,6 +699,10 @@ struct WetbrushSimState {
         destroy_buf(ptcl_color_b);
         destroy_buf(ptcl_alive_b);
         destroy_buf(packed_paint);
+        destroy_buf(debug_ptcl_buf);
+        destroy_buf(debug_voxel_buf);
+        destroy_buf(debug_bristle_buf);
+        destroy_buf(debug_voxel_counter);
 
         auto destroy_prog = [&](ProgramHandle& h) {
             if (h) {
@@ -677,6 +733,9 @@ struct WetbrushSimState {
         destroy_prog(grid_to_ptcl_program);
         destroy_prog(field_copy_window_program);
         destroy_prog(pack_program);
+        destroy_prog(debug_pack_particles_program);
+        destroy_prog(debug_pack_voxels_program);
+        destroy_prog(debug_pack_bristles_program);
     }
 };
 

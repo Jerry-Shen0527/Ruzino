@@ -70,21 +70,42 @@ NODE_EXECUTION_FUNCTION(brush_wb_bristle)
     // §5.1 Bristle-particle liquid transfer (brush_paint_sim ~1531-1612).
     // ABSORB (paint supply -> sample using Eq.12/13 capacity) then EMIT
     // (sample -> particles). Ping-pong on sample_liquid.
+    //
+    // PEN-UP GATING: a pen-up brush is not painting — skip both passes. The
+    // ungated version kept absorbing the dip supply and emitting at the
+    // (stalled) sample positions while the fluid node skipped particle
+    // maintenance on pen-up frames, so the pool filled with particles that
+    // could never deposit (+emit_budget/frame, wrapping MAX_PARTICLES on a
+    // long pen-up tail).
     // ======================================================================
+    if (!field->pen_down) {
+        samples.sample_pos = field->sample_pos;
+        samples.sample_color = field->sample_color;
+        samples.sample_frame = field->sample_frame;
+        params.set_output("State", zs);
+        params.set_output("Bristle Samples", samples);
+        return true;
+    }
     Ruzino::BristleLiquidConstants blc = {};
     blc.num_bristles = Nb;
     blc.samples_per_bristle = S;
     blc.mu = 0.5f;
-    // M_max bounds the emission radius R_j = cbrt(3*M_max/(4π*ρ₀)). To keep
-    // paint tight to the brush footprint (radius≈brush_radius=0.02), R_j must
-    // stay ≈ brush_radius, not larger. ρ₀=1e3 (paper's SI paint density) in
-    // these normalized units makes R_j grow fast with M_max, so M_max must be
-    // small: M_max=0.03 → R_j≈0.02 ≈ brush_radius. Larger values (0.5, 2.0)
-    // made R_j=0.05-0.08, scattering emitted particles well past the brush
-    // and producing a wide diffuse blob instead of a stroke.
+    // M_max bounds the emission radius R_j = cbrt(3*M_max/(4π*ρ₀)). R_j must
+    // stay well inside D1 so newborns ride the adhesion bulb; with ρ₀=2e4,
+    // M_max=0.03 → R_j≈0.0076 ≈ 0.38×brush_radius (paper ratio ~0.35). Larger
+    // M_max (or smaller ρ₀) scatters emitted particles past the brush and
+    // produces a wide diffuse blob instead of a stroke.
     blc.M_max = 0.03f;
     blc.M_min = 0.005f;
-    blc.rho_0 = 1e3f;
+    // ρ₀ sets the emission radius R_j = cbrt(3·M_max/(4π·ρ₀)) (§5.1). At 1e3,
+    // R_j ≈ 0.019 ≈ 95% of brush_radius(0.02), which forced D1 up to
+    // 1.6×radius — an adhesion layer 80% as wide as the D0 conversion zone,
+    // so the whole swarm rode the brush and almost nothing deposited (leak
+    // ~3%/frame). 2e4 puts R_j ≈ 0.0076 (0.38×radius, paper ratio ~0.35),
+    // letting D1 drop to 0.5×radius (D1/D0 = 0.25 vs paper's 0.3): the
+    // adhesion shell is thin, trailing particles decouple within a few
+    // frames and retire across D0.
+    blc.rho_0 = 2e4f;
     blc.eps_emit = 0.1f;
     blc.max_emit_per_step = 10;
     blc.grid_res = field->grid_res;
@@ -97,6 +118,29 @@ NODE_EXECUTION_FUNCTION(brush_wb_bristle)
     blc.grid_center_y = field->grid_center.y;
     blc.D0 = brush_radius * 3.0f;
     blc.max_particles = max_ptcl;
+    // Global per-step particle-creation budget (see common.slangh). With the
+    // supply drip overloading essentially ALL Nb*S=76800 samples every frame,
+    // EMIT birthed ~76k particles/frame and instantly wrapped the 262k pool
+    // (wb_diag showed +70-80k/frame growth). The budget is now calibrated to
+    // the DEPOSITED DENSITY target instead of the pool size: with the
+    // discretely-normalized Eq.16 kernel (Σw=1), each particle lands ~its
+    // mass m (~0.002-0.05) as density. ABSORB reclaims ~70% of the emitted
+    // mass back into the bristles, so budget 300 only reached ~0.07 mean
+    // cell density on the trail; 800 lands ~0.2 (pack D_MAX=0.3 → strong but
+    // unsaturated stroke). Env-tunable for experiments.
+    static const int emit_budget = [] {
+        const char* env = std::getenv("WB_EMIT_BUDGET");
+        return env ? std::max(std::atoi(env), 0) : 800;
+    }();
+    blc.emit_budget = emit_budget;
+    // Per-frame entropy for the EMIT budget's probabilistic pre-gate (see
+    // bristle_liquid_transfer.slang) — the moving brush position decorrelates
+    // the gate draw across frames. The deposit node (which runs before this
+    // one in the zone chain) stores THIS frame's grid-local position in
+    // prev_brush_pos at its end, so it is current here.
+    blc.brush_pos_x = field->prev_brush_pos.x;
+    blc.brush_pos_y = field->prev_brush_pos.y;
+    blc.brush_pos_z = field->prev_brush_pos.z;
     blc.window_origin_x = field->win_origin_x;
     blc.window_origin_y = field->win_origin_y;
     blc.window_origin_z = 0;
@@ -143,6 +187,10 @@ NODE_EXECUTION_FUNCTION(brush_wb_bristle)
     // destroying the survivors the compact step had preserved and breaking
     // particle persistence — new particles overwrote slot 0+ and the
     // §5.1-emitted paint never accumulated.
+    //
+    // The EMIT budget counter IS reset here: it bounds births per step, so it
+    // must start from zero every frame.
+    Ruzino::brush_reset_counter(rc, device, field->emit_budget);
     Ruzino::brush_dispatch(
         rc,
         field->bri_liquid_emit_program,
@@ -158,6 +206,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_bristle)
         { { "sample_liquid_out", field->sample_liquid_b },
           { "sample_supply", field->sample_supply },
           { "ptcl_counter", field->ptcl_counter },
+          { "emit_budget", field->emit_budget },
           { "ptcl_pos_out", field->ptcl_pos },
           { "ptcl_vel_out", field->ptcl_vel },
           { "ptcl_color_out", field->ptcl_color },

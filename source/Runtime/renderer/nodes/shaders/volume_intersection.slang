@@ -21,8 +21,12 @@ struct VolumeHitAttributes {
     float tExit;   // Ray param at slab AABB exit (clamped to RayTCurrent).
 };
 
-// Density above which a cell counts as "paint surface".
-static const float kDensitySurface = 0.02;
+// Density above which a cell counts as "paint surface". 0.012 (was 0.02):
+// the conservatively-deposited trail has thin stretches (fast trajectory
+// segments get fewer particle deposits per cell) that sat just under 0.02
+// and rendered as gaps splitting the stroke into disconnected pieces;
+// 0.012 pulls them in without showing stray overspray.
+static const float kDensitySurface = 0.012;
 
 // Fetch one Float4 voxel, returning (0,0,0,0) outside the grid.
 float4 fetchVoxel(VolumeDesc vd, int ix, int iy, int iz)

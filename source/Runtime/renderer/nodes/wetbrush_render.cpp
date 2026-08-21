@@ -461,6 +461,13 @@ void fetch_)" + material.second->GetMaterialName() +
             "VolumeClosestHit", "", "VolumeIntersection", 4);
         context.announce_hitgroup(
             "VolumeShadowHit", "", "VolumeIntersection", 5);
+        // Capsule hit groups (slots 6/7) — debug bristles. Routed to points
+        // instances in registry segments mode (instanceContribution 6, see
+        // Hd_RUZINO_Points::updateTLAS).
+        context.announce_hitgroup(
+            "CapsuleClosestHit", "", "CapsuleIntersection", 6);
+        context.announce_hitgroup(
+            "CapsuleShadowHit", "", "CapsuleIntersection", 7);
         context.announce_miss("Miss", 0);
         context.announce_miss("ShadowMiss", 1);
 

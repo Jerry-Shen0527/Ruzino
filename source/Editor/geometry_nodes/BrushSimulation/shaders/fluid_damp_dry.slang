@@ -27,6 +27,16 @@ void main(uint3 dtid : SV_DispatchThreadID)
     if (dtid.x >= total) return;
     uint idx = dtid.x;
 
+    // Per-dispatch velocity damping (paper §4.2's damp step; the host sends
+    // pow(frame_damp, 1/substeps) so decay is substep-count independent).
+    // Injected brush velocity would otherwise persist until the cell dries
+    // and keep semi-Lagrangian-smearing the paint — the stroke visibly
+    // inflates while the active window still covers it.
+    float damp = cb.velocity_damp > 0.0 ? cb.velocity_damp : 1.0;
+    vel_x[idx] *= damp;
+    vel_y[idx] *= damp;
+    vel_z[idx] *= damp;
+
     // Zero velocity where paint is dry
     if (wetness[idx] < 0.01f) {
         vel_x[idx] = 0.0f;

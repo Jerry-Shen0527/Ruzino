@@ -1,5 +1,15 @@
 // Particle compaction — remove dead particles, pack alive ones  (3D)
-// Single-pass prefix-sum compaction
+// Single-pass prefix-sum compaction.
+//
+// The host ZEROES ptcl_alive_out before this dispatch (see fluid.cpp). This
+// shader must only WRITE, never CLEAR: a dead thread writing
+// ptcl_alive_out[idx]=0 at its own idx raced with packed survivors (a dead
+// particle whose index lands below the live count killed the survivor that
+// compacted into that slot), and slots above the live count kept the STALE
+// alive=1 flags of the ping-pong buffer's previous contents — every deposited
+// particle resurrected one frame later at its pre-deposit position and
+// re-deposited its mass every frame until the far+stalled kill caught it
+// (mass minting; the density climb to ~600 was partly this).
 
 #include "common.slangh"
 
@@ -19,11 +29,7 @@ void main(uint3 tid : SV_DispatchThreadID)
 {
     int idx = int(tid.x);
     if (idx >= cb.max_particles) return;
-
-    if (ptcl_alive[idx] == 0) {
-        ptcl_alive_out[idx] = 0;
-        return;
-    }
+    if (ptcl_alive[idx] == 0) return;  // dead: write nothing (buffer pre-zeroed)
 
     // Allocate compacted slot
     uint slot;

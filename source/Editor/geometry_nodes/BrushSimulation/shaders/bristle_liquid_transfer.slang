@@ -51,6 +51,10 @@ RWStructuredBuffer<SampleLiquid> sample_liquid_out : register(u0);
 // NOTE: float4 (not float3) to avoid RWStructuredBuffer<float3> stride hazards
 // on some drivers; .xyz stores position/velocity, .w unused.
 RWByteAddressBuffer ptcl_counter : register(u1);
+// Global per-step birth budget (zeroed by the host each frame). EMIT reserves
+// num_emit from it atomically; when spent, the sample KEEPS its load (no
+// mass loss — it just tries again next step). See BristleLiquidConstants.
+RWByteAddressBuffer emit_budget : register(u7);
 RWStructuredBuffer<float4> ptcl_pos_out : register(u2);
 RWStructuredBuffer<float4> ptcl_vel_out : register(u3);
 RWStructuredBuffer<float4> ptcl_color_out : register(u4);
@@ -59,6 +63,14 @@ RWStructuredBuffer<uint> ptcl_alive_out : register(u5);
 #ifndef PASS
 #define PASS 0
 #endif
+
+// Per-particle emission mass floor (EMIT) — also the ABSORB overload
+// headroom: a saturated sample may only take up enough extra supply to fund
+// ONE more particle beyond the (1+ε)M_j emission threshold. Without this cap
+// a budget-blocked sample kept absorbing (m_j ballooned while the global
+// EMIT budget was spent, dumping the whole balloon as a burst of particles
+// the moment the budget freed up).
+static const float PER_PARTICLE_FLOOR = 0.05;
 
 // World position → 3D grid cell coordinates
 float3 world_to_grid_f3(float3 pos)
@@ -307,11 +319,14 @@ void main(uint3 tid : SV_DispatchThreadID)
         // hydrophilic bristle keeps taking up liquid past its static capacity
         // M_j when the supply is rich (a dipped brush). This overload is
         // exactly what §5.1 EMIT consumes (m_j > (1+ε)M_j → release
-        // particles). Allow continued uptake so the supply can push m_j into
-        // the overload region; EMIT drains the excess each frame.
+        // particles). Uptake is capped at one particle's worth of headroom
+        // above the emission threshold (PER_PARTICLE_FLOOR) so a
+        // budget-blocked sample parks at the cap instead of ballooning.
         float bleed_weight = avail_supply * 0.02 * m_j;
         result.pigment = color_mix(absorb_color, c_j, bleed_weight, m_j);
-        float take = min(avail_supply, cb.M_max);
+        float overload_room = max(
+            (1.0 + cb.eps_emit) * M_j + PER_PARTICLE_FLOOR - m_j, 0.0);
+        float take = min(avail_supply, overload_room);
         result.mass = m_j + take;
         sample_supply[idx] = max(avail_supply - take, 0.0);
     }
@@ -336,9 +351,43 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     // Excess mass to emit
     float excess = m_j - emit_threshold_high;
-    float per_particle = max(M_j * 0.15, 0.05);
+    float per_particle = max(M_j * 0.15, PER_PARTICLE_FLOOR);
     int num_emit = int(ceil(excess / per_particle));
     num_emit = min(num_emit, cb.max_emit_per_step);
+
+    // Global birth budget: reserve num_emit atomically; a spent budget leaves
+    // the load on the sample (mass stays put, emission retries next step).
+    // Without this, the supply drip overloaded all 76800 samples every frame
+    // and EMIT birthed ~76k particles/step, wrapping the pool.
+    if (cb.emit_budget > 0) {
+        // Probabilistic pre-gate BEFORE the atomic. The InterlockedAdd race
+        // is won by whichever threads arrive first — in dispatch order, i.e.
+        // the SAME first ~budget/max_emit samples (bristle #0's) every frame,
+        // so all paint sprayed from one spot on the brush and the trail
+        // rendered as a chain of clumps. Gate each sample with a
+        // per-(sample, frame) random draw (brush position varies per frame)
+        // so only ~budget/(Nb·S·max_emit) fraction compete, spread randomly
+        // across the whole brush each frame.
+        uint num_samples = uint(cb.num_bristles * cb.samples_per_bristle);
+        float gate_p = min(
+            1.0, float(cb.emit_budget) /
+                     max(1.0, float(num_samples * uint(cb.max_emit_per_step))));
+        float draw = frac(sin(
+            cb.brush_pos_x * 12.9898 + cb.brush_pos_y * 78.233 +
+            float(idx) * 0.6180339 + cb.brush_pos_z * 37.719) * 43758.5453);
+        if (draw > gate_p) {
+            sample_liquid_out[idx] = liquid;  // keep load, retry next step
+            return;
+        }
+        uint used;
+        emit_budget.InterlockedAdd(0, uint(num_emit), used);
+        if (used >= uint(cb.emit_budget)) {
+            sample_liquid_out[idx] = liquid;  // keep load, no emission
+            return;
+        }
+        num_emit = int(min(
+            uint(num_emit), uint(cb.emit_budget) - used));
+    }
 
     float total_emit_mass = 0.0;
 

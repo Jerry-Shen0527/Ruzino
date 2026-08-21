@@ -59,7 +59,12 @@ void main(uint3 tid : SV_DispatchThreadID)
     // Only transfer particles that are:
     // 1. Away from bristles (d_{B,k} >= D0)
     // 2. Moving slowly (speed < threshold) — paper §5.2 "moves slowly"
-    if (d_B < cb.D0 || speed > 0.5) {
+    // PEN-UP: the brush is away from the canvas (lifted or trajectory
+    // exhausted) — d_{B,k} against the stalled sample positions no longer
+    // means proximity to a painting brush, so drop the distance condition and
+    // let the whole carried swarm settle onto the canvas.
+    bool near_brush = d_B < cb.D0 && cb.pen_down != 0;
+    if (near_brush || speed > 0.5) {
         ptcl_alive_out[idx] = 1;
         return;
     }
@@ -68,7 +73,10 @@ void main(uint3 tid : SV_DispatchThreadID)
     float half_p = cb.paper_size * 0.5;
     float half_h = cb.height_extent * 0.5;
     float cell_z = cb.height_extent / float(cb.grid_res_z);
-    float h = cb.cell_size * 1.5;  // kernel radius (XY)
+    // 2.5-cell kernel: wide enough that retiring-particle deposits merge
+    // into a continuous band instead of a chain of one-cell clumps with
+    // sub-threshold gaps between them (Σw=1 keeps mass exact).
+    float h = cb.cell_size * 2.5;  // kernel radius (XY)
     int res = cb.grid_res, res_z = cb.grid_res_z;
 
     int cx = int(floor((pos.x - cb.grid_center_x + half_p) / cb.cell_size));
@@ -85,10 +93,42 @@ void main(uint3 tid : SV_DispatchThreadID)
     // persistent canvas. Only deposit into valid global-grid cells (the bounds
     // check in the neighborhood loop below handles out-of-grid).
 
-    // 3×3×3 neighborhood with kernel weights (Eq.16)
-    [unroll] for (int dz = -1; dz <= 1; dz++) {
-      [unroll] for (int dy = -1; dy <= 1; dy++) {
-        [unroll] for (int dx = -1; dx <= 1; dx++) {
+    // 5×5×5 neighborhood (±2 cells) with a 2.5-cell kernel, discretely
+    // normalized: each particle deposits EXACTLY its mass m_k over the
+    // neighborhood (Σ_c w_c = 1), so ρ_c += m_k · w_c keeps the particle mass
+    // in DENSITY units — one emitted particle (m ≈ 0.05) adds ~0.05 to the
+    // cells it covers. The wide footprint merges retiring-particle deposits
+    // into a continuous band instead of a chain of clumps with
+    // sub-threshold gaps between them. The previous 3×3×3 × (W·dV) form
+    // deposited m·W·dV ≈ 4e-6 per cell at res 1024 (dV = cell³ ≈ 9.3e-10) —
+    // four orders below the render threshold — so the trail rendered as
+    // faint disconnected blobs. The dV factor only makes sense when m_k is a
+    // physical mass and ρ a physical density; our m_k ("liquid load") and ρ
+    // (normalized paint density) share one arbitrary unit scale, and the
+    // discrete normalization keeps the grid↔particle round trip exactly
+    // conservative on that scale (grid_to_particle's subtraction uses the
+    // same normalized weights).
+    float wsum = 0.0;
+    [unroll] for (int dz = -2; dz <= 2; dz++) {
+      [unroll] for (int dy = -2; dy <= 2; dy++) {
+        [unroll] for (int dx = -2; dx <= 2; dx++) {
+            int ix = cx + dx;
+            int iy = cy + dy;
+            int iz = cz + dz;
+            if (ix < 0 || ix >= res || iy < 0 || iy >= res || iz < 0 || iz >= res_z) continue;
+            float3 cell_pos = float3(
+                (float(ix) + 0.5) * cb.cell_size - half_p + cb.grid_center_x,
+                (float(iy) + 0.5) * cb.cell_size - half_p + cb.grid_center_y,
+                (float(iz) + 0.5) * cell_z - half_h + cb.grid_center_z);
+            wsum += W_smooth_3d(pos - cell_pos, h);
+        }
+      }
+    }
+    if (wsum < 1e-9) return;  // no valid neighbor cell (outside grid)
+
+    [unroll] for (int dz = -2; dz <= 2; dz++) {
+      [unroll] for (int dy = -2; dy <= 2; dy++) {
+        [unroll] for (int dx = -2; dx <= 2; dx++) {
             int ix = cx + dx;
             int iy = cy + dy;
             int iz = cz + dz;
@@ -98,21 +138,17 @@ void main(uint3 tid : SV_DispatchThreadID)
                 (float(ix) + 0.5) * cb.cell_size - half_p + cb.grid_center_x,
                 (float(iy) + 0.5) * cb.cell_size - half_p + cb.grid_center_y,
                 (float(iz) + 0.5) * cell_z - half_h + cb.grid_center_z);
-            float w = W_smooth_3d(pos - cell_pos, h);
+            float w = W_smooth_3d(pos - cell_pos, h) / wsum;
 
             // Global grid index (buffers are global-sized).
             uint gi = grid_idx_3d(uint(ix), uint(iy), uint(iz), res, res_z);
 
-            // Eq.16: ρ_c += m_k * W(p_k - x_c, h) * dV. W is a normalized SPH
-            // kernel (per unit volume); multiply by the cell volume dV to get
-            // the cell-density contribution. Without dV the kernel value at
-            // r≈0 is ~1/(h³·(2π)^1.5) ≈ 317000 for cell-size h, causing
-            // runaway density. Color accumulated as weighted RYB; brightness-
-            // preserving mixing is deferred to the merge step. Plain += races
-            // (see particle_rasterize note) but collisions are rare for sparse
+            // Eq.16 with discrete normalization: ρ_c += m_k · w_c. Color
+            // accumulated as weighted RYB; brightness-preserving mixing is
+            // deferred to the merge step. Plain += races (see
+            // particle_rasterize note) but collisions are rare for sparse
             // far-from-brush particles.
-            float dV = cb.cell_size * cb.cell_size * cell_z;
-            float w_new = col.w * w * dV;
+            float w_new = col.w * w;
             density[gi] += w_new;
             color_r[gi] += col.x * w_new;
             color_y[gi] += col.y * w_new;

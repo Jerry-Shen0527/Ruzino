@@ -97,6 +97,21 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
     glm::vec3 brush_accel_3d(0.0f);
     glm::vec3 brush_angular_accel(0.0f);
 
+    // Grid↔particle conversion + adhesion ranges (paper §5.2 Table 1: D0
+    // = 1cm fixed, D1 = 0.3cm; here scaled off brush_radius since the sim
+    // runs in normalized paper units). D1 must exceed the §5.1 emission
+    // radius R_j = cbrt(3·M_max/(4π·ρ₀)) (with ρ₀=2e4: R_j ≈ 0.0076 ≈
+    // 0.38×brush_radius) so newborns ride: Eq.10's adhesion blend is
+    // max(1 − d_B/D1, 0). Keeping D1/D0 ≈ 0.25 (paper: 0.3) is what makes
+    // the trailing edge shed: a FAT adhesion layer (the previous
+    // D1 = 1.6×radius, forced by the old ρ₀=1e3 R_j ≈ 0.95×radius) made the
+    // whole swarm ride the brush with only ~3%/frame leaking out to deposit.
+    // D0 > D1 strictly: beyond D0 a slow particle deposits (§5.2), so the
+    // trail is laid continuously at the trailing edge while the interior
+    // swarm rides with the brush.
+    const float D0 = brush_radius * 2.0f;
+    const float D1 = brush_radius * 0.5f;
+
     // Lazily compile the fluid + particle shaders.
     auto ensure_prog = [&](ProgramHandle& slot, const char* fn) {
         if (!slot)
@@ -127,13 +142,9 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         Ruzino::ParticleConstants pc = {};
         pc.max_particles = max_ptcl;
         pc.dt = 0.016f;
-        pc.D0 = brush_radius *
-                1.5f;  // deposit boundary (§5.2). Now that num_bristles is set
-                       // in this CB (was 0 → d_B=∞ → instant deposit), d_{B,k}
-                       // is real. 1.5× (0.03) is just above R_j (0.019), so
-                       // newborns live ~1-2 frames trailing the brush then
-                       // deposit, spreading paint along the stroke.
-        pc.friction_delta = 5.0f / pc.D0;
+        pc.D0 = D0;
+        pc.pen_down = 1;  // this whole section is gated on bp.active
+        pc.friction_delta = 5.0f / D0;
         pc.flip_gamma = 0.8f;
         pc.grid_res = field->grid_res;
         pc.grid_res_z = WIN_Z;
@@ -152,14 +163,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         pc.brush_pos_y = brush_pos_3d.y;
         pc.brush_pos_z = brush_pos_3d.z;
         pc.brush_radius = brush_radius;
-        // Adhesion range (§4.3 Eq.10): blend = max(1 - d_B/D1, 0). Low (0.9× <
-        // R_j) so emitted particles (d_B≈R_j at birth) have ~zero adhesion —
-        // they stay where emitted instead of clinging to the brush. The brush
-        // moves on, d_B grows past D0, and they deposit in place along the
-        // stroke path (spread out), not piled at the touchdown. Higher D1
-        // glued particles to the brush → they never lagged past D0 → never
-        // deposited → pool saturated → no paint on grid.
-        pc.D1 = brush_radius * 0.9f;
+        pc.D1 = D1;
         pc.num_bristles = Nb;
         pc.samples_per_bristle = S;
         pc.brush_accel_x = brush_accel_3d.x;
@@ -260,6 +264,13 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         mc2.window_size_x = WIN_XY;
         mc2.window_size_y = WIN_XY;
         mc2.window_size_z = WIN_Z;
+        // Swarm→grid momentum coupling scale (bristle_merge relaxation gate;
+        // see the quadratic-momentum note there). WB_VEL_INJECT tunes it.
+        static const float vel_inject_scale = [] {
+            const char* env = std::getenv("WB_VEL_INJECT");
+            return env ? std::max(std::atof(env), 0.0) : 1.0;
+        }();
+        mc2.velocity_inject_scale = vel_inject_scale;
         nvrhi::BufferHandle merge_cb;
         Ruzino::brush_upload_cb(
             rc, device, &mc2, sizeof(mc2), "wb_ptcl_merge_cb", merge_cb);
@@ -279,6 +290,25 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         rc.destroy(merge_cb);
         rc.destroy(ptcl_cb);
     }
+    else if (field->particles_initialized) {
+        // Pen-up: the rasterized-swarm composite in pack_float4 must not keep
+        // showing the last pen-down frame's swarm. The maintenance below
+        // deposits the whole carried swarm onto the grid, so the render field
+        // is grid-only — clear the stale raster.
+        auto clear_raster = [&](nvrhi::BufferHandle& buf) {
+            Ruzino::brush_dispatch(
+                rc,
+                field->field_clear_program,
+                {},
+                { { "field", buf } },
+                nullptr,
+                win_n3d);
+        };
+        clear_raster(field->ptcl_density);
+        clear_raster(field->ptcl_rast_r);
+        clear_raster(field->ptcl_rast_y);
+        clear_raster(field->ptcl_rast_b);
+    }
 
     // ======================================================================
     // FLUID SOLVE (brush_paint_sim ~1971-2468). One or more substeps based on
@@ -297,6 +327,24 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
             std::max(1, static_cast<int>(std::ceil(sim_dt / max_sub_dt)));
         substeps = std::min(substeps, 16);
         float sub_dt = sim_dt / static_cast<float>(substeps);
+
+        // Per-FRAME velocity decay (fluid_damp_dry applies it once per
+        // substep, so convert: damp_sub = frame_damp^(1/substeps)). Without
+        // this the brush velocity injected by brush_deposit persists until
+        // wetness < 0.01 — at drying_rate 0.1 that is ~600 frames — and the
+        // active-window advection keeps semi-Lagrangian-smearing the stroke
+        // (backtraces of tens of cells per frame at res 4096), which reads as
+        // the painted stroke continuously inflating. WB_VEL_DAMP tunes the
+        // per-frame factor (0 = no damping, i.e. the old behavior).
+        static const float vel_damp_frame = [] {
+            const char* env = std::getenv("WB_VEL_DAMP");
+            float v = env ? std::atof(env) : 0.8f;
+            return std::min(std::max(v, 0.0f), 1.0f);
+        }();
+        const float vel_damp_sub =
+            vel_damp_frame > 0.0f
+                ? std::pow(vel_damp_frame, 1.0f / static_cast<float>(substeps))
+                : 1.0f;
 
         for (int s = 0; s < substeps; s++) {
             Ruzino::SimConstants fluid_cb = {};
@@ -324,6 +372,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
             // rasterized field (window-sized), bound into divergence/jacobi/
             // gradient. See those shaders' is_brush_g.
             fluid_cb.brush_boundary_gate = 0.01f;
+            fluid_cb.velocity_damp = vel_damp_sub;
 
             nvrhi::BufferHandle cb_buf;
             Ruzino::brush_upload_cb(
@@ -553,7 +602,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                 Ruzino::ParticleConstants pc = {};
                 pc.max_particles = max_ptcl;
                 pc.dt = sub_dt;
-                pc.D0 = brush_radius * 1.5f;  // match particle/maintenance D0
+                pc.D0 = D0;  // match particle/maintenance D0
                 pc.flip_gamma = 0.8f;
                 pc.grid_res = field->grid_res;
                 pc.grid_res_z = WIN_Z;
@@ -604,7 +653,11 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         Ruzino::ParticleConstants pc = {};
         pc.max_particles = max_ptcl;
         pc.dt = 0.016f;
-        pc.D0 = brush_radius * 1.5f;  // match particle-section D0
+        pc.D0 = D0;  // match particle-section D0
+        // grid_to_particle drains within D1 (the adhesion bulb), not D0 —
+        // see the moat note in grid_to_particle.slang. The maintenance CB
+        // must carry D1 or the shader reads 0 and never converts.
+        pc.D1 = D1;
         pc.grid_res = field->grid_res;
         pc.grid_res_z = WIN_Z;
         pc.height_extent = field->grid_height;
@@ -630,6 +683,10 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         // effect: the d_B was always astronomically larger than any D0.
         pc.num_bristles = Nb;
         pc.samples_per_bristle = S;
+        // Pen state for the §5.2 conversions below: pen-up deposits the
+        // carried swarm (d_{B,k} vs stalled samples means nothing) and
+        // suspends grid→particle conversion.
+        pc.pen_down = bp.active ? 1 : 0;
 
         nvrhi::BufferHandle maint_cb;
         Ruzino::brush_upload_cb(
@@ -713,7 +770,19 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         std::swap(field->color_y, field->color_y_tmp);
         std::swap(field->color_b, field->color_b_tmp);
 
-        // Particle compaction
+        // Particle compaction. Zero the OUTPUT alive buffer first: compact
+        // only writes packed survivors' flags, so slots above the live count
+        // must be cleared by us or they keep the ping-pong buffer's stale
+        // alive=1 flags (deposited particles resurrected at their pre-deposit
+        // positions every frame, re-depositing their mass — see
+        // particle_compact.slang).
+        Ruzino::brush_dispatch(
+            rc,
+            field->field_clear_program,
+            {},
+            { { "field", field->ptcl_alive_b } },
+            nullptr,
+            max_ptcl);
         Ruzino::brush_reset_counter(rc, device, field->ptcl_counter);
         Ruzino::brush_dispatch(
             rc,

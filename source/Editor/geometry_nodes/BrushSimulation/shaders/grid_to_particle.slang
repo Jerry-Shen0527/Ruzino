@@ -78,13 +78,29 @@ void main(uint3 tid : SV_DispatchThreadID)
     float cell_cz = (float(z) + 0.5) * cell_z - half_h + cb.grid_center_z;
     float3 cell_center = float3(cell_cx, cell_cy, cell_cz);
 
-    // Only convert cells within D0 of the brush footprint (XY)
+    // PEN-UP: no conversion — a lifted brush has no particle zone around it
+    // (§5.2's "liquid within D0 of bristles must be particles" only applies
+    // while the brush is painting). Suspending this also stops the
+    // convert→re-deposit churn from running against a parked brush.
+    if (cb.pen_down == 0) return;
+
+    // Only convert cells the ADHESION BULB covers (within D1 of the brush
+    // footprint XY). Draining within D0 (the wider §5.2 conversion range)
+    // left an empty annulus: grid paint drained out to D0, but particles
+    // only ride within D1 < D0, so the D1..D0 ring had neither grid paint
+    // nor swarm — the rendered stroke showed a moat around the brush. With
+    // the drain bounded by D1, annulus cells keep their deposits and the
+    // trail runs continuous right up to the (composited) bulb.
     float2 dxy = cell_center.xy - float2(cb.brush_pos_x, cb.brush_pos_y);
     float d_to_brush = length(dxy);
-    if (d_to_brush > cb.D0) return;
+    if (d_to_brush > cb.D1) return;
 
     // Stratified sampling: 27 candidate positions (3×3×3 sub-grid per cell)
-    float h = cell_sz * 1.5;  // smoothing kernel radius (XY-isotropic approx)
+    // 2.5-cell kernel on the ±1 drain window (tighter than particle_to_grid's
+    // ±2 deposit on purpose: the drain stays inside the adhesion bulb while
+    // deposits feather outward, so each convert→re-deposit cycle smooths the
+    // trail instead of notching it).
+    float h = cell_sz * 2.5;  // smoothing kernel radius (XY-isotropic approx)
 
     // Particle mass per sub-cell: equal share of cell density
     float mass_per_candidate = cell_density / 27.0;
@@ -96,23 +112,43 @@ void main(uint3 tid : SV_DispatchThreadID)
     float inv_d = 1.0 / max(cell_density, 1e-8f);
     float3 norm_ryb = float3(color_r[gidx], color_y[gidx], color_b[gidx]) * inv_d;
 
-    float dV = cell_sz * cell_sz * cell_z;
-
     [unroll] for (int sz = 0; sz < 3; sz++) {
       [unroll] for (int sy = 0; sy < 3; sy++) {
         [unroll] for (int sx = 0; sx < 3; sx++) {
 
-            // Stratified sub-cell position (27 samples per cell, §5.2)
+            // Stratified sub-cell position (27 samples per cell, §5.2) with a
+            // random jitter INSIDE each stratum. Fixed stratum centers put
+            // every converted particle on a global 3×3×3 sub-lattice — the
+            // debug particle render exposed the paint mass as a regular grid
+            // instead of free particles. Stratified sampling in the Monte
+            // Carlo sense IS jittered strata (and re-deposit then no longer
+            // cancels systematically onto the same grid points). Same
+            // frac(sin) hash as the bristle EMIT pass, seeded per cell +
+            // stratum so every candidate gets a stable, distinct offset.
+            float3 stratum = float3(cell_sz / 3.0, cell_sz / 3.0, cell_z / 3.0);
+            uint jseed = uint(x) * 73856093u ^ uint(y) * 19349663u ^
+                         uint(z) * 83492791u ^ uint(sx) * 2971u ^
+                         uint(sy) * 4177u ^ uint(sz) * 7537u;
+            float jx = frac(sin(float(jseed)) * 43758.5453) - 0.5;
+            float jy = frac(sin(float(jseed + 1u)) * 43758.5453) - 0.5;
+            float jz = frac(sin(float(jseed + 2u)) * 43758.5453) - 0.5;
+
             float3 candidate = float3(
                 cell_cx - cell_sz * 0.5 + (float(sx) + 0.5) / 3.0 * cell_sz,
                 cell_cy - cell_sz * 0.5 + (float(sy) + 0.5) / 3.0 * cell_sz,
-                cell_cz - cell_z  * 0.5 + (float(sz) + 0.5) / 3.0 * cell_z);
+                cell_cz - cell_z  * 0.5 + (float(sz) + 0.5) / 3.0 * cell_z)
+                + float3(jx, jy, jz) * stratum;
 
-            // Interpolate density at candidate from neighboring cells (3×3×3 kernel)
+            // Interpolate density at candidate from neighboring cells (3×3×3
+            // kernel), discretely normalized (Σw = 1) so the interpolated
+            // value is in the same DENSITY units as the cells themselves and
+            // the 0.02 gate below reads on that scale. The previous W·dV
+            // form yielded ρ·dV ≈ 1e-4 — the gate never fired at res ≥1024.
             float interp_density = 0.0;
             int cx = int(floor((candidate.x - cb.grid_center_x + half_p) / cell_sz));
             int cy = int(floor((candidate.y - cb.grid_center_y + half_p) / cell_sz));
             int cz = int(floor((candidate.z - cb.grid_center_z + half_h) / cell_z));
+            float interp_wsum = 0.0;
             for (int dz = -1; dz <= 1; dz++) {
                 for (int dy = -1; dy <= 1; dy++) {
                     for (int dx = -1; dx <= 1; dx++) {
@@ -122,10 +158,23 @@ void main(uint3 tid : SV_DispatchThreadID)
                             (float(nx) + 0.5) * cell_sz - half_p + cb.grid_center_x,
                             (float(ny) + 0.5) * cell_sz - half_p + cb.grid_center_y,
                             (float(nz) + 0.5) * cell_z  - half_h + cb.grid_center_z);
-                        float w = W_smooth_3d(candidate - npos, h);
+                        interp_wsum += W_smooth_3d(candidate - npos, h);
+                    }
+                }
+            }
+            if (interp_wsum < 1e-9) continue;
+            for (int dz = -1; dz <= 1; dz++) {
+                for (int dy = -1; dy <= 1; dy++) {
+                    for (int dx = -1; dx <= 1; dx++) {
+                        int nx = cx + dx, ny = cy + dy, nz = cz + dz;
+                        if (nx < 0 || nx >= res || ny < 0 || ny >= res || nz < 0 || nz >= res_z) continue;
+                        float3 npos = float3(
+                            (float(nx) + 0.5) * cell_sz - half_p + cb.grid_center_x,
+                            (float(ny) + 0.5) * cell_sz - half_p + cb.grid_center_y,
+                            (float(nz) + 0.5) * cell_z  - half_h + cb.grid_center_z);
+                        float w = W_smooth_3d(candidate - npos, h) / interp_wsum;
                         uint gi = grid_idx_3d(uint(nx), uint(ny), uint(nz), res, res_z);
-                        float dV_interp = cell_sz * cell_sz * cell_z;
-                        interp_density += density[gi] * w * dV_interp;
+                        interp_density += density[gi] * w;
                     }
                 }
             }
@@ -142,10 +191,11 @@ void main(uint3 tid : SV_DispatchThreadID)
             // Eq.15 density subtraction spread to the particle's 3×3×3
             // neighborhood (paper §5.2: "c can be any cell near new particles
             // and it does not have to emit any particle"). Each neighbor cell
-            // c loses m_k · W(candidate − x_c, h) · dV. This is symmetric with
-            // particle_to_grid's Eq.16 add and produces a smooth density field
-            // across the D0 boundary. Plain -= races but collisions are rare
-            // (see common.slangh note).
+            // c loses m_k · w_c with the SAME discrete normalization
+            // (Σw = 1) that particle_to_grid deposits with, so the 27
+            // candidates × (ρ_c/27) round trip removes and restores exactly
+            // ρ_c — conservative on the shared density/mass unit scale. Plain
+            // -= races but collisions are rare (see common.slangh note).
             //
             // Color subtraction (§14 TODO #2): each neighbor loses the SAME
             // fraction of its premultiplied color, so its color/density ratio
@@ -154,6 +204,7 @@ void main(uint3 tid : SV_DispatchThreadID)
             int pcx = int(floor((candidate.x - cb.grid_center_x + half_p) / cell_sz));
             int pcy = int(floor((candidate.y - cb.grid_center_y + half_p) / cell_sz));
             int pcz = int(floor((candidate.z - cb.grid_center_z + half_h) / cell_z));
+            float sub_wsum = 0.0;
             for (int sdt = -1; sdt <= 1; sdt++) {
               for (int sdy = -1; sdy <= 1; sdy++) {
                 for (int sdx = -1; sdx <= 1; sdx++) {
@@ -163,9 +214,23 @@ void main(uint3 tid : SV_DispatchThreadID)
                         (float(nx) + 0.5) * cell_sz - half_p + cb.grid_center_x,
                         (float(ny) + 0.5) * cell_sz - half_p + cb.grid_center_y,
                         (float(nz) + 0.5) * cell_z  - half_h + cb.grid_center_z);
-                    float w = W_smooth_3d(candidate - npos, h);
+                    sub_wsum += W_smooth_3d(candidate - npos, h);
+                }
+              }
+            }
+            if (sub_wsum < 1e-9) continue;
+            for (int sdt = -1; sdt <= 1; sdt++) {
+              for (int sdy = -1; sdy <= 1; sdy++) {
+                for (int sdx = -1; sdx <= 1; sdx++) {
+                    int nx = pcx + sdx, ny = pcy + sdy, nz = pcz + sdt;
+                    if (nx < 0 || nx >= res || ny < 0 || ny >= res || nz < 0 || nz >= res_z) continue;
+                    float3 npos = float3(
+                        (float(nx) + 0.5) * cell_sz - half_p + cb.grid_center_x,
+                        (float(ny) + 0.5) * cell_sz - half_p + cb.grid_center_y,
+                        (float(nz) + 0.5) * cell_z  - half_h + cb.grid_center_z);
+                    float w = W_smooth_3d(candidate - npos, h) / sub_wsum;
                     uint gi = grid_idx_3d(uint(nx), uint(ny), uint(nz), res, res_z);
-                    float loss = m_k * w * dV;
+                    float loss = m_k * w;
                     density_out[gi] -= loss;
                     // Neighbor pigment (normalized); fall back to this cell's
                     // pigment if the neighbor has no density to normalize by.

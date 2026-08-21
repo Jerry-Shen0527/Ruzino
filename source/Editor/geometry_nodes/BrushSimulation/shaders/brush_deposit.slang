@@ -127,8 +127,17 @@ void main(uint3 dtid : SV_DispatchThreadID)
         if (vi > 0 && prev_time >= 0.0f) {
             float dt_v = pos.w - prev_time;
             if (dt_v > 1e-6f) {
+                // Scale down the injected brush velocity: at full speed the
+                // footprint cells advect tens of cells per frame at res 4096
+                // and the semi-Lagrangian smear balloons the fresh stroke.
+                // cb.velocity_inject_scale (~0.3) keeps a wet directional
+                // flow without the inflation (the paper's mechanism is the
+                // bristles acting as moving no-flux walls, §4.2, not a bulk
+                // liquid velocity equal to brush speed).
+                float vs = cb.velocity_inject_scale > 0.0f
+                             ? cb.velocity_inject_scale : 1.0f;
                 vel_inject = float2((gx - prev_gx) / dt_v / (float)N,
-                                    (gy - prev_gy) / dt_v / (float)N);
+                                    (gy - prev_gy) / dt_v / (float)N) * vs;
             }
         }
 

@@ -58,7 +58,19 @@ struct SimConstants {
     // treated as a no-flux wall by fluid_divergence/jacobi/gradient. Set per
     // dispatch (0 disables the brush boundary). Replaces former _pad0.
     float brush_boundary_gate;
-    float _pad1, _pad2;  // keep 16-byte alignment
+    // Per-dispatch velocity damping multiplier (fluid_damp_dry). The host
+    // computes pow(frame_damp, 1/substeps) so the per-FRAME decay is
+    // substep-count independent. Replaces former _pad1.
+    float velocity_damp;
+    // Scale on the brush velocity injected by brush_deposit into the footprint
+    // cells. 1.0 smears fresh paint at full brush speed (semi-Lagrangian
+    // backtraces of tens of cells per frame at res 4096); ~0.3 keeps a wet
+    // directional flow without ballooning the stroke. Replaces former _pad2.
+    float velocity_inject_scale;
+    // Render composite scale for the rasterized particle swarm overlaid on the
+    // grid paint in pack_float4 (0 disables; see the moat note there).
+    float ptcl_render_scale;
+    float _pad3;  // keep 16-byte alignment
 };
 
 // ============================================================
@@ -330,6 +342,11 @@ struct ParticleConstants {
     int window_origin_z;
     int window_size_x;
     int window_size_z;
+    // Pen state (from deposit's BrushPoint): pen-up = brush away from the
+    // canvas. particle_to_grid then deposits slow particles regardless of
+    // d_{B,k} (a lifted brush is beyond D0 of everything); grid_to_particle
+    // suspends conversion.
+    int pen_down;
 };
 
 // ============================================================
@@ -383,6 +400,17 @@ struct BristleLiquidConstants {
     float grid_center_x, grid_center_y, grid_center_z;
     float D0;                // grid-particle conversion distance
     int max_particles;       // for slot wrap in EMIT
+    // Global per-step particle-creation budget (EMIT pass). The paper's
+    // per-sample limit (max_emit_per_step) bounds ONE sample; with 76800
+    // samples all overloading every frame (supply drip) that still floods
+    // the pool (~76k births/frame vs 262k slots). EMIT atomically reserves
+    // from the budget buffer and keeps the sample's load when it is spent.
+    int emit_budget;         // max NEW particles per step, 0 = unlimited
+    // Brush world position — per-frame entropy for the EMIT budget's
+    // probabilistic pre-gate (see bristle_liquid_transfer.slang).
+    float brush_pos_x;
+    float brush_pos_y;
+    float brush_pos_z;
     // Active-window origin/size (Wetbrush §4.2) — 3D buffers are window-sized.
     int window_origin_x;
     int window_origin_y;

@@ -40,6 +40,16 @@ struct HD_RUZINO_API GPUSceneAssember {
         uint32_t sphere_count,
         nvrhi::IBuffer* out_aabb_buffer);
 
+    // Compute AABBs for capsule segments on GPU (debug bristles). Each prim is
+    // the capsule around segment [A, B]: AABB = min/max(A, B) ± radius.
+    static void compute_segment_aabbs(
+        nvrhi::BufferHandle vertex_buffer,
+        size_t endpoints_a_offset,
+        size_t endpoints_b_offset,
+        size_t radii_offset,
+        uint32_t segment_count,
+        nvrhi::IBuffer* out_aabb_buffer);
+
     static GPUSceneAssember& get_instance()
     {
         return instance;
@@ -63,6 +73,17 @@ struct HD_RUZINO_API GPUSceneAssember {
 
     ResourceAllocator sa_resource_allocator;
     std::unique_ptr<ShaderFactory> shader_factory;
+
+    // Cached AABB-compute resources. The debug points pipeline calls the
+    // compute_*_aabbs helpers EVERY frame (registry version bump); creating
+    // and destroying the program per call both stalls (slang recompile +
+    // PSO recreation) and trips a use-after-free in the allocator's program
+    // cache after a few cycles. Compile once, reuse the constant buffer.
+    ProgramHandle sphere_aabb_program;
+    ProgramHandle segment_aabb_program;
+    nvrhi::BufferHandle sphere_aabb_params;
+    nvrhi::BufferHandle segment_aabb_params;
+
     static GPUSceneAssember instance;
 };
 
