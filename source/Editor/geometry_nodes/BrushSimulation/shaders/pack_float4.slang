@@ -5,17 +5,19 @@
 //
 // Dispatched with one thread per global grid cell (res * res * res_z).
 //
-// PARTICLE-SWARM COMPOSITE: grid_to_particle drains the grid density within D0
-// of the brush into (invisible-to-the-render) particles every frame, so a
-// grid-only pack leaves a "moat" of missing paint around the brush — the stroke
-// renders broken at its trailing end (paper §5.2: near the brush the liquid IS
-// particles). Composite the per-frame rasterized swarm (ptcl_density /
-// ptcl_color_*, window-sized, filled by particle_rasterize in the fluid node)
-// on top of the grid field, exactly like paper §6 renders the active-window
-// liquid. Both sides are mass-premultiplied, so the composite is a plain sum
-// before normalization. One-frame lag: the raster predates this frame's §5.2
-// conversions, and a particle that deposited this frame is counted on both
-// sides for one frame (slightly brighter fresh trail, self-correcting).
+// UNIFIED PAINT RENDERING: paper §6 renders the grid with raymarching and the
+// near-brush liquid particles with a separate screen-space method, accepting a
+// visible mode seam around the brush. We instead composite the per-frame
+// particle raster (ptcl_density / ptcl_rast_*, mass-weighted, Σw=1 per
+// particle — the same transient raster particle_rasterize.slang builds for
+// the §4.3 joint velocity merge) into this field, so paint inside and outside
+// the active window renders through ONE method. This is mass-consistent with
+// the sim: grid_to_particle (Eq.15) subtracted exactly the mass the raster
+// re-adds, so grid + composite ≈ the pre-drain total — no double counting
+// (the earlier darker-disc bug splatted particles while the grid had NOT been
+// drained; the §5.2 subtraction makes the composite the correct inverse).
+// Particle POINT SPRITES (wetbrush_debug_particles) remain available as an
+// opt-in debug visualization (WB_DRAW_PARTICLES=1), off by default.
 
 #include "common.slangh"
 
@@ -25,11 +27,11 @@ StructuredBuffer<float> density : register(t0);
 StructuredBuffer<float> color_r : register(t1);
 StructuredBuffer<float> color_y : register(t2);
 StructuredBuffer<float> color_b : register(t3);
-// Window-sized particle raster grids (particle_rasterize outputs).
+// Window-sized particle raster (live swarm mass near the brush).
 StructuredBuffer<float> ptcl_density : register(t4);
-StructuredBuffer<float> ptcl_color_r : register(t5);
-StructuredBuffer<float> ptcl_color_y : register(t6);
-StructuredBuffer<float> ptcl_color_b : register(t7);
+StructuredBuffer<float> ptcl_rast_r : register(t5);
+StructuredBuffer<float> ptcl_rast_y : register(t6);
+StructuredBuffer<float> ptcl_rast_b : register(t7);
 
 RWStructuredBuffer<float4> packed_out : register(u0);
 
@@ -52,28 +54,21 @@ void main(uint3 tid : SV_DispatchThreadID)
     float d = density[tid.x];
     float3 col_pre = float3(color_r[tid.x], color_y[tid.x], color_b[tid.x]);
 
-    // Swarm composite: add the rasterized particle mass/pigment for cells
-    // inside the (brush-following) active window. Window buffers are indexed
-    // window-locally (lz*WSX*WSX + ly*WSX + lx); invert the global linear
-    // index with the same order grid_idx_3d uses.
-    if (cb.ptcl_render_scale > 0.0) {
-        uint N = uint(cb.res);
-        uint x = tid.x % N;
-        uint y = (tid.x / N) % N;
-        uint z = tid.x / (N * N);
-        int lx = int(x) - cb.window_origin_x;
-        int ly = int(y) - cb.window_origin_y;
-        int lz = int(z) - cb.window_origin_z;
-        int WSX = cb.window_size_x;
-        if (lx >= 0 && lx < WSX && ly >= 0 && ly < WSX && lz >= 0 &&
-            lz < cb.window_size_z) {
-            uint win_idx = uint(lz) * uint(WSX * WSX) + uint(ly) * uint(WSX) +
-                           uint(lx);
-            float s = cb.ptcl_render_scale;
-            d += s * ptcl_density[win_idx];
-            col_pre += s * float3(ptcl_color_r[win_idx],
-                                  ptcl_color_y[win_idx],
-                                  ptcl_color_b[win_idx]);
+    // Composite the swarm raster on window cells: the raster grids are
+    // window-local, so map this global cell through win_field_idx (0 outside
+    // the window — no particle mass there; the raster is cleared each frame
+    // the brush is up, so a stale swarm never ghosts into the pack).
+    {
+        int res = cb.res;
+        int gx = int(tid.x) % res;
+        int gy = (int(tid.x) / res) % res;
+        int gz = int(tid.x) / (res * res);
+        int w = win_field_idx(
+            gx, gy, gz, cb.window_origin_x, cb.window_origin_y,
+            cb.window_origin_z, cb.window_size_x, cb.window_size_z);
+        if (w >= 0) {
+            d += ptcl_density[w];
+            col_pre += float3(ptcl_rast_r[w], ptcl_rast_y[w], ptcl_rast_b[w]);
         }
     }
 

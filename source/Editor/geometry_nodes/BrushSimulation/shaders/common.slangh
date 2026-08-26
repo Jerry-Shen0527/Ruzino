@@ -67,11 +67,43 @@ struct SimConstants {
     // backtraces of tens of cells per frame at res 4096); ~0.3 keeps a wet
     // directional flow without ballooning the stroke. Replaces former _pad2.
     float velocity_inject_scale;
-    // Render composite scale for the rasterized particle swarm overlaid on the
-    // grid paint in pack_float4 (0 disables; see the moat note there).
-    float ptcl_render_scale;
-    float _pad3;  // keep 16-byte alignment
+    // field_copy_window mode: 0 = window→window (both widx), 1 = global→window
+    // (read gidx, write widx), 2 = window→global (read widx, write gidx).
+    int copy_mode;
+    // fluid_damp_dry mode: 0 = global dispatch, wetness only; 1 = window
+    // dispatch, velocity damp + dry-zero (vel at widx) + wetness (gidx).
+    int damp_mode;
+    // fluid_advect: 1 = field_in is a window-local buffer (velocity family,
+    // sampled through window_local_idx with outside→0); 0 = global canvas
+    // field. field_out is ALWAYS window-local (widx) — the host copies back.
+    int advect_field_window_local;
+    // Gravity (world units/s²) — external body force. Grid side: applied to
+    // fluid (wet, painted) cells' velocity in fluid_damp_dry's window pass,
+    // per substep, before the next projection (standard Eulerian external
+    // force step; paper §4.2 "standard way"). Default from the host's env
+    // WB_GRAVITY_* (physically scaled: 1 unit ≈ 27.5 cm → g ≈ 36 units/s²).
+    float gravity_x;
+    float gravity_y;
+    float gravity_z;
 };
+
+// ============================================================
+// Window-local indexing for the transient solve fields
+// ============================================================
+// Paper §4.2: velocity/pressure/divergence (and the scalar advect tmps) live
+// ONLY inside the 128×128×res_z active window — allocating them over the
+// whole global grid costs GBs (25 dense fields at res 1024) where the paper's
+// window scratch is ~2MB each. Sampling a window-local field at an arbitrary
+// GLOBAL cell must return 0 outside the window: there is no liquid motion
+// there (§4.2: simulation runs only inside the window).
+int win_field_idx(int gx, int gy, int gz,
+                  int ox, int oy, int oz, int WSX, int WSZ)
+{
+    int lx = gx - ox, ly = gy - oy, lz = gz - oz;
+    if (lx < 0 || lx >= WSX || ly < 0 || ly >= WSX || lz < 0 || lz >= WSZ)
+        return -1;
+    return lz * (WSX * WSX) + ly * WSX + lx;
+}
 
 // ============================================================
 // Grid indexing — 3D: (res × res × res_z), row-major Z-first
@@ -131,6 +163,18 @@ bool window_map(SimConstants cb, uint window_idx, out WindowCell c)
     return true;
 }
 
+// Window-local index of the neighbor offset (dx,dy,dz) from a dispatched
+// window cell, or -1 outside the window. The 6-neighbor stencils of the
+// transient-field solvers (jacobi/divergence/gradient) address window-local
+// buffers through this; -1 callers apply the shader's boundary rule.
+int wnb(WindowCell c, int dx, int dy, int dz, int WSX, int WSZ)
+{
+    int lx = int(c.lx) + dx, ly = int(c.ly) + dy, lz = int(c.lz) + dz;
+    if (lx < 0 || lx >= WSX || ly < 0 || ly >= WSX || lz < 0 || lz >= WSZ)
+        return -1;
+    return (lz * WSX + ly) * WSX + lx;
+}
+
 // Convert a GLOBAL grid cell (x,y,z) to a GLOBAL linear index.
 // Buffers are global-sized, so any in-grid cell has a valid index. Returns
 // false only if the cell is outside the global grid bounds. Used by
@@ -163,12 +207,30 @@ void atomicFloatAdd(RWByteAddressBuffer buf, uint byte_offset, float value)
         old_val = prev;
     }
 }
-// NOTE: a RWStructuredBuffer<float> overload was attempted but Slang rejects
-// InterlockedCompareExchange(buf[i], ...) with "must be l-value" — CAS is not
-// available on structured-buffer elements in this Slang version. Particle
-// scatter (rasterize / to_grid) therefore uses plain += and tolerates the
-// rare collision; switch those fields to RWByteAddressBuffer if precision
-// becomes an issue.
+// NOTE: a RWStructuredBuffer<float> overload was impossible — Slang rejects
+// InterlockedCompareExchange(buf[i], ...) with "must be l-value" (no CAS on
+// structured-buffer elements in this Slang version). The scattered transfers
+// (particle_rasterize / particle_to_grid / grid_to_particle Eq.15/16) therefore
+// bind their accumulation targets as RWByteAddressBuffer and go through these
+// CAS helpers, making the grid↔particle round trip exactly conservative
+// (paper §5.2 Eq.15/16 conservation; the previous plain += raced and drifted
+// RYB over long loops, clamped only as a band-aid at pack time). The host-side
+// field buffers carry CanHaveRawViews so raw UAV bindings resolve.
+
+// Atomic float max(buf[offset], value) via the same CAS loop.
+void atomicFloatMax(RWByteAddressBuffer buf, uint byte_offset, float value)
+{
+    uint old_val = buf.Load(byte_offset);
+    for (;;) {
+        float cur = asfloat(old_val);
+        if (cur >= value) break;
+        uint new_val = asuint(value);
+        uint prev;
+        buf.InterlockedCompareExchange(byte_offset, old_val, new_val, prev);
+        if (prev == old_val) break;
+        old_val = prev;
+    }
+}
 
 float color_brightness(float3 rgb)
 {
@@ -255,6 +317,15 @@ struct BristleConstants {
     int has_prev_brush_pos;
     int sweep_steps;
     float _sweep_pad0, _sweep_pad1;
+    // Pen orientation (StrokeSample.orientation): brush_R0/1/2.xyz = world
+    // image of local X/Y/Z (host stores mat3_cast(q) COLUMNS as rows here).
+    // rot(v) = v.x*brush_R0.xyz + v.y*brush_R1.xyz + v.z*brush_R2.xyz —
+    // avoids float3x3 mul() row/column ambiguity. Local frame: -Z = root→tip,
+    // XY = root disk. Identity = the pre-orientation hardcoded upright brush.
+    // MUST mirror brush_sim_common.hpp BristleConstants field-for-field.
+    float4 brush_R0;
+    float4 brush_R1;
+    float4 brush_R2;
 };
 
 // ============================================================
@@ -347,6 +418,26 @@ struct ParticleConstants {
     // d_{B,k} (a lifted brush is beyond D0 of everything); grid_to_particle
     // suspends conversion.
     int pen_down;
+    // Brush linear velocity (canvas frame, units/s) for the Eq.9/10 two-step:
+    // the local frame of the closest bristle sample TRANSLATES with the
+    // brush, so Step A must convert in with the sample's previous position
+    // (origin − v·dt) and out with the current one — otherwise the brush's
+    // translation cancels and adhesion never carries particles along.
+    float brush_vel_x, brush_vel_y, brush_vel_z;
+    // §5.2 "moves slowly" — the paper gives no number; this is the absolute
+    // canvas-frame speed below which a particle beyond D0 is grid liquid.
+    // Derived from real units: ~2 cm/s at paper_size = 1 unit ≈ 27 cm
+    // (brush radius 0.55 cm scaled to our 0.02).
+    float slow_deposit_speed;
+    // Gravity (world units/s²) for particle_update's external acceleration
+    // (§4.3: a_k "including the gravity and the friction"). Physically
+    // scaled: 1 unit ≈ 27.5 cm → g = 981 cm/s² / 27.5 ≈ 35.7 units/s². The
+    // old hardcoded -0.2 was ~180× weaker than real gravity — flung
+    // particles hovered in slow motion and deposited mid-air (the blob
+    // test's hovering ink). Host env: WB_GRAVITY_X/Y/Z.
+    float gravity_x;
+    float gravity_y;
+    float gravity_z;
 };
 
 // ============================================================
@@ -417,6 +508,10 @@ struct BristleLiquidConstants {
     int window_origin_z;
     int window_size_x;
     int window_size_z;
+    // 1 = dip frame (stroke_start): ABSORB initializes m_j = M'_j(ψ) (Eq.12
+    // with the current crowding) — "dipped full" means full to the capacity
+    // the bristle geometry actually allows, not the uncrowded M_max.
+    int dip_frame;
 };
 
 #endif

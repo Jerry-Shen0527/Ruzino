@@ -34,8 +34,10 @@ void main(uint3 tid : SV_DispatchThreadID)
     if (tid.x >= n) return;
 
     float3 p = ptcl_pos[tid.x].xyz;
-    float3 ryb = clamp(ptcl_color[tid.x].rgb, float3(0.0), float3(1.0));
-    float3 rgb = ryb_to_rgb(ryb.x, ryb.y, ryb.z);
+    // FIXED AMBER reference color: the swarm must be readable where it sits
+    // (hanging on the blue bristles / pooling on the paper). Pigment coloring
+    // rendered black ink as black-on-black and made the swarm invisible.
+    float3 rgb = float3(1.0, 0.75, 0.15);
 
     uint i = tid.x;
     uint C = uint(max(cb.capacity, 1));

@@ -30,8 +30,10 @@ ConstantBuffer<BristleConstants> cb : register(b0);
 RWStructuredBuffer<float4> bristle_data : register(u0);  // Nb * M * 2
 // Grid-based liquid velocity field (paper §4.1 Eq.2: a_i includes "drag force
 // due to the grid-based liquid flow"). Read-only SRVs so bristles feel the
-// surrounding liquid motion. Velocity is stored normalized to the grid: a unit
-// velocity moves one XY cell per (dt·N), one Z cell per (dt·D).
+// surrounding liquid motion. Velocity is in WORLD units (u/s) — the same
+// convention as every producer of this field (bristle rasterize, swarm merge,
+// gravity body force, projection wall BC) and this shader's own bristle
+// velocities.
 StructuredBuffer<float> grid_vel_x : register(t0);
 StructuredBuffer<float> grid_vel_y : register(t1);
 StructuredBuffer<float> grid_vel_z : register(t2);
@@ -42,20 +44,28 @@ void store_pos(int idx, float3 p) { bristle_data[idx * BRV_STRIDE] = float4(p, 0
 void store_vel(int idx, float3 v) { bristle_data[idx * BRV_STRIDE + 1] = float4(v, 0.0); }
 
 // Trilinear sample of a single scalar grid channel at fractional cell coords.
-// Cell indices + weights are precomputed by the caller; this just does the 8-
-// corner fetch + 3-axis lerp.
+// The grid velocity family is WINDOW-SIZED (paper §4.2): fetch through
+// win_field_idx with outside-window → 0 (no liquid motion outside the window).
+float fetch_win(StructuredBuffer<float> buf, int gx, int gy, int gz)
+{
+    int w = win_field_idx(
+        gx, gy, gz, cb.window_origin_x, cb.window_origin_y,
+        cb.window_origin_z, cb.window_size_x, cb.window_size_z);
+    return (w >= 0) ? buf[w] : 0.0;
+}
+
 float sample_channel(StructuredBuffer<float> buf,
                      int x0,int x1,int y0,int y1,int z0,int z1,
                      float sx,float sy,float sz,int N,int D)
 {
-    float v000 = buf[grid_idx_3d((uint)x0,(uint)y0,(uint)z0,N,D)];
-    float v100 = buf[grid_idx_3d((uint)x1,(uint)y0,(uint)z0,N,D)];
-    float v010 = buf[grid_idx_3d((uint)x0,(uint)y1,(uint)z0,N,D)];
-    float v110 = buf[grid_idx_3d((uint)x1,(uint)y1,(uint)z0,N,D)];
-    float v001 = buf[grid_idx_3d((uint)x0,(uint)y0,(uint)z1,N,D)];
-    float v101 = buf[grid_idx_3d((uint)x1,(uint)y0,(uint)z1,N,D)];
-    float v011 = buf[grid_idx_3d((uint)x0,(uint)y1,(uint)z1,N,D)];
-    float v111 = buf[grid_idx_3d((uint)x1,(uint)y1,(uint)z1,N,D)];
+    float v000 = fetch_win(buf, x0,y0,z0);
+    float v100 = fetch_win(buf, x1,y0,z0);
+    float v010 = fetch_win(buf, x0,y1,z0);
+    float v110 = fetch_win(buf, x1,y1,z0);
+    float v001 = fetch_win(buf, x0,y0,z1);
+    float v101 = fetch_win(buf, x1,y0,z1);
+    float v011 = fetch_win(buf, x0,y1,z1);
+    float v111 = fetch_win(buf, x1,y1,z1);
     float v00 = lerp(v000,v100,sx), v10 = lerp(v010,v110,sx);
     float v01 = lerp(v001,v101,sx), v11 = lerp(v011,v111,sx);
     float v0 = lerp(v00,v10,sy),   v1 = lerp(v01,v11,sy);
@@ -98,6 +108,17 @@ float3 sample_grid_vel(float3 world_pos)
         sample_channel(grid_vel_z, x0,x1,y0,y1,z0,z1, sx,sy,sz, N,D));
 }
 
+// Pen orientation (StrokeSample.orientation, BristleConstants::brush_R*):
+// rotate a brush-LOCAL vector into world. Local convention: -Z = root→tip,
+// XY = root disk. Identity = the pre-orientation hardcoded upright brush
+// (brush_rotation, the old velocity-heading guess, was never consumed by
+// any shader — orientation is now a real input that tilts the footprint
+// spiral AND the bristle growth axis).
+float3 pen_rot(float3 v)
+{
+    return v.x * cb.brush_R0.xyz + v.y * cb.brush_R1.xyz + v.z * cb.brush_R2.xyz;
+}
+
 [numthreads(256, 1, 1)]
 void main(uint3 tid : SV_DispatchThreadID)
 {
@@ -109,11 +130,14 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     // Root position: distribute bristles across the 2D brush footprint (a
     // filled disk) using a golden-angle spiral (Vogel/sunflower pattern) —
-    // gives a near-uniform area filling rather than a hollow ring.
+    // gives a near-uniform area filling rather than a hollow ring. The disk
+    // lies in the pen's LOCAL XY plane (pen_rot), so a tilted pen stamps an
+    // elliptical footprint on the canvas (侧锋).
     float golden_angle = 2.39996323;  // radians (~137.5°)
     float angle = golden_angle * float(bi);
     float r_frac = sqrt((float(bi) + 0.5) / float(cb.num_bristles));
-    float3 root_offset = cb.brush_radius * r_frac * float3(cos(angle), sin(angle), 0.0);
+    float3 root_offset = cb.brush_radius * r_frac *
+        pen_rot(float3(cos(angle), sin(angle), 0.0));
 
     float3 brush_pos = float3(cb.brush_pos_x, cb.brush_pos_y, cb.brush_pos_z);
     float3 brush_vel = float3(cb.brush_vel_x, cb.brush_vel_y, cb.brush_vel_z);
@@ -123,12 +147,13 @@ void main(uint3 tid : SV_DispatchThreadID)
     store_pos(base, root_pos);
     store_vel(base, brush_vel);
 
-    // Bristle rest length per segment (chain points from root toward canvas).
+    // Bristle rest length per segment (chain points from root toward tip).
     float beta_B = cb.beta_B;
     float dt = cb.dt;
     float rest_len = cb.brush_radius * 1.5 / float(M);
-    // Vertical extent of the bristle (root → tip toward the canvas, -Z).
-    float3 down_dir = float3(0.0, 0.0, -1.0);
+    // Bristle growth direction: local -Z (root → tip), rotated by the pen
+    // orientation. Identity ⇒ (0,0,-1), the old hardcoded vertical.
+    float3 down_dir = pen_rot(float3(0.0, 0.0, -1.0));
 
     // Non-inertial frame quantities (full 3D). omega is rad/s; omega_dot is
     // rad/s², both finite-differenced on the host from the previous frame.
@@ -142,6 +167,11 @@ void main(uint3 tid : SV_DispatchThreadID)
     // bristle rigidly carried by the brush (v_B ≈ 0) is not damped at all.
     float damping_B = cb.damping;
 
+    // Set when this bristle was laid out THIS frame (first frame only: the
+    // buffer is zero-initialized, so all vertices turn all-zero together).
+    // Gates the PBD velocity fold below on the initialization frame.
+    bool fresh_bristle = false;
+
     // Simulate vertices 1..M-1
     for (int vi = 1; vi < M; vi++) {
         int idx = base + vi;
@@ -153,6 +183,7 @@ void main(uint3 tid : SV_DispatchThreadID)
         // by an all-zero persisted position (buffer is zero-initialized).
         if (pos.x == 0.0 && pos.y == 0.0 && pos.z == 0.0) {
             pos = root_pos + down_dir * rest_len * float(vi);
+            fresh_bristle = true;
         }
 
         // === Non-inertial brush frame integration (Wetbrush Eq.2) ===
@@ -332,6 +363,20 @@ void main(uint3 tid : SV_DispatchThreadID)
     float vel_damp = 1.0f;  // full correction; reduce to soften
     for (int vi = 1; vi < M; vi++) {
         int idx = base + vi;
+        if (fresh_bristle) {
+            // Initialization frame: the freshly laid-out chain starts BELOW
+            // the canvas (the brush is already pressed), so the PBD clamp +
+            // splay above teleported it by up to the full press depth. Folding
+            // that into velocity manufactures a fake impulse
+            // (penetration/dt, +Z, under the brush) that the sample rasterize
+            // → bristle velocity field → moving-wall/divergence and the EMIT
+            // (particles inherit sample velocity) both consume — it flings
+            // the first emitted swarm mid-air (the f2 initialization
+            // transient). A freshly groomed bristle is at rest in the brush
+            // frame (v_B = 0): store the rigid-carry velocity instead.
+            store_vel(idx, brush_vel);
+            continue;
+        }
         float3 v = load_vel(idx);
         v += delta_pos[vi] * (inv_dt * vel_damp);
         store_vel(idx, v);

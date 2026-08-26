@@ -2,12 +2,12 @@
 //
 // Topology (the simulation zone now carries ONE typed boundary slot:
 // WetbrushZoneState = shared_ptr<WetbrushSimState>, i.e. just the paint field.
-// The per-frame BrushPoint and the input stroke Geometry stay OFF the
+// The per-frame StrokeSample and the input stroke Geometry stay OFF the
 // boundary):
 //
 //   mock_stroke --Stroke Curves--> [ simulation_in ]   (static input slot)
 //   [ simulation_in ] --WetbrushZoneState--> brush_wb_deposit   (fed-back
-//   field) mock_point_emitter --BrushPoint--> brush_wb_deposit   (interior,
+//   field) mock_point_emitter --StrokeSample--> brush_wb_deposit   (interior,
 //   fresh/帧) brush_wb_deposit --WetbrushZoneState--> brush_wb_bristle --...-->
 //   commit brush_wb_commit --WetbrushZoneState--> [ simulation_out ]   (fed
 //   back)
@@ -18,9 +18,12 @@
 //      in Node::storage, here carried in the shared field. Allocation mirrors
 //      brush_paint_sim lines ~463-818.
 //   2. Lazily compile every Wetbrush shader (they persist in the field too).
-//   3. Derive the brush pose (pos / vel / accel / omega / omega_dot) from THIS
-//      BrushPoint + the field's prev_* via frame finite-differencing
-//      (brush_paint_sim ~938-998). On stroke_start, reset prev_*.
+//   3. Derive the brush pose (pos / vel / accel / omega / omega_dot /
+//      orientation) from THIS StrokeSample: analytic derivatives when the
+//      source supplies them (has_dynamics; accel/omega_dot stay
+//      host-differenced, first-order), frame finite-differencing against the
+//      field's prev_* otherwise (brush_paint_sim ~938-998). On stroke_start,
+//      reset prev_* (seeded with the analytic derivatives when known).
 //   4. Sub-step loop (brush_paint_sim ~1383-1478): subdivide the frame
 //      displacement into <= one brush-diameter steps, and at each sub-step:
 //        - position_window(sub_pos): commit+clear the OLD window if it moved
@@ -36,6 +39,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <memory>
 #include <vector>
 
@@ -43,7 +47,7 @@
 #include "GCore/geom_payload.hpp"
 #include "GPUContext/compute_context.hpp"  // CommandListDesc
 #include "RHI/ResourceManager/resource_allocator.hpp"
-#include "brush_sim_common.hpp"  // BrushPoint, WetbrushSimState, WetbrushZoneState, brush_* helpers
+#include "brush_sim_common.hpp"  // StrokeSample, WetbrushSimState, WetbrushZoneState, brush_* helpers
 #include "geom_node_base.h"
 #include "spdlog/spdlog.h"
 
@@ -51,9 +55,10 @@ NODE_DEF_OPEN_SCOPE
 
 NODE_DECLARATION_FUNCTION(brush_wb_deposit)
 {
-    // Per-frame brush sample from the emitter (interior edge, fresh each
-    // frame).
-    b.add_input<Ruzino::BrushPoint>("Brush Point");
+    // Per-frame pen-dynamics sample from the emitter (interior edge, fresh
+    // each frame): position + orientation + analytic derivatives when the
+    // source knows them (has_dynamics).
+    b.add_input<Ruzino::StrokeSample>("Stroke Sample");
     // The fed-back paint field. On the init frame there is NO feedback yet
     // (simulation_out has not run), so this slot is empty then -- optional so
     // the zone doesn't skip simulation_in for a missing required input. The
@@ -78,9 +83,9 @@ NODE_DECLARATION_FUNCTION(brush_wb_deposit)
     // Outgoing paint field (allocated/updated) for the rest of the chain +
     // next-frame feedback.
     b.add_output<Ruzino::WetbrushZoneState>("State");
-    // Forward the per-frame BrushPoint so downstream nodes (fluid) know pen
+    // Forward the per-frame StrokeSample so downstream nodes (fluid) know pen
     // up/down without re-reading the emitter.
-    b.add_output<Ruzino::BrushPoint>("Brush Point");
+    b.add_output<Ruzino::StrokeSample>("Stroke Sample");
 }
 
 NODE_EXECUTION_FUNCTION(brush_wb_deposit)
@@ -88,7 +93,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
     using Ruzino::WetbrushSimState;
     using Ruzino::WetbrushZoneState;
 
-    Ruzino::BrushPoint bp = params.get_input<Ruzino::BrushPoint>("Brush Point");
+    Ruzino::StrokeSample bp =
+        params.get_input<Ruzino::StrokeSample>("Stroke Sample");
     // "State" is optional: absent on the init frame (no feedback yet). Default
     // to a fresh WetbrushZoneState with a null field; need_alloc below handles
     // it. Never call get_input on an unwired optional — the executor sets its
@@ -109,9 +115,10 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
     float brush_pressure = params.get_input<float>("Brush Pressure");
     float ink_amount = params.get_input<float>("Ink Amount");
     float oil_density_in = params.get_input<float>("Oil Density");
-    // Ink color: prefer the BrushPoint's trajectory color (enables multi-color
-    // strokes where each point carries its own RYB); fall back to the static
-    // "Ink Color" socket when the emitter didn't supply one (single-color).
+    // Ink color: prefer the StrokeSample's trajectory color (enables
+    // multi-color strokes where each point carries its own RYB); fall back to
+    // the static "Ink Color" socket when the emitter didn't supply one
+    // (single-color).
     glm::vec3 ink_color = params.has_input("Ink Color")
                               ? params.get_input<glm::vec3>("Ink Color")
                               : glm::vec3(1.0f, 0.0f, 0.0f);
@@ -123,8 +130,10 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
     // conversion gating): a pen-up brush is not painting — no sample uptake,
     // no emission, and no grid↔particle conversion zone around it. Recorded
     // every frame BEFORE any early return so it never goes stale.
-    if (field)
+    if (field) {
         field->pen_down = bp.active;
+        field->dip_frame = bp.stroke_start;
+    }
 
     auto& rc = get_resource_allocator();
     auto device = RHI::get_device();
@@ -252,28 +261,40 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
             return Ruzino::brush_create_field_buffer(rc, win_alloc_n3d, name);
         };
 
+        // Canvas state (persistent paint store) — GLOBAL-sized. Paper §4.2:
+        // "a large 3D grid stores all cells". These are the only fields that
+        // genuinely need global extent.
         field->density = make_buf("wb_density");
-        field->density_tmp = make_buf("wb_density_tmp");
         field->color_r = make_buf("wb_color_r");
         field->color_y = make_buf("wb_color_y");
         field->color_b = make_buf("wb_color_b");
-        field->color_r_tmp = make_buf("wb_color_r_tmp");
-        field->color_y_tmp = make_buf("wb_color_y_tmp");
-        field->color_b_tmp = make_buf("wb_color_b_tmp");
-        field->vel_x = make_buf("wb_vel_x");
-        field->vel_x_tmp = make_buf("wb_vel_x_tmp");
-        field->vel_y = make_buf("wb_vel_y");
-        field->vel_y_tmp = make_buf("wb_vel_y_tmp");
-        field->vel_z = make_buf("wb_vel_z");
-        field->vel_z_tmp = make_buf("wb_vel_z_tmp");
         field->wetness = make_buf("wb_wetness");
-        field->wetness_tmp = make_buf("wb_wetness_tmp");
         field->oil_density = make_buf("wb_oil_density");
-        field->oil_density_tmp = make_buf("wb_oil_density_tmp");
-        field->height_field = make_buf("wb_height");
-        field->pressure_a = make_buf("wb_pressure_a");
-        field->pressure_b = make_buf("wb_pressure_b");
-        field->divergence_buf = make_buf("wb_divergence");
+        // height_field is NOT allocated: its only writer was the legacy
+        // brush_deposit.slang path (never dispatched in the wb pipeline) and
+        // no reader exists. Keeping it global-sized cost a full grid buffer.
+        // TRANSIENT SOLVE FIELDS — window-sized (paper §4.2: "we can restrict
+        // grid-based simulation to a small active window around the brush",
+        // 128×128×32). Velocity/pressure/divergence live only in the window;
+        // the scalar tmps are window scratch for advection and the §5.2
+        // Eq.15 subtraction (host copies between the two index spaces via
+        // field_copy_window). 18 global buffers → ~4MB each: saves ~4.8GB at
+        // res 1024.
+        field->density_tmp = make_win_buf("wb_density_tmp");
+        field->color_r_tmp = make_win_buf("wb_color_r_tmp");
+        field->color_y_tmp = make_win_buf("wb_color_y_tmp");
+        field->color_b_tmp = make_win_buf("wb_color_b_tmp");
+        field->vel_x = make_win_buf("wb_vel_x");
+        field->vel_x_tmp = make_win_buf("wb_vel_x_tmp");
+        field->vel_y = make_win_buf("wb_vel_y");
+        field->vel_y_tmp = make_win_buf("wb_vel_y_tmp");
+        field->vel_z = make_win_buf("wb_vel_z");
+        field->vel_z_tmp = make_win_buf("wb_vel_z_tmp");
+        field->wetness_tmp = make_win_buf("wb_wetness_tmp");
+        field->oil_density_tmp = make_win_buf("wb_oil_density_tmp");
+        field->pressure_a = make_win_buf("wb_pressure_a");
+        field->pressure_b = make_win_buf("wb_pressure_b");
+        field->divergence_buf = make_win_buf("wb_divergence");
         // Group B (bristle accumulation grids) — window-sized.
         field->bristle_density = make_win_buf("wb_bristle_density");
         field->bristle_vel_x = make_win_buf("wb_bristle_vel_x");
@@ -290,9 +311,34 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         field->ptcl_rast_r = make_win_buf("wb_ptcl_rast_r");
         field->ptcl_rast_y = make_win_buf("wb_ptcl_rast_y");
         field->ptcl_rast_b = make_win_buf("wb_ptcl_rast_b");
-        field->vel_x_old = make_buf("wb_vel_x_old");
-        field->vel_y_old = make_buf("wb_vel_y_old");
-        field->vel_z_old = make_buf("wb_vel_z_old");
+        field->vel_x_old = make_win_buf("wb_vel_x_old");
+        field->vel_y_old = make_win_buf("wb_vel_y_old");
+        field->vel_z_old = make_win_buf("wb_vel_z_old");
+
+        // Zero the 4 pack-relevant particle raster grids at allocation: GPU
+        // heap allocations are NOT zero-initialized, and pack_float4.slang
+        // composites these into the render field from the very first cook —
+        // before the fluid node's per-frame clear+raster has ever run (and on
+        // frames before the brush first deposits). Garbage there would render
+        // as a noise cloud on frame 1.
+        if (!field->field_clear_program)
+            field->field_clear_program =
+                Ruzino::brush_compile_shader(rc, "field_clear.slang");
+        nvrhi::BufferHandle* rast_bufs[] = {
+            std::addressof(field->ptcl_density),
+            std::addressof(field->ptcl_rast_r),
+            std::addressof(field->ptcl_rast_y),
+            std::addressof(field->ptcl_rast_b),
+        };
+        for (nvrhi::BufferHandle* buf : rast_bufs) {
+            Ruzino::brush_dispatch(
+                rc,
+                field->field_clear_program,
+                {},
+                { { "field", *buf } },
+                nullptr,
+                win_alloc_n3d);
+        }
         // Float4 packed paint field (density,r,g,b) — global grid sized, for
         // the shared GPU buffer registry (zero-copy sim→render). Needs
         // CanHaveRawViews because the render rprim binds it as a
@@ -329,12 +375,17 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
                  bufs, zeros_win.data(), win_alloc_n3d * sizeof(float)),
              ...);
         };
+        // Canvas state is global-sized; every transient solve field is
+        // window-sized (see the allocation comments above).
         write_3d(
             field->density,
-            field->density_tmp,
             field->color_r,
             field->color_y,
             field->color_b,
+            field->wetness,
+            field->oil_density);
+        write_win(
+            field->density_tmp,
             field->color_r_tmp,
             field->color_y_tmp,
             field->color_b_tmp,
@@ -344,18 +395,14 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
             field->vel_y_tmp,
             field->vel_z,
             field->vel_z_tmp,
-            field->wetness,
             field->wetness_tmp,
-            field->oil_density,
             field->oil_density_tmp,
-            field->height_field,
             field->pressure_a,
             field->pressure_b,
             field->divergence_buf,
             field->vel_x_old,
             field->vel_y_old,
-            field->vel_z_old);
-        write_win(
+            field->vel_z_old,
             field->bristle_density,
             field->bristle_vel_x,
             field->bristle_vel_y,
@@ -465,21 +512,11 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
             field->sample_vel,
             field->sample_color,
             field->sample_liquid_b);
-        // sample_liquid starts DRY (m_j = 0). Paper §5.1: a brush carries
-        // paint due to hydrophilicity, but loading happens via ABSORB from the
-        // supply reservoir (the "dip"), NOT by pre-saturating every sample at
-        // allocation. Pre-saturating to M_max caused a cold-start burst: frame
-        // 1 ABSORB pushes every canvas-touching sample past (1+ε)M_j at once
-        // (supply is refilled at stroke_start), they all EMIT simultaneously,
-        // and the brush's static velocity field can't advect the deposit away
-        // → a thick pile at the touchdown point ("落笔处一大坨").
-        //
-        // Starting dry, ABSORB frame 1 fills each sample up to M_j (saturated,
-        // not yet overloaded — m_j ≤ (1+ε)M_j, so EMIT is a no-op). Only from
-        // frame 2 do samples begin to overload and emit, by which time the
-        // brush has started moving, so the first deposit lands along the
-        // stroke rather than piling up at the touchdown point. The pigment c_j
-        // is still seeded to the ink color so ABSORB's color_mix has a base.
+        // sample_liquid allocation stays DRY (m_j = 0). The dip (saturated
+        // m_j = WB_M_MAX + ink pigment) is written at every stroke_start by
+        // the SUB-STEP LOOP below — allocation can precede the first stroke
+        // point, and re-dips must pick up the current stroke's ink color.
+        // The pigment c_j is seeded to the ink color so color_mix has a base.
         std::vector<float> liquid_init(Nb * S * 4, 0.0f);
         for (int i = 0; i < Nb * S; ++i) {
             liquid_init[i * 4 + 0] = 0.0f;  // m_j = 0 (dry)
@@ -510,7 +547,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
     }
 
     // Refresh the bristle ink color EVERY active frame (not just on alloc):
-    // the BrushPoint's color can change mid-simulation (multi-color strokes),
+    // the StrokeSample's color can change mid-simulation (multi-color strokes),
     // so the init-block write above (which only runs once) would leave a stale
     // color. This write is cheap (4 floats) and runs only when the pen is down.
     if (field->bristles_initialized && bp.active) {
@@ -627,14 +664,19 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
     // Init frame or pen-up: nothing to deposit. Forward the (allocated) field.
     if (!payload.is_simulating || !bp.active) {
         params.set_output("State", zs);
-        params.set_output("Brush Point", bp);
+        params.set_output("Stroke Sample", bp);
         return true;
     }
 
     // ======================================================================
-    // BRUSH POSE — frame finite-differencing (brush_paint_sim ~938-998)
-    // The monolith differences along the curve's last 2-3 vertices; here we
-    // difference THIS BrushPoint against the field's prev_* (one point/frame).
+    // BRUSH POSE — prefer the sample's analytic dynamics, fall back to host
+    // finite-differencing (brush_paint_sim ~938-998).
+    // StrokeSample (the pen-dynamics contract) carries vel / angular_vel /
+    // orientation when the trajectory source knows them analytically
+    // (has_dynamics): use them directly and difference only ONCE for
+    // accel / omega_dot (first-order on exact derivatives). Position-only
+    // sources (real captured input) keep the legacy path: difference THIS
+    // sample against the field's prev_* (one sample/frame).
     // ======================================================================
     glm::vec3 brush_pos_3d = bp.pos;
     brush_pos_3d.x -= field->grid_center.x;
@@ -644,32 +686,59 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
     glm::vec3 brush_accel_3d(0.0f);
     glm::vec3 brush_angular_vel(0.0f);
     glm::vec3 brush_angular_accel(0.0f);
+    // Heading angle (XY). LEGACY: no shader consumes brush_rotation — the
+    // pen's orientation now travels as the brush_R* matrix rows (below).
+    // Kept only so the CB field stays populated; do not build on it.
     float brush_rotation = 0.0f;
 
     if (bp.stroke_start) {
-        // Fresh pen-down: no inherited motion.
+        // Fresh pen-down. With analytic dynamics the pen is ALREADY moving at
+        // pen-down: adopt the sample's derivatives this very frame — the
+        // substep-loop tail stamps prev_brush_vel from brush_vel_3d, so this
+        // also seeds the next frame's accel difference correctly (a from-rest
+        // assumption would manufacture a vel/dt acceleration spike on frame
+        // 2). Position-only sources keep "no inherited motion" (unknown).
         field->has_prev_brush_pos = false;
+        if (bp.has_dynamics) {
+            brush_vel_3d = bp.vel;
+            brush_angular_vel = bp.angular_vel;
+        }
         field->prev_brush_vel = glm::vec3(0.0f);
         field->prev_angular_vel = glm::vec3(0.0f);
     }
     else if (field->has_prev_brush_pos) {
-        // new_vel is the frame displacement; divide by dt to get TRUE velocity
-        // (units/s). The bristle shader uses brush_vel as a velocity
-        // (v_B = vel - brush_vel, vel = v_B + brush_vel) and the paper's Eq.2
-        // Coriolis term is 2ω×v_B — feeding a per-frame displacement here made
-        // v_B 60× too small, so the bristles barely felt the brush's motion
-        // (the Coriolis/centrifugal inertial response was effectively dead).
-        // With velocity units, brush_accel_3d below is a real acceleration
-        // (units/s²) and the rectilinear term a_B in Eq.2 is correct.
-        glm::vec3 new_vel = (brush_pos_3d - field->prev_brush_pos) / dt;
-        if (dt > 1e-6f)
-            brush_accel_3d = (new_vel - field->prev_brush_vel) / dt;
-        brush_vel_3d = new_vel;
-        brush_rotation = atan2(brush_vel_3d.y, brush_vel_3d.x);
+        if (bp.has_dynamics) {
+            // Analytic path: trust the sample's derivatives. accel /
+            // omega_dot stay differenced (one subtraction on exact values —
+            // no double amplification of position quantization noise).
+            brush_vel_3d = bp.vel;
+            if (dt > 1e-6f)
+                brush_accel_3d = (bp.vel - field->prev_brush_vel) / dt;
+            brush_angular_vel = bp.angular_vel;
+            if (dt > 1e-6f)
+                brush_angular_accel =
+                    (bp.angular_vel - field->prev_angular_vel) / dt;
+            brush_rotation = brush_vel_3d.x != 0.0f || brush_vel_3d.y != 0.0f
+                                 ? atan2(brush_vel_3d.y, brush_vel_3d.x)
+                                 : 0.0f;
+        }
+        else {
+            // Legacy finite-difference path (captured input without
+            // derivatives). new_vel is the frame displacement; divide by dt
+            // to get TRUE velocity (units/s). The bristle shader uses
+            // brush_vel as a velocity (v_B = vel - brush_vel, vel = v_B +
+            // brush_vel) and the paper's Eq.2 Coriolis term is 2ω×v_B —
+            // feeding a per-frame displacement here made v_B 60× too small,
+            // so the bristles barely felt the brush's motion. With velocity
+            // units, brush_accel_3d below is a real acceleration (units/s²)
+            // and the rectilinear term a_B in Eq.2 is correct.
+            glm::vec3 new_vel = (brush_pos_3d - field->prev_brush_pos) / dt;
+            if (dt > 1e-6f)
+                brush_accel_3d = (new_vel - field->prev_brush_vel) / dt;
+            brush_vel_3d = new_vel;
+            brush_rotation = atan2(brush_vel_3d.y, brush_vel_3d.x);
 
-        // Angular velocity about canvas normal (Z), wrapped to [-pi, pi].
-        if (field->has_prev_brush_pos) {
-            // Recover prev heading from prev velocity.
+            // Angular velocity about canvas normal (Z), wrapped [-pi, pi].
             float prev_rot =
                 atan2(field->prev_brush_vel.y, field->prev_brush_vel.x);
             float dtheta = brush_rotation - prev_rot;
@@ -683,13 +752,49 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         }
     }
 
+    // Pen orientation → rotation-matrix rows for BristleConstants::brush_R*
+    // (columns of mat3_cast = world images of the local axes; the shader
+    // combines rot(v) = v.x*R0 + v.y*R1 + v.z*R2, see bristle_simulate).
+    glm::quat brush_orientation = bp.orientation;
+    glm::mat3 brush_rot_m = glm::mat3_cast(brush_orientation);
+
+    // [wb-pose] gate-A diagnostic (see docs §24): the pose that the whole
+    // downstream chain actually receives, per frame.
+    if (std::getenv("WB_DEBUG_DUMP_PTCL")) {
+        static int pose_frame = 0;
+        // Tilt = angle between the pen axis (local -Z in world, i.e.
+        // -mat3_cast(q)·e_z) and the world-down direction: cos = R_col2.z.
+        float tilt_deg = glm::degrees(
+            acosf(std::min(1.0f, std::max(-1.0f, brush_rot_m[2].z))));
+        spdlog::info(
+            "[wb-pose] f={} t={:.3f} pos=({:.3f},{:.3f},{:.3f}) "
+            "|v|={:.3f} |a|={:.3f} |w|={:.4f} tilt={:.1f}deg dyn={}",
+            pose_frame++,
+            bp.time,
+            brush_pos_3d.x,
+            brush_pos_3d.y,
+            brush_pos_3d.z,
+            glm::length(brush_vel_3d),
+            glm::length(brush_accel_3d),
+            glm::length(brush_angular_vel),
+            tilt_deg,
+            bp.has_dynamics ? 1 : 0);
+    }
+
     // ======================================================================
     // position_window — center the active window's dispatch range on a brush
-    // XY. Paper §4.2: the 3D grid is global and persistent; the window is only
-    // the per-frame compute region. Moving the window no longer commits/clears
-    // anything — the old cells keep their values in the global grid.
+    // XY. Paper §4.2: "We update the window location at the beginning of each
+    // time step." Canvas cells are global/persistent and untouched by the
+    // move; the PERSISTENT window-sized fields (velocity family + the
+    // pressure warm-start) must be SCROLLED: their window-local layout is
+    // relative to the origin, so the overlap region is re-based and the cells
+    // left behind the window are discarded (no liquid motion outside it).
     // ======================================================================
     auto position_window = [&](float bx, float by) {
+        int old_ox = field->win_origin_x;
+        int old_oy = field->win_origin_y;
+        bool first = !field->win_origin_set;
+
         float half_p = field->grid_paper * 0.5f;
         float bgx = (bx - field->grid_center.x + half_p) / cell_sz;
         float bgy = (by - field->grid_center.y + half_p) / cell_sz;
@@ -702,6 +807,41 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         field->win_origin_y = new_woy;
         field->win_origin_z = 0;
         field->win_origin_set = true;
+
+        if (first || (new_wox == old_ox && new_woy == old_oy))
+            return;  // no move (or no prior window to scroll from)
+
+        // Scroll the persistent window fields: vel_x/y/z + pressure_a.
+        // window_scroll writes the re-based contents into a scratch buffer
+        // (same size), then we swap handles so the field keeps the data.
+        if (!field->window_scroll_program)
+            field->window_scroll_program =
+                Ruzino::brush_compile_shader(rc, "window_scroll.slang");
+        struct ScrollCB {
+            int old_ox, old_oy, old_oz;
+            int new_ox, new_oy, new_oz;
+            int wsx, wsz;
+        };
+        ScrollCB scb{ old_ox, old_oy, 0, new_wox, new_woy, 0, WIN_XY, WIN_Z };
+        nvrhi::BufferHandle scroll_cb;
+        Ruzino::brush_upload_cb(
+            rc, device, &scb, sizeof(scb), "wb_scroll_cb", scroll_cb);
+        auto scroll = [&](nvrhi::BufferHandle& field_buf,
+                          nvrhi::BufferHandle& scratch) {
+            Ruzino::brush_dispatch(
+                rc,
+                field->window_scroll_program,
+                { { "src_field", field_buf } },
+                { { "dst_field", scratch } },
+                scroll_cb,
+                win_n3d);
+            std::swap(field_buf, scratch);
+        };
+        scroll(field->vel_x, field->vel_x_tmp);
+        scroll(field->vel_y, field->vel_y_tmp);
+        scroll(field->vel_z, field->vel_z_tmp);
+        scroll(field->pressure_a, field->pressure_b);
+        rc.destroy(scroll_cb);
     };
 
     // ======================================================================
@@ -762,6 +902,12 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         bc.sweep_steps = 1;
         bc._sweep_pad0 = 0.0f;
         bc._sweep_pad1 = 0.0f;
+        // Pen orientation rows (StrokeSample.orientation → mat3 columns).
+        // Identity = upright brush; bristle_simulate builds the footprint
+        // disk and the bristle growth axis from these.
+        bc.brush_R0 = glm::vec4(brush_rot_m[0], 0.0f);
+        bc.brush_R1 = glm::vec4(brush_rot_m[1], 0.0f);
+        bc.brush_R2 = glm::vec4(brush_rot_m[2], 0.0f);
 
         nvrhi::BufferHandle bristle_cb;
         Ruzino::brush_upload_cb(
@@ -888,39 +1034,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
     // displacement into <= one brush-diameter steps; deposit at each.
     // ======================================================================
     {
-        // Paint supply reservoir — paper §5.1: a dipped brush carries a FINITE
-        // ink charge in its bristles, depleted as paint is emitted. The
-        // previous code refilled EVERY sample to ink_amount EACH frame, an
-        // unbounded source that minted mass continuously (supply → ABSORB →
-        // sample overload → emit particles → particle_to_grid deposit), so
-        // grid density grew without limit and bloomed into a black blob.
-        //
-        // Now the reservoir is refilled ONCE at stroke_start ("re-dip"),
-        // sized for a full stroke. ABSORB drains it sample-by-sample; once it
-        // is exhausted the brush runs dry (as a real brush does), capping the
-        // total paint mass that can enter the grid. The per-sample amount is
-        // ink_amount scaled by a nominal stroke length so a stroke lays down
-        // visible paint before drying out.
-        if (bp.stroke_start) {
-            // dip_charge scales with M_max (MUST match node_brush_wb_bristle's
-            // blc.M_max = 0.03): ABSORB saturates a sample to M_j per frame, so
-            // a charge of M_max*N sustains ~N frames of emission. ink_amount
-            // modulates how heavily loaded the dip is. With M_max=0.03 and
-            // ink_amount=0.8 → 0.72 per sample, ~24 frames of active paint.
-            const float dip_charge = 0.03f * ink_amount * 30.0f;
-            std::vector<float> supply(Nb * S, dip_charge);
-            auto cmd = rc.create(CommandListDesc{});
-            cmd->open();
-            cmd->writeBuffer(
-                field->sample_supply,
-                supply.data(),
-                supply.size() * sizeof(float));
-            cmd->close();
-            device->executeCommandList(cmd);
-            device->waitForIdle();
-            rc.destroy(cmd);
-        }
-
         int n_sub = 1;
         if (field->has_prev_brush_pos) {
             glm::vec3 delta = brush_pos_3d - field->prev_brush_pos;
@@ -967,7 +1080,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
     }
 
     params.set_output("State", zs);
-    params.set_output("Brush Point", bp);
+    params.set_output("Stroke Sample", bp);
     return true;
 }
 

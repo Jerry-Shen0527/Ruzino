@@ -8,10 +8,10 @@
 // field." So each emitted particle subtracts its mass (weighted by W) from
 // its 3×3×3 neighborhood of cells, NOT just the emitting cell. The host
 // seeds density_out with the current density before this dispatch, so the
-// shader only needs to subtract contributions. Plain -= races on the
-// RWStructuredBuffer (Slang CAS unsupported on structured-buffer elements,
-// see common.slangh note), but with h = 1.5 cells each particle's spread is
-// small enough that collisions are rare and slight.
+// shader only needs to subtract contributions — atomically: the Eq.15
+// subtraction goes through atomicFloatAdd on RWByteAddressBuffer views
+// (see common.slangh), so the grid↔particle round trip is exactly
+// conservative.
 // Dispatched over the active window (win_n3d threads). Buffer indexing is
 // GLOBAL (buffers are global-sized).
 
@@ -32,16 +32,18 @@ RWStructuredBuffer<float4> ptcl_color : register(u3);
 RWStructuredBuffer<uint> ptcl_alive : register(u4);
 // Density reduction output (Eq.15). Seeded with current density by the host;
 // this shader subtracts particle contributions via the 3×3×3 neighborhood.
-RWStructuredBuffer<float> density_out : register(u5);
+RWByteAddressBuffer density_out : register(u5);
 // Color reduction outputs. Seeded with the current color_r/y/b by the host.
 // When a cell loses density to a new particle (Eq.15), it must lose the SAME
 // fraction of its premultiplied color, otherwise color/density drifts: the
 // grid keeps color while density walks out as particles, and the particle
 // (which reads the cell's absolute color) carries a mis-scaled pigment. This
 // is the §14 TODO #2 fix — color transfers WITH mass, conserving the ratio.
-RWStructuredBuffer<float> color_r_out : register(u6);
-RWStructuredBuffer<float> color_y_out : register(u7);
-RWStructuredBuffer<float> color_b_out : register(u8);
+// Raw views + atomicFloatAdd(-loss): the Eq.15 subtraction must be a CAS —
+// plain -= raced on the RWStructuredBuffer and drifted RYB over long loops.
+RWByteAddressBuffer color_r_out : register(u6);
+RWByteAddressBuffer color_y_out : register(u7);
+RWByteAddressBuffer color_b_out : register(u8);
 
 [numthreads(256, 1, 1)]
 void main(uint3 tid : SV_DispatchThreadID)
@@ -84,16 +86,17 @@ void main(uint3 tid : SV_DispatchThreadID)
     // convert→re-deposit churn from running against a parked brush.
     if (cb.pen_down == 0) return;
 
-    // Only convert cells the ADHESION BULB covers (within D1 of the brush
-    // footprint XY). Draining within D0 (the wider §5.2 conversion range)
-    // left an empty annulus: grid paint drained out to D0, but particles
-    // only ride within D1 < D0, so the D1..D0 ring had neither grid paint
-    // nor swarm — the rendered stroke showed a moat around the brush. With
-    // the drain bounded by D1, annulus cells keep their deposits and the
-    // trail runs continuous right up to the (composited) bulb.
+    // Paper §5.2: "liquid within distance D0 from bristles must be represented
+    // by particles" — convert every cell within D0 of the bristles. The exact
+    // test is a distance to the nearest SAMPLE (samples spread across the
+    // footprint out to the brush radius), so the center-distance bound is
+    // brush_radius + D0: a cell within that radius of the center is within
+    // D0 of some sample. The drained zone renders via the raster composite
+    // (pack_float4); trail continuity behind the brush comes from particles
+    // crossing D0 and depositing (Eq.16).
     float2 dxy = cell_center.xy - float2(cb.brush_pos_x, cb.brush_pos_y);
     float d_to_brush = length(dxy);
-    if (d_to_brush > cb.D1) return;
+    if (d_to_brush > cb.brush_radius + cb.D0) return;
 
     // Stratified sampling: 27 candidate positions (3×3×3 sub-grid per cell)
     // 2.5-cell kernel on the ±1 drain window (tighter than particle_to_grid's
@@ -181,10 +184,13 @@ void main(uint3 tid : SV_DispatchThreadID)
 
             if (interp_density < 0.02) continue;
 
-            // Allocate particle slot (with wrap to prevent overflow)
+            // Allocate particle slot; on pool exhaustion the candidate is
+            // skipped and the cell keeps its density (no wrap-around: the
+            // old `slot % max` overwrote a LIVE particle, silently
+            // destroying its mass).
             uint slot;
             ptcl_counter.InterlockedAdd(0, 1, slot);
-            slot = slot % uint(cb.max_particles);
+            if (slot >= uint(cb.max_particles)) continue;
 
             float m_k = mass_per_candidate;
 
@@ -230,23 +236,38 @@ void main(uint3 tid : SV_DispatchThreadID)
                         (float(nz) + 0.5) * cell_z  - half_h + cb.grid_center_z);
                     float w = W_smooth_3d(candidate - npos, h) / sub_wsum;
                     uint gi = grid_idx_3d(uint(nx), uint(ny), uint(nz), res, res_z);
+                    // density_out / color_*_out are WINDOW-SIZED tmps (the
+                    // host seeds them from the global canvas fields and copies
+                    // back). The D0 drain zone + kernel apron sits well inside
+                    // the 128-cell window; out-of-window writes are skipped.
+                    int wo = win_field_idx(
+                        nx, ny, nz, cb.window_origin_x, cb.window_origin_y,
+                        cb.window_origin_z, cb.window_size_x, cb.window_size_z);
+                    if (wo < 0) continue;
                     float loss = m_k * w;
-                    density_out[gi] -= loss;
+                    atomicFloatAdd(density_out, uint(wo) * 4u, -loss);
                     // Neighbor pigment (normalized); fall back to this cell's
                     // pigment if the neighbor has no density to normalize by.
                     float nd = density[gi];
                     float3 n_ryb = (nd > 1e-6f)
                         ? float3(color_r[gi], color_y[gi], color_b[gi]) / nd
                         : norm_ryb;
-                    color_r_out[gi] -= n_ryb.x * loss;
-                    color_y_out[gi] -= n_ryb.y * loss;
-                    color_b_out[gi] -= n_ryb.z * loss;
+                    atomicFloatAdd(color_r_out, uint(wo) * 4u, -n_ryb.x * loss);
+                    atomicFloatAdd(color_y_out, uint(wo) * 4u, -n_ryb.y * loss);
+                    atomicFloatAdd(color_b_out, uint(wo) * 4u, -n_ryb.z * loss);
                 }
               }
             }
 
             ptcl_pos[slot] = float4(candidate, 0.0);
-            ptcl_vel[slot] = float4(vel_x[gidx], vel_y[gidx], vel_z[gidx], 0.0);
+            // The velocity family is WINDOW-SIZED: this cell is inside the
+            // window by the D0 dispatch bound (guard anyway).
+            int wv = win_field_idx(
+                x, y, z, cb.window_origin_x, cb.window_origin_y,
+                cb.window_origin_z, cb.window_size_x, cb.window_size_z);
+            ptcl_vel[slot] = (wv >= 0)
+                ? float4(vel_x[wv], vel_y[wv], vel_z[wv], 0.0)
+                : float4(0.0, 0.0, 0.0, 0.0);
             ptcl_color[slot] = float4(norm_ryb, m_k);
             ptcl_alive[slot] = 1;
         }
@@ -255,10 +276,18 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     // Clamp own cell to non-negative (neighbors handled by their own threads).
     // The host seeds density_out/color_*_out with current values, so
-    // subtraction may leave negative values; clamp to 0 here. Neighbor cells
-    // are clamped by their own threads (each thread runs the same shader).
-    density_out[gidx] = max(density_out[gidx], 0.0);
-    color_r_out[gidx] = max(color_r_out[gidx], 0.0);
-    color_y_out[gidx] = max(color_y_out[gidx], 0.0);
-    color_b_out[gidx] = max(color_b_out[gidx], 0.0);
+    // subtraction may leave negative values; clamp to 0 here via atomic max.
+    // Neighbor cells are clamped by their own threads (each thread runs the
+    // same shader). The *_out tmps are window-sized — index window-locally.
+    {
+        int w0 = win_field_idx(
+            x, y, z, cb.window_origin_x, cb.window_origin_y,
+            cb.window_origin_z, cb.window_size_x, cb.window_size_z);
+        if (w0 >= 0) {
+            atomicFloatMax(density_out, uint(w0) * 4u, 0.0);
+            atomicFloatMax(color_r_out, uint(w0) * 4u, 0.0);
+            atomicFloatMax(color_y_out, uint(w0) * 4u, 0.0);
+            atomicFloatMax(color_b_out, uint(w0) * 4u, 0.0);
+        }
+    }
 }

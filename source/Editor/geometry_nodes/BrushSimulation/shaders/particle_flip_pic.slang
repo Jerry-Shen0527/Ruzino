@@ -15,7 +15,18 @@ StructuredBuffer<float> vel_y_new : register(t6);
 StructuredBuffer<float> vel_z_new : register(t7);
 RWStructuredBuffer<float4> ptcl_vel : register(u0);
 
-// Trilinear sample of a 3D field at world position
+// Trilinear sample of a WINDOW-LOCAL scalar field (vel_old/vel_new — the
+// window-sized velocity family) at world position. Outside the active window
+// the value is 0: no liquid motion outside the window (paper §4.2).
+// Window-local fetch with outside-window → 0 (velocity family).
+float fetch_win(StructuredBuffer<float> field, int gx, int gy, int gz)
+{
+    int w = win_field_idx(
+        gx, gy, gz, cb.window_origin_x, cb.window_origin_y,
+        cb.window_origin_z, cb.window_size_x, cb.window_size_z);
+    return (w >= 0) ? field[w] : 0.0;
+}
+
 float sample_grid_3d(StructuredBuffer<float> field, float3 pos)
 {
     float half_p = cb.paper_size * 0.5;
@@ -32,29 +43,11 @@ float sample_grid_3d(StructuredBuffer<float> field, float3 pos)
     float fy = gy - float(iy);
     float fz = gz - float(iz);
 
-    float c000 = 0.0, c100 = 0.0, c010 = 0.0, c110 = 0.0;
-    float c001 = 0.0, c101 = 0.0, c011 = 0.0, c111 = 0.0;
-    int res = cb.grid_res, res_z = cb.grid_res_z;
-    [unroll] for (int dz = 0; dz <= 1; dz++) {
-        [unroll] for (int dy = 0; dy <= 1; dy++) {
-            [unroll] for (int dx = 0; dx <= 1; dx++) {
-                int nx = ix + dx, ny = iy + dy, nz = iz + dz;
-                if (nx < 0 || nx >= res || ny < 0 || ny >= res || nz < 0 || nz >= res_z)
-                    continue;
-                // Global grid index (buffers are global-sized).
-                uint gi = grid_idx_3d(uint(nx), uint(ny), uint(nz), res, res_z);
-                float v = field[gi];
-                if (dz == 0 && dy == 0 && dx == 0) c000 = v;
-                else if (dz == 0 && dy == 0 && dx == 1) c100 = v;
-                else if (dz == 0 && dy == 1 && dx == 0) c010 = v;
-                else if (dz == 0 && dy == 1 && dx == 1) c110 = v;
-                else if (dz == 1 && dy == 0 && dx == 0) c001 = v;
-                else if (dz == 1 && dy == 0 && dx == 1) c101 = v;
-                else if (dz == 1 && dy == 1 && dx == 0) c011 = v;
-                else if (dz == 1 && dy == 1 && dx == 1) c111 = v;
-            }
-        }
-    }
+
+    float c000 = fetch_win(field, ix, iy, iz), c100 = fetch_win(field, ix+1, iy, iz);
+    float c010 = fetch_win(field, ix, iy+1, iz), c110 = fetch_win(field, ix+1, iy+1, iz);
+    float c001 = fetch_win(field, ix, iy, iz+1), c101 = fetch_win(field, ix+1, iy, iz+1);
+    float c011 = fetch_win(field, ix, iy+1, iz+1), c111 = fetch_win(field, ix+1, iy+1, iz+1);
 
     float c00 = lerp(c000, c100, fx);
     float c10 = lerp(c010, c110, fx);

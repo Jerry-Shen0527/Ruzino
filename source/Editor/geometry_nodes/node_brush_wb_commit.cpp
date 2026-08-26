@@ -123,15 +123,9 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
         Ruzino::SimConstants pack_cb = {};
         pack_cb.res = field->grid_res;
         pack_cb.res_z = field->grid_res_z;
-        // Swarm composite (see pack_float4.slang): overlay the rasterized
-        // particle swarm on the grid paint so the D0 drain zone around the
-        // brush renders as liquid instead of a moat. WB_RENDER_PTCL=0
-        // restores the grid-only pack.
-        static const float ptcl_render_scale = [] {
-            const char* env = std::getenv("WB_RENDER_PTCL");
-            return env ? std::max(std::atof(env), 0.0) : 1.0;
-        }();
-        pack_cb.ptcl_render_scale = ptcl_render_scale;
+        // Window mapping for the swarm-raster composite (pack_float4.slang):
+        // window cells add the live particle mass, everything else is pure
+        // canvas grid. Origin follows the sim's current window.
         pack_cb.window_origin_x = field->win_origin_x;
         pack_cb.window_origin_y = field->win_origin_y;
         pack_cb.window_origin_z = 0;
@@ -150,9 +144,9 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
               { "color_y", field->color_y },
               { "color_b", field->color_b },
               { "ptcl_density", field->ptcl_density },
-              { "ptcl_color_r", field->ptcl_rast_r },
-              { "ptcl_color_y", field->ptcl_rast_y },
-              { "ptcl_color_b", field->ptcl_rast_b } },
+              { "ptcl_rast_r", field->ptcl_rast_r },
+              { "ptcl_rast_y", field->ptcl_rast_y },
+              { "ptcl_rast_b", field->ptcl_rast_b } },
             { { "packed_out", field->packed_paint } },
             pack_cb_buf,
             grid_n3d);
@@ -242,10 +236,16 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
 
     float max_div = 0.0f, mean_div = 0.0f;
     {
-        auto div_cpu = readback(field->divergence_buf, grid_n3d);
+        // divergence_buf is WINDOW-SIZED (paper §4.2 transient solve field) —
+        // read only the window extent.
+        const int win_n3d_div =
+            std::min(WetbrushSimState::WIN_ALLOC_XY, field->grid_res) *
+            std::min(WetbrushSimState::WIN_ALLOC_XY, field->grid_res) *
+            field->grid_res_z;
+        auto div_cpu = readback(field->divergence_buf, win_n3d_div);
         double div_sum = 0.0;
         int div_count = 0;
-        for (int i = 0; i < grid_n3d; ++i) {
+        for (int i = 0; i < win_n3d_div; ++i) {
             float ad = std::fabs(div_cpu[i]);
             max_div = std::max(max_div, ad);
             div_sum += ad;
@@ -340,6 +340,255 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
             for (int i = 0; i < n; ++i)
                 if (ptcl_alive_flags[i] != 0)
                     ptcl_mass += ptcl_colors[i * STRIDE + 3];
+        }
+    }
+
+    // ======================================================================
+    // WB_DEBUG_DUMP_PTCL=1: per-cook swarm kinematics + window grid-velocity
+    // stats. Detects a frozen swarm (centroid drift ≈ 0, vmean ≈ 0) and a dead
+    // velocity field (gridvmax ≈ 0) in one glance.
+    // ======================================================================
+    {
+        static const bool dump_ptcl = [] {
+            const char* e = std::getenv("WB_DEBUG_DUMP_PTCL");
+            return e && e[0] == '1';
+        }();
+        static int dump_frame = 0;
+        if (dump_ptcl) {
+            ++dump_frame;
+            float cx = 0, cy = 0, cz = 0;
+            float minx = 1e30f, maxx = -1e30f, miny = 1e30f, maxy = -1e30f,
+                  minz = 1e30f, maxz = -1e30f;
+            double vmean = 0.0;
+            float vmax = 0.0f;
+            int n_live = 0;
+            if (ptcl_count > 0) {
+                int n = std::min(ptcl_count, max_ptcl);
+                std::vector<float> ptcl_vels(n * 4);
+                auto rb = rc.create(
+                    nvrhi::BufferDesc{}
+                        .setByteSize(static_cast<size_t>(n) * 16)
+                        .setCpuAccess(nvrhi::CpuAccessMode::Read)
+                        .setDebugName("wb_ptcl_vel_rb"));
+                auto cmd = rc.create(CommandListDesc{});
+                cmd->open();
+                cmd->copyBuffer(
+                    rb, 0, field->ptcl_vel, 0, static_cast<size_t>(n) * 16);
+                cmd->close();
+                device->executeCommandList(cmd);
+                device->waitForIdle();
+                void* mapped =
+                    device->mapBuffer(rb, nvrhi::CpuAccessMode::Read);
+                memcpy(ptcl_vels.data(), mapped, static_cast<size_t>(n) * 16);
+                device->unmapBuffer(rb);
+                rc.destroy(rb);
+                rc.destroy(cmd);
+                for (int i = 0; i < n; ++i) {
+                    if (ptcl_alive_flags.empty() || ptcl_alive_flags[i] == 0)
+                        continue;
+                    float x = ptcl_positions[i * 4 + 0];
+                    float y = ptcl_positions[i * 4 + 1];
+                    float z = ptcl_positions[i * 4 + 2];
+                    cx += x;
+                    cy += y;
+                    cz += z;
+                    minx = std::min(minx, x);
+                    maxx = std::max(maxx, x);
+                    miny = std::min(miny, y);
+                    maxy = std::max(maxy, y);
+                    minz = std::min(minz, z);
+                    maxz = std::max(maxz, z);
+                    float sp = std::sqrt(
+                        ptcl_vels[i * 4 + 0] * ptcl_vels[i * 4 + 0] +
+                        ptcl_vels[i * 4 + 1] * ptcl_vels[i * 4 + 1] +
+                        ptcl_vels[i * 4 + 2] * ptcl_vels[i * 4 + 2]);
+                    vmean += sp;
+                    vmax = std::max(vmax, sp);
+                    ++n_live;
+                }
+                if (n_live > 0) {
+                    cx /= float(n_live);
+                    cy /= float(n_live);
+                    cz /= float(n_live);
+                }
+            }
+            // Window grid velocity (window-sized vel_x/y/z buffers).
+            float gridvmax = 0.0f;
+            float gv_argmax = 0.0f;
+            int gv_argi = -1, gv_argcomp = -1, gv_over1 = 0;
+            float pmax = 0.0f, dmax = 0.0f;
+            {
+                const int WIN_XY =
+                    std::min(WetbrushSimState::WIN_ALLOC_XY, field->grid_res);
+                const int win_n3d = WIN_XY * WIN_XY * field->grid_res_z;
+                auto read_win = [&](nvrhi::BufferHandle buf) {
+                    std::vector<float> data(win_n3d);
+                    auto rb = rc.create(
+                        nvrhi::BufferDesc{}
+                            .setByteSize(
+                                static_cast<size_t>(win_n3d) * sizeof(float))
+                            .setCpuAccess(nvrhi::CpuAccessMode::Read)
+                            .setDebugName("wb_winvel_rb"));
+                    auto cmd = rc.create(CommandListDesc{});
+                    cmd->open();
+                    cmd->copyBuffer(
+                        rb,
+                        0,
+                        buf,
+                        0,
+                        static_cast<size_t>(win_n3d) * sizeof(float));
+                    cmd->close();
+                    device->executeCommandList(cmd);
+                    device->waitForIdle();
+                    void* mapped =
+                        device->mapBuffer(rb, nvrhi::CpuAccessMode::Read);
+                    memcpy(
+                        data.data(),
+                        mapped,
+                        static_cast<size_t>(win_n3d) * sizeof(float));
+                    device->unmapBuffer(rb);
+                    rc.destroy(rb);
+                    rc.destroy(cmd);
+                    return data;
+                };
+                auto vx = read_win(field->vel_x);
+                auto vy = read_win(field->vel_y);
+                auto vz = read_win(field->vel_z);
+                // Projection internals (eruption hunt): warm-started pressure
+                // and the divergence rhs peaks — distinguishes "rhs spike"
+                // from "pressure warm-start runaway".
+                if (true) {
+                    auto pa = read_win(field->pressure_a);
+                    auto db = read_win(field->divergence_buf);
+                    for (int i = 0; i < win_n3d; ++i) {
+                        pmax = std::max(pmax, std::abs(pa[i]));
+                        dmax = std::max(dmax, std::abs(db[i]));
+                    }
+                }
+                // Argmax: WHERE the peak grid velocity lives (window-local
+                // cell + dominant component) — distinguishes "floor ring",
+                // "brush rim", "above the brush" etc. when hunting the
+                // press-phase velocity buildup (blob-test explosion).
+                for (int i = 0; i < win_n3d; ++i) {
+                    float sp = std::sqrt(
+                        vx[i] * vx[i] + vy[i] * vy[i] + vz[i] * vz[i]);
+                    gridvmax = std::max(gridvmax, sp);
+                    if (sp > 1.0f)
+                        ++gv_over1;
+                    if (sp > gv_argmax) {
+                        gv_argmax = sp;
+                        gv_argi = i;
+                        float ax = std::abs(vx[i]), ay = std::abs(vy[i]),
+                              az = std::abs(vz[i]);
+                        gv_argcomp =
+                            (ax >= ay && ax >= az) ? 0 : (ay >= az ? 1 : 2);
+                    }
+                }
+            }
+            // Window-local cell of the argmax (grid z = lz, x/y = lx/ly).
+            int gv_lx = -1, gv_ly = -1, gv_lz = -1;
+            if (gv_argi >= 0) {
+                const int WIN_XY_d =
+                    std::min(WetbrushSimState::WIN_ALLOC_XY, field->grid_res);
+                gv_lz = gv_argi / (WIN_XY_d * WIN_XY_d);
+                int rem = gv_argi - gv_lz * WIN_XY_d * WIN_XY_d;
+                gv_ly = rem / WIN_XY_d;
+                gv_lx = rem - gv_ly * WIN_XY_d;
+            }
+            spdlog::info(
+                "[wb-ptcl] f={} n={} live={} mass={:.3f} "
+                "cen=({:.4f},{:.4f},{:.4f}) "
+                "bbox=[{:.3f},{:.3f}]x[{:.3f},{:.3f}]x[{:.3f},{:.3f}] "
+                "vmean={:.5f} vmax={:.5f} gridvmax={:.5f} "
+                "gv@=(lx{},ly{},lz{},c{}) over1={} pmax={:.4f} dmax={:.6f}",
+                dump_frame,
+                ptcl_count,
+                n_live,
+                ptcl_mass,
+                cx,
+                cy,
+                cz,
+                minx,
+                maxx,
+                miny,
+                maxy,
+                minz,
+                maxz,
+                n_live > 0 ? vmean / n_live : 0.0,
+                vmax,
+                gridvmax,
+                gv_lx,
+                gv_ly,
+                gv_lz,
+                gv_argcomp,
+                gv_over1,
+                pmax,
+                dmax);
+
+            // Mass-balance split: grid vs swarm, and how much of the grid is
+            // above the render threshold (kDensitySurface ⟺ raw d ≈ 0.006).
+            // Discriminates "deposit starvation" (grid total ≪ emitted) from
+            // "advection dilution" (grid total large, cells-above-threshold
+            // collapsed). rastmax = swarm composite peak.
+            {
+                double tot_d = 0.0;
+                int cells_vis = 0, cells_paint = 0;
+                float dmax = 0.0f;
+                for (int i = 0; i < grid_n3d; ++i) {
+                    float d = density_cpu[i];
+                    tot_d += d;
+                    dmax = std::max(dmax, d);
+                    if (d > 0.006f)
+                        ++cells_vis;
+                    if (d > 1e-5f)
+                        ++cells_paint;
+                }
+                const int WIN_XY =
+                    std::min(WetbrushSimState::WIN_ALLOC_XY, field->grid_res);
+                const int win_n3d = WIN_XY * WIN_XY * field->grid_res_z;
+                float rastmax = 0.0f;
+                {
+                    std::vector<float> rast(win_n3d);
+                    auto rb = rc.create(
+                        nvrhi::BufferDesc{}
+                            .setByteSize(
+                                static_cast<size_t>(win_n3d) * sizeof(float))
+                            .setCpuAccess(nvrhi::CpuAccessMode::Read)
+                            .setDebugName("wb_rast_rb"));
+                    auto cmd = rc.create(CommandListDesc{});
+                    cmd->open();
+                    cmd->copyBuffer(
+                        rb,
+                        0,
+                        field->ptcl_density,
+                        0,
+                        static_cast<size_t>(win_n3d) * sizeof(float));
+                    cmd->close();
+                    device->executeCommandList(cmd);
+                    device->waitForIdle();
+                    void* mapped =
+                        device->mapBuffer(rb, nvrhi::CpuAccessMode::Read);
+                    memcpy(
+                        rast.data(),
+                        mapped,
+                        static_cast<size_t>(win_n3d) * sizeof(float));
+                    device->unmapBuffer(rb);
+                    rc.destroy(rb);
+                    rc.destroy(cmd);
+                    for (int i = 0; i < win_n3d; ++i)
+                        rastmax = std::max(rastmax, rast[i]);
+                }
+                spdlog::info(
+                    "[wb-mass] f={} grid_tot={:.1f} grid_max={:.3f} "
+                    "cells_vis={} cells_paint={} swarm={:.1f} rastmax={:.4f}",
+                    dump_frame,
+                    tot_d,
+                    dmax,
+                    cells_vis,
+                    cells_paint,
+                    ptcl_mass,
+                    rastmax);
+            }
         }
     }
 

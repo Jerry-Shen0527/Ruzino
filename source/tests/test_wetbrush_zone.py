@@ -7,9 +7,9 @@ Builds the streaming brush pipeline purely from the Python node-graph API:
     <init/feedback> --WetbrushZoneState--> [ simulation_in ]   (boundary slot B: field)
 
       [ simulation_in ] --Stroke Curves--> mock_point_emitter   (zone interior)
-      mock_point_emitter --BrushPoint--> brush_wb_deposit "Brush Point"
+      mock_point_emitter --StrokeSample--> brush_wb_deposit "Stroke Sample"
       [ simulation_in ] --State--> brush_wb_deposit "State"
-      brush_wb_deposit --BrushPoint--> brush_wb_fluid   (so fluid knows pen up/down)
+      brush_wb_deposit --StrokeSample--> brush_wb_fluid   (so fluid knows pen up/down)
       brush_wb_deposit --State--> brush_wb_bristle --State--> brush_wb_fluid
         --State--> brush_wb_commit
       brush_wb_commit --Paint Particles--> write_usd   (interior)
@@ -67,11 +67,11 @@ def _build_streaming_graph():
       mock_stroke --Stroke Curves--> [ simulation_in ]
       <init frame / feedback> --State--> [ simulation_in ]
       [ simulation_in ] --Stroke Curves--> mock_point_emitter
-      mock_point_emitter --BrushPoint--> brush_wb_deposit
+      mock_point_emitter --StrokeSample--> brush_wb_deposit
       [ simulation_in ] --State--> brush_wb_deposit
       brush_wb_deposit --State--> brush_wb_bristle --State--> brush_wb_fluid
         --State--> brush_wb_commit
-      brush_wb_deposit --BrushPoint--> brush_wb_fluid
+      brush_wb_deposit --StrokeSample--> brush_wb_fluid
       brush_wb_commit --Paint Particles--> write_usd   (interior)
       brush_wb_commit --State--> [ simulation_out ]   (fed back)
 
@@ -103,14 +103,14 @@ def _build_streaming_graph():
     # same boundary slot, replayed on advance frames; the emitter caches it).
     g.addEdge(sim_in, "Simulation Out", emitter, "Stroke Curves")
     # emitter -> deposit: the fresh per-frame BrushPoint (interior edge).
-    g.addEdge(emitter, "Current Point", deposit, "Brush Point")
+    g.addEdge(emitter, "Stroke Sample", deposit, "Stroke Sample")
     # sim_in -> deposit: the fed-back paint field (boundary slot B). On the
     # init frame this is empty/null and deposit allocates it; on advance frames
     # it carries the committed canvas + live fields.
     g.addEdge(sim_in, "Simulation Out", deposit, "State")
     # deposit -> fluid: forward the BrushPoint so the fluid node knows pen
     # up/down (pen-up frames still relax the fluid but skip emission).
-    g.addEdge(deposit, "Brush Point", fluid, "Brush Point")
+    g.addEdge(deposit, "Stroke Sample", fluid, "Stroke Sample")
     # The wb chain: the field flows deposit -> bristle -> fluid -> commit.
     g.addEdge(deposit, "State", bristle, "State")
     g.addEdge(bristle, "State", fluid, "State")

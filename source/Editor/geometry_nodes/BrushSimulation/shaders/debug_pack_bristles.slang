@@ -46,11 +46,10 @@ void main(uint3 tid : SV_DispatchThreadID)
     int s = clamp(int(t * cb.samples_per_bristle), 0, cb.samples_per_bristle - 1);
     SampleLiquid liquid = sample_liquid[b * cb.samples_per_bristle + s];
 
-    float3 ryb = clamp(liquid.pigment, float3(0.0), float3(1.0));
-    float3 rgb = ryb_to_rgb(ryb.x, ryb.y, ryb.z);
-    // Dry samples render as neutral gray; liquid load drives saturation.
-    float wet = saturate(liquid.mass * 20.0);
-    float3 col = lerp(float3(0.55, 0.57, 0.62), rgb, wet);
+    // FIXED BLUE reference color (user request): the brush must be readable
+    // against the paint. The previous liquid-load coloring rendered a dipped
+    // brush black-on-black — invisible next to the dark paint it deposits.
+    float3 col = float3(0.25, 0.5, 1.0);
 
     uint i = tid.x;
     uint C = uint(cb.num_bristles * segs_per);

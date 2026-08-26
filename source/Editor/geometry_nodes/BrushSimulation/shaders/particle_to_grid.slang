@@ -15,10 +15,12 @@ StructuredBuffer<uint> ptcl_alive : register(t3);
 // Bristle sample positions for the d_{B,k} distance query (paper §5.2 Table 1:
 // d_{B,k} is the particle distance TO BRISTLES, not to the brush center).
 StructuredBuffer<float4> sample_pos : register(t4);
-RWStructuredBuffer<float> density : register(u0);
-RWStructuredBuffer<float> color_r : register(u1);
-RWStructuredBuffer<float> color_y : register(u2);
-RWStructuredBuffer<float> color_b : register(u3);
+// Eq.15/16 scatter targets, bound as raw views: the accumulation must be a
+// CAS atomicFloatAdd — plain += raced and drifted RYB over long loops.
+RWByteAddressBuffer density : register(u0);
+RWByteAddressBuffer color_r : register(u1);
+RWByteAddressBuffer color_y : register(u2);
+RWByteAddressBuffer color_b : register(u3);
 RWStructuredBuffer<uint> ptcl_alive_out : register(u4);
 // Wetness: depositing paint is WET paint. damp_dry only ever DECREASES
 // wetness, so without a writer that sets it high on deposition, every painted
@@ -26,7 +28,7 @@ RWStructuredBuffer<uint> ptcl_alive_out : register(u4);
 // solve then treats fresh paint as an immovable wall and it never spreads.
 // Set the receiving cells to fully wet here (the only place mass enters the
 // grid).
-RWStructuredBuffer<float> wetness : register(u5);
+RWByteAddressBuffer wetness : register(u5);
 
 [numthreads(256, 1, 1)]
 void main(uint3 tid : SV_DispatchThreadID)
@@ -37,7 +39,6 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     float3 pos = ptcl_pos[idx].xyz;
     float3 vel = ptcl_vel[idx].xyz;
-    float speed = length(vel);
 
     // Paper §5.2 / Table 1: the grid↔particle conversion boundary is d_{B,k},
     // the particle's distance TO BRISTLES (not to the brush footprint center).
@@ -56,15 +57,25 @@ void main(uint3 tid : SV_DispatchThreadID)
     }
     float d_B = sqrt(best_d2);
 
-    // Only transfer particles that are:
-    // 1. Away from bristles (d_{B,k} >= D0)
-    // 2. Moving slowly (speed < threshold) — paper §5.2 "moves slowly"
-    // PEN-UP: the brush is away from the canvas (lifted or trajectory
-    // exhausted) — d_{B,k} against the stalled sample positions no longer
-    // means proximity to a painting brush, so drop the distance condition and
-    // let the whole carried swarm settle onto the canvas.
+    // Paper §5.2, LITERAL reading: transfer a particle back into the density
+    // field "if the particle moves slowly and its distance to the bristles is
+    // above D0". "Slowly" is the ABSOLUTE canvas-frame speed (the paper gives
+    // no number; cb.slow_deposit_speed ≈ 2 cm/s in real units). The previous
+    // relative-to-flow and landed-on-canvas readings were local inventions
+    // from the era when the wake velocity did not decay; the wake now decays
+    // through the paper's own §4.2 mechanisms (strong viscous Jacobi
+    // diffusion homogenizing window momentum + dryness zeroing), so the
+    // literal gate works: behind a moving brush the flow slows, particles
+    // follow via the §4.3 FLIP/PIC update (γ=0.8 PIC-weighted), and the
+    // trailing edge deposits continuously.
+    // PEN-UP: the brush is away from the canvas — d_{B,k} against the stalled
+    // sample positions no longer means proximity to a painting brush, so drop
+    // the distance condition and let the whole carried swarm settle onto the
+    // canvas as the residual flow decays.
+    float speed = length(vel);
     bool near_brush = d_B < cb.D0 && cb.pen_down != 0;
-    if (near_brush || speed > 0.5) {
+    bool too_fast = speed > cb.slow_deposit_speed;
+    if (near_brush || too_fast) {
         ptcl_alive_out[idx] = 1;
         return;
     }
@@ -145,19 +156,18 @@ void main(uint3 tid : SV_DispatchThreadID)
 
             // Eq.16 with discrete normalization: ρ_c += m_k · w_c. Color
             // accumulated as weighted RYB; brightness-preserving mixing is
-            // deferred to the merge step. Plain += races (see
-            // particle_rasterize note) but collisions are rare for sparse
-            // far-from-brush particles.
+            // deferred to the merge step. Atomic CAS adds make the scatter
+            // exactly conservative (see common.slangh atomicFloatAdd).
             float w_new = col.w * w;
-            density[gi] += w_new;
-            color_r[gi] += col.x * w_new;
-            color_y[gi] += col.y * w_new;
-            color_b[gi] += col.z * w_new;
+            atomicFloatAdd(density, gi * 4u, w_new);
+            atomicFloatAdd(color_r, gi * 4u, col.x * w_new);
+            atomicFloatAdd(color_y, gi * 4u, col.y * w_new);
+            atomicFloatAdd(color_b, gi * 4u, col.z * w_new);
             // Freshly deposited paint is fully wet; drying (damp_dry) brings
             // it down over time. max() so re-depositing on an existing cell
             // keeps it wet (a re-stroke wets the paint again, as a real brush
             // would).
-            wetness[gi] = max(wetness[gi], 1.0f);
+            atomicFloatMax(wetness, gi * 4u, 1.0);
         }
       }
     }

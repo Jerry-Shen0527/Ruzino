@@ -1,8 +1,8 @@
-// Mock Point Emitter — streams control points one per simulation frame,
+// Mock Point Emitter — streams stroke samples one per simulation frame,
 // replaying a captured stroke trajectory at the simulation's own frame rate.
 //
 // Pipeline role:
-//   [brush_capture] --Stroke Curves--> [mock_point_emitter] --BrushPoint-->
+//   [brush_capture] --Stroke Curves--> [mock_point_emitter] --StrokeSample-->
 //       [simulation_in] --> {wetbrush step} --> [simulation_out]
 //
 // The emitter does NOT read live mouse input. During drawing (is_simulating
@@ -12,16 +12,24 @@
 // cursor by payload.delta_time each frame and linearly interpolates the
 // captured trajectory to produce "where the brush has reached now".
 //
+// Each emitted StrokeSample carries the pen DYNAMICS the trajectory source
+// knows analytically: velocity = the polyline segment velocity (exact on
+// linear segments; deposit no longer double-differences positions), angular
+// velocity = 0, orientation = identity/upright (CurveComponent carries no
+// orientation channel yet — the contract supports it, this mock doesn't
+// author it). has_dynamics = true tells deposit to trust these values.
+//
 // Multi-stroke support: when the cursor crosses a stroke boundary the
-// emitted BrushPoint carries stroke_start=true so downstream nodes can
+// emitted StrokeSample carries stroke_start=true so downstream nodes can
 // re-initialize (treat as a brand-new pen-down).
 
 #include <cmath>
+#include <cstdlib>
 
 #include "GCore/Components/CurveComponent.h"
 #include "GCore/GOP.h"
 #include "GCore/geom_payload.hpp"
-#include "brush_sim_common.hpp"  // BrushPoint
+#include "brush_sim_common.hpp"  // StrokeSample
 #include "geom_node_base.h"
 #include "spdlog/spdlog.h"
 
@@ -38,7 +46,7 @@ struct EmitterStorage {
     // Stroke k occupies vertices [stroke_start[k],
     // stroke_start[k]+stroke_len[k]).
     std::vector<glm::vec3> points;
-    std::vector<glm::vec3> colors;       // per-point RYB display color
+    std::vector<glm::vec3> colors;      // per-point RYB display color
     std::vector<float> times;           // per-point stroke-local time
     std::vector<int> stroke_start_idx;  // first flat index of each stroke
     std::vector<int> stroke_len;        // vertex count per stroke
@@ -55,7 +63,9 @@ struct EmitterStorage {
 
 // Forward declarations — helpers are defined after node_execution below.
 static void advance_cursor(EmitterStorage& s, float elapsed);
-static void sample_trajectory(const EmitterStorage& s, BrushPoint& out);
+static void
+fill_pen_dynamics(const EmitterStorage& s, int i0, StrokeSample& out);
+static void sample_trajectory(const EmitterStorage& s, StrokeSample& out);
 
 NODE_DECLARATION_FUNCTION(mock_point_emitter)
 {
@@ -64,7 +74,7 @@ NODE_DECLARATION_FUNCTION(mock_point_emitter)
     // zone it is wired directly. Required in the zone path.
     b.add_input<Geometry>("Stroke Curves");
     b.add_input<float>("Replay Speed").default_val(1.0f).min(0.01f).max(10.0f);
-    b.add_output<BrushPoint>("Current Point");
+    b.add_output<StrokeSample>("Stroke Sample");
 }
 
 NODE_EXECUTION_FUNCTION(mock_point_emitter)
@@ -72,8 +82,8 @@ NODE_EXECUTION_FUNCTION(mock_point_emitter)
     auto& storage = params.get_storage<EmitterStorage&>();
     auto payload = params.get_global_payload<GeomPayload>();
 
-    // Default output: an inactive point (pen up).
-    BrushPoint out;
+    // Default output: an inactive sample (pen up).
+    StrokeSample out;
     out.active = false;
 
     // Refresh the trajectory cache from the input curve. Rebuild only when
@@ -91,12 +101,13 @@ NODE_EXECUTION_FUNCTION(mock_point_emitter)
             storage.points = verts;
             storage.total_points = static_cast<int>(verts.size());
 
-            // Per-vertex RYB display color (carried through to BrushPoint so
-            // the deposit node paints with the trajectory's own color, not a
-            // single static Ink Color — needed for multi-color strokes).
+            // Per-vertex RYB display color (carried through to StrokeSample
+            // so the deposit node paints with the trajectory's own color, not
+            // a single static Ink Color — needed for multi-color strokes).
             storage.colors = curve->get_display_color();
             if (storage.colors.size() != verts.size()) {
-                storage.colors.assign(verts.size(), glm::vec3(1.0f, 0.0f, 0.0f));
+                storage.colors.assign(
+                    verts.size(), glm::vec3(1.0f, 0.0f, 0.0f));
             }
 
             // Timestamps (optional — stroke-local time per point).
@@ -171,9 +182,10 @@ NODE_EXECUTION_FUNCTION(mock_point_emitter)
             out.pos = storage.points[0];
             out.time = storage.times.empty() ? 0.0f : storage.times[0];
             out.color = storage.colors.empty() ? glm::vec3(1.0f, 0.0f, 0.0f)
-                                                : storage.colors[0];
+                                               : storage.colors[0];
             out.active = true;
             out.stroke_start = true;
+            fill_pen_dynamics(storage, 0, out);
             storage.last_pos = out.pos;
             // Advance cursor by one frame's worth of time.
             float dt =
@@ -198,12 +210,45 @@ NODE_EXECUTION_FUNCTION(mock_point_emitter)
         }
     }
 
-    params.set_output("Current Point", out);
+    params.set_output("Stroke Sample", out);
     params.set_storage(storage);
     return true;
 }
 
 // --- helpers (file-local) ---
+
+// Fill the pen-dynamics channels of the sample from the trajectory's
+// analytic derivatives. Velocity = the polyline segment starting at vertex
+// `i0` (linear motion ⇒ exact; deposit only needs to difference THIS value
+// once for accel, instead of double-differencing positions). Orientation =
+// identity/upright (local -Z toward the canvas): CurveComponent has no
+// orientation channel yet, so the mock holds the pen vertical — the
+// StrokeSample contract supports authored orientation, the trajectory
+// format does not (yet). Constant orientation ⇒ angular_vel = 0.
+static void
+fill_pen_dynamics(const EmitterStorage& s, int i0, StrokeSample& out)
+{
+    int i1 = std::min(i0 + 1, s.total_points - 1);
+    float seg_dt = 1.0f / 60.0f;
+    if (!s.times.empty() && i1 < static_cast<int>(s.times.size()) &&
+        s.times[i1] - s.times[i0] > 1e-6f) {
+        seg_dt = s.times[i1] - s.times[i0];
+    }
+    if (i1 > i0) {
+        out.vel = (s.points[i1] - s.points[i0]) / seg_dt;
+    }
+    else {
+        out.vel = glm::vec3(0.0f);
+    }
+    out.angular_vel = glm::vec3(0.0f);
+    out.orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+    // A/B attribution switch: WB_NO_DYNAMICS=1 withholds the analytic
+    // derivatives so deposit falls back to its finite-difference path —
+    // i.e. the exact pre-StrokeSample behavior (pen-down from rest, FD
+    // heading-derived omega). Regression triage only; do not ship runs with
+    // it set.
+    out.has_dynamics = std::getenv("WB_NO_DYNAMICS") == nullptr;
+}
 
 // Advance the cursor by `elapsed` seconds, mapping time into index space
 // using the local time spacing within the current stroke. Crosses stroke
@@ -254,7 +299,7 @@ static void advance_cursor(EmitterStorage& s, float elapsed)
 
 // Sample the trajectory at the current cursor position via linear
 // interpolation. Sets stroke_start=true on the first point of a stroke.
-static void sample_trajectory(const EmitterStorage& s, BrushPoint& out)
+static void sample_trajectory(const EmitterStorage& s, StrokeSample& out)
 {
     float c = s.cursor;
     int i0 = static_cast<int>(std::floor(c));
@@ -284,6 +329,8 @@ static void sample_trajectory(const EmitterStorage& s, BrushPoint& out)
         out.color = glm::vec3(1.0f, 0.0f, 0.0f);
     }
     out.active = true;
+    // Analytic pen dynamics for this sample (segment under the cursor).
+    fill_pen_dynamics(s, i0, out);
     // stroke_start on the first point of whichever stroke the cursor is in.
     int eff_stroke = s.cur_stroke;
     if (eff_stroke >= s.total_strokes)

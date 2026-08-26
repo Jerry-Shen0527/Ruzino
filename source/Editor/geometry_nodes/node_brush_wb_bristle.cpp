@@ -91,23 +91,28 @@ NODE_EXECUTION_FUNCTION(brush_wb_bristle)
     blc.samples_per_bristle = S;
     blc.mu = 0.5f;
     // M_max bounds the emission radius R_j = cbrt(3*M_max/(4π*ρ₀)). R_j must
-    // stay well inside D1 so newborns ride the adhesion bulb; with ρ₀=2e4,
-    // M_max=0.03 → R_j≈0.0076 ≈ 0.38×brush_radius (paper ratio ~0.35). Larger
-    // M_max (or smaller ρ₀) scatters emitted particles past the brush and
-    // produces a wide diffuse blob instead of a stroke.
-    blc.M_max = 0.03f;
+    // stay well inside D1 so newborns ride the adhesion bulb; with ρ₀=1e5,
+    // M_max=0.15 → R_j≈0.0071 ≈ 0.36×brush_radius (paper ratio ~0.35). M_max
+    // and ρ₀ move TOGETHER (M_max = dip size — how long a stroke one dip
+    // paints; ρ₀ keeps R_j constant): the pair (0.03, 2e4) drained a dip in
+    // ~15 frames; (0.15, 1e5) carries 5× the paint at the same R_j and
+    // sustains a 60-frame stroke. Larger M_max without raising ρ₀ scatters
+    // emitted particles past the brush (wide diffuse blob instead of a
+    // stroke). Also the dip load (m_j = M_max at stroke_start, deposit node)
+    // — shared constant.
+    blc.M_max = WetbrushSimState::WB_M_MAX;
     blc.M_min = 0.005f;
-    // ρ₀ sets the emission radius R_j = cbrt(3·M_max/(4π·ρ₀)) (§5.1). At 1e3,
-    // R_j ≈ 0.019 ≈ 95% of brush_radius(0.02), which forced D1 up to
-    // 1.6×radius — an adhesion layer 80% as wide as the D0 conversion zone,
-    // so the whole swarm rode the brush and almost nothing deposited (leak
-    // ~3%/frame). 2e4 puts R_j ≈ 0.0076 (0.38×radius, paper ratio ~0.35),
-    // letting D1 drop to 0.5×radius (D1/D0 = 0.25 vs paper's 0.3): the
-    // adhesion shell is thin, trailing particles decouple within a few
-    // frames and retire across D0.
-    blc.rho_0 = 2e4f;
+    blc.rho_0 = 1e5f;
     blc.eps_emit = 0.1f;
-    blc.max_emit_per_step = 10;
+    // §5.1 emission smoothing: "To further smoothen the liquid transfer
+    // process, we also set a limit on the maximum number of particles that
+    // can be absorbed or emitted by a sample per time step." 10/step let a
+    // saturated dip dump HALF the ink charge in the first ~5 frames at the
+    // touchdown point (174K particles / 5762 mass airborne at frame 5), and
+    // the stroke then ran dry. 1/step paces the same drawable mass
+    // (M_max − (1+ε)M_j ≈ 0.1/sample) over ~50 frames — a full stroke —
+    // at paper particle density (§7: 210K–2M).
+    blc.max_emit_per_step = 1;
     blc.grid_res = field->grid_res;
     blc.grid_res_z = WIN_Z;
     blc.height_extent = field->grid_height;
@@ -118,19 +123,17 @@ NODE_EXECUTION_FUNCTION(brush_wb_bristle)
     blc.grid_center_y = field->grid_center.y;
     blc.D0 = brush_radius * 3.0f;
     blc.max_particles = max_ptcl;
-    // Global per-step particle-creation budget (see common.slangh). With the
-    // supply drip overloading essentially ALL Nb*S=76800 samples every frame,
-    // EMIT birthed ~76k particles/frame and instantly wrapped the 262k pool
-    // (wb_diag showed +70-80k/frame growth). The budget is now calibrated to
-    // the DEPOSITED DENSITY target instead of the pool size: with the
-    // discretely-normalized Eq.16 kernel (Σw=1), each particle lands ~its
-    // mass m (~0.002-0.05) as density. ABSORB reclaims ~70% of the emitted
-    // mass back into the bristles, so budget 300 only reached ~0.07 mean
-    // cell density on the trail; 800 lands ~0.2 (pack D_MAX=0.3 → strong but
-    // unsaturated stroke). Env-tunable for experiments.
+    // Global per-step particle-creation cap. PAPER-FAITHFUL DEFAULT = OFF
+    // (0): the paper bounds emission only per SAMPLE ("a limit on the
+    // maximum number of particles that can be absorbed or emitted by a
+    // sample per time step") and its typical run holds 210K–2M particles.
+    // With the dip model (mass = the finite stroke_start saturation), the
+    // total emitted mass is bounded by the dip itself — no per-frame
+    // minting to throttle. The env var stays as a pool-overflow escape
+    // hatch for extreme test configurations.
     static const int emit_budget = [] {
         const char* env = std::getenv("WB_EMIT_BUDGET");
-        return env ? std::max(std::atoi(env), 0) : 800;
+        return env ? std::max(std::atoi(env), 0) : 0;
     }();
     blc.emit_budget = emit_budget;
     // Per-frame entropy for the EMIT budget's probabilistic pre-gate (see
@@ -146,6 +149,10 @@ NODE_EXECUTION_FUNCTION(brush_wb_bristle)
     blc.window_origin_z = 0;
     blc.window_size_x = WIN_XY;
     blc.window_size_z = WIN_Z;
+    // Dip request from the deposit node (stroke_start): the ABSORB pass
+    // initializes m_j = M'_j(ψ) in-shader this frame.
+    blc.dip_frame = field->dip_frame ? 1 : 0;
+    field->dip_frame = false;
 
     nvrhi::BufferHandle liquid_cb;
     Ruzino::brush_upload_cb(
@@ -159,7 +166,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_bristle)
         field->bri_liquid_emit_program =
             Ruzino::brush_compile_shader(rc, "bristle_liquid_emit.slang");
 
-    // Pass 0: ABSORB (sample_liquid SRV -> sample_liquid_b UAV)
+    // Pass 0: ABSORB (color bleeding; sample_liquid SRV -> sample_liquid_b UAV)
     Ruzino::brush_dispatch(
         rc,
         field->bri_liquid_transfer_program,
@@ -171,8 +178,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_bristle)
           { "grid_color_r", field->color_r },
           { "grid_color_y", field->color_y },
           { "grid_color_b", field->color_b } },
-        { { "sample_liquid_out", field->sample_liquid_b },
-          { "sample_supply", field->sample_supply } },
+        { { "sample_liquid_out", field->sample_liquid_b } },
         liquid_cb,
         Nb * S);
     std::swap(field->sample_liquid, field->sample_liquid_b);
@@ -204,7 +210,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_bristle)
           { "grid_color_y", field->color_y },
           { "grid_color_b", field->color_b } },
         { { "sample_liquid_out", field->sample_liquid_b },
-          { "sample_supply", field->sample_supply },
           { "ptcl_counter", field->ptcl_counter },
           { "emit_budget", field->emit_budget },
           { "ptcl_pos_out", field->ptcl_pos },

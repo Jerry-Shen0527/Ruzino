@@ -11,14 +11,18 @@ StructuredBuffer<float4> ptcl_pos : register(t0);
 StructuredBuffer<float4> ptcl_color : register(t1);
 StructuredBuffer<float4> ptcl_vel : register(t2);
 StructuredBuffer<uint> ptcl_alive : register(t3);
-RWStructuredBuffer<float> ptcl_density : register(u0);
-RWStructuredBuffer<float> ptcl_vel_x : register(u1);
-RWStructuredBuffer<float> ptcl_vel_y : register(u2);
-RWStructuredBuffer<float> ptcl_vel_z : register(u3);
+// Accumulation grids, bound as raw views: every splat is an atomicFloatAdd
+// CAS (plain += raced; the raster feeds the §4.3 joint velocity merge and
+// the pack-time composite, so lost/garbled accumulations corrupted both the
+// FLIP/PIC update and the rendered swarm mass).
+RWByteAddressBuffer ptcl_density : register(u0);
+RWByteAddressBuffer ptcl_vel_x : register(u1);
+RWByteAddressBuffer ptcl_vel_y : register(u2);
+RWByteAddressBuffer ptcl_vel_z : register(u3);
 // Color channels: RYB weighted by mass (for merge into main grid)
-RWStructuredBuffer<float> ptcl_color_r : register(u4);
-RWStructuredBuffer<float> ptcl_color_y : register(u5);
-RWStructuredBuffer<float> ptcl_color_b : register(u6);
+RWByteAddressBuffer ptcl_color_r : register(u4);
+RWByteAddressBuffer ptcl_color_y : register(u5);
+RWByteAddressBuffer ptcl_color_b : register(u6);
 
 [numthreads(256, 1, 1)]
 void main(uint3 tid : SV_DispatchThreadID)
@@ -78,18 +82,17 @@ void main(uint3 tid : SV_DispatchThreadID)
                 // Window-local linear index into the window-sized buffer.
                 uint gi = uint(nz) * uint(WSX * WSX) + uint(lny) * uint(WSX) + uint(lnx);
 
-                // NOTE: plain += races when many particles splat into the
-                // same cell. Slang's RWStructuredBuffer lacks a working
-                // atomic-CAS on float elements (InterlockedCompareExchange
-                // rejects buf[i] as non-l-value), so we accept the race —
-                // density is sparse and collisions are rare in practice.
-                ptcl_density[gi] += deposit * w;
-                ptcl_vel_x[gi]   += vel.x * deposit * w;
-                ptcl_vel_y[gi]   += vel.y * deposit * w;
-                ptcl_vel_z[gi]   += vel.z * deposit * w;
-                ptcl_color_r[gi] += color_deposit.r * w;
-                ptcl_color_y[gi] += color_deposit.g * w;
-                ptcl_color_b[gi] += color_deposit.b * w;
+                // Atomic CAS adds: many particles splat into the same cell
+                // every frame (the swarm under the brush is dense by
+                // design), so the racy plain += lost mass routinely, not
+                // rarely. See common.slangh atomicFloatAdd.
+                atomicFloatAdd(ptcl_density, gi * 4u, deposit * w);
+                atomicFloatAdd(ptcl_vel_x, gi * 4u, vel.x * deposit * w);
+                atomicFloatAdd(ptcl_vel_y, gi * 4u, vel.y * deposit * w);
+                atomicFloatAdd(ptcl_vel_z, gi * 4u, vel.z * deposit * w);
+                atomicFloatAdd(ptcl_color_r, gi * 4u, color_deposit.r * w);
+                atomicFloatAdd(ptcl_color_y, gi * 4u, color_deposit.g * w);
+                atomicFloatAdd(ptcl_color_b, gi * 4u, color_deposit.b * w);
             }
         }
     }

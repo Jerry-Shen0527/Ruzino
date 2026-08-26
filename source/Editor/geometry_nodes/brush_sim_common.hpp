@@ -21,6 +21,9 @@
 #include "RHI/ResourceManager/resource_allocator.hpp"
 #include "RHI/shaderCompiler.h"
 #include "glm/glm.hpp"
+// glm::qua is NOT defined by glm.hpp in this vendored GLM (fwd-declared only,
+// full type lives in the gtc extension) — StrokeSample::orientation needs it.
+#include "glm/gtc/quaternion.hpp"
 #include "nvrhi/nvrhi.h"
 #include "spdlog/spdlog.h"
 
@@ -50,6 +53,13 @@ brush_create_field_buffer(ResourceAllocator& rc, int n, const char* debug_name)
             .setKeepInitialState(true)
             .setCanHaveUAVs(true)
             .setCanHaveTypedViews(true)
+            // Raw views let the scatter shaders (particle_rasterize /
+            // particle_to_grid / grid_to_particle) bind these buffers as
+            // RWByteAddressBuffer and run the atomicFloatAdd CAS loop —
+            // structured-buffer elements have no CAS in Slang, and plain +=
+            // raced, drifting RYB over long loops (paper §5.2 Eq.15/16
+            // conservation).
+            .setCanHaveRawViews(true)
             .setDebugName(debug_name));
 }
 
@@ -217,9 +227,21 @@ struct SimConstants {
     // Scale on the brush velocity injected by brush_deposit. Replaces former
     // _pad2.
     float velocity_inject_scale;
-    // Render composite scale for the rasterized swarm in pack_float4.
-    float ptcl_render_scale;
-    float _pad3;
+    // field_copy_window mode: 0 = window→window, 1 = global→window,
+    // 2 = window→global. See common.slangh.
+    int copy_mode;
+    // fluid_damp_dry mode: 0 = global wetness-only, 1 = window vel+wetness.
+    int damp_mode;
+    // fluid_advect: 1 = field_in window-local (velocity family), 0 = global
+    // canvas field. field_out is always window-local.
+    int advect_field_window_local;
+    // Gravity (world units/s²): grid-side body force (fluid cells) and
+    // particle-side a_k component. Physically scaled: 1 unit ≈ 27.5 cm →
+    // g ≈ 35.7 units/s². Host env WB_GRAVITY_X/Y/Z (direction-adjustable
+    // for experiments). Must match common.slangh SimConstants.
+    float gravity_x;
+    float gravity_y;
+    float gravity_z;
 };
 
 struct BristleConstants {
@@ -271,6 +293,15 @@ struct BristleConstants {
     int has_prev_brush_pos;
     int sweep_steps;  // >=1; 1 means no sweep (single-point splat)
     float _sweep_pad0, _sweep_pad1;
+    // Pen orientation (StrokeSample.orientation) as rotation-matrix ROWS
+    // stored per local axis: brush_R0/1/2.xyz = world image of local X/Y/Z
+    // (i.e. the COLUMNS of mat3_cast(q)). Shader side uses
+    // rot(v) = v.x*R0.xyz + v.y*R1.xyz + v.z*R2.xyz — no mul() row/column
+    // ambiguity. Appended at the END so existing CB offsets are untouched;
+    // MUST mirror common.slangh BristleConstants field-for-field.
+    glm::vec4 brush_R0{ 1.0f, 0.0f, 0.0f, 0.0f };
+    glm::vec4 brush_R1{ 0.0f, 1.0f, 0.0f, 0.0f };
+    glm::vec4 brush_R2{ 0.0f, 0.0f, 1.0f, 0.0f };
 };
 
 struct ParticleConstants {
@@ -299,10 +330,20 @@ struct ParticleConstants {
     int window_origin_z;
     int window_size_x;
     int window_size_z;
-    // Pen state (from deposit's BrushPoint): pen-up means the brush is away
+    // Pen state (from deposit's StrokeSample): pen-up means the brush is away
     // from the canvas — particle_to_grid deposits slow particles regardless
     // of d_{B,k}, and grid_to_particle suspends conversion.
     int pen_down;
+    // Brush linear velocity (units/s) for particle_update's Eq.9/10 two-step
+    // (the sample frame translates with the brush). Must match common.slangh
+    // ParticleConstants (incl. the trailing field).
+    float brush_vel_x, brush_vel_y, brush_vel_z;
+    // §5.2 "moves slowly" absolute speed gate (see common.slangh).
+    float slow_deposit_speed;
+    // Gravity for particle_update's a_k (see common.slangh ParticleConstants).
+    float gravity_x;
+    float gravity_y;
+    float gravity_z;
 };
 
 struct BristleLiquidConstants {
@@ -333,6 +374,10 @@ struct BristleLiquidConstants {
     int window_origin_z;
     int window_size_x;
     int window_size_z;
+    // 1 = this frame is a dip (stroke_start): the §5.1 ABSORB pass
+    // initializes m_j = M'_j(ψ) (Eq.12 with the CURRENT crowding), instead of
+    // the host pre-writing m_j = M_max. See bristle_liquid_transfer.slang.
+    int dip_frame;
 };
 
 struct ConstraintModeCB {
@@ -341,7 +386,8 @@ struct ConstraintModeCB {
 };
 
 // ============================================================
-// BrushPoint — the per-frame brush sample carried across the graph.
+// StrokeSample — one sample of the PEN DYNAMICS along a stroke, the
+// per-frame contract between the trajectory source and the wetbrush zone.
 //
 // Produced by node_mock_point_emitter (one per simulation frame, replaying
 // the captured trajectory) and consumed by node_brush_wb_deposit (which
@@ -349,14 +395,38 @@ struct ConstraintModeCB {
 // here in the shared header so both nodes — compiled into separate .dlls —
 // see the SAME type identity and can pass it through a socket.
 //
+// Formerly `BrushPoint`: position-only, which forced deposit to
+// finite-difference every derivative (accel = double-differentiated
+// position noise) and GUESS an orientation from the velocity heading — a
+// field no shader even consumed (brush_rotation is dead in common.slangh;
+// the bristle footprint spiral was hardcoded upright in world XY). The pen
+// input model is its full DYNAMIC state: pose AND derivatives.
+//
+// Orientation semantics: `orientation` rotates the brush LOCAL frame into
+// world. Local convention (matches bristle_simulate.slang): local -Z points
+// from the root plane toward the tip (identity = pen held vertical, tip
+// down), local XY is the root disk. Identity ⇒ the old hardcoded upright
+// brush, so the default is behavior-preserving.
+//
+// vel / angular_vel are the pen's world velocity (units/s) and angular
+// velocity (rad/s). A source that knows them analytically sets
+// has_dynamics = true and deposit uses them directly (only accel / omega_dot
+// stay host-differenced — first-order on exact derivatives, no double
+// amplification of position noise). Captured input without derivatives
+// leaves has_dynamics = false and deposit falls back to finite differencing.
+//
 // Plain aggregate: auto-registered with entt::meta by get_socket_type<T>()
 // on first use, the same way Geometry / Eigen::MatrixXd socket types work.
 // ============================================================
-struct BrushPoint {
-    glm::vec3 pos{ 0.0f };      // world position of the brush
+struct StrokeSample {
+    glm::vec3 pos{ 0.0f };  // pen reference point (root-plane center), world
+    glm::quat orientation{ 1.0f, 0.0f, 0.0f, 0.0f };  // local→world, (w,x,y,z)
+    glm::vec3 vel{ 0.0f };  // world velocity, units/s (valid if has_dynamics)
+    glm::vec3 angular_vel{ 0.0f };  // world angular velocity, rad/s
+    bool has_dynamics = false;  // vel/angular_vel are analytic — skip host FD
     float time = 0.0f;          // stroke-local time (seconds since pen-down)
     bool active = false;        // pen is currently down
-    bool stroke_start = false;  // first point of a new stroke (pen-down edge)
+    bool stroke_start = false;  // first sample of a new stroke (pen-down edge)
     glm::vec3 color{ 1.0f, 0.0f, 0.0f };  // RYB ink color (from the trajectory)
 };
 
@@ -383,6 +453,17 @@ struct BrushPoint {
 // ============================================================
 struct WetbrushSimState {
     static constexpr bool has_storage = false;
+
+    // §5.1 sample saturation capacity scale M_max (Eq.12). Shared by the
+    // deposit node (dip initialization m_j = M_max at stroke_start — a
+    // "dipped-full brush") and the bristle node (BristleLiquidConstants).
+    // Single definition so the dip load and the capacity cannot drift apart.
+    // The paper never gives M_max; it is the free parameter that sets HOW
+    // MUCH PAINT ONE DIP CARRIES (stroke length before the brush runs dry).
+    // 0.03 drained in ~15 frames; 0.15 sustains a 60-frame stroke. Must stay
+    // coupled with rho_0 (bristle node) so the emission radius
+    // R_j = cbrt(3·M_max/(4π·ρ₀)) ≈ 0.36×brush_radius stays inside D1.
+    static constexpr float WB_M_MAX = 0.15f;
 
     // --- Global 3D fluid grid (allocated at gridRes × gridRes × gridRes_z;
     // the persistent paint store. Paper §4.2: a large 3D grid stores all
@@ -448,12 +529,17 @@ struct WetbrushSimState {
     static constexpr int MAX_PARTICLES = 1048576;
 
     // --- Cross-frame brush state (written by deposit every frame) ---
-    // Pen-down flag from the current BrushPoint. Gates §5.1 absorb/emit in the
-    // bristle node and §5.2 conversions in the fluid node: a pen-up brush is
-    // not painting. Without it, a parked/stalled brush kept emitting
+    // Pen-down flag from the current StrokeSample. Gates §5.1 absorb/emit in
+    // the bristle node and §5.2 conversions in the fluid node: a pen-up brush
+    // is not painting. Without it, a parked/stalled brush kept emitting
     // (+emit_budget particles/frame) while the fluid node skipped particle
     // maintenance — the pool wrapped with nothing depositing.
     bool pen_down = false;
+
+    // Dip request for this frame (deposit sets it from bp.stroke_start; the
+    // bristle node's §5.1 ABSORB pass consumes it by initializing
+    // m_j = M'_j(ψ) inside the shader, then clears it).
+    bool dip_frame = false;
 
     nvrhi::BufferHandle ptcl_pos;
     nvrhi::BufferHandle ptcl_vel;
@@ -494,9 +580,9 @@ struct WetbrushSimState {
     // segments. CanHaveRawViews so the render side can bind them
     // RawBuffer_SRV / ByteAddressBuffer. ---
     static constexpr int DEBUG_MAX_VOXELS = 1 << 20;  // 1M points, 28 MB
-    nvrhi::BufferHandle debug_ptcl_buf;     // MAX_PARTICLES * 7 floats
-    nvrhi::BufferHandle debug_voxel_buf;    // DEBUG_MAX_VOXELS * 7 floats
-    nvrhi::BufferHandle debug_bristle_buf;  // Nb*(M-1) * 10 floats
+    nvrhi::BufferHandle debug_ptcl_buf;       // MAX_PARTICLES * 7 floats
+    nvrhi::BufferHandle debug_voxel_buf;      // DEBUG_MAX_VOXELS * 7 floats
+    nvrhi::BufferHandle debug_bristle_buf;    // Nb*(M-1) * 10 floats
     nvrhi::BufferHandle debug_voxel_counter;  // 1 uint, zeroed each frame
     ProgramHandle debug_pack_particles_program;
     ProgramHandle debug_pack_voxels_program;
@@ -529,6 +615,9 @@ struct WetbrushSimState {
     // non-contiguous block inside the global buffer, so the snapshot cannot be
     // a plain copyBuffer(..., win_n3d) — that copies the corner at offset 0.
     ProgramHandle field_copy_window_program;
+    // Re-bases the persistent window-sized fields (velocity family, pressure
+    // warm-start) when the active window moves. See window_scroll.slang.
+    ProgramHandle window_scroll_program;
 
     // --- Control / grid bookkeeping (read by all nodes to set shader CBs) ---
     int grid_res = 0;
@@ -759,7 +848,7 @@ struct BristleSampleOutputs {
 // Why this and not the old WetbrushFrame bundle: the zone boundary supports
 // multiple typed slots, but the ONLY thing that must ride the feedback loop
 // (simulation_out -> simulation_in, moved by the eager executor after each
-// cook) is the accumulated paint FIELD. The per-frame BrushPoint is produced
+// cook) is the accumulated paint FIELD. The per-frame StrokeSample is produced
 // INSIDE the zone every frame by mock_point_emitter and reaches deposit via an
 // ordinary interior socket — it never crosses the boundary. The input stroke
 // Geometry is static and enters the zone through its own simulation_in input

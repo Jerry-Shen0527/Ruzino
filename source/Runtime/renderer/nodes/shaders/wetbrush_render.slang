@@ -1042,9 +1042,9 @@ void VolumeClosestHit(inout RayPayload payload, in VolumeHitAttributes attr)
     // exceeds the surface threshold; that is the "first cross". From there,
     // continue marching a penetration depth proportional to the oil density,
     // averaging the pigment color of every cell touched. The blended pigment
-    // IS the radiance (RayGen composites volume hits as pure emission). The
-    // surface normal (density gradient) modulates simple Lambertian shading;
-    // paper §6 AO darkens crevices.
+    // IS the radiance (RayGen composites volume hits as pure emission), and
+    // paper §6 AO darkens crevices — that is the paper's complete shading
+    // model: pigment × (1 − AO).
     payload.hit = true;
     payload.isVolume = true;
     payload.volumeColor = float3(0.0);
@@ -1111,41 +1111,21 @@ void VolumeClosestHit(inout RayPayload payload, in VolumeHitAttributes attr)
     float3 paintColor = (weightSum > 0.0) ? colorSum / weightSum : float3(0.0);
 
     // Surface normal from the density gradient at the first-cross point.
+    // Paper §6 uses the normal to orient the AO hemisphere (and it is what
+    // the density field's shape gives us for free) — the paper's shading
+    // model is pigment × AO darkening only; it has NO Lambertian term and
+    // NO specular. The previous 0.4+0.6·facing shade and wet-gloss Blinn-
+    // Phong were post-paper additions that darkened/matte-flattened the
+    // paint; removed per the paper-fidelity directive (§15's "偏暗" RGB
+    // 116,59,59 was largely the shade × (1-ao) product).
     float3 surfP = origin + tCross * dir;
     float3 nrm = surfaceNormal(vd, surfP);
-
-    // Simple Lambertian facing term: paint facing the incoming ray direction
-    // is brightest; grazing paint darkens. dir points INTO the surface, so the
-    // facing term uses -dir (the view direction).
-    float facing = max(0.0, dot(nrm, -dir));
-    float shade = 0.4 + 0.6 * facing;  // ambient floor + Lambertian
 
     // Paper §6 ambient occlusion at the surface point: 64-ray hemisphere
     // sampling darkens crevices and dense pigment pockets.
     float ao = ambientOcclusion(vd, surfP, nrm, payload.seed);
 
-    // Wet-gloss specular from the primary distant light. The diffuse-only
-    // Lambertian term leaves the paint matte; wet paint reads glossy (the
-    // paper's figures show the same sheen; §6 text only specifies the
-    // first-cross / penetration / AO pipeline, not the BRDF). Blinn-Phong on
-    // the density-gradient normal — the glint rides the surface curvature,
-    // which only carries variation once the packed field does (pack_float4
-    // D_MAX). Additive on top of the diffuse; shadowing is already handled by
-    // VolumeShadowHit for the main NEE, this is just a sheen.
-    float3 viewDir = -dir;
-    float3 specular = float3(0.0);
-    for (uint li = 0; li < ptConstants.lightCount; ++li) {
-        LightData light = lightBuffer[li];
-        if (light.type == uint(LightType::Distant)) {
-            float3 L = -light.dirW;  // direction to the light (NEE convention)
-            float3 H = normalize(L + viewDir);
-            float gloss = pow(max(dot(nrm, H), 0.0), 48.0);
-            specular = light.intensity * gloss * 0.4;
-            break;  // single key light is enough for the sheen
-        }
-    }
-
-    payload.volumeColor = paintColor * shade * (1.0 - ao) + specular;
+    payload.volumeColor = paintColor * (1.0 - ao);
 }
 
 [shader("closesthit")]

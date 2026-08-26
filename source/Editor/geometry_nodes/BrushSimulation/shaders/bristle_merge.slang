@@ -69,7 +69,9 @@ void main(uint3 tid : SV_DispatchThreadID)
     float scale = cb.velocity_inject_scale > 0.0 ? cb.velocity_inject_scale
                                                  : 1.0;
     float gate = min(bd * scale, 1.0);
-    vel_x[gidx] += (v_avg.x - vel_x[gidx]) * gate;
-    vel_y[gidx] += (v_avg.y - vel_y[gidx]) * gate;
-    vel_z[gidx] += (v_avg.z - vel_z[gidx]) * gate;
+    // vel_* are WINDOW-SIZED buffers — index window-locally (win_idx, the
+    // same index used for the window-sized bristle accumulators above).
+    vel_x[win_idx] += (v_avg.x - vel_x[win_idx]) * gate;
+    vel_y[win_idx] += (v_avg.y - vel_y[win_idx]) * gate;
+    vel_z[win_idx] += (v_avg.z - vel_z[win_idx]) * gate;
 }

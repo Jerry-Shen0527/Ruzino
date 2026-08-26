@@ -2,16 +2,16 @@
 // Models per-sample liquid capacity M_j, absorption, emission, and color bleeding.
 //
 // Two passes:
-//   Pass 0 (ABSORB): Load paint into bristle samples from supply (sample_color).
-//     - Compute potential capacity M'_j from bristle density ψ (Eq.12)
-//     - Compute actual capacity M_j from surface distance r_j (Eq.13)
-//     - If sample is dry: seed with paint supply color
-//     - If below capacity: absorb from supply, color_mix (Algorithm 2)
-//     - Color bleeding: even saturated samples pick up new colors
+//   Pass 0 (ABSORB): color bleeding only — a (saturated) sample in contact
+//     with grid paint picks up its hue (§5.1 "we still allow the color
+//     mixing process to happen"). Mass does NOT flow here: the dip
+//     initialization (m_j = M_max at stroke_start, deposit node) is the only
+//     mass source, per the paper's initial-state treatment of a dipped
+//     brush. (The paper's Eq.14 particle absorption is not implemented.)
 //
 //   Pass 1 (EMIT): Bristle samples → particles.
 //     - If m_j > (1+ε) M_j: emit excess as particles in hemisphere pattern
-//     - Particles share sample velocity (zero for now) and pigment
+//     - Particles share sample velocity and pigment
 //
 // Dispatch: Nb*S threads, 1 thread per bristle sample.
 
@@ -40,10 +40,6 @@ StructuredBuffer<float> grid_color_r : register(t6);
 StructuredBuffer<float> grid_color_y : register(t7);
 StructuredBuffer<float> grid_color_b : register(t8);
 
-// Per-sample paint supply reservoir (consumed by ABSORB, §5.1 conservation).
-// Read-modify-write: ABSORB takes min(available, capacity_room) and decrements.
-RWStructuredBuffer<float> sample_supply : register(u6);
-
 // Output: updated sample liquid state
 RWStructuredBuffer<SampleLiquid> sample_liquid_out : register(u0);
 
@@ -64,13 +60,12 @@ RWStructuredBuffer<uint> ptcl_alive_out : register(u5);
 #define PASS 0
 #endif
 
-// Per-particle emission mass floor (EMIT) — also the ABSORB overload
-// headroom: a saturated sample may only take up enough extra supply to fund
-// ONE more particle beyond the (1+ε)M_j emission threshold. Without this cap
-// a budget-blocked sample kept absorbing (m_j ballooned while the global
-// EMIT budget was spent, dumping the whole balloon as a burst of particles
-// the moment the budget freed up).
-static const float PER_PARTICLE_FLOOR = 0.05;
+// Per-particle emission mass floor (EMIT). Small particles at paper density:
+// the drawable mass per sample (M_max − (1+ε)M_j ≈ 0.1) must spread over
+// MANY steps×particles (cap 1/step), so each birth carries ~0.002 — with the
+// old 0.05 floor, a sample's whole drawable mass left in 2 steps and the
+// touchdown point swallowed half the dip (see max_emit_per_step note).
+static const float PER_PARTICLE_FLOOR = 0.002;
 
 // World position → 3D grid cell coordinates
 float3 world_to_grid_f3(float3 pos)
@@ -259,81 +254,49 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     float m_j = liquid.mass;
     float3 c_j = liquid.pigment;
-    float avail_supply = sample_supply[idx];  // finite reservoir (refilled/frame)
 
 #if PASS == 0
     // ================================================================
-    // ABSORB: Load paint into sample (Section 5.1, Eq.14).
-    //
-    // CONSERVATION (corrected): mass enters the simulation ONLY from the dip
-    // supply — the finite ink charge loaded into the bristles at stroke_start
-    // ("a dipped brush"). A brush that drags until the supply runs dry lays
-    // down progressively less paint, exactly as a real brush does. The supply
-    // is decremented here for every unit of mass the sample takes up; nothing
-    // else mints mass.
-    //
-    // Grid paint near the sample influences COLOR only (§5.1 color bleeding:
-    // a brush wiping through existing paint picks up its hue). It does NOT
-    // contribute mass — the previous code did `take = min(M_j, supply +
-    // grid_paint.a)` then only subtracted from supply, copying grid mass into
-    // the sample without removing it from the grid. That created a supply →
-    // sample → emit → deposit → grid → ABSORB → sample loop that minted mass
-    // and drove density from ~200 to ~1000.
+    // ABSORB — paper §5.1: MASS enters the samples only through the dip
+    // initialization (stroke_start) and only through EMIT afterwards.
     // ================================================================
 
+    // DIP (stroke_start frame): "dipped full" means saturated to the
+    // capacity the bristle geometry ACTUALLY allows right now — Eq.12's
+    // M'_j(ψ), crowding included. The earlier host-side m_j = M_max used
+    // the UNCROWDED capacity, overloading interior samples (ψ high → real
+    // capacity ≈ M_min) by ~30×: the whole brush body dripped continuously
+    // (76800 births/step, pool flood). With m_j = M'_j, only samples whose
+    // capacity DROPS from here (canvas contact / compression) overload and
+    // emit — the paper's pressure-controls-output mechanism.
+    if (cb.dip_frame != 0) {
+        SampleLiquid dipped;
+        dipped.mass = M_prime;
+        dipped.pigment = s_color.rgb;  // ink color (resampled input color)
+        sample_liquid_out[idx] = dipped;
+        return;
+    }
+
     // Real paint near the sample in the grid (density-weighted RYB). Color
-    // source only — a brush through wet paint picks up its hue (§5.1 color
-    // bleeding), but the grid keeps its mass.
+    // source only — the grid keeps its mass.
     float4 grid_paint = sample_grid_paint(s_pos);
     bool has_grid_paint = grid_paint.a > 0.05;
-
-    // Absorb color: grid paint if present, else the brush supply color.
-    float3 absorb_color = has_grid_paint ? grid_paint.rgb : s_color.rgb;
 
     SampleLiquid result;
     result.pigment = c_j;
     result.mass = m_j;
 
-    // Paper §5.1: "a brush bristle can keep paint liquid due to its
-    // hydrophilicity." A dipped brush's samples are kept loaded by capillary
-    // action from the ink supply — they saturate toward their capacity M_j
-    // each frame. The supply IS the sole mass source. Without this saturation
-    // the sample never reaches M_j, never overloads, and §5.1 EMIT never fires
-    // (cold-start deadlock). This matches the paper's implicit assumption that
-    // a loaded brush carries paint in its bristles before the first stroke.
-    if (m_j < M_j && avail_supply > 1e-5) {
-        // Dry or below-capacity — saturate up to M_j from the supply (capillary
-        // refill), capped by what the supply can give this frame.
-        float room = M_j - m_j;
-        float take = min(room, avail_supply);
-        float new_mass = m_j + take;
-
-        // Brightness-preserving color mix (Algorithm 2). The incoming paint's
-        // color is the grid-bleed color if present, else the supply (ink)
-        // color — but the MASS always comes from the supply.
-        result.pigment = color_mix(absorb_color, c_j, take, m_j);
-        result.mass = new_mass;
-        sample_supply[idx] = max(avail_supply - take, 0.0);
-    } else if (m_j >= M_j && avail_supply > 1e-5) {
-        // Saturated sample (paper §5.1: color bleeding + overload). A
-        // hydrophilic bristle keeps taking up liquid past its static capacity
-        // M_j when the supply is rich (a dipped brush). This overload is
-        // exactly what §5.1 EMIT consumes (m_j > (1+ε)M_j → release
-        // particles). Uptake is capped at one particle's worth of headroom
-        // above the emission threshold (PER_PARTICLE_FLOOR) so a
-        // budget-blocked sample parks at the cap instead of ballooning.
-        float bleed_weight = avail_supply * 0.02 * m_j;
-        result.pigment = color_mix(absorb_color, c_j, bleed_weight, m_j);
-        float overload_room = max(
-            (1.0 + cb.eps_emit) * M_j + PER_PARTICLE_FLOOR - m_j, 0.0);
-        float take = min(avail_supply, overload_room);
-        result.mass = m_j + take;
-        sample_supply[idx] = max(avail_supply - take, 0.0);
+    if (has_grid_paint) {
+        // Color bleeding: contact weight from the local grid paint amount
+        // (previously scaled by the supply reservoir, which no longer
+        // exists — the bleed must survive the dip model change, or a wet
+        // brush could never pick up canvas color).
+        float bleed_weight = grid_paint.a * 0.05;
+        if (bleed_weight + m_j > 1e-9) {
+            result.pigment = color_mix(
+                grid_paint.rgb, c_j, bleed_weight, m_j);
+        }
     }
-    // else: no supply left (brush ran dry) → sample keeps its current load,
-    // EMIT drains it toward (1+ε)M_j and no new mass enters. This is the
-    // "dragged until out of paint" behavior.
-    // supply uptake, not by an artificial cap here.
     sample_liquid_out[idx] = result;
 
 #else // PASS == 1
@@ -349,9 +312,11 @@ void main(uint3 tid : SV_DispatchThreadID)
         return;
     }
 
-    // Excess mass to emit
+    // Excess mass to emit. Paper §5.1 emission smoothing: one SMALL particle
+    // per sample per step (max_emit_per_step=1, per_particle ≈ 0.002) paces a
+    // saturated dip over a whole stroke instead of dumping it at touchdown.
     float excess = m_j - emit_threshold_high;
-    float per_particle = max(M_j * 0.15, PER_PARTICLE_FLOOR);
+    float per_particle = max(M_j * 0.05, PER_PARTICLE_FLOOR);
     int num_emit = int(ceil(excess / per_particle));
     num_emit = min(num_emit, cb.max_emit_per_step);
 
@@ -401,7 +366,10 @@ void main(uint3 tid : SV_DispatchThreadID)
     for (int ei = 0; ei < num_emit; ei++) {
         uint slot;
         ptcl_counter.InterlockedAdd(0, 1, slot);
-        slot = slot % uint(cb.max_particles);
+        // Pool exhausted: keep this birth's mass on the sample (retry next
+        // step). The old `slot % max` wrap overwrote a LIVE particle and
+        // silently destroyed its mass.
+        if (slot >= uint(cb.max_particles)) break;
 
         // Random direction on the lower hemisphere (z <= 0 relative to sample).
         uint seed = uint(idx) * 1973u + uint(ei) * 9277u;
@@ -417,8 +385,11 @@ void main(uint3 tid : SV_DispatchThreadID)
         // Keep emission inside the paint volume (above the canvas).
         emit_pos.z = max(emit_pos.z, canvas_z);
 
-        // Distribute excess evenly
-        float emit_m = excess / float(num_emit);
+        // Distribute: each birth carries per_particle at most. When the
+        // per-step cap binds (num_emit < ceil(excess/per_particle)), the
+        // un-capped excess/num_emit would load ONE particle with the whole
+        // excess — clamp so the sample keeps the remainder for later steps.
+        float emit_m = min(excess / float(num_emit), per_particle);
         total_emit_mass += emit_m;
 
         ptcl_pos_out[slot] = float4(emit_pos, 0.0);

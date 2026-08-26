@@ -27,7 +27,18 @@ RWStructuredBuffer<float4> ptcl_pos_out : register(u0);
 RWStructuredBuffer<float4> ptcl_vel_out : register(u1);
 RWStructuredBuffer<uint> ptcl_alive_out : register(u2);
 
-// Trilinear sample of a 3D scalar field at world position.
+// Trilinear sample of a WINDOW-LOCAL scalar field (the grid velocity family)
+// at world position. Outside the active window the value is 0 — there is no
+// liquid motion outside the window (paper §4.2).
+// Window-local fetch with outside-window → 0 (velocity family).
+float fetch_win(StructuredBuffer<float> field, int gx, int gy, int gz)
+{
+    int w = win_field_idx(
+        gx, gy, gz, cb.window_origin_x, cb.window_origin_y,
+        cb.window_origin_z, cb.window_size_x, cb.window_size_z);
+    return (w >= 0) ? field[w] : 0.0;
+}
+
 float sample_grid_3d(StructuredBuffer<float> field, float3 pos)
 {
     float half_p = cb.paper_size * 0.5;
@@ -44,25 +55,12 @@ float sample_grid_3d(StructuredBuffer<float> field, float3 pos)
     float fy = gy - float(iy);
     float fz = gz - float(iz);
 
-    int res = cb.grid_res, res_z = cb.grid_res_z;
-    float c000 = 0.0, c100 = 0.0, c010 = 0.0, c110 = 0.0;
-    float c001 = 0.0, c101 = 0.0, c011 = 0.0, c111 = 0.0;
-    for (int dz = 0; dz <= 1; dz++) {
-        for (int dy = 0; dy <= 1; dy++) {
-            for (int dx = 0; dx <= 1; dx++) {
-                int nx = ix + dx, ny = iy + dy, nz = iz + dz;
-                if (nx >= 0 && nx < res && ny >= 0 && ny < res && nz >= 0 && nz < res_z) {
-                    // Global grid index (buffers are global-sized).
-                    uint gi = grid_idx_3d(uint(nx), uint(ny), uint(nz), res, res_z);
-                    float v = field[gi];
-                    if (dz==0&&dy==0&&dx==0) c000=v; else if (dz==0&&dy==0&&dx==1) c100=v;
-                    else if (dz==0&&dy==1&&dx==0) c010=v; else if (dz==0&&dy==1&&dx==1) c110=v;
-                    else if (dz==1&&dy==0&&dx==0) c001=v; else if (dz==1&&dy==0&&dx==1) c101=v;
-                    else if (dz==1&&dy==1&&dx==0) c011=v; else c111=v;
-                }
-            }
-        }
-    }
+
+    float c000 = fetch_win(field, ix, iy, iz), c100 = fetch_win(field, ix+1, iy, iz);
+    float c010 = fetch_win(field, ix, iy+1, iz), c110 = fetch_win(field, ix+1, iy+1, iz);
+    float c001 = fetch_win(field, ix, iy, iz+1), c101 = fetch_win(field, ix+1, iy, iz+1);
+    float c011 = fetch_win(field, ix, iy+1, iz+1), c111 = fetch_win(field, ix+1, iy+1, iz+1);
+
     float c00 = lerp(c000, c100, fx);
     float c10 = lerp(c010, c110, fx);
     float c01 = lerp(c001, c101, fx);
@@ -122,10 +120,20 @@ void main(uint3 tid : SV_DispatchThreadID)
     float3 omega_L = float3(frame.tangent.w, frame.normal.w, frame.binormal.w);
 
     // --- Step A: simulate in the closest sample's local frame (Eq.9) ---
-    // Convert position/velocity into the local (non-inertial) frame.
-    float3 r_from_sample = pos - sample_origin;
+    // The sample frame TRANSLATES with the brush. Convert IN with the
+    // sample's position at time t (origin − v_frame·dt) and OUT with its
+    // current position (the buffer holds t+dt), so the brush's translation
+    // carries the particle — this is the paper's two-step adhesion (Fig.8b).
+    // Using the current origin on BOTH sides cancels the translation and was
+    // why adhered particles never moved with the brush.
+    float3 v_frame = float3(cb.brush_vel_x, cb.brush_vel_y, cb.brush_vel_z);
+    float3 origin_prev = sample_origin - v_frame * dt;
+    // Convert position/velocity into the local (non-inertial) frame; the
+    // frame velocity is subtracted so v_L is the velocity RELATIVE to the
+    // bristle (added back after the conversion out).
+    float3 r_from_sample = pos - origin_prev;
     float3 p_L = to_local(r_from_sample, frame);
-    float3 v_L = to_local(vel, frame);
+    float3 v_L = to_local(vel - v_frame, frame);
 
     // External acceleration (canvas-frame forces): gravity + friction (Eq.8)
     // + grid-liquid drag (§4.1: a_i "includes the gravity force and the drag
@@ -151,8 +159,10 @@ void main(uint3 tid : SV_DispatchThreadID)
     float kappa = 4.0;  // drag gain
     float3 drag = (u_grid - vel) * kappa;
 
-    // Gravity (scaled to world units; small magnitude for thin paint layer).
-    float3 gravity = float3(0.0, 0.0, -0.2);
+    // Gravity (§4.3 a_k), physically scaled: 1 unit ≈ 27.5 cm → g ≈
+    // 35.7 units/s². The old hardcoded -0.2 was ~180× weak — flung
+    // particles hovered and deposited mid-air.
+    float3 gravity = float3(cb.gravity_x, cb.gravity_y, cb.gravity_z);
 
     float3 a_ext_canvas = gravity + drag - delta_k * vel;
 
@@ -174,9 +184,10 @@ void main(uint3 tid : SV_DispatchThreadID)
     float3 v_L_new = v_L + a_L * dt;
     float3 p_L_new = p_L + v_L_new * dt;
 
-    // Convert local result back to canvas frame.
+    // Convert local result back to canvas frame: origin at t+dt is the
+    // buffer's current sample position; the frame velocity is added back.
     float3 pos_local = sample_origin + to_canvas(p_L_new, frame);
-    float3 vel_local = to_canvas(v_L_new, frame);
+    float3 vel_local = to_canvas(v_L_new, frame) + v_frame;
 
     // --- Step B: canvas-frame integration (no adhesion) ---
     float3 a_canvas = a_ext_canvas;
@@ -195,13 +206,11 @@ void main(uint3 tid : SV_DispatchThreadID)
     float3 new_pos = lerp(pos_canvas, pos_local, blend);
     float3 new_vel = lerp(v_canvas_new, vel_local, blend);
 
-    // Kill particles that drift very far and stall — reclaims pool slots.
-    float speed = length(new_vel);
-    if (d_B > cb.D0 * 2.0 && speed < 0.01) {
-        ptcl_alive_out[idx] = 0;
-        return;
-    }
-
+    // No far+stalled reaper: a slow particle beyond D0 is exactly the §5.2
+    // deposit case (particle_to_grid converts it and its mass lands on the
+    // canvas). The old d_B > 2·D0 && speed < 0.01 kill destroyed that mass
+    // outright — a silent conservation leak the pool-reclamation rationale
+    // no longer needs now that deposition handles those particles.
     ptcl_pos_out[idx] = float4(new_pos, 0.0);
     ptcl_vel_out[idx] = float4(new_vel, 0.0);
     ptcl_alive_out[idx] = 1;

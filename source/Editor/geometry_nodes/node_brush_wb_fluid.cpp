@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <vector>
 
 #include "GCore/GOP.h"
 #include "GCore/geom_payload.hpp"
@@ -29,9 +30,10 @@ NODE_DEF_OPEN_SCOPE
 
 NODE_DECLARATION_FUNCTION(brush_wb_fluid)
 {
-    // Per-frame brush sample, forwarded from deposit (so this node knows when
-    // the pen is up — pen-up frames still relax the fluid but skip emission).
-    b.add_input<Ruzino::BrushPoint>("Brush Point");
+    // Per-frame pen-dynamics sample, forwarded from deposit (so this node
+    // knows when the pen is up — pen-up frames still relax the fluid but
+    // skip emission).
+    b.add_input<Ruzino::StrokeSample>("Stroke Sample");
     b.add_input<Ruzino::WetbrushZoneState>("State");
     b.add_input<float>("Viscosity").default_val(0.5f).min(0.0f).max(10.0f);
     b.add_input<float>("Oil Density").default_val(0.5f).min(0.0f).max(1.0f);
@@ -52,7 +54,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
     using Ruzino::WetbrushSimState;
     using Ruzino::WetbrushZoneState;
 
-    Ruzino::BrushPoint bp = params.get_input<Ruzino::BrushPoint>("Brush Point");
+    Ruzino::StrokeSample bp =
+        params.get_input<Ruzino::StrokeSample>("Stroke Sample");
     WetbrushZoneState zs = params.get_input<WetbrushZoneState>("State");
     auto& field = zs.state;
     float viscosity = params.get_input<float>("Viscosity");
@@ -97,20 +100,44 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
     glm::vec3 brush_accel_3d(0.0f);
     glm::vec3 brush_angular_accel(0.0f);
 
-    // Grid↔particle conversion + adhesion ranges (paper §5.2 Table 1: D0
-    // = 1cm fixed, D1 = 0.3cm; here scaled off brush_radius since the sim
-    // runs in normalized paper units). D1 must exceed the §5.1 emission
-    // radius R_j = cbrt(3·M_max/(4π·ρ₀)) (with ρ₀=2e4: R_j ≈ 0.0076 ≈
-    // 0.38×brush_radius) so newborns ride: Eq.10's adhesion blend is
-    // max(1 − d_B/D1, 0). Keeping D1/D0 ≈ 0.25 (paper: 0.3) is what makes
-    // the trailing edge shed: a FAT adhesion layer (the previous
-    // D1 = 1.6×radius, forced by the old ρ₀=1e3 R_j ≈ 0.95×radius) made the
-    // whole swarm ride the brush with only ~3%/frame leaking out to deposit.
-    // D0 > D1 strictly: beyond D0 a slow particle deposits (§5.2), so the
-    // trail is laid continuously at the trailing edge while the interior
-    // swarm rides with the brush.
-    const float D0 = brush_radius * 2.0f;
-    const float D1 = brush_radius * 0.5f;
+    // Grid↔particle conversion + adhesion ranges (paper §5.2 Table 1): the
+    // paper fixes D0 = 1 cm and D1 = 0.3 cm in SI. Its brushes are ~0.55 cm
+    // in radius (the §1 demo videos / Fig 1 scale), so in units of the brush
+    // radius: D0 ≈ 1.8 R and D1 ≈ 0.55 R (D1/D0 = 0.3 exactly as printed).
+    // These are the values used here — the earlier D0 = 1.0 R / D1 = 0.5 R
+    // were §17/§20 calibrations against a 60-frame test stroke (ride-time
+    // shortening), not paper ratios; per the paper-fidelity directive they
+    // are restored. Note the ride time does grow back (~D0 shell width /
+    // relative speed): the paper's head-to-trail mass ratio converges over
+    // LONG strokes, which a 60-frame test cannot show.
+    // R_j consistency: the §5.1 emission radius R_j = cbrt(3·M_max/(4π·ρ₀))
+    // ≈ 0.36 R (ρ₀ = 2e4, M_max = WB_M_MAX) stays below D1 = 0.55 R, so
+    // newborn particles still ride the brush through Eq.10's adhesion blend
+    // max(1 − d_B/D1, 0) ≈ 0.35–1 inside the emission shell.
+    const float D0 = brush_radius * 1.8f;
+    const float D1 = brush_radius * 0.55f;
+    // §5.2 "moves slowly": the paper gives no number. Scaled from real
+    // units — a real trail's liquid behind the brush settles below ~2 cm/s,
+    // and paper_size = 1 unit ≈ 27 cm (brush radius 0.55 cm : 0.02) →
+    // ≈ 0.075 units/s, rounded to 0.1.
+    const float slow_deposit_speed = 0.1f;
+
+    // Gravity (world units/s²), physically scaled: 1 unit ≈ 27.5 cm →
+    // g = 981 cm/s² / 27.5 ≈ 35.7 units/s². Applied to particles (§4.3 a_k
+    // "including the gravity and the friction") and to fluid cells (§4.2
+    // standard Eulerian external force — the grid liquid previously had NO
+    // force and hovered where deposited). Direction-adjustable for
+    // experiments via WB_GRAVITY_X/Y/Z.
+    const glm::vec3 gravity = [] {
+        auto envf = [](const char* k, float d) {
+            const char* v = std::getenv(k);
+            return v ? std::atof(v) : d;
+        };
+        return glm::vec3(
+            envf("WB_GRAVITY_X", 0.0f),
+            envf("WB_GRAVITY_Y", 0.0f),
+            envf("WB_GRAVITY_Z", -35.7f));
+    }();
 
     // Lazily compile the fluid + particle shaders.
     auto ensure_prog = [&](ProgramHandle& slot, const char* fn) {
@@ -164,8 +191,19 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         pc.brush_pos_z = brush_pos_3d.z;
         pc.brush_radius = brush_radius;
         pc.D1 = D1;
+        // Brush linear velocity for the Eq.9/10 two-step (the closest
+        // sample's frame translates with the brush). prev_brush_vel is
+        // updated by the deposit node at the END of each frame, so here it
+        // holds the LAST frame's velocity — correct as v_frame for the
+        // frame-constant strokes the tests drive.
+        pc.brush_vel_x = field->prev_brush_vel.x;
+        pc.brush_vel_y = field->prev_brush_vel.y;
+        pc.brush_vel_z = field->prev_brush_vel.z;
         pc.num_bristles = Nb;
         pc.samples_per_bristle = S;
+        pc.gravity_x = gravity.x;
+        pc.gravity_y = gravity.y;
+        pc.gravity_z = gravity.z;
         pc.brush_accel_x = brush_accel_3d.x;
         pc.brush_accel_y = brush_accel_3d.y;
         pc.brush_accel_z = brush_accel_3d.z;
@@ -275,39 +313,64 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         Ruzino::brush_upload_cb(
             rc, device, &mc2, sizeof(mc2), "wb_ptcl_merge_cb", merge_cb);
 
-        Ruzino::brush_dispatch(
-            rc,
-            field->bristle_merge_program,
-            { { "bristle_density", field->ptcl_density },
-              { "bristle_vel_x", field->ptcl_vel_x },
-              { "bristle_vel_y", field->ptcl_vel_y },
-              { "bristle_vel_z", field->ptcl_vel_z } },
-            { { "vel_x", field->vel_x },
-              { "vel_y", field->vel_y },
-              { "vel_z", field->vel_z } },
-            merge_cb,
-            win_n3d);
+        // WB_DISABLE_MERGE=1: diagnostic bisect — skip the swarm→grid
+        // momentum merge entirely (velocity family keeps whatever the fluid
+        // solve alone produces). Used to attribute the press-phase grid
+        // velocity buildup (blob-test explosion hunt). NOT a physics knob.
+        static const bool disable_merge = [] {
+            const char* env = std::getenv("WB_DISABLE_MERGE");
+            return env && std::atoi(env) == 1;
+        }();
+        if (!disable_merge) {
+            Ruzino::brush_dispatch(
+                rc,
+                field->bristle_merge_program,
+                { { "bristle_density", field->ptcl_density },
+                  { "bristle_vel_x", field->ptcl_vel_x },
+                  { "bristle_vel_y", field->ptcl_vel_y },
+                  { "bristle_vel_z", field->ptcl_vel_z } },
+                { { "vel_x", field->vel_x },
+                  { "vel_y", field->vel_y },
+                  { "vel_z", field->vel_z } },
+                merge_cb,
+                win_n3d);
+        }
         rc.destroy(merge_cb);
         rc.destroy(ptcl_cb);
     }
     else if (field->particles_initialized) {
-        // Pen-up: the rasterized-swarm composite in pack_float4 must not keep
-        // showing the last pen-down frame's swarm. The maintenance below
-        // deposits the whole carried swarm onto the grid, so the render field
-        // is grid-only — clear the stale raster.
-        auto clear_raster = [&](nvrhi::BufferHandle& buf) {
+        // Brush up / no deposit this frame: the raster grids still hold the
+        // last active frame's swarm splat. pack_float4 composites them into
+        // the render field, so a stale raster would ghost paint that the
+        // maintenance pass is simultaneously depositing into the canvas —
+        // double-visible mass. Clear the 4 pack-relevant raster grids (the
+        // vel rasters have no reader outside the merge above).
+        //
+        // ALSO clear the BRISTLE raster (density + velocities): the bristle
+        // node skips pen-up frames, so its rasterized boundary otherwise
+        // persists as GHOST NO-FLUX WALLS at the brush's last position —
+        // the pressure projection kept diverging around walls that no
+        // longer exist, one suspected driver of the blob test's pen-up
+        // velocity churn and mass advection.
+        nvrhi::BufferHandle* rast_bufs[] = {
+            std::addressof(field->ptcl_density),
+            std::addressof(field->ptcl_rast_r),
+            std::addressof(field->ptcl_rast_y),
+            std::addressof(field->ptcl_rast_b),
+            std::addressof(field->bristle_density),
+            std::addressof(field->bristle_vel_x),
+            std::addressof(field->bristle_vel_y),
+            std::addressof(field->bristle_vel_z),
+        };
+        for (nvrhi::BufferHandle* buf : rast_bufs) {
             Ruzino::brush_dispatch(
                 rc,
                 field->field_clear_program,
                 {},
-                { { "field", buf } },
+                { { "field", *buf } },
                 nullptr,
                 win_n3d);
-        };
-        clear_raster(field->ptcl_density);
-        clear_raster(field->ptcl_rast_r);
-        clear_raster(field->ptcl_rast_y);
-        clear_raster(field->ptcl_rast_b);
+        }
     }
 
     // ======================================================================
@@ -328,23 +391,163 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         substeps = std::min(substeps, 16);
         float sub_dt = sim_dt / static_cast<float>(substeps);
 
-        // Per-FRAME velocity decay (fluid_damp_dry applies it once per
-        // substep, so convert: damp_sub = frame_damp^(1/substeps)). Without
-        // this the brush velocity injected by brush_deposit persists until
-        // wetness < 0.01 — at drying_rate 0.1 that is ~600 frames — and the
-        // active-window advection keeps semi-Lagrangian-smearing the stroke
-        // (backtraces of tens of cells per frame at res 4096), which reads as
-        // the painted stroke continuously inflating. WB_VEL_DAMP tunes the
-        // per-frame factor (0 = no damping, i.e. the old behavior).
+        // Velocity decay control (fluid_damp_dry applies it once per
+        // substep, so convert: damp_sub = frame_damp^(1/substeps)).
+        // PAPER-FAITHFUL DEFAULT = OFF (1.0): the paper eliminates trailing
+        // velocity via (a) strong §4.2 viscosity diffusion — the implicit
+        // Jacobi at a = dt·visc·N² ≈ 500 homogenizes the window velocity each
+        // substep, diluting localized momentum to ~the window mean, and
+        // (b) the dryness threshold zeroing velocity, plus the bounded §4.3
+        // particle-velocity merge. This global multiplier was a temporary
+        // stand-in from the era when the merge accumulated momentum
+        // quadratically (see bristle_merge.slang); it stays env-tunable
+        // (<1.0) as an escape hatch for stroke-speed extremes.
         static const float vel_damp_frame = [] {
             const char* env = std::getenv("WB_VEL_DAMP");
-            float v = env ? std::atof(env) : 0.8f;
+            float v = env ? std::atof(env) : 1.0f;
             return std::min(std::max(v, 0.0f), 1.0f);
         }();
         const float vel_damp_sub =
             vel_damp_frame > 0.0f
                 ? std::pow(vel_damp_frame, 1.0f / static_cast<float>(substeps))
                 : 1.0f;
+
+        // DIAGNOSTIC (WB_STAGE_DUMP=1): per-stage |vel| maxima for the f12
+        // eruption hunt. The velocity field cannot grow new maxima through
+        // convex stages (diffuse = neighbor average, semi-Lagrangian advect =
+        // convex sample), so the first stage whose max jumps is the injector.
+        // Reads back the WINDOW-SIZED vel buffers + div/pressure after each
+        // project. Substep 0 only. NOT a physics knob.
+        static const bool stage_dump = [] {
+            const char* env = std::getenv("WB_STAGE_DUMP");
+            return env && std::atoi(env) == 1;
+        }();
+        static int stage_frame = 0;
+        ++stage_frame;
+        auto buf_absmax = [&](const nvrhi::BufferHandle& buf) -> float {
+            std::vector<float> data(win_n3d);
+            auto rb = rc.create(
+                nvrhi::BufferDesc{}
+                    .setByteSize(static_cast<size_t>(win_n3d) * sizeof(float))
+                    .setCpuAccess(nvrhi::CpuAccessMode::Read)
+                    .setDebugName("wb_stage_rb"));
+            auto cmd = rc.create(CommandListDesc{});
+            cmd->open();
+            cmd->copyBuffer(
+                rb, 0, buf, 0, static_cast<size_t>(win_n3d) * sizeof(float));
+            cmd->close();
+            device->executeCommandList(cmd);
+            device->waitForIdle();
+            void* mapped = device->mapBuffer(rb, nvrhi::CpuAccessMode::Read);
+            memcpy(
+                data.data(),
+                mapped,
+                static_cast<size_t>(win_n3d) * sizeof(float));
+            device->unmapBuffer(rb);
+            rc.destroy(rb);
+            rc.destroy(cmd);
+            float mx = 0.0f;
+            for (float v : data)
+                mx = std::max(mx, std::fabs(v));
+            return mx;
+        };
+        // Same readback but also reports the argmax window-local coordinates
+        // (lx, ly, lz) of the |max| cell — needed to tell WHICH face of WHICH
+        // cell a projection-stage spike lives at.
+        auto buf_absmax_loc = [&](const nvrhi::BufferHandle& buf,
+                                  int& lx,
+                                  int& ly,
+                                  int& lz) -> float {
+            std::vector<float> data(win_n3d);
+            auto rb = rc.create(
+                nvrhi::BufferDesc{}
+                    .setByteSize(static_cast<size_t>(win_n3d) * sizeof(float))
+                    .setCpuAccess(nvrhi::CpuAccessMode::Read)
+                    .setDebugName("wb_stage_rb"));
+            auto cmd = rc.create(CommandListDesc{});
+            cmd->open();
+            cmd->copyBuffer(
+                rb, 0, buf, 0, static_cast<size_t>(win_n3d) * sizeof(float));
+            cmd->close();
+            device->executeCommandList(cmd);
+            device->waitForIdle();
+            void* mapped = device->mapBuffer(rb, nvrhi::CpuAccessMode::Read);
+            memcpy(
+                data.data(),
+                mapped,
+                static_cast<size_t>(win_n3d) * sizeof(float));
+            device->unmapBuffer(rb);
+            rc.destroy(rb);
+            rc.destroy(cmd);
+            float mx = 0.0f;
+            int best = 0;
+            for (int i = 0; i < win_n3d; ++i) {
+                float a = std::fabs(data[i]);
+                if (a > mx) {
+                    mx = a;
+                    best = i;
+                }
+            }
+            const int wxy = WIN_XY * WIN_XY;
+            lz = best / wxy;
+            int rem = best - lz * wxy;
+            ly = rem / WIN_XY;
+            lx = rem - ly * WIN_XY;
+            return data[best];
+        };
+        auto vel_stage = [&](const char* stage) {
+            if (!stage_dump)
+                return;
+            int lx = -1, ly = -1, lz = -1;
+            float mv = 0.0f;
+            int comp = -1;
+            float sv = buf_absmax_loc(field->vel_x, lx, ly, lz);
+            if (std::fabs(sv) >= std::fabs(mv)) {
+                mv = sv;
+                comp = 0;
+            }
+            int x2, y2, z2;
+            sv = buf_absmax_loc(field->vel_y, x2, y2, z2);
+            if (std::fabs(sv) > std::fabs(mv)) {
+                mv = sv;
+                comp = 1;
+                lx = x2;
+                ly = y2;
+                lz = z2;
+            }
+            sv = buf_absmax_loc(field->vel_z, x2, y2, z2);
+            if (std::fabs(sv) > std::fabs(mv)) {
+                mv = sv;
+                comp = 2;
+                lx = x2;
+                ly = y2;
+                lz = z2;
+            }
+            spdlog::info(
+                "[wb-stage] f={} {} vabsmax={:.5f} at (lx{},ly{},lz{},c{})",
+                stage_frame,
+                stage,
+                mv,
+                lx,
+                ly,
+                lz,
+                comp);
+        };
+        auto solve_stage = [&](const char* stage) {
+            if (!stage_dump)
+                return;
+            int lx, ly, lz;
+            float dv = buf_absmax_loc(field->divergence_buf, lx, ly, lz);
+            spdlog::info(
+                "[wb-stage] f={} {} div={} at (lx{},ly{},lz{}) pmax={:.5f}",
+                stage_frame,
+                stage,
+                dv,
+                lx,
+                ly,
+                lz,
+                buf_absmax(field->pressure_a));
+        };
 
         for (int s = 0; s < substeps; s++) {
             Ruzino::SimConstants fluid_cb = {};
@@ -371,8 +574,41 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
             // cells and thin paint do not. bristle_density is the §4.1
             // rasterized field (window-sized), bound into divergence/jacobi/
             // gradient. See those shaders' is_brush_g.
-            fluid_cb.brush_boundary_gate = 0.01f;
+            //
+            // Diagnostic bisect switches for the blob-test f12 eruption hunt
+            // (NOT physics knobs): WB_NO_PROJECT=1 skips both pressure
+            // projections; WB_NO_BRUSH_WALL=1 disables the §4.2 bristle
+            // no-flux/moving-wall BC (gate huge → is_brush_g always false).
+            // The gate MUST be decided BEFORE cb_buf is uploaded below — the
+            // divergence/gradient dispatches inside project() reuse cb_buf,
+            // so patching fluid_cb afterwards silently did nothing and the
+            // WB_NO_BRUSH_WALL bisect was invalid.
+            static const bool no_project = [] {
+                const char* env = std::getenv("WB_NO_PROJECT");
+                return env && std::atoi(env) == 1;
+            }();
+            static const float wall_gate = [] {
+                const char* env = std::getenv("WB_NO_BRUSH_WALL");
+                if (env && std::atoi(env) == 1)
+                    return 1e9f;
+                // Tunable via WB_WALL_GATE (default 0.01: only cells
+                // genuinely under bristles count as brush interior). A 0.001
+                // gate ("any splat") was tested for the blob lift trail and
+                // made no difference — the trail cells carry no bristle
+                // splat at all (sample mass is depleted by lift time).
+                const char* gate_env = std::getenv("WB_WALL_GATE");
+                return gate_env ? static_cast<float>(
+                                      std::max(std::atof(gate_env), 0.0))
+                                : 0.01f;
+            }();
+            fluid_cb.brush_boundary_gate = wall_gate;
             fluid_cb.velocity_damp = vel_damp_sub;
+            fluid_cb.copy_mode =
+                0;  // window→window (both buffers window-sized)
+            fluid_cb.advect_field_window_local = 0;
+            fluid_cb.gravity_x = gravity.x;
+            fluid_cb.gravity_y = gravity.y;
+            fluid_cb.gravity_z = gravity.z;
 
             nvrhi::BufferHandle cb_buf;
             Ruzino::brush_upload_cb(
@@ -411,6 +647,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
             // brush_dispatch submits internally; ensure the snapshot lands
             // before the solve dispatches read vel_*_old.
             device->waitForIdle();
+            if (s == 0)
+                vel_stage("pre_diffuse");
 
             // Velocity diffuse (Jacobi, mode 0)
             fluid_cb.jacobi_mode = 0;
@@ -447,21 +685,38 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                 for (auto& pp : vel_pairs) {
                     nvrhi::BufferHandle& in = *pp[0];
                     nvrhi::BufferHandle& out = *pp[1];
-                    Ruzino::brush_dispatch(
-                        rc,
-                        field->jacobi_program,
-                        { { "field_in", in },
-                          { "rhs", in },
-                          { "wetness", field->wetness },
-                          { "density", field->density },
-                          { "bristle_density", field->bristle_density } },
-                        { { "field_out", out } },
-                        jcb,
-                        window_total);
-                    std::swap(in, out);
+                    // Paper-style solver iteration (§4.2/Algorithm 1 uses
+                    // three fixed-point iterations): several Jacobi sweeps
+                    // per substep actually resolve the implicit high-
+                    // viscosity diffusion. ONE sweep left local spikes
+                    // (moving-wall injections, venturi through the brush
+                    // gap) alive at ~10x brush speed, which advected the
+                    // trail into torn bands; 3 sweeps spread the momentum
+                    // over the √α≈22-cell diffusion radius at a lower peak.
+                    for (int vs = 0; vs < 3; vs++) {
+                        Ruzino::brush_dispatch(
+                            rc,
+                            field->jacobi_program,
+                            { { "field_in", in },
+                              { "rhs", in },
+                              { "wetness", field->wetness },
+                              { "density", field->density },
+                              { "bristle_density", field->bristle_density },
+                              // Mode 0 (diffuse) never reads the swarm
+                              // raster, but the shader DECLARES the slot —
+                              // an unbound declared slot fails binding-set
+                              // creation and the whole dispatch is skipped.
+                              { "ptcl_density", field->ptcl_density } },
+                            { { "field_out", out } },
+                            jcb,
+                            window_total);
+                        std::swap(in, out);
+                    }
                 }
                 rc.destroy(jcb);
             }
+            if (s == 0)
+                vel_stage("post_diffuse");
 
             // Project (fixed-point, 3 iterations, 2 Jacobi each)
             auto project = [&]() {
@@ -474,7 +729,11 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                           { "vel_z", field->vel_z },
                           { "wetness", field->wetness },
                           { "density", field->density },
-                          { "bristle_density", field->bristle_density } },
+                          { "bristle_density", field->bristle_density },
+                          { "bristle_vel_x", field->bristle_vel_x },
+                          { "bristle_vel_y", field->bristle_vel_y },
+                          { "bristle_vel_z", field->bristle_vel_z },
+                          { "ptcl_density", field->ptcl_density } },
                         { { "div_out", field->divergence_buf } },
                         cb_buf,
                         window_total);
@@ -496,7 +755,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                               { "rhs", field->divergence_buf },
                               { "wetness", field->wetness },
                               { "density", field->density },
-                              { "bristle_density", field->bristle_density } },
+                              { "bristle_density", field->bristle_density },
+                              { "ptcl_density", field->ptcl_density } },
                             { { "field_out", field->pressure_b } },
                             pcb,
                             window_total);
@@ -510,7 +770,11 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                         { { "pressure", field->pressure_a },
                           { "wetness", field->wetness },
                           { "density", field->density },
-                          { "bristle_density", field->bristle_density } },
+                          { "bristle_density", field->bristle_density },
+                          { "bristle_vel_x", field->bristle_vel_x },
+                          { "bristle_vel_y", field->bristle_vel_y },
+                          { "bristle_vel_z", field->bristle_vel_z },
+                          { "ptcl_density", field->ptcl_density } },
                         { { "vel_x", field->vel_x },
                           { "vel_y", field->vel_y },
                           { "vel_z", field->vel_z } },
@@ -518,10 +782,30 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                         window_total);
                 }
             };
-            project();
+
+            // Diagnostic bisect switches (definitions live with the CB
+            // upload above, where they actually take effect): WB_NO_PROJECT
+            // skips both pressure projections; WB_NO_BRUSH_WALL sets the
+            // projection wall gate to 1e9 via the uploaded CB.
+            if (!no_project)
+                project();
+            if (s == 0) {
+                vel_stage("post_project1");
+                solve_stage("after_project1");
+            }
 
             // Advect velocity. See diffuse note above: std::addressof is
             // required because RefCountPtr::operator&() returns IBuffer**.
+            // field_in is the window-local velocity itself → the flag CB.
+            fluid_cb.advect_field_window_local = 1;
+            nvrhi::BufferHandle advect_vel_cb;
+            Ruzino::brush_upload_cb(
+                rc,
+                device,
+                &fluid_cb,
+                sizeof(fluid_cb),
+                "wb_adv_vel_cb",
+                advect_vel_cb);
             nvrhi::BufferHandle* advect_pairs[3][2] = {
                 { std::addressof(field->vel_x),
                   std::addressof(field->vel_x_tmp) },
@@ -541,15 +825,36 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                       { "vel_y", field->vel_y },
                       { "vel_z", field->vel_z } },
                     { { "field_out", out } },
-                    cb_buf,
+                    advect_vel_cb,
                     window_total);
                 std::swap(in, out);
             }
+            rc.destroy(advect_vel_cb);
+            if (s == 0)
+                vel_stage("post_advect");
 
             // Re-project
-            project();
+            if (!no_project)
+                project();
+            if (s == 0) {
+                vel_stage("post_project2");
+                solve_stage("after_project2");
+            }
 
-            // Advect scalars (density, color, wetness, oil_density)
+            // Advect scalars (density, color, wetness, oil_density). These are
+            // GLOBAL canvas fields: read globally (flag 0, the main cb_buf),
+            // advected into the WINDOW-SIZED tmp, then copied back over the
+            // window region (field_copy_window mode 2). No buffer swap — the
+            // tmp and the field have different sizes.
+            fluid_cb.copy_mode = 2;
+            nvrhi::BufferHandle advect_scalar_cb;
+            Ruzino::brush_upload_cb(
+                rc,
+                device,
+                &fluid_cb,
+                sizeof(fluid_cb),
+                "wb_adv_scalar_cb",
+                advect_scalar_cb);
             auto advect_scalar = [&](nvrhi::BufferHandle& f,
                                      nvrhi::BufferHandle& tmp) {
                 Ruzino::brush_dispatch(
@@ -562,7 +867,13 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                     { { "field_out", tmp } },
                     cb_buf,
                     window_total);
-                std::swap(f, tmp);
+                Ruzino::brush_dispatch(
+                    rc,
+                    field->field_copy_window_program,
+                    { { "src_field", tmp } },
+                    { { "dst_field", f } },
+                    advect_scalar_cb,
+                    win_n3d);
             };
             advect_scalar(field->density, field->density_tmp);
             advect_scalar(field->color_r, field->color_r_tmp);
@@ -570,6 +881,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
             advect_scalar(field->color_b, field->color_b_tmp);
             advect_scalar(field->wetness, field->wetness_tmp);
             advect_scalar(field->oil_density, field->oil_density_tmp);
+            rc.destroy(advect_scalar_cb);
 
             // NOTE: no scalar diffusion step here. Paper §4.2/§5.1 line 209
             // applies viscosity to the VELOCITY field only (done in
@@ -584,18 +896,49 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
             // window) so that paint left behind by a moving brush still dries
             // (§4.2: "increase the dryness of every grid cell"). Velocity damp
             // on empty cells is a no-op (their velocity is already zero).
+            // Damp + dry, split along the buffer residency (see
+            // fluid_damp_dry.slang): a GLOBAL wetness-only pass so paint left
+            // behind by a moving brush still dries (§4.2: "increase the
+            // dryness of every grid cell"), and a WINDOW velocity pass (the
+            // velocity family only exists inside the window).
+            fluid_cb.damp_mode = 0;
+            nvrhi::BufferHandle damp_global_cb;
+            Ruzino::brush_upload_cb(
+                rc,
+                device,
+                &fluid_cb,
+                sizeof(fluid_cb),
+                "wb_damp_g_cb",
+                damp_global_cb);
             Ruzino::brush_dispatch(
                 rc,
                 field->damp_dry_program,
-                // oil_density was bound here but the shader never samples it
-                // (dead binding) — removed.
-                {},
+                { { "density", field->density } },
+                { { "wetness", field->wetness } },
+                damp_global_cb,
+                global_n3d);
+            rc.destroy(damp_global_cb);
+
+            fluid_cb.damp_mode = 1;
+            nvrhi::BufferHandle damp_window_cb;
+            Ruzino::brush_upload_cb(
+                rc,
+                device,
+                &fluid_cb,
+                sizeof(fluid_cb),
+                "wb_damp_w_cb",
+                damp_window_cb);
+            Ruzino::brush_dispatch(
+                rc,
+                field->damp_dry_program,
+                { { "density", field->density } },
                 { { "vel_x", field->vel_x },
                   { "vel_y", field->vel_y },
                   { "vel_z", field->vel_z },
                   { "wetness", field->wetness } },
-                cb_buf,
-                global_n3d);
+                damp_window_cb,
+                window_total);
+            rc.destroy(damp_window_cb);
 
             // FLIP/PIC velocity update for particles
             if (field->particles_initialized) {
@@ -621,6 +964,9 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                 pc.brush_pos_y = brush_pos_3d.y;
                 pc.brush_pos_z = brush_pos_3d.z;
                 pc.brush_radius = brush_radius;
+                pc.brush_vel_x = field->prev_brush_vel.x;
+                pc.brush_vel_y = field->prev_brush_vel.y;
+                pc.brush_vel_z = field->prev_brush_vel.z;
 
                 nvrhi::BufferHandle flip_cb;
                 Ruzino::brush_upload_cb(
@@ -654,9 +1000,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         pc.max_particles = max_ptcl;
         pc.dt = 0.016f;
         pc.D0 = D0;  // match particle-section D0
-        // grid_to_particle drains within D1 (the adhesion bulb), not D0 —
-        // see the moat note in grid_to_particle.slang. The maintenance CB
-        // must carry D1 or the shader reads 0 and never converts.
+        // D1 (adhesion range, Eq.10) — grid_to_particle drains within D0 per
+        // paper §5.2; D1 is carried for reference but unused by the drain.
         pc.D1 = D1;
         pc.grid_res = field->grid_res;
         pc.grid_res_z = WIN_Z;
@@ -675,6 +1020,9 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         pc.brush_pos_y = brush_pos_3d.y;
         pc.brush_pos_z = brush_pos_3d.z;
         pc.brush_radius = brush_radius;
+        pc.brush_vel_x = field->prev_brush_vel.x;
+        pc.brush_vel_y = field->prev_brush_vel.y;
+        pc.brush_vel_z = field->prev_brush_vel.z;
         // num_bristles / samples_per_bristle: REQUIRED by particle_to_grid's
         // d_{B,k} nearest-sample query (§5.2). Without these, num_samples = 0,
         // the scan finds no bristle, d_B defaults to sqrt(1e30)≈3e15, and
@@ -683,6 +1031,10 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         // effect: the d_B was always astronomically larger than any D0.
         pc.num_bristles = Nb;
         pc.samples_per_bristle = S;
+        pc.slow_deposit_speed = slow_deposit_speed;
+        pc.gravity_x = gravity.x;
+        pc.gravity_y = gravity.y;
+        pc.gravity_z = gravity.z;
         // Pen state for the §5.2 conversions below: pen-up deposits the
         // carried swarm (d_{B,k} vs stalled samples means nothing) and
         // suspends grid→particle conversion.
@@ -720,29 +1072,44 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         // Paper §5.2: "c can be any cell near new particles and it does not
         // have to emit any particle." Each emitted particle subtracts its mass
         // (weighted by W) from its 3×3×3 neighborhood, NOT just its emitting
-        // cell. The shader writes density_out via RWByteAddressBuffer atomic
-        // subtract, so we must seed density_out with the current density
-        // (atomic subtract accumulates on top of the seed). Color outputs are
-        // seeded the same way so the shader can subtract color in lockstep
-        // with density (§14 TODO #2 — keeps color/density ratio conserved).
+        // cell. The *_out tmps are WINDOW-SIZED: seed them from the global
+        // canvas fields over the window (field_copy_window mode 1), let the
+        // shader subtract, then copy the results back (mode 2). No buffer
+        // swap — the tmp and the field have different sizes.
         {
-            const size_t grid_bytes = static_cast<size_t>(field->grid_res) *
-                                      field->grid_res_z * field->grid_res *
-                                      sizeof(float);
-            auto seed_cmd = rc.create(CommandListDesc{});
-            seed_cmd->open();
-            seed_cmd->copyBuffer(
-                field->density_tmp, 0, field->density, 0, grid_bytes);
-            seed_cmd->copyBuffer(
-                field->color_r_tmp, 0, field->color_r, 0, grid_bytes);
-            seed_cmd->copyBuffer(
-                field->color_y_tmp, 0, field->color_y, 0, grid_bytes);
-            seed_cmd->copyBuffer(
-                field->color_b_tmp, 0, field->color_b, 0, grid_bytes);
-            seed_cmd->close();
-            device->executeCommandList(seed_cmd);
-            device->waitForIdle();
-            rc.destroy(seed_cmd);
+            Ruzino::SimConstants seed_cb = {};
+            seed_cb.res = field->grid_res;
+            seed_cb.res_z = field->grid_res_z;
+            seed_cb.window_origin_x = field->win_origin_x;
+            seed_cb.window_origin_y = field->win_origin_y;
+            seed_cb.window_origin_z = 0;
+            seed_cb.window_size_x = WIN_XY;
+            seed_cb.window_size_y = WIN_XY;
+            seed_cb.window_size_z = WIN_Z;
+            seed_cb.copy_mode = 1;  // global → window
+            nvrhi::BufferHandle g2p_copy_cb;
+            Ruzino::brush_upload_cb(
+                rc,
+                device,
+                &seed_cb,
+                sizeof(seed_cb),
+                "wb_g2p_copy_cb",
+                g2p_copy_cb);
+            auto win_copy = [&](nvrhi::BufferHandle& src,
+                                nvrhi::BufferHandle& dst) {
+                Ruzino::brush_dispatch(
+                    rc,
+                    field->field_copy_window_program,
+                    { { "src_field", src } },
+                    { { "dst_field", dst } },
+                    g2p_copy_cb,
+                    win_n3d);
+            };
+            win_copy(field->density, field->density_tmp);
+            win_copy(field->color_r, field->color_r_tmp);
+            win_copy(field->color_y, field->color_y_tmp);
+            win_copy(field->color_b, field->color_b_tmp);
+            rc.destroy(g2p_copy_cb);
         }
         Ruzino::brush_dispatch(
             rc,
@@ -765,10 +1132,42 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
               { "color_b_out", field->color_b_tmp } },
             maint_cb,
             win_n3d);
-        std::swap(field->density, field->density_tmp);
-        std::swap(field->color_r, field->color_r_tmp);
-        std::swap(field->color_y, field->color_y_tmp);
-        std::swap(field->color_b, field->color_b_tmp);
+        // Copy the subtracted window regions back into the global fields.
+        {
+            Ruzino::SimConstants writeback_cb = {};
+            writeback_cb.res = field->grid_res;
+            writeback_cb.res_z = field->grid_res_z;
+            writeback_cb.window_origin_x = field->win_origin_x;
+            writeback_cb.window_origin_y = field->win_origin_y;
+            writeback_cb.window_origin_z = 0;
+            writeback_cb.window_size_x = WIN_XY;
+            writeback_cb.window_size_y = WIN_XY;
+            writeback_cb.window_size_z = WIN_Z;
+            writeback_cb.copy_mode = 2;  // window → global
+            nvrhi::BufferHandle g2p_wb_cb;
+            Ruzino::brush_upload_cb(
+                rc,
+                device,
+                &writeback_cb,
+                sizeof(writeback_cb),
+                "wb_g2p_wb_cb",
+                g2p_wb_cb);
+            auto copy_back = [&](nvrhi::BufferHandle& src,
+                                 nvrhi::BufferHandle& dst) {
+                Ruzino::brush_dispatch(
+                    rc,
+                    field->field_copy_window_program,
+                    { { "src_field", src } },
+                    { { "dst_field", dst } },
+                    g2p_wb_cb,
+                    win_n3d);
+            };
+            copy_back(field->density_tmp, field->density);
+            copy_back(field->color_r_tmp, field->color_r);
+            copy_back(field->color_y_tmp, field->color_y);
+            copy_back(field->color_b_tmp, field->color_b);
+            rc.destroy(g2p_wb_cb);
+        }
 
         // Particle compaction. Zero the OUTPUT alive buffer first: compact
         // only writes packed survivors' flags, so slots above the live count

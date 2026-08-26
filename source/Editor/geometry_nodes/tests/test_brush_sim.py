@@ -6,11 +6,11 @@ Pipeline (simulation zone, fed back every frame):
     mock_stroke --Stroke Curves--> [ simulation_in ]   (boundary slot A)
     brush_wb_init_state --State--> [ simulation_in ]   (boundary slot B, seed)
       [ simulation_in ] --Stroke Curves--> mock_point_emitter
-      mock_point_emitter --BrushPoint--> brush_wb_deposit
+      mock_point_emitter --StrokeSample--> brush_wb_deposit
       [ simulation_in ] --State--> brush_wb_deposit
       brush_wb_deposit --State--> brush_wb_bristle --State--> brush_wb_fluid
         --State--> brush_wb_commit
-      brush_wb_deposit --BrushPoint--> brush_wb_fluid
+      brush_wb_deposit --StrokeSample--> brush_wb_fluid
       brush_wb_commit --Paint Particles--> write_usd
       brush_wb_commit --State--> [ simulation_out ]   (fed back)
 
@@ -74,9 +74,9 @@ def _build_zone_graph(num_points=30):
     g.addEdge(mock, "Stroke Curves", sim_in, "Simulation In")
     g.addEdge(init_state, "State", sim_in, "Simulation In")
     g.addEdge(sim_in, "Simulation Out", emitter, "Stroke Curves")
-    g.addEdge(emitter, "Current Point", deposit, "Brush Point")
+    g.addEdge(emitter, "Stroke Sample", deposit, "Stroke Sample")
     g.addEdge(sim_in, "Simulation Out", deposit, "State")
-    g.addEdge(deposit, "Brush Point", fluid, "Brush Point")
+    g.addEdge(deposit, "Stroke Sample", fluid, "Stroke Sample")
     g.addEdge(deposit, "State", bristle, "State")
     g.addEdge(bristle, "State", fluid, "State")
     g.addEdge(fluid, "State", commit, "State")

@@ -90,9 +90,9 @@ def build_sim_graph(sim_usd: Path):
     g.addEdge(mock, "Stroke Curves", sim_in, "Simulation In")
     g.addEdge(init_state, "State", sim_in, "Simulation In")
     g.addEdge(sim_in, "Simulation Out", emitter, "Stroke Curves")
-    g.addEdge(emitter, "Current Point", deposit, "Brush Point")
+    g.addEdge(emitter, "Stroke Sample", deposit, "Stroke Sample")
     g.addEdge(sim_in, "Simulation Out", deposit, "State")
-    g.addEdge(deposit, "Brush Point", fluid, "Brush Point")
+    g.addEdge(deposit, "Stroke Sample", fluid, "Stroke Sample")
     g.addEdge(deposit, "State", bristle, "State")
     g.addEdge(bristle, "State", fluid, "State")
     g.addEdge(fluid, "State", commit, "State")
@@ -144,7 +144,42 @@ def build_sim_graph(sim_usd: Path):
 # Stage 1b: build the marker render scene. UsdVolVolume with grid metadata
 # primvars (NO paintField — the rprim reads paint from the registry buffer),
 # plus the Paper mesh, camera, and lights. Returns the scene path.
+#
+# UNIFIED PAINT RENDERING (deviates from paper §6's dual-mode on purpose):
+# paint inside AND outside the active window renders through the single volume
+# path — brush_wb_commit's pack composites the live swarm raster into the
+# paint field (mass-consistent with the §5.2 Eq.15 drain). The /LiquidParticles
+# point sprites (Hd_RUZINO_Points fed zero-copy from the
+# wetbrush_debug_particles registry buffer) are an OPT-IN debug visualization
+# of the particle state: set WB_DRAW_PARTICLES=1. /BrushBristles (the brush
+# itself) defaults on; WB_DRAW_BRISTLES=0 hides it.
 # ---------------------------------------------------------------------------
+def add_registry_points(stage, path, key, color):
+    pts = UsdGeom.Points.Define(stage, path)
+    # One placeholder point keeps the USD data valid; the registry buffer
+    # supplies the real geometry once the sim ticks.
+    pts.CreatePointsAttr().Set([Gf.Vec3f(0.0, 0.0, -10.0)])
+    pv = UsdGeom.PrimvarsAPI(pts.GetPrim())
+    pv.CreatePrimvar("debugKey", Sdf.ValueTypeNames.String).Set(key)
+    # Per-frame re-sync driver: time samples on `widths` keep Hydra re-dirtying
+    # this prim every render-time change so the rprim re-checks the registry
+    # version (values never read; the registry supplies real radii).
+    widths = pts.CreateWidthsAttr()
+    for i in range(NUM_FRAMES):
+        widths.Set(Vt.FloatArray([0.001 * (i + 1)]), (i + 1) * DT)
+    # Neutral material — the sphere/capsule hit groups never consult it, but
+    # the rprim's TLAS update expects one to exist.
+    mat = UsdShade.Material.Define(stage, f"{path}Material")
+    shader = UsdShade.Shader.Define(stage, f"{path}Material/Shader")
+    shader.CreateIdAttr("UsdPreviewSurface")
+    shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(color)
+    mat.CreateSurfaceOutput().ConnectToSource(
+        UsdShade.ConnectableAPI(shader), "surface",
+        UsdShade.AttributeType.Output)
+    UsdShade.MaterialBindingAPI.Apply(pts.GetPrim()).Bind(mat)
+    return pts
+
+
 def build_marker_scene(scene_path: Path):
     if scene_path.exists():
         scene_path.unlink()
@@ -172,6 +207,19 @@ def build_marker_scene(scene_path: Path):
     canvas_z = 0.0
     gm = Gf.Vec3f(-SIM_PAPER * 0.5, -SIM_PAPER * 0.5, float(canvas_z))
     pv.CreatePrimvar("gridMin", Sdf.ValueTypeNames.Float3).Set(gm)
+
+    # OPT-IN particle visualization: WB_DRAW_PARTICLES=1 adds the live-swarm
+    # point sprites (debug view of the particle state). Default OFF — the
+    # unified paint render composites the swarm into the volume field, so
+    # sprites would double-show the same mass. WB_DRAW_BRISTLES=0 hides the
+    # brush-context prim (defaults on).
+    draw = os.environ.get("WB_DRAW_PARTICLES", "0") == "1"
+    if draw:
+        add_registry_points(stage, "/LiquidParticles",
+                            "wetbrush_debug_particles", (0.8, 0.3, 0.3))
+    if os.environ.get("WB_DRAW_BRISTLES", "1") == "1":
+        add_registry_points(stage, "/BrushBristles",
+                            "wetbrush_debug_bristles", (0.7, 0.7, 0.75))
 
     # Neutral fallback material (the volume hit path colors from the field).
     mat = UsdShade.Material.Define(stage, "/PaintMaterial")

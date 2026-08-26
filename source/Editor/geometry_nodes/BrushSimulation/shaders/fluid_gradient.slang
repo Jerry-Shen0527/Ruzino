@@ -2,7 +2,10 @@
 // Wetbrush Algorithm 1: "u ← u - ∇P"
 // 3D: subtract ∂P/∂x, ∂P/∂y, ∂P/∂z from vel_x, vel_y, vel_z
 //
-// Global grid: neighbor access uses global coords/strides (res, res_z).
+// Pressure and the velocity family are WINDOW-SIZED buffers (paper §4.2),
+// indexed window-locally via wnb(). Outside-window neighbors mirror the
+// center value (Neumann BC — no pressure flux across the window edge; the
+// edge is far from the brush). The BC fields (wetness/density) stay GLOBAL.
 
 #include "common.slangh"
 
@@ -17,6 +20,17 @@ StructuredBuffer<float> wetness    : register(t1);
 StructuredBuffer<float> density    : register(t2);
 // Bristle rasterized density (paper §4.2 boundary condition). Window-sized.
 StructuredBuffer<float> bristle_density : register(t3);
+// Bristle rasterized VELOCITY (§4.1: "we rasterize them into a density field
+// and a velocity field. They will be used as boundary conditions"; §4.2:
+// "the discretized bristle density and velocity fields are treated as
+// boundary conditions in pressure projection"). Window-sized; accumulates
+// Σ v·w, so bristle_vel/bristle_density is the mass-weighted average bristle
+// sample velocity — the brush's local wall velocity.
+StructuredBuffer<float> bristle_vel_x : register(t4);
+StructuredBuffer<float> bristle_vel_y : register(t5);
+StructuredBuffer<float> bristle_vel_z : register(t6);
+// Rasterized swarm density (§4.1/§4.3 joint liquid field). Window-sized.
+StructuredBuffer<float> ptcl_density : register(t7);
 
 RWStructuredBuffer<float> vel_x : register(u0);
 RWStructuredBuffer<float> vel_y : register(u1);
@@ -40,9 +54,38 @@ bool is_brush_g(uint gx, uint gy, uint gz)
     return bristle_density[gi] > cb.brush_boundary_gate;
 }
 
+// MOVING-WALL velocity of a brush-interior cell: the rasterized average
+// bristle sample velocity (§4.2's boundary condition pair). The brush is not
+// a static wall — its bristles drag the liquid with them.
+float3 brush_wall_vel(uint gx, uint gy, uint gz)
+{
+    int w = win_field_idx(
+        int(gx), int(gy), int(gz), cb.window_origin_x, cb.window_origin_y,
+        cb.window_origin_z, cb.window_size_x, cb.window_size_z);
+    if (w < 0) return float3(0.0, 0.0, 0.0);
+    float bd = bristle_density[w];
+    if (bd <= cb.brush_boundary_gate) return float3(0.0, 0.0, 0.0);
+    float inv = 1.0 / max(bd, 1e-6);
+    return float3(bristle_vel_x[w], bristle_vel_y[w], bristle_vel_z[w]) * inv;
+}
+
 bool is_blocked(uint idx, uint gx, uint gy, uint gz)
 {
     return is_solid(idx) || is_brush_g(gx, gy, gz);
+}
+
+// LIQUID OCCUPANCY (§4.1/§4.3 joint field): grid paint + swarm + bristles.
+// No liquid → AIR: velocity there is fictional and is cleared (see
+// fluid_divergence.slang's is_air note).
+bool is_air(uint idx, uint gx, uint gy, uint gz)
+{
+    if (is_brush_g(gx, gy, gz)) return false;
+    if (density[idx] > 1e-6f) return false;
+    int w = win_field_idx(
+        int(gx), int(gy), int(gz), cb.window_origin_x, cb.window_origin_y,
+        cb.window_origin_z, cb.window_size_x, cb.window_size_z);
+    if (w >= 0 && ptcl_density[w] > 1e-6f) return false;
+    return true;
 }
 
 [numthreads(256, 1, 1)]
@@ -51,37 +94,67 @@ void main(uint3 dtid : SV_DispatchThreadID)
     int RES  = cb.res;
     int RESZ = cb.res_z;
     uint RNN = (uint)(RES * RES);
+    int WSX = cb.window_size_x;
+    int WSZ = cb.window_size_z;
 
     WindowCell c;
     if (!window_map(cb, dtid.x, c)) return;
     uint gx = c.x, gy = c.y, gz = c.z;
     uint idx = c.idx;
 
-    // Solid or brush-interior cells keep zero velocity (no update). Paper §4.2.
-    if (is_blocked(idx, gx, gy, gz)) {
-        vel_x[idx] = 0.0f;
-        vel_y[idx] = 0.0f;
-        vel_z[idx] = 0.0f;
+    int w0 = wnb(c, 0, 0, 0, WSX, WSZ);
+    float p_center = pressure[w0];
+    int wxm = wnb(c, -1, 0, 0, WSX, WSZ);
+    int wxp = wnb(c, 1, 0, 0, WSX, WSZ);
+    int wym = wnb(c, 0, -1, 0, WSX, WSZ);
+    int wyp = wnb(c, 0, 1, 0, WSX, WSZ);
+    int wzm = wnb(c, 0, 0, -1, WSX, WSZ);
+    int wzp = wnb(c, 0, 0, 1, WSX, WSZ);
+
+    // Dried-solid cells keep zero velocity (§4.2). Brush-interior cells get
+    // the MOVING-WALL velocity (the rasterized bristle velocity) — the
+    // brush's bristles push the liquid as they sweep (§4.2's velocity BC).
+    // Zeroing these instead made the brush a static bollard: whatever the
+    // swarm merge injected under the brush was erased each projection.
+    if (is_solid(idx)) {
+        vel_x[w0] = 0.0f;
+        vel_y[w0] = 0.0f;
+        vel_z[w0] = 0.0f;
+        return;
+    }
+    if (is_brush_g(gx, gy, gz)) {
+        float3 wv = brush_wall_vel(gx, gy, gz);
+        vel_x[w0] = wv.x;
+        vel_y[w0] = wv.y;
+        vel_z[w0] = wv.z;
+        return;
+    }
+    // AIR (free surface): no liquid → no liquid velocity. Clear it so the
+    // fictional velocity the projection/diffuse stages leave in empty space
+    // can never be sampled back by advection or the swarm.
+    if (is_air(idx, gx, gy, gz)) {
+        vel_x[w0] = 0.0f;
+        vel_y[w0] = 0.0f;
+        vel_z[w0] = 0.0f;
         return;
     }
 
-    // ∂P/∂x — Neumann BC at solid/brush interfaces: a blocked neighbor
-    // contributes pressure[idx] (mirror), so the gradient across the boundary
-    // is zero. This prevents the fluid from being sucked toward blocked cells;
-    // the fluid is simply deflected around the brush/dried paint.
-    float px_lo = (gx > 0)             ? (is_blocked(idx - 1, gx - 1, gy, gz)    ? pressure[idx] : pressure[idx - 1])    : pressure[idx];
-    float px_hi = (gx < (uint)RES - 1) ? (is_blocked(idx + 1, gx + 1, gy, gz)    ? pressure[idx] : pressure[idx + 1])    : pressure[idx];
-    vel_x[idx] -= 0.5f * (px_hi - px_lo);
+    // Pressure at the faces. Neumann BC at solid/brush interfaces: a blocked
+    // neighbor mirrors the center (zero gradient, no suction toward the
+    // wall). Dirichlet p = 0 at AIR interfaces (free surface).
+    float px_lo = (gx > 0)             ? (is_blocked(idx - 1, gx - 1, gy, gz) ? p_center : (is_air(idx - 1, gx - 1, gy, gz) ? 0.0 : ((wxm >= 0) ? pressure[wxm] : p_center))) : p_center;
+    float px_hi = (gx < (uint)RES - 1) ? (is_blocked(idx + 1, gx + 1, gy, gz) ? p_center : (is_air(idx + 1, gx + 1, gy, gz) ? 0.0 : ((wxp >= 0) ? pressure[wxp] : p_center))) : p_center;
+    vel_x[w0] -= 0.5f * (px_hi - px_lo);
 
     // ∂P/∂y
-    float py_lo = (gy > 0)             ? (is_blocked(idx - (uint)RES, gx, gy - 1, gz) ? pressure[idx] : pressure[idx - (uint)RES]) : pressure[idx];
-    float py_hi = (gy < (uint)RES - 1) ? (is_blocked(idx + (uint)RES, gx, gy + 1, gz) ? pressure[idx] : pressure[idx + (uint)RES]) : pressure[idx];
-    vel_y[idx] -= 0.5f * (py_hi - py_lo);
+    float py_lo = (gy > 0)             ? (is_blocked(idx - (uint)RES, gx, gy - 1, gz) ? p_center : (is_air(idx - (uint)RES, gx, gy - 1, gz) ? 0.0 : ((wym >= 0) ? pressure[wym] : p_center))) : p_center;
+    float py_hi = (gy < (uint)RES - 1) ? (is_blocked(idx + (uint)RES, gx, gy + 1, gz) ? p_center : (is_air(idx + (uint)RES, gx, gy + 1, gz) ? 0.0 : ((wyp >= 0) ? pressure[wyp] : p_center))) : p_center;
+    vel_y[w0] -= 0.5f * (py_hi - py_lo);
 
     // ∂P/∂z
     if (RESZ > 1) {
-        float pz_lo = (gz > 0)             ? (is_blocked(idx - RNN, gx, gy, gz - 1) ? pressure[idx] : pressure[idx - RNN]) : pressure[idx];
-        float pz_hi = (gz < (uint)RESZ - 1) ? (is_blocked(idx + RNN, gx, gy, gz + 1) ? pressure[idx] : pressure[idx + RNN]) : pressure[idx];
-        vel_z[idx] -= 0.5f * (pz_hi - pz_lo);
+        float pz_lo = (gz > 0)             ? (is_blocked(idx - RNN, gx, gy, gz - 1) ? p_center : (is_air(idx - RNN, gx, gy, gz - 1) ? 0.0 : ((wzm >= 0) ? pressure[wzm] : p_center))) : p_center;
+        float pz_hi = (gz < (uint)RESZ - 1) ? (is_blocked(idx + RNN, gx, gy, gz + 1) ? p_center : (is_air(idx + RNN, gx, gy, gz + 1) ? 0.0 : ((wzp >= 0) ? pressure[wzp] : p_center))) : p_center;
+        vel_z[w0] -= 0.5f * (pz_hi - pz_lo);
     }
 }
