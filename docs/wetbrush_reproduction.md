@@ -533,8 +533,568 @@ pen-up 帧 fluid 节点清空这些光栅缓冲（避免幽灵粒子群）。
 7 帧寿命）、无 NaN。可调项：`WB_VEL_DAMP`(0.8)、`WB_VEL_INJECT`(1.0)、
 `WB_EMIT_BUDGET`(800)、`WB_RENDER_PTCL`(1.0)。
 
-## 关键经验教训
+### 18. 回归论文本意：双模式渲染 + 粒子密度 + 活动窗口内存模型（2026-08-23）
 
+用户对 §17 的结果指出两处残留（活动窗口内颜色更深的圆盘、窗口外颗粒感
++ 偏窄），并要求对照 paper 原文审查 §17 的操作哪些是 hack。通读
+`docs/Wetbrush_GPU_based_3D_painting_simulation_at_the.md` 后的结论与重构：
+
+#### Hack 审查结论（对照 paper 原文）
+
+1. **pack 粒子群合成（§17.1）→ 撤销**。Paper §6 明确用两套渲染：体积
+   raymarch 只采样网格密度场，粒子用独立的屏幕空间方法（van der Laan
+   2009），且论文直言两模式在笔刷附近会有不连续、"noticeable only in
+   closeup views"——论文接受它。我们的密度合成把窗口内密度叠高 → §6 AO
+   饱和 → 深色圆盘。撤销后深色圆盘消失；活粒子通过
+   `wetbrush_debug_particles` 点精灵渲染进正式序列（`/LiquidParticles`
+   prim，`WB_DRAW_PARTICLES=0` 关闭；笔刷本体 `/BrushBristles`，
+   `WB_DRAW_BRISTLES=0` 关闭）。
+2. **D1 抽干（§17.5 的一部分）→ 撤销**。Paper §5.2 就是按 D0 转换；
+   护城河区域按论文本该是粒子（由点精灵渲染覆盖）。
+3. **WB_VEL_DAMP=0.8 → 默认 1.0（关闭）**。论文消除 trailing velocity 的
+   机制是 §4.2 强粘性扩散（把动量稀释到窗口均值）+ dryness 阈值清零 +
+   有界的 §4.3 合并（二次方动量 bug 修复后）。env 保留作极端工况逃生门。
+   （勘误：§17.3 曾称粘性 Jacobi 是数值 no-op——推导错了，
+   `x'=(x+a·Σ₆)/(1+6a)` 在 a→∞ 时是纯邻居平均即最大平滑，a≈500 是强扩散。）
+4. **Eq.15/16 离散归一化 → 确认为论文本意**。论文原文
+   `ρ_c ± m_k·ΣW(p_k−x_c,h)` 本来就没有 dV——W 是纯权重核，旧代码的
+   W·dV 才是误读。
+5. **粒子密度 → 按论文量级**。论文 §7："This requires particles to be
+   densely sampled... otherwise dirty color mixing or noisy surface
+   artifacts may appear"——正是我们的颗粒感。`WB_EMIT_BUDGET`
+   800→8192/帧（论文典型 210K 粒子、大笔刷 2M）。颗粒感随之消失。
+
+#### 活动窗口内存模型（paper §4.2 "128×128×32"）
+
+用户发现显存爆炸（进程 ~9.4GB）。根因：25 个场全部按全局网格稠密分配
+（1024²×64 下每个 268MB）。论文 12GB TITAN X 跑 4096 的唯一可能是：
+求解/临时场只存在于活动窗口（论文原文 "we can restrict grid-based
+simulation to a small active window"，128×128×32 ≈ 每场 2MB），画布状态
+在 4096 下稠密 float 也要 25.8GB——论文必然用了稀疏/量化存储（原文未写明，
+算术上别无可能）。
+
+重构（仿真侧 ~8GB → ~3.7GB）：
+- **窗口尺寸化 18 个瞬态场**：vel×3 + tmp×3 + vel_old×3 + pressure×2 +
+  divergence + density/color×3/wetness/oil 的 tmp。画布状态（density、
+  color×3、wetness、oil）保持全局稠密；`height_field` 是死代码不再分配。
+- **窗口滚动**（`window_scroll.slang`）：窗口随笔刷移动时把 vel×3 +
+  pressure_a（warm-start）的重叠区重定基，窗口外丢弃（论文：窗口外无液体
+  运动）。scratch 复用 vel_tmp / pressure_b / divergence_buf。
+- **两套索引空间的桥**（`field_copy_window.slang` 三模式）：vel 快照
+  window→window；g2p 的 Eq.15 扣减种子 global→window、写回 window→global
+  （替代旧的整场 copyBuffer 种子 + swap）；标量平流 window→global 写回。
+- **求解器窗口局部索引**：jacobi/divergence/gradient 的瞬态缓冲走
+  `wnb()`（窗口边缘取该 shader 的边界规则：散度=墙、梯度=镜像、扩散=镜像），
+  BC 场（wetness/density）保持全局索引；advect 的速度回溯采样走
+  `win_field_idx`（窗口外=0）；particle_update / particle_flip_pic /
+  bristle_simulate 的三线性速度采样同样窗口化；bristle_merge 的速度写入
+  改窗口索引（顺带发现：它之前用全局 gidx 写——若漏改会越界）。
+- **damp_dry 拆分**：全局 pass 只做 wetness 干燥（论文"every grid cell"），
+  窗口 pass 做速度衰减/dry 清零（速度只在窗口存在）。
+- 顺带：Slang 不支持 C++ lambda（`auto f=[&](...)` 语法错误）——全部改
+  普通函数；改 shader 后先用 `slangc -target dxil` 预检全部 21 个再跑，
+  省渲染迭代。
+
+#### 验证（run11，60 帧完整）
+
+- **显存**：进程 ~3.7GB（原 ~9.4GB）；渲染 4s/帧（原 60-90s，VRAM 压力
+  消失）。
+- **连续性（像素级）**：frames 35/50/55/59 全部**单一连通域**（60k-106k
+  px，>99% 红像素），历史首次完全连续；厚度 44-48px 稳定，轨迹结点区
+  82-98px 有界（帧间不再增长，runaway 膨胀消除）。
+- **深色圆盘**：消失（视觉确认颜色均匀）。
+- **颗粒感**：消失（论文密度粒子）。
+- `test_wetbrush_zone.py` 3 passed。
+- 已知：视觉模型对最终帧仍报"断块+中部膨胀"，与像素连通域分析矛盾，
+  以像素为准（该模型在同类图上多次过度解读）。
+
+### 19. 统一颜料渲染 + 流体速度场"死场"三连修（2026-08-23）
+
+用户反馈两个问题：① 渲染时 active window 内外用了两种"颜料"画法
+（内=粒子 sprite，外=格子 raymarch），要求统一为格子系统、粒子仅
+按需可视化；② window 内的粒子帧与帧之间完全不动，流体行为缺失。
+
+#### 诊断手段：WB_DEBUG_DUMP_PTCL=1
+
+commit 节点新增逐帧 readback 统计（粒子数/质心/bbox/vmean/vmax +
+窗口速度场 gridvmax），一行日志看清粒子是否真的在动。**第一轮输出
+直接定案：gridvmax ≡ 0.00000（每帧、精确为零）**——不是"渲染冻结"，
+是整个欧拉速度场从第一帧起就是死的；粒子 vmean ~0.003-0.014 只是
+发射点随笔刷移动的假象。
+
+#### 根因 1：fluid_damp_dry 的 dry-zero 缺 density 门
+
+`wetness` 只在粒子 **deposit** 时写 1（particle_to_grid）。刷子底下
+质量都在粒子里、没有 deposit → wetness=0 → damp 的窗口 pass 把
+`wetness < 0.01` 的格子速度**清零**——swarm merge 注入的速度每个
+substep 都被抹掉。paper §4.2 说的是"**干掉的颜料**格子忽略其速度"，
+不是"空格子"。修复：dry-zero 加 `density > 1e-6` 门（与 divergence/
+gradient 的 is_solid 谓词一致——空格子里的速度场是流动液体本身，
+必须存活）。
+
+#### 根因 2：刷毛边界是"移动墙"，不是"静止墙"（§4.2 本义）
+
+paper §4.1: "we rasterize them into a density field **and a velocity
+field**. They will be used as boundary conditions"；§4.2: "the
+discretized bristle density **and velocity** fields are treated as
+boundary conditions in pressure projection"。我们的实现只 rasterize 了
+bristle_vel_* 却从不消费——gradient 把刷毛格速度硬置 0（静止墩子），
+divergence 直接跳过刷毛邻居（无通量）。修复：
+
+- **fluid_gradient**：刷毛格速度 = raster 平均刷毛速度
+  （bristle_vel/bd，质量加权），不再是 0；
+- **fluid_divergence**：朝向刷毛格的面速度 = 该格壁面速度（移动墙
+  源项），干颜料格维持跳过（真静止墙）。
+
+这是 paper 让笔刷"推动"液体的原生机制。
+
+#### 根因 3：particle_update 局部标架的平移抵消（Eq.9/10 两步法）
+
+Step A 原实现用**当前**采样点位置做正逆变换的原点——进去出来抵消，
+笔刷平移永远不会携带粒子（adhesion 名存实亡）。paper 的两步法：t 时刻
+用采样点**旧**位置（origin − v_frame·dt）转进去，t+dt 用**新**位置转
+出来。修复：v_frame = brush velocity（ParticleConstants 新增
+brush_vel_*，取 field->prev_brush_vel，deposit 帧末维护）；v_L 改为
+**相对**速度（vel − v_frame），转出时加回。
+
+#### 统一渲染（有意偏离 paper §6）
+
+paper §6 双模式渲染（grid raymarch + 屏幕空间粒子）自带笔刷周围的
+模式接缝，paper 自己承认"noticeable in closeup views"。按用户指令改为
+**单一格子渲染**：pack_float4 把每帧的粒子 raster（ptcl_density/
+ptcl_rast_*，particle_rasterize 为 §4.3 联合速度场生产的 transient，
+质量加权 Σw=1）复合进渲染场。质量自洽：grid_to_particle (Eq.15) 减掉
+的正是 raster 加回来的，总量守恒（之前的"深色圆盘"bug 是 grid 未
+排水时叠加了 splat——§5.2 排水后复合恰是逆运算）。配套：
+
+- 粒子 sprite 改为 **opt-in**（WB_DRAW_PARTICLES=1，默认 0），
+  仅供粒子状态可视化；
+- 抬笔帧（!bp.active）fluid 清零 4 个 raster 格，防止幽灵复合；
+- deposit 分配 raster 格时一次性清零（GPU 堆内存不清零，否则第 1 帧
+  pack 复合的是垃圾噪声）。
+
+#### 修复后实测（zone test, WETBRUSH_RES=1024）
+
+| 指标 | 修复前 | 修复后 |
+|------|--------|--------|
+| gridvmax（窗口速度场峰值） | **0.00000**（恒零） | 2.4-9.3 |
+| 粒子 vmean | 0.003-0.014 | **0.45-1.09**（≈笔刷速度，70×） |
+| 粒子 z 范围 | 全钉在纸面 z=0 | 0-0.04（被流场卷起） |
+| 笔抬后（f13-14） | 全零 | 残余 gridvmax 2.4（动量保持，§4.3 原文行为） |
+
+#### 渲染验证（run13，60 帧，粒子 sprite 关闭 + 统一渲染）
+
+- **统一渲染生效**：全程无粒子圆点、无窗口圆盘接缝；笔画在 window
+  内外以同一体积 raymarch 呈现（frame 50 剖面：主体 50-60px 连续带）。
+- **流体行为可见**：笔刷后方出现拖尾/涡痕；粒子群 3.7 万、vmean
+  0.39-0.53、z 被卷到 0.03-0.04；笔移动时质心跟随。
+- **粘性迭代**：初版（1 次 Jacobi 扫掠）局部速度尖峰 ~10× 笔速，把
+  轨迹撕成带状碎块；按 paper Algorithm 1 的迭代精神加到 3 次扫掠后，
+  f20/f35 主连通域 93-94%。
+- `test_wetbrush_zone.py` 3 passed（修复后复跑）。
+
+### 20. 头部囤积 vs 笔画饥饿：质量平衡三连调（2026-08-23）
+
+run13 的用户反馈：window 外"薄薄一层"、window 内"超级大的一坨"。
+新增 `[wb-mass]` 逐帧诊断（grid_tot / grid_max / cells_vis / swarm /
+rastmax）量化后定位，三次实验排除两个错误假设：
+
+1. **绝对速度门槛（`speed > 0.5` 不沉积）**：流场活了以后粒子随流
+   速度恰好 0.3-0.5 卡在门槛上——f12 时 grid 0.4 vs swarm 413，
+   前半段笔画完全没沉积。改成 §5.2 "moves slowly" 的**相对流场**
+   读法（|v − u_grid| < 0.1，随流被动输运 = 格子液体）+ **落地即沉积**
+   （距纸面 <2 格 = 已落地的液体属于密度场，只有真正的空中喷雾留
+   粒子态）。注意纯相对速度门槛有个反直觉坑：粒子甩出 D0 后带着
+   笔速冲进更慢的尾流，读作"独立运动"反而不沉积——必须配落地规则。
+2. **bristle_merge 正反馈假设（WB_VEL_INJECT=0.05 对照）**：排除，
+   数字不动。尾流能量来自 moving-wall 注入本身，不是 merge 回灌。
+3. **WB_VEL_DAMP（0.85 / 0.6 扫描）**：0.85 略优（cells_vis +50%），
+   0.6 反而更差（沉积也变慢），与 D0 收窄叠加后不增益——最终保持
+   默认 1.0（关）。
+
+**根因是 D0 壳的骑行时间**：粒子在 D0 区内随笔刷同速移动（adhesion
+携带 + 尾流拖拽），只有比笔慢的少数粒子穿出 d_B = D0 沉积；骑行
+时间 ≈ D0/(v_brush − v_swarm) ≈ 40+ 帧。头部囤积 = 发射通量 × 骑行
+时间（f60：swarm 821 vs grid 443，头部质量 2 倍于笔画且密度 10×）。
+paper 的头部:笔画质量比在长笔画下自然趋小（trail 累计时间 ≫ 骑行
+时间），60 帧短测试里必须压骑行。
+
+**修复：D0 = 2R → 1R**（`node_brush_wb_fluid.cpp`）。d_{B,k} 是到
+sample 的距离，sample 本身铺到 R，所以 2R 壳 = 中心 3R 半径的区域
+（paper D0/R≈1.8 也是从刷毛量起，但我们的 40 帧骑行实测过长）。
+收窄后区域仍完整包住笔刷（中心 2R），骑行减半、沉积通量翻倍：
+
+| 指标 (f60) | D0=2R | D0=1R |
+|---|---|---|
+| grid_tot / swarm | 443 / 821（头 2× 笔画） | **899 / 314（笔画 3× 头）** |
+| f12 早期沉积 | 0.5 | **47**（立即开始） |
+| grid_max / cells_vis | 0.028 / 10.5k | **0.058 / 17.5k** |
+| 主连通域 (f59) | 65% | **89.6%**（113k px） |
+
+f20/35 主连通域 ~89%，f50 在轨迹急转弯处仍有 78%（转弯撕裂是活流体
+的物理表现）。头部现在是适度的"湿头"（密度仍高于笔画——真实笔刷
+携带的湿颜料本就如此），笔画主体厚实连续。
+
+### 21. Paper-fidelity 对齐轮：真实 D₀/D₁ + 原子守恒 + 蘸墨即初始化 + 论文渲染（2026-08-24）
+
+对 §15-§20 遗留问题的逐条 paper 审查后，本轮把四处偏离论文的实现拉回论文本意。
+范围决策（用户批准）：#1-#4 实施；#5 稀疏化改为量化分析（见下）；#6 压感只查论文定义。
+
+#### 1. 粒子沉积回归 §5.2 字面判据 + 论文 D₀/D₁
+
+- **D₀ = 1.8R、D₁ = 0.55R**（`node_brush_wb_fluid.cpp`）。论文 Table 1 是 SI 绝对值
+  （D₀=1cm、D₁=0.3cm，笔刷半径 ≈0.55cm），换算成相对值即 1.8R/0.55R，
+  D₁/D₀ = 0.3 与论文一致。§17/§20 的 1.0R/0.5R 是针对 60 帧短测试调的骑行时间，
+  本轮按论文恢复。R_j ≈ 0.36R（ρ₀=2e4）仍 < D₁，新生儿照样骑行。
+- **`particle_to_grid` 沉积条件回归字面读法**：`d_{B,k} ≥ D₀ 且 |v| <
+  slow_deposit_speed(0.1)`（绝对速度，≈ 真实 2cm/s 换算）。删掉自创的
+  「相对流场速度」和「落地即沉积」两条引申判据。能这么做的依据：§19 修复后
+  速度场是活的，且 §4.2 强粘性扩散（α=dt·visc·N²，3 扫掠）会把窗口动量
+  稀释到窗口均值——笔刷身后的尾流自然减速，粒子经 FLIP/PIC（γ=0.8 偏 PIC）
+  跟随减速、过阈沉积。
+- **删除 far+stalled 击杀**（`particle_update.slang`）：旧代码把 d_B>2D₀ 且
+  慢的粒子直接 `alive=0`——**质量凭空销毁**，是隐藏的守恒漏洞（§16.1 时代
+  为回收池子加的）。现在这类粒子正是 §5.2 的沉积对象，字面判据天然覆盖。
+- `grid_to_particle` 转换半径从「笔刷中心 D₀」修正为 **R + D₀**（"距任一
+  sample < D₀"的正确中心距上界——samples 铺到半径 R）。
+
+#### 2. Eq.15/16 原子守恒（CAS 循环）
+
+"Slang 不支持 CAS"只对 structured-buffer 元素成立；`common.slangh` 里
+`atomicFloatAdd`（RWByteAddressBuffer 上的 InterlockedCompareExchange 循环）
+一直是通的。本轮把三处裸 `+=`/`-=` 全部改走原子路径：
+
+- `particle_to_grid`：density/color×3 沉积 `atomicFloatAdd`，wetness 用
+  `atomicFloatMax`（新增 helper）。
+- `grid_to_particle`：Eq.15 扣减 + 非负 clamp 全原子化。
+- `particle_rasterize`：7 个通道的光栅累加原子化（笔刷下 swarm 密集，
+  碰撞不是"罕见"而是常态）。
+
+配套：`brush_create_field_buffer` 加 `CanHaveRawViews`（raw UAV 绑定的前提）；
+两处粒子槽位 `% max_particles` wrap 改为「池满即放弃出生、质量留在源头」
+（wrap 会覆盖活粒子 = 静默质量销毁）。pack_float4 的 RYB clamp 从"兜底"
+降级为"防御性"（race 根因已除）。
+
+#### 3. 蘸墨 = 初始化（§5.1 本意）
+
+论文把蘸满的笔当作**初始状态**：m_j 起笔饱和、中途不补。现在
+`stroke_start` 时一次性写 `m_j = M_max`（Eq.12 在 ψ≈0 未受压状态下的容量，
+即"蘸满"的定义）+ 当前墨色。颜料流出的唯一通道是 EMIT——由**容量下降**
+驱动：笔压到纸上 → r_j 变小（Eq.13 球冠削顶）+ 刷毛挤压（Eq.12 ψ 项）
+→ m_j > (1+ε)M_j → 发射。**压力控制出墨量是容量模型的涌现行为**，
+不是脚本。删除：逐帧 supply 滴灌 buffer（论文外发明，历史上是质量铸造
+源头）、全局 emit_budget 默认值（论文只有 per-sample 上限；env
+`WB_EMIT_BUDGET` 保留为逃生门，默认 0=关）。落笔点的墨团是论文本身的
+行为（蘸满的笔按下就该出一坨）。ABSORB 保留颜色渗透（contact-weighted
+grid-bleed，不再依赖 supply），论文的 Eq.14 粒子吸收（质量回到笔刷）
+**仍未实现**——这是 §5.1 剩余的最大缺口，也是 wet-in-wet 蘸色的完整形态。
+
+#### 4. 渲染对齐论文 §6：颜色 = penetration blend × (1−AO)
+
+删掉自创的 Lambertian `0.4+0.6·facing` 和 wet-gloss Blinn-Phong 高光
+（论文 §6 只有 first-cross → 梯度法线（用于 AO 半球）→ penetration
+blend → AO 压暗，没有 BRDF）。预期效果：**变亮**（去掉 ×0.4~1.0 的
+shade 因子）、更平/哑光（论文本来的样子）。
+
+#### 5. 4096 内存：量化分析（替代稀疏化假设）
+
+用户假设：论文未必用了稀疏存储，可能是**量化**——不是所有场都需要
+全精度，也不是所有场都需要全局。分析支持这个方向：
+
+当前全局场（`node_brush_wb_deposit.cpp`）只有 6 个画布状态 + packed_paint；
+瞬态场已窗口化（§18）。4096²×64 = 1.07e9 cell：
+
+| 场 | 现格式 | 值域（实测，§17.4/pack 注释） | 可量化到 |
+|---|---|---|---|
+| density | f32 | 0.001–0.285（中位 0.041） | **fp16 (2B)** |
+| color×3 | f32×3 | 预乘颜料，量级同 density | **fp16×3 (6B)**，或存归一化 c/ρ 后 UNORM8×3 (3B)* |
+| wetness | f32 | [0,1] 单调衰减 | **UNORM8 (1B)** |
+| oil_density | f32 | [0,1] 松弛到 base | **UNORM8 (1B)** |
+| packed_paint | f32×4 | 渲染就绪值全在 [0,1] | **UNORM8×4 (4B)** |
+
+\* 存归一化颜料（而非预乘）还有一个结构红利：Eq.15 转移时**颜色根本不用
+减**（质量走了、归一化色不变），颜色守恒的 race 从表示层面消失；代价是
+混色时要做质量加权平均（写侧仍需原子）。
+
+内存账：40B/cell → **10–14B/cell**；4096 全局画布 43GB → **11–15GB**
+（TITAN X 12GB 的边缘——这正是论文能跑 4096 的一个自洽重构：**量化
+dense**，不需要假设未公开的稀疏结构）。中间收益立即可用：2048 从
+10.7GB → ~3GB，1024 从 2.7GB → ~0.8GB。实现代价：读写侧全部要过
+dequant（21 个 shader），fp16 对的原子 CAS 需要按 32bit 打包双通道——
+非平凡，单独立项。
+
+#### 6. 压感：论文的定义是几何深度，不是力反馈
+
+论文全文检索：`pressure` 只出现在流体的 pressure projection；没有任何
+力反馈/压感硬件/传感器描述。笔刷输入模型是**位姿**（位置 + 朝向随时间）；
+§7 艺术家反馈的 "pressing strongly or softly" 通过**笔刷压入画布的深度**
+起作用——深度由 Z 坐标给出，bristle sim 的 canvas collision + splay +
+Eq.12/13 容量下降已经完整建模。**结论：压感 = 笔尖高度（Z）**，即
+`node_brush_capture` 从轨迹 Z 推 BrushPressure（tip 距纸面越近压力越大），
+而非接 Wintab 力反馈。这是纯输入侧工程，与仿真无关。
+
+#### 验证
+
+- slangc（sm_6_6）全部 29 个 BrushSimulation shader 编译通过（含 CAS 路径
+  ——同时实证了"Slang CAS 不可用"的旧注释只适用于 structured-buffer 元素）。
+- `test_wetbrush_zone.py` 3 passed（新蘸墨模型出墨、字面判据沉积、无 NaN）。
+- 60 帧渲染验证见本轮 commit / 下次 run 记录。
+
+### 22. 重力修复 + blob 沉降测试 + f12 爆炸根因调查（2026-08-24 后半，进行中）
+
+> **本文档是上下文压缩前的完整交接记录。**§21 之后的所有改动、调查结论、
+> 待办都在这里。所有改动**未 commit**（叠加在另一 agent §18-20 的未提交工作之上）。
+
+#### A. §21 之后的迭代修正（蘸墨/发射参数经历了 4 轮）
+
+§21.3 首版"蘸墨 = m_j = M_max"暴露问题后继续迭代，**当前生效值**：
+
+| 参数 | 当前值 | 演变原因 |
+|---|---|---|
+| M_max（WB_M_MAX，brush_sim_common.hpp） | **0.15** | 0.03 时 15 帧墨干（笔画后段断碎）；5× 蘸墨撑满 60 帧 |
+| ρ₀（bristle 节点） | **1e5** | 与 M_max 耦合同升，保持 R_j≈0.36R < D₁ |
+| 蘸墨方式 | **shader 内 m_j = M'_j(ψ)**（`BristleLiquidConstants::dip_frame`，deposit 置 flag，transfer 的 ABSORB pass 消费） | host 写 M_max 无视 ψ 拥挤 → 内部样品容量只有 ~0.07 → 整支笔像超载海绵全程滴墨（76800 出生/帧，池 90 万） |
+| max_emit_per_step | **1**（原 10） | 论文 §5.1 "smoothen the liquid transfer"；10/步时落笔点 5 帧吞掉半个墨仓 |
+| per_particle 下限 | **0.002**（原 0.05，公式 max(M_j·0.05, floor)） | 同上；emit_m 额外 clamp 到 per_particle 防单粒吞全部过剩质量 |
+| emit_budget 默认 | **0=关**（env WB_EMIT_BUDGET 保留逃生门） | 论文只有 per-sample 上限；蘸墨总量本身有限，无需全局预算 |
+
+主笔画 sequence（run5，60 帧 1024）结果：连通域 **91%**（历史最好，§20 旧调参
+89.6%，run1 41%）、红色像素 135k、质量守恒 grid 4020 + swarm 669 ≈ 4689/蘸墨 5400 ✓、
+颜色零漂移（原子化生效，color_r/density 恒 1.0）。
+
+#### B. 已实施的修复（本轮）
+
+1. **粒子重力标定**（bug 级）：`particle_update.slang` 原 -0.2 → **cb 传入**，
+   默认 `(0,0,-35.7)` units/s²（1 unit ≈ 27.5cm，真实 g=981cm/s²）。env
+   `WB_GRAVITY_X/Y/Z` 可调方向（用户要的实验旋钮）。字段加在
+   `ParticleConstants`（host+slang 同步）。
+2. **grid 侧重力**（新）：`fluid_damp_dry.slang` 窗口 pass 对**流体格**
+   （density>1e-6 且 wetness≥0.01）加速度体力，每 substep；投影随后把下压
+   转成不可压缩流——贴纸面即横向铺展（"standard Eulerian"读法）。
+   字段加在 `SimConstants`。副作用见 §22.D：它会拉下一切悬空沉积。
+3. **pen-up 陈旧刷毛墙清理**（bug 级）：fluid.cpp pen-up 分支多清
+   `bristle_density/vel_x/y/z`（原来只清 4 个粒子光栅格）——刷毛 no-flux 墙
+   停留在笔刷最后位置变成幽灵墙。
+4. **rznode 序列化 null-list 崩溃修复**（框架 bug）：`node.cpp` 序列化对零
+   输入/输出节点写 null（`brush_wb_init_state` 无输入、`write_usd` 无输出），
+   全新 stage 首帧 tick 抛 `json.exception.type_error.302`。修复：序列化端
+   空 socket 列表初始化为 `json::object()`（注意是 object 不是 array——
+   列表按索引字符串键，array 会抛 305），反序列化端 null-guard。
+5. **测试设施**：
+   - 新节点 `node_mock_press_lift.cpp`（自动被 GLOB 拾取；**需在
+     `Binaries/Release/geometry_nodes.json` 手工注册**
+     `"node_mock_press_lift": ["mock_press_lift"]`，若 json 被重新生成需重加）。
+   - `source/tests/render_wetbrush_blob.py`：blob 沉降测试（压 0.3s→抬 0.15s
+     至 z=0.08→悬停观察，90 帧，**侧视机位**看 Z 剖面，bristle 保留作参照）。
+   - `source/tests/blob_sim_probe.py`：**只跑仿真不渲染**的轻量探针（配合
+     512 分辨率 ≈ 几百 MB 显存、~40s），复现压墨阶段。
+
+#### C. blob 测试的观察与数据（用户肉眼 + wb_diag/wb-ptcl dump）
+
+用户观察（以肉眼为准，见 workflow）：压墨期颜料正确压扁在纸面（重力修复 ✓）；
+**f11-12 颜料突然上抛**，悬停在带黑条纹的高度。数据（`WB_DEBUG_DUMP_PTCL=1`
+的 `[wb-ptcl]` 行，commit 节点每帧 readback）：
+
+- f2：dmax 0.51、gridvmax 3.8（地面中心，Z 分量）——**初始化瞬态**；
+- f4-11：gridvmax 在 lz16-19（z≈0.03）以 ~0.1/帧爬升 = **grid 重力拉半空沉积下落**；
+- f12：dmax 0.58 → gridvmax **11**，argmax lz2→lz26 上移——**射流**；
+- 之后：swarm 质心 z=**0.0363 ≈ D₀=1.8R 精确**，悬停在 D₀ 壳，自激励。
+
+#### D. f12 爆炸完整因果链（二分实验全部完成）
+
+**环 1** f2 瞬态（把首批粒子抛到 z≤0.036 → 少量半空沉积，density tot 0.012）。
+写入者未最终定位，已排除：merge（WB_DISABLE_MERGE=1 仍爆）、移动墙
+（WB_NO_BRUSH_WALL=1 仍爆）、重力。剩余嫌疑：bristle 第一帧"瞬移初始化"
+（顶点从零位到垂直链，0.03/帧 ≈ 1.8 units/s 假速度）经某路径进入散度/速度。
+**环 2**（我的）grid 重力正确地拉半空沉积下落（0.1/帧²，从 0.03 高度
+恰好 f11-12 触底——**f11/12 没有任何调度操作，是自由落体到岸时刻**，
+发射耗尽只是同期巧合）。**环 3** 触底撞进刷毛墙+纸面围死的口袋，
+**压力投影**把不可压缩约束变成轴心向上射流（WB_NO_PROJECT=1 则全程
+安静、gridvmax 恒 0——投影是放大器）。**环 4** 抛起的粒子卡在 D₀ 壳
+（笔按下 → 不沉积）+ 速度 > 0.1 慢速阈值 → 自激励速度场维持悬停。
+
+注意：GPU 原子操作使 sim 跑跑之间有非确定性（单次二分可能误导，结论以
+多跑交叉验证为准）。
+
+#### E. 已加的诊断开关（全部保留，非物理旋钮）
+
+| env | 作用 |
+|---|---|
+| `WB_DEBUG_DUMP_PTCL=1` | commit 每帧打印 swarm 运动学 + gridvmax + argmax 位置(gv@) + over1 + pmax/dmax（P warm-start 与散度峰值） |
+| `WB_DISABLE_MERGE=1` | 跳过 swarm→grid 动量 merge |
+| `WB_NO_PROJECT=1` | 跳过两次压力投影 |
+| `WB_NO_BRUSH_WALL=1` | 刷毛 no-flux/移动墙 BC 完全关闭（gate=1e9） |
+| `WB_GRAVITY_X/Y/Z` | 重力向量（默认 0/0/-35.7） |
+| `WB_EMIT_BUDGET` | 默认 0=关 |
+
+#### F. 待办（按优先级）
+
+1. **（已提议待批准）掐掉 f2 初始化瞬态**：bristle 首帧初始化不应产生速度
+   ——初始化帧 sample_vel 置零（或跳过首帧流体 solve）。瞬态一除，半空墨
+   不再产生，§D 整条链断掉。然后复跑 blob 探针 + 渲染，用户肉眼验收。
+2. f2 修后复测残余：口袋射流 / D₀ 壳自激励是否还有别的燃料；pen-up 的
+   grid 质量流失（此前观测 199→15.8，−92%，疑平流出窗口边界）。
+3. **主 sequence 回归未做**：重力/蘸墨改动后 run5 之后的
+   `render_wetbrush.py` 没有重跑（blob 调查占用了时间）。
+4. AO 对密集复合场的黑化（悬空层的"黑条纹"）：物理层修后重新评估。
+5. 遗留大项：Eq.14 粒子吸收未实现（§5.1 最大缺口，也是 paper 的"泄压阀"）；
+   4096 量化方案（§21.5）；压感=几何深度（Z）结论已定（§21.6）未接线。
+6. `test_wetbrush_zone.py` 3 passed（蘸墨+重力后需复跑确认）。
+
+#### G. 工作流约定（本轮确立）
+
+- **渲染验收由用户肉眼**（视觉工具太差已弃用）；像素统计仅作量化补充。
+- **GPU 任务严格串行**——并发两个渲染叠加 ~7GB+ 溢出 shared memory（本轮
+  事故）；杀后台任务用 `nvidia-smi --query-compute-apps` 找 pid + taskkill。
+- 测试用 python313（scoop）；shader 改动 slangc 预检
+  （`slangc -target dxil -stage compute -profile sm_6_6`）；新 .cpp 需
+  `cd build && cmake .` 重 configure 让 GLOB 拾取。
+- **不 commit**（用户需明确授权）。
+
+### 23. f2 修复验证 + f12 真因定案：wall BC 抬笔吸抽 + 单位统一 + bisect 失效 bug（2026-08-24 深夜）
+
+#### A. f2 修复已验证
+`bristle_simulate.slang` 初始化帧跳过 PBD 速度折叠（存 `brush_vel` 刚体随动）。
+probe 复测：f2 dmax 0.51→0.000126，gridvmax 3.8→0.0019，f2–f11 全部粒子趴在
+canvas（bbox z=[0,0]），**无半空墨**。§22.D 旧因果链的中间环节被推翻——
+f12 爆发在无半空墨时依然发生。
+
+#### B. 三个已修 bug
+1. **advect 单位错配**（`fluid_advect.slang`）：回溯用 `dt·N`/`dt·D`（假定
+   cells/s），但所有写入方（bristle rasterize、swarm merge、gravity 体force、
+   wall BC、FLIP/PIC、粒子 drag）都是世界单位 u/s。改为逐轴
+   `vel·dt/cell_size`（XY 用 cell_xy，Z 用 cell_z；顺带修了 y 轴误用 Z 步长的
+   次级 bug）。全场统一为世界单位。
+2. **bisect CB 失效**（`node_brush_wb_fluid.cpp`）：`WB_NO_BRUSH_WALL` 的
+   gate 在 cb 上传**之后**才写入 struct——project() 内 divergence/gradient
+   复用旧 `cb_buf`（gate=0.01），wall 从未被真正关掉，§22.E 的
+   "wall 关闭仍炸"结论无效。gate 定义挪到上传前。**教训：改 CB 字段必须
+   在 upload 之前，project() 复用外层 cb_buf。**
+3. 新增 `WB_STAGE_DUMP=1` 分阶段插桩（pre/post diffuse/project1/advect/
+   project2 的 |vel|max + div/p max，fluid 节点，只 dump substep 0）。
+
+#### C. f12 真因（stage dump 定案）
+f11 post_diffuse vz=0.0014（安静）→ **post_project1 vz=8.4，divmax=1.6**。
+凸 stage（diffuse/advect）不可能放大极值 → div 的唯一非速度输入 =
+**moving-wall BC 的 brush_wall_vel 替换**。修复后的 bisect 证实：
+`WB_NO_BRUSH_WALL=1` 下 f12 **完全安静**，f14 质量正常转化，之后 blob 趴地
+温和沉降（正是用户要的流体行为）。
+
+机制：抬笔时笔毛尖在墨池上方形成 no-flux "wall"（bristle_density>gate 的
+栅格化柱），墙速度 = 抬笔 0.6 + 笔毛链 canvas 钳位释放的 PBD 反冲 ~1.0
+≈ 1.6 u/s 向上。移动壁 + 不可压 = **注射器活塞上提**，整个 79.6 万粒子池被
+吸上 z=0.12 后悬停 D₀ 壳自激励。press/stroke 阶段 wall 是对的（排开液体）；
+**separation（墙远离液体）时的吸抽不是 paper 意图**——§5.1/5.2 抬笔时墨应
+留在纸面（笔只带走附着量 Eq.9/10）。
+
+#### D. wall BC 分离语义 — 用户选了 (B) 分离面豁免；实施后的完整结论
+实施 (B) 后发现豁免必要但不充分，又落了两层修复（均为 paper 保真语义）：
+1. **分离面豁免**（`fluid_divergence.slang`）：wall 邻居面的速度替换仅在
+   墙面逼近或静止（排开语义）时施加；沿面法线远离 = 分离界面（自由面，
+   无项）。行笔排开保留、尾迹不再被倒吸。
+2. **液体占据判定（air cells）**（divergence/jacobi/gradient + fluid cpp
+   绑定 `ptcl_density`）：液体 = grid paint ∨ 粒子群栅格 ∨ 笔毛（§4.1/4.3
+   joint field）。无液体 = 空气：div=0、pressure=0（Dirichlet 自由面）、
+   velocity 清零。此前投影把整个窗口当不可压液体解——笔刷在空无一物的
+   空间里"排开虚构液体"，FLIP 粒子（唯一真实质量）骑着不存在的压力场飞。
+   air 模型后 pmax 2.4→0.6。
+   **坑**：jacobi 声明了 `ptcl_density` 槽位后，diffuse dispatch（mode 0
+   不读它）必须也绑定该槽，否则 binding set 创建失败、**整个 dispatch 被
+   静默跳过**（RZ_RHI_VALIDATION 抓到）。
+
+**残余（未除根）**：抬笔 trail——发射粒子继承 sample 位置躺在上升笔毛柱
+内部/边缘（sample 质量已耗尽，cell 无笔毛 splat，gate 0.01 与 0.001 数字
+完全相同），其下邻笔毛 cell 被判"逼近"→ 替换注入 div≈1.6 → fixed-point
+投影（3fp×2jacobi×2project，paper Algorithm 1 规格）在薄液体丝+混合 BC 下
+不收敛（after_project2 div 仍 ~1），重复 −∇p 过量扣减放大到 vz 9-16。
+**wall 替换是唯一残余驱动**：`WB_NO_BRUSH_WALL=1`（现在真的生效）+ air 模型
+下 blob 测试 30 帧全程安静，f14/f15 质量干净转化，墨池趴地温和摊开
+（z 0.001-0.005）——即用户想要的流开行为。
+
+**下一步二选一（待用户决策）**：
+- **Eq.14 粒子吸收**（推荐，本就是 §5.1 最大缺口）：paper 里 D0 内的粒子
+  会被笔毛重新吸收（ε 滞回）——抬笔 trail 应立即被吸回笔刷，不存在悬空
+  液体，注入源自然消失。这是补论文机制而非继续 BC 手术。
+- **去掉固体 wall**（原 D 选项）：已验证安静；笔毛=多孔介质只经 merge 动量
+  耦合；需主序列 stroke 回归验证排开行为。
+
+#### E. 其他观察
+- **grid density 变负**（Eq.15 原子减法透支，grid_tot=-6.2，NO_PROJECT 运行
+  中出现）：转化减掉的超过该 cell 曾存的。待查 particle_to_grid/grid_to_particle
+  同帧次序与竞态。未修。
+- mock 轨迹 `pen_down = bp.active` 全程 true → 抬笔期间 deposit 分支照跑、
+  笔毛 raster/wall 一直活着（这是 C 选项需改 active 语义的原因）。
+- stage dump 中 commit 的 `[wb-ptcl] f=N` 是该帧 fluid solve **之前**的快照
+  （同帧 stage f=N 的爆发体现在 commit f=N+1）。
+
+### 24. 输入契约重构：BrushPoint → StrokeSample（笔的动态采样点）（2026-08-25）
+
+#### A. 动机（用户定方向）
+
+用户指出结构限制了物理：旧 `BrushPoint` 只有 pos/time/active/stroke_start/color，
+一笔的输入被降格成"一条曲线 to 笔画"，笔的**动态**（朝向、角速度）根本进不来。
+排查证实比预想更糟：
+
+- `brush_rotation`（由速度航向 atan2 派生的"朝向"）**是死字段**——CB 里带着，
+  没有任何 shader 消费它；笔毛 root 螺旋固定在世界 XY，笔杆永远写死垂直
+  （`down_dir=(0,0,-1)`）。朝向支持是彻底空白，不是"猜错"而是"没有"。
+- 所有导数靠 host 帧间差分：accel 是位置的**二阶**差分，逐帧量化噪声放大两次
+  （轨迹拐弯处的毛鞭速度尖峰一部分来自这里）；stroke_start 假定笔从静止开始
+  （第二帧出现 vel/dt 假加速度尖峰，实测 72 u/s²）。
+
+#### B. 新契约（brush_sim_common.hpp::StrokeSample）
+
+| 字段 | 语义 |
+|---|---|
+| `pos` | 笔参考点（root 盘中心），世界坐标（含 Z，压深自由度不变） |
+| `orientation` | `glm::quat` local→world。局部约定：-Z=root→tip，XY=root 盘。单位=旧硬编码直立笔（默认零回归）。**glm/glm.hpp 在本仓库 vendored GLM 里不含 qua，必须补 `glm/gtc/quaternion.hpp`** |
+| `vel` / `angular_vel` | 世界系速度 u/s、角速度 rad/s（解析源直接供） |
+| `has_dynamics` | true=deposit 直接采信；false=回落旧 FD 路径（真实采集输入） |
+
+#### C. 落地（本轮已实施）
+
+1. **emitter 供解析动力学**：vel=光标所在线段速度（线性段上精确），
+   orientation=单位直立（CurveComponent 暂无朝向通道——契约支持、轨迹格式未跟上，
+   侧锋作者化留作输入侧后续），omega=0，has_dynamics=1。
+2. **deposit 位姿三路**：stroke_start+解析 → 当帧即采纳 vel/omega（笔落下时本就在动；
+   假尖峰 72→消除，见 [wb-pose]）；常规帧+解析 → vel/omega 直采，accel/omega_dot 只做
+   一阶差分（精确值相减，无二次放大）；无解析 → 旧 FD 全套。`brush_rotation` 降级为
+   legacy 注释（勿再依赖）。
+3. **朝向进物理**：BristleConstants 尾部追加 `brush_R0/1/2`（mat3_cast 列存行，
+   shader `pen_rot(v)=v.x·R0+v.y·R1+v.z·R2` 无 mul() 行列歧义；追加在结构体尾部
+   不动现有偏移）。`bristle_simulate.slang` 的 root 螺旋盘与 `down_dir` 改经
+   `pen_rot`——倾斜笔将盖椭圆足印（侧锋）、毛沿倾斜轴生长；单位朝向下与旧代码
+   逐位等价。
+4. **[wb-pose] gate-A 诊断**（`WB_DEBUG_DUMP_PTCL=1`，deposit 每帧）：pos/|v|/|a|/
+   |w|/tilt/dyn。zone 测试实测：dyn=1 全程、|w|=0、tilt=0、f1 假尖峰消除
+   （剩余 |a| 3~33 是轨迹折线在 30fps 采样的真实一阶加速度）。
+5. 连锁改名：socket `Brush Point`→`Stroke Sample`、emitter 输出 `Current Point`→
+   `Stroke Sample`，9 个 py 文件 addEdge 同步；C++ 注释 BrushPoint→StrokeSample。
+
+#### D. 验证与遗留
+
+- slangc 预检：bristle_simulate/density_constraint/resample/rasterize 全过（CB 镜像
+  hpp↔slangh 字段一致）。构建过。`test_wetbrush_zone.py` **3 passed**（10.9s；
+  teardown 的 "Resource leak (2 in use)" 是注册表持有 buffer 的退出噪声，非本轮引入）。
+- 60 帧 sequence A/B 归因（`WB_NO_DYNAMICS=1` = 旧 FD 行为；两 run 均存
+  `Binaries/Release/wetbrush_sequence{,_dyn}/`）：
+  | | 解析(新契约) | FD(旧行为) |
+  |---|---|---|
+  | f10/f20 主连通域 | 99.5% / 99.4% | 94.1% / 97.0% |
+  | f59 主连通域 | 54.5% | 45.7% |
+  | f60 grid_tot | 1541 | 1888 |
+  新契约**不劣于**旧路径（前段还更好）。但两 run 同现"中段墨尽→笔画裂成两大块
+  （14.9k+11.2k px）+ 质量泄漏（f15 时 grid+swarm≈3134 → f30 只剩≈1816-2207，
+  ~40% 凭空消失）"——这是 §22–23 的重力/单位/wall/air 改动**从未做过 sequence
+  回归**（§22.F.3 欠账）的既有回归，与本轮契约无关。泄漏形态吻合 §23.E 已记录
+  的 Eq.15 原子透支/窗口边缘流出两个未修 bug；下一步按 gate 阶梯补 [wb-liquid]/
+  [wb-xfer] 账本定位。
+- 朝向作者化（轨迹带倾角）、子步内 orientation/vel 插值（当前子步只插位置）留作
+  后续。
+
+
+
+## 关键经验教训
 
 1. **先量像素再下结论**。"纸是黑的"其实是背景 dome 蓝；"变深"先以为是 sim 累积，
    实际是渲染 accumulate 叠加。用 PIL 采样像素 + ASCII map 比肉眼判断可靠得多。
@@ -648,8 +1208,8 @@ Shaders 运行时编译（非 build 时）。编辑 `.slang` 后无需 rebuild�
 | 参数 | Paper | 当前 | 备注 |
 |---|---|---|---|
 | Grid 分辨率 | 4096×4096×64 | 默认 4096（env 可降：1024 ~7GB / 2048 ~28GB） | 全 grid 分配，需稀疏化才能在消费级卡跑满 4096 |
-| D₀ (grid→particle range) | 1 cm 固定 | brush_radius×2.0 | 单位换算；§16（须 > D1，R_j≈0.011-0.019） |
-| D₁ (bristle adhesion) | 0.3 cm | brush_radius×1.6 | 同上；必须 > R_j，出生 blend≈0.4-0.6（§16） |
+| D₀ (grid→particle range) | 1 cm 固定 | brush_radius×1.8 | 论文 SI→相对换算（R≈0.55cm）；§21 恢复论文比例 |
+| D₁ (bristle adhesion) | 0.3 cm | brush_radius×0.55 | 同上；D₁/D₀=0.3 与论文一致，R_j(0.36R)<D₁ |
 | γ (FLIP/PIC blend) | 0.8 | 0.8 | ✓ |
 | δ (particle friction) | 1/0.2 cm | 5.0/D₀ | 单位换算后一致 |
 | α (pressure solver) | 1 | 1 | ✓ |
