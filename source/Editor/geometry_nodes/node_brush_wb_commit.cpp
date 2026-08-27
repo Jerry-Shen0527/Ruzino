@@ -12,6 +12,7 @@
 // The field is forwarded on the "State" output so the zone feeds it back
 // simulation_out -> simulation_in for the next frame.
 
+#include <fstream>
 #include <memory>
 
 #include "GCore/Components/PointsComponent.h"
@@ -671,26 +672,28 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
 
         Ruzino::brush_reset_counter(rc, device, field->debug_voxel_counter);
 
-        // Debug-render radii, in cell-size units. Env-tunable (WB_DEBUG_PTCL_R
-        // / WB_DEBUG_VOXEL_R / WB_DEBUG_BRISTLE_R) for quick visual iteration
-        // without a rebuild. Defaults: particles 0.2 / voxels 0.3 / bristles
-        // 0.45 cell — the previous 0.55-cell voxels deliberately tiled like
-        // cells, which read as "giant particles" once tens of thousands
-        // overlapped into a slab; the smaller radii keep the voxel cloud a
-        // lattice of visibly discrete dots and leave the free-swimming
-        // particle swarm (slightly smaller still) distinguishable from
-        // deposited grid paint.
-        static const float ptcl_radius_cells = [] {
+        // Debug-render radii, in WORLD units (res-independent). Env-tunable
+        // (WB_DEBUG_PTCL_R / WB_DEBUG_VOXEL_R / WB_DEBUG_BRISTLE_R, also
+        // world units). These used to be CELL fractions, tuned at res 512 —
+        // at 1024 the bristle hair radius shrank to 0.44px and the brush
+        // rendered as one sub-pixel thin line instead of a hair cluster (the
+        // "blue line" report: geometry and capsule intersection were both
+        // correct, only the display radius collapsed). Defaults sized
+        // against the brush (radius 0.02): bristles 0.001 → hair diameter
+        // 0.002 exceeds the ~0.0014 hair spacing, so the 600 hairs overlap
+        // into a readable solid brush; voxels slightly bigger dots;
+        // particles smaller still so the swarm reads distinct from paint.
+        static const float ptcl_radius = [] {
             const char* env = std::getenv("WB_DEBUG_PTCL_R");
-            return env ? std::max(std::atof(env), 0.05) : 0.2;
+            return env ? std::max(std::atof(env), 1e-5) : 0.0005;
         }();
-        static const float voxel_radius_cells = [] {
+        static const float voxel_radius = [] {
             const char* env = std::getenv("WB_DEBUG_VOXEL_R");
-            return env ? std::max(std::atof(env), 0.05) : 0.3;
+            return env ? std::max(std::atof(env), 1e-5) : 0.0008;
         }();
-        static const float bristle_radius_cells = [] {
+        static const float bristle_radius = [] {
             const char* env = std::getenv("WB_DEBUG_BRISTLE_R");
-            return env ? std::max(std::atof(env), 0.05) : 0.45;
+            return env ? std::max(std::atof(env), 1e-5) : 0.001;
         }();
 
         // Live particles (only when the pool exists; register count=0
@@ -704,7 +707,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
             } cb{};
             cb.count = ptcl_count;
             cb.capacity = max_ptcl;
-            cb.radius = cell_sz * ptcl_radius_cells;
+            cb.radius = ptcl_radius;
             nvrhi::BufferHandle cb_buf;
             Ruzino::brush_upload_cb(
                 rc, device, &cb, sizeof(cb), "wb_dbg_ptcl_cb", cb_buf);
@@ -745,7 +748,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
             cb.z_floor = field->grid_center_z - field->grid_height * 0.5f;
             cb.cell_z =
                 field->grid_height / static_cast<float>(field->grid_res_z);
-            cb.radius = cell_sz * voxel_radius_cells;
+            cb.radius = voxel_radius;
             cb.eps = 0.001f;
             cb.max_out = WetbrushSimState::DEBUG_MAX_VOXELS;
             nvrhi::BufferHandle cb_buf;
@@ -796,6 +799,21 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
                 device->unmapBuffer(rb);
                 rc.destroy(rb);
                 rc.destroy(cmd);
+                // WB_DUMP_BRISTLES=<path-prefix>: write the raw bristle_data
+                // readback (nb*m*2 float4: pos,vel per vertex) to
+                // <prefix>_<frame>.bin for offline geometry analysis (the
+                // pooled range above cannot tell a spread root disk from a
+                // collapsed line).
+                if (const char* dump = std::getenv("WB_DUMP_BRISTLES")) {
+                    static int dump_frame = 0;
+                    std::string path = std::string(dump) + "_" +
+                                       std::to_string(dump_frame++) + ".bin";
+                    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+                    if (f)
+                        f.write(
+                            reinterpret_cast<const char*>(bd.data()),
+                            std::streamsize(bd.size() * sizeof(float)));
+                }
                 int nan_v = 0, inf_v = 0, degenerate = 0;
                 float lo = 1e30f, hi = -1e30f;
                 for (int i = 0; i < nb * m; ++i) {
@@ -842,7 +860,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
             cb.nb = WetbrushSimState::NUM_BRISTLES;
             cb.m = WetbrushSimState::VERTS_PER_BRISTLE;
             cb.s = WetbrushSimState::SAMPLES_PER_BRISTLE;
-            cb.radius = cell_sz * bristle_radius_cells;
+            cb.radius = bristle_radius;
             nvrhi::BufferHandle cb_buf;
             Ruzino::brush_upload_cb(
                 rc, device, &cb, sizeof(cb), "wb_dbg_bristle_cb", cb_buf);

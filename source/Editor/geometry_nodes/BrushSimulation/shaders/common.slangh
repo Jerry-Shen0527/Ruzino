@@ -269,6 +269,20 @@ float3 color_mix(float3 c_new_ryb, float3 c_old_ryb, float w_new, float w_old)
 // Bristle model constants (Wetbrush Section 4.1)
 // ============================================================
 struct BristleConstants {
+    // Pen orientation (StrokeSample.orientation): brush_R0/1/2.xyz = world
+    // image of local X/Y/Z (host stores mat3_cast(q) COLUMNS as rows here).
+    // rot(v) = v.x*brush_R0.xyz + v.y*brush_R1.xyz + v.z*brush_R2.xyz —
+    // avoids float3x3 mul() row/column ambiguity. Local frame: -Z = root→tip,
+    // XY = root disk. Identity = the pre-orientation hardcoded upright brush.
+    // MUST be the FIRST fields (offsets 0/16/32) and mirror brush_sim_common.hpp
+    // BristleConstants field-for-field — at the END of the struct the two
+    // sides disagreed (host packs glm::vec4 at 4-byte alignment, this view
+    // aligns float4 to 16) and every row reached the shader rotated into
+    // garbage ("brush collapsed into a blue stick" bug, 2026-08-27).
+    float4 brush_R0;
+    float4 brush_R1;
+    float4 brush_R2;
+
     int num_bristles;        // N_b (40–200)
     int verts_per_bristle;   // M (~10)
     int samples_per_bristle; // S (~32)
@@ -317,15 +331,6 @@ struct BristleConstants {
     int has_prev_brush_pos;
     int sweep_steps;
     float _sweep_pad0, _sweep_pad1;
-    // Pen orientation (StrokeSample.orientation): brush_R0/1/2.xyz = world
-    // image of local X/Y/Z (host stores mat3_cast(q) COLUMNS as rows here).
-    // rot(v) = v.x*brush_R0.xyz + v.y*brush_R1.xyz + v.z*brush_R2.xyz —
-    // avoids float3x3 mul() row/column ambiguity. Local frame: -Z = root→tip,
-    // XY = root disk. Identity = the pre-orientation hardcoded upright brush.
-    // MUST mirror brush_sim_common.hpp BristleConstants field-for-field.
-    float4 brush_R0;
-    float4 brush_R1;
-    float4 brush_R2;
 };
 
 // ============================================================

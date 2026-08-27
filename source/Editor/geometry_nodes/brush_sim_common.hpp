@@ -143,22 +143,32 @@ inline void brush_upload_cb(
     ResourceAllocator& rc,
     nvrhi::IDevice* device,
     const void* data,
-    size_t size,
+    size_t size_bytes,
     const char* debug_name,
     nvrhi::BufferHandle& out_buf)
 {
-    if (out_buf)
-        rc.destroy(out_buf);
-    out_buf = rc.create(
-        nvrhi::BufferDesc{}
-            .setByteSize(size)
-            .setIsConstantBuffer(true)
-            .setInitialState(nvrhi::ResourceStates::ConstantBuffer)
-            .setKeepInitialState(true)
-            .setDebugName(debug_name));
+    // REUSE the buffer across uploads instead of destroy+create per call.
+    // The upload path runs per sub-step (the bristle pipeline re-dispatches
+    // several times a frame), and destroy→create hands the same pool slot
+    // back while the previous dispatch can still be in flight — reads then
+    // alias whatever bytes live there now (observed: one frame's CB read as
+    // a blend of four earlier frames' uploads, 2026-08-27). A stable handle
+    // keeps the GPUVA fixed, so queue-ordered write→dispatch is always
+    // self-consistent.
+    if (!out_buf || out_buf->getDesc().byteSize < size_bytes) {
+        if (out_buf)
+            rc.destroy(out_buf);
+        out_buf = rc.create(
+            nvrhi::BufferDesc{}
+                .setByteSize(size_bytes)
+                .setIsConstantBuffer(true)
+                .setInitialState(nvrhi::ResourceStates::ConstantBuffer)
+                .setKeepInitialState(true)
+                .setDebugName(debug_name));
+    }
     auto cmd = rc.create(CommandListDesc{});
     cmd->open();
-    cmd->writeBuffer(out_buf, data, size);
+    cmd->writeBuffer(out_buf, data, size_bytes);
     cmd->close();
     device->executeCommandList(cmd);
     device->waitForIdle();
@@ -245,6 +255,26 @@ struct SimConstants {
 };
 
 struct BristleConstants {
+    // Pen orientation (StrokeSample.orientation) as rotation-matrix COLUMNS
+    // stored per local axis: brush_R0/1/2.xyz = world image of local X/Y/Z
+    // (i.e. the COLUMNS of mat3_cast(q)). Shader side uses
+    // rot(v) = v.x*R0.xyz + v.y*R1.xyz + v.z*R2.xyz — no mul() row/column
+    // ambiguity. Local frame: -Z = root→tip, XY = root disk. Identity =
+    // upright brush.
+    //
+    // MUST stay the FIRST fields (offsets 0/16/32) and mirror common.slangh
+    // BristleConstants field-for-field. They used to live at the END of the
+    // struct, which was a CB-layout bug: the C++ side packs glm::vec4 tightly
+    // (4-byte aligned — R0@184 here), while the slang/std140 view aligns each
+    // float4 to 16 bytes (R0@192, +8-byte skew) and sizes the struct larger
+    // than the host's 232 bytes — every row reached the shader rotated into
+    // garbage (the "brush collapsed into a blue stick" bug of 2026-08-27).
+    // Front-loading the rows makes offsets 0/16/32 agree under ANY packing
+    // rule on both sides.
+    glm::vec4 brush_R0{ 1.0f, 0.0f, 0.0f, 0.0f };
+    glm::vec4 brush_R1{ 0.0f, 1.0f, 0.0f, 0.0f };
+    glm::vec4 brush_R2{ 0.0f, 0.0f, 1.0f, 0.0f };
+
     int num_bristles;
     int verts_per_bristle;
     int samples_per_bristle;
@@ -293,15 +323,6 @@ struct BristleConstants {
     int has_prev_brush_pos;
     int sweep_steps;  // >=1; 1 means no sweep (single-point splat)
     float _sweep_pad0, _sweep_pad1;
-    // Pen orientation (StrokeSample.orientation) as rotation-matrix ROWS
-    // stored per local axis: brush_R0/1/2.xyz = world image of local X/Y/Z
-    // (i.e. the COLUMNS of mat3_cast(q)). Shader side uses
-    // rot(v) = v.x*R0.xyz + v.y*R1.xyz + v.z*R2.xyz — no mul() row/column
-    // ambiguity. Appended at the END so existing CB offsets are untouched;
-    // MUST mirror common.slangh BristleConstants field-for-field.
-    glm::vec4 brush_R0{ 1.0f, 0.0f, 0.0f, 0.0f };
-    glm::vec4 brush_R1{ 0.0f, 1.0f, 0.0f, 0.0f };
-    glm::vec4 brush_R2{ 0.0f, 0.0f, 1.0f, 0.0f };
 };
 
 struct ParticleConstants {

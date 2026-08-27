@@ -1092,6 +1092,93 @@ f11 post_diffuse vz=0.0014（安静）→ **post_project1 vz=8.4，divmax=1.6**�
 - 朝向作者化（轨迹带倾角）、子步内 orientation/vel 插值（当前子步只插位置）留作
   后续。
 
+### 25. 输入侧收尾：mock_pen_motion 取代曲线中间层（2026-08-26）
+
+§24 留下的尾巴：mock 侧仍走 `mock_stroke → 曲线 → emitter 折线插值 →
+fill_pen_dynamics 差分`。三个实际伤害：①"解析速度"其实是折线段差分
+（C0 不 C1，accel 是顶点尖峰阶梯——f1 |a|=13.97 的残余正是折线拐点加速度）；
+② orientation 恒 identity、ω 恒 0，§24 铺的 brush_R0/R1/R2/pen_rot 整条路零测试；
+③ pen_down 全程 true，mock_press_lift 只能用 Z 剖面曲线绕（已知问题）。
+
+**新节点 `mock_pen_motion`**（`node_mock_pen_motion.cpp`，zone 内、ALWAYS_DIRTY、
+由 payload 时钟驱动、无输入）：解析时间轴 DESCEND(hover→press) → STROKE(落笔
+行走，stroke_start 首帧) → LIFT(press→hover，即刻 pen-up) → DONE。每帧解析求
+pos/vel/orientation/ω：sinuous 路径 y=A·sin(2πCs) 与 mock_stroke 形状一致
+（Cycles=2 ⟺ 旧 sin(4πt)）；tilt=绕水平轴 angleAxis，`mat3_cast(q)[2].z=cosθ`
+与 [wb-pose] 诊断严格一致；Tilt Sweep 沿笔画线性爬升 → ω=常量解析值；
+Length=0 为 blob 按压模式（吸收 mock_press_lift）；Enable=false 恒 pen-up
+（"空输入"降级测试的新等价物）。`WB_NO_DYNAMICS` A/B 开关保留。
+
+**图接线简化**：zone 边界从双槽（Curves+State）减为单槽（State）——
+`mock_pen_motion → deposit` 是普通内部边，不再过 sim_in。**曲线路径保留**：
+`mock_strokes`（双笔画混色 fixture）+ `mock_point_emitter` 原样不动，
+`render_wetbrush_cross.py`/`export_particles_cross.py` 继续走回放路径；
+为此 commit 的 "Stroke Curves" 槽改 `.optional(true)`（须配 `has_input` 守卫——
+对未连接槽直接 `get_input<Geometry>` 会对空 meta_any 解引用，null+0x28 访问
+违例，cdb 定位）。删除 `node_mock_stroke.cpp`、`node_mock_press_lift.cpp`。
+
+**验证**（Tilt=25°+Sweep=10°，Speed 0.15，[wb-pose] 45 帧）：
+
+| 量 | 预测（解析） | 实测 |
+|---|---|---|
+| 落笔帧 | f3（descend 0.05s@60fps） | f3，pos=(−0.150,0,0) |
+| tilt | 25+10s，s=(t−0.05)/2 | 25.0°→28.3° 逐帧吻合 |
+| \|ω\| | radians(10)/2=0.0873 rad/s | 0.0873 恒定 |
+| \|v\| | √(0.15²+(0.314·cos4πs)²)∈[0.15,0.35] | [0.150,0.348] |
+| \|a\| | 0.05(4π/2)²·sin4πs ≤ 1.97，平滑 | 0→1.970 正弦，无尖峰 |
+| stroke_start \|a\| | 0（无假尖峰） | 0.000 |
+
+test_wetbrush_zone 3 passed / test_brush_sim 2 passed（含禁用笔空画布）。
+blob/pen-up 语义修正：抬笔瞬间 active=false（旧轨迹全程 true），blob 测试从此
+真正只按压不漏刷。定位脚本 `Binaries/Release/wb_pose_check.py`（不入库）。
+跨脚本注意：`add_nodes` 用裸 GLOB——**新增节点 .cpp 必须 `-Reconfigure`** 才能
+被 cmake 发现。
+
+
+### 26. "蓝色小棍"定案：BristleConstants 尾部 vec4 的 CB 布局错位（2026-08-27）
+
+用户连续质疑序列里的"一根蓝色小棍在平移，一点也不像毛刷"。视觉+像素+GPU dump
+三路会诊，**不是遮挡、不是相机比例、不是渲染能力**——是真实几何 bug：
+
+**现象链**：debug 视图里蓝色物体 = 一根 ~90×8px 的细棍平躺在颜料表面，沿运动
+方向；`WB_DUMP_BRISTLES`（本节新增的 commit 读回开关，env 给路径前缀逐帧写
+bristle_data 顶点二进制）显示：600 根鬃毛的**根盘塌缩成 XZ 竖直面里 r=0.0088
+的螺旋盘**（应为倾斜 XY 面 r=0.02），所有链**水平指向运动反方向**（-X），
+第一帧即定型且永不恢复。
+
+**根因**：`BristleConstants` 在结构体**末尾**追加 3 个 `glm::vec4`
+（brush_R0/1/2，§24 朝向重构引入）。host 侧 vendored glm vec4 按 4 字节对齐
+紧凑排列（R0@184/200/216，sizeof=232）；slang 常量缓冲按 std140 把 float4
+对齐到 16 字节（R0@192/208/224，视图 240）。shader 读到的旋转矩阵整体 +8B
+错位、尾部越界到资源池旧数据——CB 侦察兵（shader 把 cb 字段原样写进顶点再
+读回）实测收到的"矩阵"是 (sinθ,0,0)/(0,0,−sinθ)/(cosθ,0,0)，等价于把
+local X→+X、local Y→−Z、local Z→+Y：根盘立进 XZ 面、半径缩成 sin(tilt)×R。
+子步行标量（vel/window 等）部分正确，说明错位只打中了 float4 对齐敏感的尾部。
+画颜色/沉积一直正常，因为 R 行只被 bristle_simulate 消费。
+
+**修复**（两处）：
+1. `brush_R0/1/2` 前置到两侧结构体的**最前**（offsets 0/16/32，对任何打包
+   规则免疫）；教训：共享 CB 结构体**永远不要在末尾追加 vec4/float4**，两侧
+   字段 diff 一致 ≠ 布局一致（对齐规则不同）。
+2. `brush_upload_cb` 改为**复用已存在缓冲**（句柄够大就不销毁重建）——
+   每 substep destroy+create 会把同一资源池槽位在 in-flight dispatch 期间
+   递出去，读数跨帧串味（实测一个 CB 的不同标量读到 4 个不同帧的上传）。
+   注：当前调用方全部传新鲜局部句柄，此修复对它们仍是 no-op，但规则先立住。
+
+**验证**：dump 回归——根盘 min/mean/max = 0.0005/0.0126/**0.0200**（Vogel 盘
+理论均值 0.0133 ✓）、z=±0.0094=R·sin(tilt) ✓、束包围盒 0.048×0.041（原
+0.042×**0.0044**）✓。debug 序列 60 帧（res512）与 beauty 序列 60 帧（res1024）
+全部渲完，无 NaN/Device Removed；蓝色像素 220–550 → **6500–9400**。beauty 视
+角下蓝色鬃毛尖端以扇贝状从红色颜料前缘下方露出（被湿颜料遮挡属物理正确）；
+debug 视角可见完整蓝色压垫 + 黄色颜料脊被推挤 + 红色粒子飞溅。
+
+**伴随教训**：`render_wetbrush.py` 默认 `SIM_RES=4096`——跑 beauty 必须
+`WETBRUSH_RES=1024`，否则首帧分配爆显存，nvrhi createBuffer 返回 NULL →
+写 NULL+8 段错误（cdb 栈：`deposit!node_execution → nvrhi` create 路径）。
+调试工具链存档：dump→SVD 平面拟合/golden-spiral 回归反推矩阵 → CB 侦察兵
+→ offsetof 打印（slang 无 offsetof，用侦察兵实测）。
+
+
 
 
 ## 关键经验教训
