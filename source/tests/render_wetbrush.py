@@ -4,11 +4,13 @@ Render the Wetbrush streaming-zone paint animation with the Ruzino path tracer
 via the ZERO-COPY GPU buffer path (no bake / no CPU readback / no USD primvar).
 
 Architecture (interleaved per-frame animation):
-  Stage 1: build the streaming Wetbrush zone graph (mock_stroke -> simulation_in
-           -> brush_wb_deposit -> bristle -> fluid -> commit -> simulation_out,
+  Stage 1: build the streaming Wetbrush zone graph (mock_pen_motion ->
+           brush_wb_deposit -> bristle -> fluid -> commit -> simulation_out,
            feedback) and a marker render scene (UsdVolVolume carrying grid
            metadata primvars but NO paintField, plus the Paper mesh, camera,
-           lights). The graph is NOT driven here.
+           lights). The graph is NOT driven here. The analytic pen-motion node
+           emits one StrokeSample per frame (press/lift authored, exact
+           velocity/orientation derivatives — no curve intermediate).
   Stage 2: interleave { stage.tick(dt) -> hydra.render(t) x SPP -> save PNG }
            for NUM_FRAMES. Each tick, the commit node packs density+color into a
            Float4 GPU buffer and registers it in SharedGPUBufferRegistry under
@@ -77,40 +79,34 @@ def build_sim_graph(sim_usd: Path):
     g = RuzinoGraph("WetbrushRender")
     g.loadConfiguration(str(BIN / "geometry_nodes.json"))
 
-    mock = g.createNode("mock_stroke", name="MockStroke")
+    pen = g.createNode("mock_pen_motion", name="PenMotion")
     init_state = g.createNode("brush_wb_init_state", name="InitState")
     sim_in, sim_out = g.createSimulationZone()
-    emitter = g.createNode("mock_point_emitter", name="Emitter")
     deposit = g.createNode("brush_wb_deposit", name="Deposit")
     bristle = g.createNode("brush_wb_bristle", name="Bristle")
     fluid = g.createNode("brush_wb_fluid", name="Fluid")
     commit = g.createNode("brush_wb_commit", name="Commit")
     write = g.createNode("write_usd", name="Output")
 
-    g.addEdge(mock, "Stroke Curves", sim_in, "Simulation In")
     g.addEdge(init_state, "State", sim_in, "Simulation In")
-    g.addEdge(sim_in, "Simulation Out", emitter, "Stroke Curves")
-    g.addEdge(emitter, "Stroke Sample", deposit, "Stroke Sample")
+    g.addEdge(pen, "Stroke Sample", deposit, "Stroke Sample")
     g.addEdge(sim_in, "Simulation Out", deposit, "State")
     g.addEdge(deposit, "Stroke Sample", fluid, "Stroke Sample")
     g.addEdge(deposit, "State", bristle, "State")
     g.addEdge(bristle, "State", fluid, "State")
     g.addEdge(fluid, "State", commit, "State")
-    g.addEdge(sim_in, "Simulation Out", commit, "Stroke Curves")
     # commit's Paint Field 3D output still feeds write_usd so the sim USD has
     # a populated prim for downstream inspection, but the renderer does NOT
     # read it — it consumes the zero-copy registry buffer.
     g.addEdge(commit, "Paint Field 3D", write, "Geometry")
     g.addEdge(commit, "State", sim_out, "Simulation In")
-    g.addEdge(commit, "Stroke Curves", sim_out, "Simulation In")
 
     g.setSocketDefaults({
-        # NUM_FRAMES points so the brush paints for the whole sequence (the
-        # old 30 exhausted the trajectory mid-run: the brush parked, the
-        # carried swarm dumped onto the park spot, and the remaining frames
-        # showed a frozen scene + the parking blot).
-        (mock, "Num Points"): NUM_FRAMES, (mock, "Amplitude"): 0.05,
-        (mock, "Length"): 0.3,
+        # Speed 0.15 u/s: the 2s stroke (Length 0.3) outlasts the 1s
+        # sequence, so the brush paints every frame — same pacing the old
+        # 60-point/30fps curve replay produced.
+        (pen, "Length"): 0.3, (pen, "Amplitude"): 0.05,
+        (pen, "Speed"): 0.15,
         # Resolution 4096 (paper Section 4.2: "we typically set the grid
         # resolution to 4096x4096x64"). At lower resolutions the brush
         # footprint covered too few cells, so trilinear filtering + the

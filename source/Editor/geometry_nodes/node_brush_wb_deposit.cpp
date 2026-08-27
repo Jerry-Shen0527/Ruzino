@@ -5,10 +5,11 @@
 // The per-frame StrokeSample and the input stroke Geometry stay OFF the
 // boundary):
 //
-//   mock_stroke --Stroke Curves--> [ simulation_in ]   (static input slot)
+//   mock_pen_motion --StrokeSample--> brush_wb_deposit   (interior, fresh
+//   per frame; the analytic pen-dynamics source — curve replay via
+//   mock_point_emitter is still possible)
 //   [ simulation_in ] --WetbrushZoneState--> brush_wb_deposit   (fed-back
-//   field) mock_point_emitter --StrokeSample--> brush_wb_deposit   (interior,
-//   fresh/帧) brush_wb_deposit --WetbrushZoneState--> brush_wb_bristle --...-->
+//   field) brush_wb_deposit --WetbrushZoneState--> brush_wb_bristle --...-->
 //   commit brush_wb_commit --WetbrushZoneState--> [ simulation_out ]   (fed
 //   back)
 //

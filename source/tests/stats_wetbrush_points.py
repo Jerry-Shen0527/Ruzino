@@ -29,9 +29,9 @@ USD_PATH = DIAG_DIR / "wetbrush_inspect.usdc"
 RESOLUTION = 256
 PAPER_SIZE = 1.0
 BRUSH_RADIUS = 0.02
-MOCK_N = 30
-MOCK_AMP = 0.05
-MOCK_LEN = 0.3
+PEN_SPEED = 0.15
+PEN_AMP = 0.05
+PEN_LEN = 0.3
 FPS = 60.0
 NUM_FRAMES = 12
 CELL = PAPER_SIZE / RESOLUTION
@@ -79,7 +79,7 @@ def main():
     w("")
     w(f"params: res={RESOLUTION}  paper={PAPER_SIZE}  brush_radius={BRUSH_RADIUS}")
     w(f"        cell={CELL:.5f}  brush_diameter/cell={2*BRUSH_RADIUS/CELL:.1f} cells")
-    w(f"        mock_stroke N={MOCK_N} amp={MOCK_AMP} len={MOCK_LEN}")
+    w(f"        pen_motion speed={PEN_SPEED} amp={PEN_AMP} len={PEN_LEN}")
     w(f"        {NUM_FRAMES} frames @ {FPS}fps = {NUM_FRAMES/FPS:.3f}s sim")
     w("")
 
@@ -90,7 +90,7 @@ def main():
     for i, (t, pts, _c, _wid) in enumerate(frames):
         n = len(pts)
         d = n - prev
-        frac = n / (MOCK_N * 20)  # rough ceiling ref
+        frac = n / (NUM_FRAMES * 20)  # rough ceiling ref
         w(f"{i:>5} {t:>8.4f} {n:>7} {d:>+7} {frac:>6.0%}")
         prev = n
     w("")

@@ -3,12 +3,10 @@ Headless simulation-zone test for the STREAMING Wetbrush decomposition.
 
 Builds the streaming brush pipeline purely from the Python node-graph API:
 
-    mock_stroke --Stroke Curves--> [ simulation_in ]   (boundary slot A: input)
-    <init/feedback> --WetbrushZoneState--> [ simulation_in ]   (boundary slot B: field)
+    <init/feedback> --WetbrushZoneState--> [ simulation_in ]  (boundary: field)
 
-      [ simulation_in ] --Stroke Curves--> mock_point_emitter   (zone interior)
-      mock_point_emitter --StrokeSample--> brush_wb_deposit "Stroke Sample"
-      [ simulation_in ] --State--> brush_wb_deposit "State"
+      mock_pen_motion --StrokeSample--> brush_wb_deposit "Stroke Sample"  (zone interior)
+      [ simulation_in ] --State--> brush_wb_deposit "state"
       brush_wb_deposit --StrokeSample--> brush_wb_fluid   (so fluid knows pen up/down)
       brush_wb_deposit --State--> brush_wb_bristle --State--> brush_wb_fluid
         --State--> brush_wb_commit
@@ -16,11 +14,12 @@ Builds the streaming brush pipeline purely from the Python node-graph API:
       brush_wb_commit --State--> [ simulation_out ]   (fed back as WetbrushZoneState)
       [ simulation_out ] --Paint Particles--> ...
 
-Topology note: the zone boundary now carries TWO typed slots — the static stroke
-Geometry (enters once, never rides feedback) and the WetbrushZoneState paint
-field (fed back every frame). The per-frame BrushPoint is produced INSIDE the
-zone by the emitter and reaches deposit via an interior socket. The old
-WetbrushFrame bundle that mixed ephemeral input with accumulated state is gone.
+The input is the analytic PEN MOTION node (mock_pen_motion): one
+StrokeSample per frame with exact position/orientation/velocity/angular
+velocity and an authored press/lift profile — no curve intermediate. The
+zone boundary carries a single typed slot (the WetbrushZoneState paint
+field, fed back every frame). The curve replay path (mock_strokes +
+mock_point_emitter) still exists for captured-trajectory fixtures.
 
 Stage 3: the wb_* nodes run the REAL Wetbrush physics (deposit -> bristle ->
 fluid -> commit, lifted 1:1 from brush_paint_sim). So this test now asserts
@@ -56,18 +55,15 @@ DT = 1.0 / FPS
 def _build_streaming_graph():
     """Build the streaming Wetbrush zone graph.
 
-    The simulation zone carries TWO typed boundary slots:
-      * Geometry "Stroke Curves" -- the static input stroke (enters once).
+    The zone boundary carries ONE typed slot:
       * WetbrushZoneState "State" -- the accumulated paint field (fed back).
-    The per-frame BrushPoint is produced inside the zone by the emitter and
-    reaches deposit over an ordinary interior socket (it does NOT cross the
-    boundary).
+    The per-frame pen sample is produced inside the zone by mock_pen_motion
+    (analytic pen dynamics, no curve input) and reaches deposit over an
+    ordinary interior socket (it does NOT cross the boundary).
 
     Topology:
-      mock_stroke --Stroke Curves--> [ simulation_in ]
       <init frame / feedback> --State--> [ simulation_in ]
-      [ simulation_in ] --Stroke Curves--> mock_point_emitter
-      mock_point_emitter --StrokeSample--> brush_wb_deposit
+      mock_pen_motion --StrokeSample--> brush_wb_deposit
       [ simulation_in ] --State--> brush_wb_deposit
       brush_wb_deposit --State--> brush_wb_bristle --State--> brush_wb_fluid
         --State--> brush_wb_commit
@@ -75,63 +71,51 @@ def _build_streaming_graph():
       brush_wb_commit --Paint Particles--> write_usd   (interior)
       brush_wb_commit --State--> [ simulation_out ]   (fed back)
 
-    Returns (graph, sim_in, sim_out, mock, emitter, commit).
+    Returns (graph, sim_in, sim_out, pen, commit).
     """
     from ruzino_graph import RuzinoGraph
 
     g = RuzinoGraph("WetbrushZoneSim")
     g.loadConfiguration(str(BINARY_DIR / "geometry_nodes.json"))
 
-    mock = g.createNode("mock_stroke", name="MockStroke")
+    pen = g.createNode("mock_pen_motion", name="PenMotion")
     init_state = g.createNode("brush_wb_init_state", name="InitState")
     sim_in, sim_out = g.createSimulationZone()
-    emitter = g.createNode("mock_point_emitter", name="Emitter")
     deposit = g.createNode("brush_wb_deposit", name="Deposit")
     bristle = g.createNode("brush_wb_bristle", name="Bristle")
     fluid = g.createNode("brush_wb_fluid", name="Fluid")
     commit = g.createNode("brush_wb_commit", name="Commit")
     write = g.createNode("write_usd", name="Output")
 
-    # mock_stroke -> simulation_in: the static stroke Geometry enters the zone
-    # as boundary slot A (auto-instantiates a real Geometry socket there).
-    g.addEdge(mock, "Stroke Curves", sim_in, "Simulation In")
-    # init_state -> simulation_in: seed the paint-field boundary slot B with an
-    # empty field on the init frame (no feedback exists yet). On advance frames
-    # sim_in replays simulation_out's stored field instead.
+    # init_state -> simulation_in: seed the paint-field boundary slot with an
+    # empty field on the init frame (no feedback exists yet). On advance
+    # frames sim_in replays simulation_out's stored field instead.
     g.addEdge(init_state, "State", sim_in, "Simulation In")
-    # sim_in -> emitter: the stroke reaches the emitter inside the zone (the
-    # same boundary slot, replayed on advance frames; the emitter caches it).
-    g.addEdge(sim_in, "Simulation Out", emitter, "Stroke Curves")
-    # emitter -> deposit: the fresh per-frame BrushPoint (interior edge).
-    g.addEdge(emitter, "Stroke Sample", deposit, "Stroke Sample")
-    # sim_in -> deposit: the fed-back paint field (boundary slot B). On the
-    # init frame this is empty/null and deposit allocates it; on advance frames
-    # it carries the committed canvas + live fields.
+    # pen_motion -> deposit: the analytic per-frame pen sample (interior
+    # edge; mock_pen_motion has no graph inputs — it reads the sim clock from
+    # the global payload and re-cooks every frame via ALWAYS_DIRTY).
+    g.addEdge(pen, "Stroke Sample", deposit, "Stroke Sample")
+    # sim_in -> deposit: the fed-back paint field. On the init frame this is
+    # empty/null and deposit allocates it; on advance frames it carries the
+    # committed canvas + live fields.
     g.addEdge(sim_in, "Simulation Out", deposit, "State")
-    # deposit -> fluid: forward the BrushPoint so the fluid node knows pen
+    # deposit -> fluid: forward the sample so the fluid node knows pen
     # up/down (pen-up frames still relax the fluid but skip emission).
     g.addEdge(deposit, "Stroke Sample", fluid, "Stroke Sample")
     # The wb chain: the field flows deposit -> bristle -> fluid -> commit.
     g.addEdge(deposit, "State", bristle, "State")
     g.addEdge(bristle, "State", fluid, "State")
     g.addEdge(fluid, "State", commit, "State")
-    # sim_in -> commit: carry the stroke to commit so it can forward it to
-    # simulation_out (the zone group sync requires sim_out to mirror sim_in's
-    # slots, so sim_out needs both State AND Stroke Curves). The stroke is
-    # static input, not feedback state; commit just passes it through.
-    g.addEdge(sim_in, "Simulation Out", commit, "Stroke Curves")
-    # commit -> write_usd (interior): Paint Particles reaches write_usd without
-    # crossing the boundary, so the zone feedback stays per-slot.
+    # commit -> write_usd (interior): Paint Particles reaches write_usd
+    # without crossing the boundary, so the zone feedback stays per-slot.
     g.addEdge(commit, "Paint Particles", write, "Geometry")
-    # commit -> simulation_out: BOTH boundary slots are fed back — the paint
-    # field (accumulates) and the stroke (static, re-fed; emitter caches it).
+    # commit -> simulation_out: the paint field feeds back.
     g.addEdge(commit, "State", sim_out, "Simulation In")
-    g.addEdge(commit, "Stroke Curves", sim_out, "Simulation In")
 
     g.setSocketDefaults({
-        (mock, "Num Points"): 30,
-        (mock, "Amplitude"): 0.05,
-        (mock, "Length"): 0.3,
+        (pen, "Length"): 0.3,
+        (pen, "Amplitude"): 0.05,
+        (pen, "Speed"): 0.15,
         (deposit, "Resolution"): 256,
         (deposit, "Paper Size"): 1.0,
         (deposit, "Brush Radius"): 0.02,
@@ -145,22 +129,22 @@ def _build_streaming_graph():
     })
 
     assert sim_in.paired_node is sim_out, "zone pairing not established"
-    return g, sim_in, sim_out, mock, emitter, commit
+    return g, sim_in, sim_out, pen, commit
 
 
 def test_streaming_graph_builds():
     """The streaming graph and zone invariants build correctly from Python."""
-    g, sim_in, sim_out, mock, emitter, commit = _build_streaming_graph()
+    g, sim_in, sim_out, pen, commit = _build_streaming_graph()
 
     labels = [n.name for n in g.nodes]
-    for needed in ("MockStroke", "InitState", "SimulationIn", "Emitter",
+    for needed in ("PenMotion", "InitState", "SimulationIn",
                    "Deposit", "Bristle", "Fluid", "Commit", "SimulationOut",
                    "Output"):
         assert needed in labels, f"missing node {needed}: {labels}"
 
     assert sim_in.paired_node is sim_out
     assert sim_out.paired_node is sim_in
-    assert len(g.links) >= 10, f"expected >=10 links, got {len(g.links)}"
+    assert len(g.links) >= 8, f"expected >=8 links, got {len(g.links)}"
 
 
 def test_streaming_simulation_runs():
@@ -178,7 +162,7 @@ def test_streaming_simulation_runs():
 
     from pxr import UsdGeom, Sdf
 
-    g, sim_in, sim_out, mock, emitter, commit = _build_streaming_graph()
+    g, sim_in, sim_out, pen, commit = _build_streaming_graph()
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     out_usd = str(OUTPUT_DIR / "wetbrush_zone_sim.usdc")
@@ -226,7 +210,7 @@ def test_streaming_physics_is_correct():
 
     from pxr import UsdGeom, Sdf
 
-    g, sim_in, sim_out, mock, emitter, commit = _build_streaming_graph()
+    g, sim_in, sim_out, pen, commit = _build_streaming_graph()
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     out_usd = str(OUTPUT_DIR / "wetbrush_zone_physics.usdc")

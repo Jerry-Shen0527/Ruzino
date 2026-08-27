@@ -7,9 +7,9 @@ Scenario (per user request):
   1. Press the brush at the center for ~0.3 s (a dipped brush deposits a blob
      of ink inside the active window).
   2. Lift the brush to z=0.08 over ~0.15 s — above the bristle extent
-     (radius*1.5 = 0.03) and the D0 zone (1.8*radius = 0.036) — then the
-     trajectory ends: the emitter freezes here and goes pen-up, and the
-     active window stays at the press XY (the window follows the brush).
+     (radius*1.5 = 0.03) and the D0 zone (1.8*radius = 0.036) — then the pen
+     parks at hover: the analytic motion node goes pen-up (active=false) the
+     moment the lift starts, and the active window stays at the press XY.
   3. Watch the blob for another ~1 s: does it settle/spread like a fluid
      (e.g. under gravity), or does it hover frozen?
 
@@ -44,7 +44,7 @@ from pxr import Usd, UsdGeom, UsdLux, UsdShade, UsdVol, Sdf, Gf, Vt  # noqa: E40
 import stage_py  # noqa: E402
 from ruzino_graph import RuzinoGraph  # noqa: E402
 
-NUM_FRAMES = 90          # 27 press+lift, 63 pen-up observation
+NUM_FRAMES = 90          # 30 descend+press+lift, 60 pen-up observation
 FPS = 60.0
 DT = 1.0 / FPS
 
@@ -55,48 +55,49 @@ SIM_RES_Z = int(os.environ.get("WETBRUSH_RES_Z", "64"))
 SIM_PAPER = 1.0
 CELL_SZ = SIM_PAPER / SIM_RES
 
-# Trajectory (seconds at 30 samples/s inside mock_press_lift): press 0.3 s at
-# z=0 (full press — the bristles, length 0.03, squash onto the canvas), then
-# lift to z=0.08 over 0.15 s (clear of the bristle extent AND the D0 zone).
+# Pen motion (mock_pen_motion, blob mode = Length 0): descend 0.05 s, press
+# 0.3 s at z=0 (full press — the bristles, length 0.03, squash onto the
+# canvas), then lift to z=0.08 over 0.15 s (clear of the bristle extent AND
+# the D0 zone). Pen goes UP at lift start (no more deposit while lifting —
+# the old curve fixture kept pen_down=true through the whole lift).
 PRESS_Z = 0.0
-LIFT_Z = 0.08
-PRESS_DUR = 0.3
+HOVER_Z = 0.08
+HOLD_DUR = 0.3
 LIFT_DUR = 0.15
+DESCEND_DUR = 0.05
 
 
 def build_sim_graph(sim_usd: Path):
     g = RuzinoGraph("WetbrushBlob")
     g.loadConfiguration(str(BIN / "geometry_nodes.json"))
 
-    mock = g.createNode("mock_press_lift", name="PressLift")
+    pen = g.createNode("mock_pen_motion", name="PenMotion")
     init_state = g.createNode("brush_wb_init_state", name="InitState")
     sim_in, sim_out = g.createSimulationZone()
-    emitter = g.createNode("mock_point_emitter", name="Emitter")
     deposit = g.createNode("brush_wb_deposit", name="Deposit")
     bristle = g.createNode("brush_wb_bristle", name="Bristle")
     fluid = g.createNode("brush_wb_fluid", name="Fluid")
     commit = g.createNode("brush_wb_commit", name="Commit")
     write = g.createNode("write_usd", name="Output")
 
-    g.addEdge(mock, "Stroke Curves", sim_in, "Simulation In")
     g.addEdge(init_state, "State", sim_in, "Simulation In")
-    g.addEdge(sim_in, "Simulation Out", emitter, "Stroke Curves")
-    g.addEdge(emitter, "Stroke Sample", deposit, "Stroke Sample")
+    g.addEdge(pen, "Stroke Sample", deposit, "Stroke Sample")
     g.addEdge(sim_in, "Simulation Out", deposit, "State")
     g.addEdge(deposit, "Stroke Sample", fluid, "Stroke Sample")
     g.addEdge(deposit, "State", bristle, "State")
     g.addEdge(bristle, "State", fluid, "State")
     g.addEdge(fluid, "State", commit, "State")
-    g.addEdge(sim_in, "Simulation Out", commit, "Stroke Curves")
     g.addEdge(commit, "Paint Field 3D", write, "Geometry")
     g.addEdge(commit, "State", sim_out, "Simulation In")
-    g.addEdge(commit, "Stroke Curves", sim_out, "Simulation In")
 
     g.setSocketDefaults({
-        (mock, "Center X"): 0.0, (mock, "Center Y"): 0.0,
-        (mock, "Press Z"): PRESS_Z, (mock, "Lift Z"): LIFT_Z,
-        (mock, "Press Duration"): PRESS_DUR,
-        (mock, "Lift Duration"): LIFT_DUR,
+        # Blob mode: Length 0 turns the stroke phase into a stationary hold.
+        (pen, "Length"): 0.0,
+        (pen, "Center X"): 0.0, (pen, "Center Y"): 0.0,
+        (pen, "Press Z"): PRESS_Z, (pen, "Hover Z"): HOVER_Z,
+        (pen, "Hold Duration"): HOLD_DUR,
+        (pen, "Lift Duration"): LIFT_DUR,
+        (pen, "Descend Duration"): DESCEND_DUR,
         (deposit, "Resolution"): SIM_RES, (deposit, "Resolution Z"): SIM_RES_Z,
         (deposit, "Paper Size"): SIM_PAPER,
         (deposit, "Brush Radius"): 0.02, (deposit, "Brush Pressure"): 1.0,

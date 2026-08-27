@@ -3,10 +3,8 @@ Test the Wetbrush paint simulation via the streaming 4-node zone chain.
 
 Pipeline (simulation zone, fed back every frame):
 
-    mock_stroke --Stroke Curves--> [ simulation_in ]   (boundary slot A)
-    brush_wb_init_state --State--> [ simulation_in ]   (boundary slot B, seed)
-      [ simulation_in ] --Stroke Curves--> mock_point_emitter
-      mock_point_emitter --StrokeSample--> brush_wb_deposit
+    brush_wb_init_state --State--> [ simulation_in ]   (boundary slot, seed)
+      mock_pen_motion --StrokeSample--> brush_wb_deposit   (zone interior)
       [ simulation_in ] --State--> brush_wb_deposit
       brush_wb_deposit --State--> brush_wb_bristle --State--> brush_wb_fluid
         --State--> brush_wb_commit
@@ -14,16 +12,19 @@ Pipeline (simulation zone, fed back every frame):
       brush_wb_commit --Paint Particles--> write_usd
       brush_wb_commit --State--> [ simulation_out ]   (fed back)
 
+The input is the analytic pen-motion node (position/orientation/velocity/
+angular velocity exact, press/lift authored); no curve intermediate.
+
 Validates (via stage.tick loop, reading USD stage geometry — the source of
 truth after a zone cook, since the executor's node output cache is not
 reliable across stage.tick):
   - The zone pipeline cooks every frame without error;
   - Paint particles are generated (canvas non-empty) and sit near the stroke;
   - RYB->RGB color deposit produces non-trivial (non-white) colors;
-  - Empty stroke input degrades cleanly (no particles emitted).
+  - A disabled pen (never touches the canvas) degrades cleanly (no deposit).
 
 Run from Binaries/Release so node-plugin DLLs (brush_wb_*.dll,
-mock_point_emitter.dll, ...) resolve.
+node_mock_pen_motion.dll, ...) resolve.
 """
 
 import math
@@ -49,46 +50,43 @@ FPS = 60.0
 DT = 1.0 / FPS
 
 
-def _build_zone_graph(num_points=30):
+def _build_zone_graph(enable=True):
     """Build the streaming Wetbrush zone graph and return
-    (graph, sim_in, sim_out, mock, emitter, commit).
+    (graph, sim_in, sim_out, pen, commit).
 
     Identical topology to test_wetbrush_zone._build_streaming_graph; kept
     inline here so this file is self-contained for the smoke tests.
+    enable=False parks the pen at hover forever (the "no input" case).
     """
     from ruzino_graph import RuzinoGraph
 
     g = RuzinoGraph("BrushSimTest")
     g.loadConfiguration(str(BINARY_DIR / "geometry_nodes.json"))
 
-    mock = g.createNode("mock_stroke", name="MockStroke")
+    pen = g.createNode("mock_pen_motion", name="PenMotion")
     init_state = g.createNode("brush_wb_init_state", name="InitState")
     sim_in, sim_out = g.createSimulationZone()
-    emitter = g.createNode("mock_point_emitter", name="Emitter")
     deposit = g.createNode("brush_wb_deposit", name="Deposit")
     bristle = g.createNode("brush_wb_bristle", name="Bristle")
     fluid = g.createNode("brush_wb_fluid", name="Fluid")
     commit = g.createNode("brush_wb_commit", name="Commit")
     write = g.createNode("write_usd", name="Output")
 
-    g.addEdge(mock, "Stroke Curves", sim_in, "Simulation In")
     g.addEdge(init_state, "State", sim_in, "Simulation In")
-    g.addEdge(sim_in, "Simulation Out", emitter, "Stroke Curves")
-    g.addEdge(emitter, "Stroke Sample", deposit, "Stroke Sample")
+    g.addEdge(pen, "Stroke Sample", deposit, "Stroke Sample")
     g.addEdge(sim_in, "Simulation Out", deposit, "State")
     g.addEdge(deposit, "Stroke Sample", fluid, "Stroke Sample")
     g.addEdge(deposit, "State", bristle, "State")
     g.addEdge(bristle, "State", fluid, "State")
     g.addEdge(fluid, "State", commit, "State")
-    g.addEdge(sim_in, "Simulation Out", commit, "Stroke Curves")
     g.addEdge(commit, "Paint Particles", write, "Geometry")
     g.addEdge(commit, "State", sim_out, "Simulation In")
-    g.addEdge(commit, "Stroke Curves", sim_out, "Simulation In")
 
     g.setSocketDefaults({
-        (mock, "Num Points"): num_points,
-        (mock, "Amplitude"): 0.05,
-        (mock, "Length"): 0.3,
+        (pen, "Enable"): enable,
+        (pen, "Length"): 0.3,
+        (pen, "Amplitude"): 0.05,
+        (pen, "Speed"): 0.15,
         (deposit, "Resolution"): 256,
         (deposit, "Paper Size"): 1.0,
         (deposit, "Brush Radius"): 0.02,
@@ -102,7 +100,7 @@ def _build_zone_graph(num_points=30):
     })
 
     assert sim_in.paired_node is sim_out, "zone pairing not established"
-    return g, sim_in, sim_out, mock, emitter, commit
+    return g, sim_in, sim_out, pen, commit
 
 
 def _run_zone_and_read_points(g, out_usd_name):
@@ -156,7 +154,7 @@ def _run_zone_and_read_points(g, out_usd_name):
 
 def test_brush_sim_generates_particles():
     """Full zone pipeline cooks and deposits paint particles."""
-    g, *_ = _build_zone_graph(num_points=30)
+    g, *_ = _build_zone_graph(enable=True)
     points, colors = _run_zone_and_read_points(g, "brush_sim_smoke.usdc")
 
     n = len(points) if points else 0
@@ -192,12 +190,12 @@ def test_brush_sim_generates_particles():
 
 
 def test_brush_sim_empty_input():
-    """When no stroke data is provided (Num Points=0), the canvas should
-    stay empty — the emitter emits no BrushPoints, so nothing deposits."""
-    g, *_ = _build_zone_graph(num_points=0)
+    """When the pen is disabled (never touches the canvas), the canvas should
+    stay empty — no stroke_start, no dip, no deposit."""
+    g, *_ = _build_zone_graph(enable=False)
     points, _ = _run_zone_and_read_points(g, "brush_sim_empty.usdc")
 
     n = len(points) if points else 0
     assert n == 0, (
-        f"Expected 0 particles for empty input, got {n}")
-    print(f"  Empty input: {n} particles (expected 0)")
+        f"Expected 0 particles for a disabled pen, got {n}")
+    print(f"  Disabled pen: {n} particles (expected 0)")

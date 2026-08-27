@@ -76,37 +76,32 @@ def build_sim_graph(sim_usd: Path):
     g = RuzinoGraph("WetbrushDebug")
     g.loadConfiguration(str(BIN / "geometry_nodes.json"))
 
-    mock = g.createNode("mock_stroke", name="MockStroke")
+    pen = g.createNode("mock_pen_motion", name="PenMotion")
     init_state = g.createNode("brush_wb_init_state", name="InitState")
     sim_in, sim_out = g.createSimulationZone()
-    emitter = g.createNode("mock_point_emitter", name="Emitter")
     deposit = g.createNode("brush_wb_deposit", name="Deposit")
     bristle = g.createNode("brush_wb_bristle", name="Bristle")
     fluid = g.createNode("brush_wb_fluid", name="Fluid")
     commit = g.createNode("brush_wb_commit", name="Commit")
     write = g.createNode("write_usd", name="Output")
 
-    g.addEdge(mock, "Stroke Curves", sim_in, "Simulation In")
     g.addEdge(init_state, "State", sim_in, "Simulation In")
-    g.addEdge(sim_in, "Simulation Out", emitter, "Stroke Curves")
-    g.addEdge(emitter, "Stroke Sample", deposit, "Stroke Sample")
+    g.addEdge(pen, "Stroke Sample", deposit, "Stroke Sample")
     g.addEdge(sim_in, "Simulation Out", deposit, "State")
     g.addEdge(deposit, "Stroke Sample", fluid, "Stroke Sample")
     g.addEdge(deposit, "State", bristle, "State")
     g.addEdge(bristle, "State", fluid, "State")
     g.addEdge(fluid, "State", commit, "State")
-    g.addEdge(sim_in, "Simulation Out", commit, "Stroke Curves")
     g.addEdge(commit, "Paint Field 3D", write, "Geometry")
     g.addEdge(commit, "State", sim_out, "Simulation In")
-    g.addEdge(commit, "Stroke Curves", sim_out, "Simulation In")
 
     g.setSocketDefaults({
-        # One trajectory point per frame (the emitter synthesizes 1/60s
-        # spacing per point): the stroke must span the whole run or the
-        # trajectory exhausts mid-run, the pen lifts, and everything freezes
-        # (that looked like a sim bug on 2026-08-18 — it was the fixture).
-        (mock, "Num Points"): NUM_FRAMES, (mock, "Amplitude"): 0.05,
-        (mock, "Length"): 0.3,
+        # Speed 0.15: the 2s stroke outlasts the sequence, so the pen paints
+        # every frame (the old equivalent trap — trajectory exhausting
+        # mid-run, pen lifting, everything freezing — cannot happen with a
+        # clock-driven analytic motion unless Speed makes it that fast).
+        (pen, "Length"): 0.3, (pen, "Amplitude"): 0.05,
+        (pen, "Speed"): 0.15,
         (deposit, "Resolution"): SIM_RES, (deposit, "Resolution Z"): SIM_RES_Z,
         (deposit, "Paper Size"): SIM_PAPER,
         (deposit, "Brush Radius"): 0.02, (deposit, "Brush Pressure"): 1.0,

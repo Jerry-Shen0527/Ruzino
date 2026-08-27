@@ -6,7 +6,8 @@ sim+render, no bake).
 
 Same interleaved architecture as render_wetbrush.py; only the sim graph differs:
 it uses the `mock_strokes` node (two curve segments with delayed absolute
-timestamps) instead of the single `mock_stroke`.
+timestamps) instead of the analytic `mock_pen_motion` (multi-stroke color
+mixing still rides the curve replay path).
 
 Stroke 0 (yellow, RYB 1,1,0): horizontal along X, frames  0..~30
 Stroke 1 (blue,   RYB 0,0,1): vertical along Y, frames ~30..60, crossing stroke 0

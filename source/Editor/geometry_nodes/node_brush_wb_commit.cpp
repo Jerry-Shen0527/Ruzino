@@ -29,12 +29,12 @@ NODE_DEF_OPEN_SCOPE
 NODE_DECLARATION_FUNCTION(brush_wb_commit)
 {
     b.add_input<Ruzino::WetbrushZoneState>("State");
-    // The stroke Geometry, forwarded unchanged. The zone's group sync mirrors
-    // every boundary slot, so sim_out needs BOTH the fed-back State AND a
-    // Stroke Curves slot (matching sim_in). The stroke is static input, not
-    // feedback state -- we just carry it across so the slot is filled. The
-    // emitter caches it on first sight, so re-feeding it each frame is a no-op.
-    b.add_input<Geometry>("Stroke Curves");
+    // The stroke Geometry, forwarded unchanged. OPTIONAL: pen-motion graphs
+    // (mock_pen_motion) carry no curve through the zone, so this slot is only
+    // wired in curve-replay graphs (mock_strokes -> sim_in), where the zone's
+    // group sync mirrors the boundary slot onto sim_out and commit is the
+    // interior forwarder. Unwired → forwarded as empty geometry.
+    b.add_input<Geometry>("Stroke Curves").optional(true);
 
     // Outputs mirror brush_paint_sim so the existing fidelity-test harness
     // (read 8 debug ports) works unchanged.
@@ -68,7 +68,11 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
 
     WetbrushZoneState zs = params.get_input<WetbrushZoneState>("State");
     auto& field = zs.state;
-    Geometry stroke = params.get_input<Geometry>("Stroke Curves");
+    // Optional socket (pen-motion graphs leave it unwired): has_input guard —
+    // get_input on an unconnected socket dereferences an empty meta_any.
+    Geometry stroke = params.has_input("Stroke Curves")
+                          ? params.get_input<Geometry>("Stroke Curves")
+                          : Geometry{};
 
     auto& rc = get_resource_allocator();
     auto device = RHI::get_device();

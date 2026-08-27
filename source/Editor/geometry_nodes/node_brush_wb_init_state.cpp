@@ -1,9 +1,10 @@
 // node_brush_wb_init_state — seeds the simulation zone with an empty paint
 // field on the init frame.
 //
-// The Wetbrush zone carries TWO boundary slots: the static stroke Geometry
-// (mock_stroke -> sim_in) and the WetbrushZoneState paint field (fed back
-// commit -> sim_out -> sim_in). On the init frame there is no feedback yet,
+// The Wetbrush zone's primary boundary slot is the WetbrushZoneState paint
+// field (fed back commit -> sim_out -> sim_in); the pen input arrives as
+// StrokeSample from mock_pen_motion INSIDE the zone (no boundary slot).
+// On the init frame there is no feedback yet,
 // so sim_in's [State] slot would be empty and the whole zone would be skipped
 // ("missing required input [State]"). This tiny source node provides that
 // initial empty field (state == nullptr), which brush_wb_deposit then
@@ -11,7 +12,7 @@
 //
 // Topology:
 //   brush_wb_init_state --State--> [ simulation_in ]   (init seed)
-//   mock_stroke --Stroke Curves--> [ simulation_in ]
+//   mock_pen_motion --StrokeSample--> brush_wb_deposit   (interior)
 //
 // On advance frames sim_in replays simulation_out's stored [State] (the
 // committed canvas), so this node's output is only consumed on the init frame.

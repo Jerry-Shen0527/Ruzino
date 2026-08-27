@@ -36,35 +36,33 @@ def build_sim_graph(sim_usd, ryb, res, res_z, paper):
     g = RuzinoGraph("WetbrushColor")
     g.loadConfiguration(str(BIN / "geometry_nodes.json"))
 
-    mock = g.createNode("mock_stroke", name="MockStroke")
+    pen = g.createNode("mock_pen_motion", name="PenMotion")
     init_state = g.createNode("brush_wb_init_state", name="InitState")
     sim_in, sim_out = g.createSimulationZone()
-    emitter = g.createNode("mock_point_emitter", name="Emitter")
     deposit = g.createNode("brush_wb_deposit", name="Deposit")
     bristle = g.createNode("brush_wb_bristle", name="Bristle")
     fluid = g.createNode("brush_wb_fluid", name="Fluid")
     commit = g.createNode("brush_wb_commit", name="Commit")
     write = g.createNode("write_usd", name="Output")
 
-    g.addEdge(mock, "Stroke Curves", sim_in, "Simulation In")
     g.addEdge(init_state, "State", sim_in, "Simulation In")
-    g.addEdge(sim_in, "Simulation Out", emitter, "Stroke Curves")
-    g.addEdge(emitter, "Stroke Sample", deposit, "Stroke Sample")
+    g.addEdge(pen, "Stroke Sample", deposit, "Stroke Sample")
     g.addEdge(sim_in, "Simulation Out", deposit, "State")
     g.addEdge(deposit, "Stroke Sample", fluid, "Stroke Sample")
     g.addEdge(deposit, "State", bristle, "State")
     g.addEdge(bristle, "State", fluid, "State")
     g.addEdge(fluid, "State", commit, "State")
-    g.addEdge(sim_in, "Simulation Out", commit, "Stroke Curves")
     g.addEdge(commit, "Paint Field 3D", write, "Geometry")
     g.addEdge(commit, "State", sim_out, "Simulation In")
-    g.addEdge(commit, "Stroke Curves", sim_out, "Simulation In")
 
     g.setSocketDefaults({
-        (mock, "Num Points"): 30, (mock, "Amplitude"): 0.02, (mock, "Length"): 0.3,
-        (mock, "Ink R (RYB)"): float(ryb[0]),
-        (mock, "Ink Y (RYB)"): float(ryb[1]),
-        (mock, "Ink B (RYB)"): float(ryb[2]),
+        # Speed 0.3: the 1s stroke (Length 0.3) completes within the 60-frame
+        # (1s) sequence — same pacing as the old 30-point/30fps curve.
+        (pen, "Length"): 0.3, (pen, "Amplitude"): 0.02,
+        (pen, "Speed"): 0.3,
+        (pen, "Ink R (RYB)"): float(ryb[0]),
+        (pen, "Ink Y (RYB)"): float(ryb[1]),
+        (pen, "Ink B (RYB)"): float(ryb[2]),
         (deposit, "Resolution"): res, (deposit, "Resolution Z"): res_z,
         (deposit, "Paper Size"): paper,
         (deposit, "Brush Radius"): 0.02, (deposit, "Brush Pressure"): 1.0,
