@@ -157,4 +157,22 @@ void main(uint3 dtid : SV_DispatchThreadID)
         float pz_hi = (gz < (uint)RESZ - 1) ? (is_blocked(idx + RNN, gx, gy, gz + 1) ? p_center : (is_air(idx + RNN, gx, gy, gz + 1) ? 0.0 : ((wzp >= 0) ? pressure[wzp] : p_center))) : p_center;
         vel_z[w0] -= 0.5f * (pz_hi - pz_lo);
     }
+
+    // CANVAS FLOOR no-flux (the paper's solid boundary under the paint
+    // volume — paint cannot sink into the paper). REQUIRED, not cosmetic:
+    // fluid_divergence skips the bottom face at gz==0 (the floor IS a wall
+    // for the divergence), so the projection can never see or correct the
+    // floor-normal velocity — gravity (damp_dry, −0.2 z on wet painted
+    // cells) keeps vz<0 there frame after frame. The scalar advection then
+    // backtraces with dtz = dt/cell_z ≈ 68 cells per unit velocity (cell_z
+    // is 4x smaller than cell_xy), i.e. a −0.2 vz displaces the backtrace
+    // 14 cells UP: the thin deposited sheet at gz=0 reads the empty layers
+    // above and is erased in ONE step (measured by [wb-xfer]: −66% of the
+    // whole canvas mass at the pen-up megadeposit). Clamping the floor-
+    // normal component to outflow-free here — AFTER the gradient subtract,
+    // i.e. immediately before the scalar advection consumes the field —
+    // makes bottom-layer backtraces reach DOWN into the sheet (clamped to
+    // itself) instead of up into emptiness.
+    if (gz == 0)
+        vel_z[w0] = max(vel_z[w0], 0.0f);
 }

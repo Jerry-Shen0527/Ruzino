@@ -613,6 +613,12 @@ struct WetbrushSimState {
     // don't recompile every frame) ---
     ProgramHandle deposit_program;
     ProgramHandle advect_program;
+    // Conservative flux-form (upwind FV) advection for the canvas SCALARS
+    // (density/color/wetness/oil). Semi-Lagrangian (advect_program) stays
+    // for the velocity family; scalars need the conservative scheme because
+    // value-interpolation of an extensive field created/destroyed canvas
+    // mass at boundaries (the ~35% tail leak — see the shader's header).
+    ProgramHandle advect_scalar_program;
     ProgramHandle jacobi_program;
     ProgramHandle divergence_program;
     ProgramHandle gradient_program;
@@ -628,6 +634,11 @@ struct WetbrushSimState {
     ProgramHandle ptcl_emit_program;
     ProgramHandle ptcl_update_program;
     ProgramHandle ptcl_raster_program;
+    // Render-time deposit-preview raster (Eq.16 kernel; see
+    // particle_rasterize_render.slang). Run by the commit node before pack so
+    // the swarm composite previews the on-canvas deposit instead of the sim
+    // raster's compact 1-cell splat (which dark-saturated the window).
+    ProgramHandle ptcl_raster_render_program;
     ProgramHandle ptcl_flip_pic_program;
     ProgramHandle ptcl_compact_program;
     ProgramHandle ptcl_to_grid_program;
@@ -822,6 +833,7 @@ struct WetbrushSimState {
         };
         destroy_prog(deposit_program);
         destroy_prog(advect_program);
+        destroy_prog(advect_scalar_program);
         destroy_prog(jacobi_program);
         destroy_prog(divergence_program);
         destroy_prog(gradient_program);
@@ -837,6 +849,7 @@ struct WetbrushSimState {
         destroy_prog(ptcl_emit_program);
         destroy_prog(ptcl_update_program);
         destroy_prog(ptcl_raster_program);
+        destroy_prog(ptcl_raster_render_program);
         destroy_prog(ptcl_flip_pic_program);
         destroy_prog(ptcl_compact_program);
         destroy_prog(ptcl_to_grid_program);

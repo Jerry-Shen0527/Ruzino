@@ -141,6 +141,77 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
         nvrhi::BufferHandle pack_cb_buf;
         Ruzino::brush_upload_cb(
             rc, device, &pack_cb, sizeof(pack_cb), "wb_pack_cb", pack_cb_buf);
+
+        // Render-time deposit PREVIEW: rebuild the swarm raster with Eq.16's
+        // deposit kernel (particle_rasterize_render.slang) so the pack
+        // composite below previews what the window cells will look like once
+        // the swarm deposits. The raster the fluid node built keeps its
+        // compact 1-cell kernel for the §4.3 velocity merge; compositing THAT
+        // into the render field concentrated the same mass ~6x relative to
+        // the deposited 2.5-cell trail, saturated the d/0.3 normalization
+        // (and with it the AO), and rendered the active window as a dark
+        // region hard-bounded by the window edge. Clear first: the buffers
+        // hold the sim raster at this point.
+        if (field->ptcl_density) {
+            const int WSX = pack_cb.window_size_x;
+            const int win_n3d = WSX * WSX * field->grid_res_z;
+
+            if (!field->field_clear_program)
+                field->field_clear_program =
+                    Ruzino::brush_compile_shader(rc, "field_clear.slang");
+            if (!field->ptcl_raster_render_program)
+                field->ptcl_raster_render_program = Ruzino::brush_compile_shader(
+                    rc, "particle_rasterize_render.slang");
+
+            nvrhi::BufferHandle* pack_rasters[] = {
+                std::addressof(field->ptcl_density),
+                std::addressof(field->ptcl_rast_r),
+                std::addressof(field->ptcl_rast_y),
+                std::addressof(field->ptcl_rast_b),
+            };
+            for (nvrhi::BufferHandle* buf : pack_rasters) {
+                Ruzino::brush_dispatch(
+                    rc,
+                    field->field_clear_program,
+                    {},
+                    { { "field", *buf } },
+                    nullptr,
+                    win_n3d);
+            }
+
+            Ruzino::ParticleConstants pc = {};
+            pc.max_particles = max_ptcl;
+            pc.grid_res = field->grid_res;
+            pc.grid_res_z = field->grid_res_z;
+            pc.height_extent = field->grid_height;
+            pc.grid_center_x = field->grid_center.x;
+            pc.grid_center_y = field->grid_center.y;
+            pc.grid_center_z = field->grid_center_z;
+            pc.cell_size = cell_sz;
+            pc.paper_size = field->grid_paper;
+            pc.window_origin_x = field->win_origin_x;
+            pc.window_origin_y = field->win_origin_y;
+            pc.window_origin_z = 0;
+            pc.window_size_x = WSX;
+            pc.window_size_z = field->grid_res_z;
+            nvrhi::BufferHandle rast_cb;
+            Ruzino::brush_upload_cb(
+                rc, device, &pc, sizeof(pc), "wb_rast_render_cb", rast_cb);
+            Ruzino::brush_dispatch(
+                rc,
+                field->ptcl_raster_render_program,
+                { { "ptcl_pos", field->ptcl_pos },
+                  { "ptcl_color", field->ptcl_color },
+                  { "ptcl_alive", field->ptcl_alive } },
+                { { "ptcl_density", field->ptcl_density },
+                  { "ptcl_color_r", field->ptcl_rast_r },
+                  { "ptcl_color_y", field->ptcl_rast_y },
+                  { "ptcl_color_b", field->ptcl_rast_b } },
+                rast_cb,
+                max_ptcl);
+            rc.destroy(rast_cb);
+        }
+
         Ruzino::brush_dispatch(
             rc,
             field->pack_program,
@@ -539,6 +610,15 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
                 double tot_d = 0.0;
                 int cells_vis = 0, cells_paint = 0;
                 float dmax = 0.0f;
+                // [wb-ledger] negative-density census. The Eq.15 paper clamp
+                // (rho_new = max(..., 0)) races the neighborhood subtraction
+                // inside one dispatch — a neighbor thread can subtract AFTER
+                // this thread clamped its own cell, so negatives survive into
+                // the global canvas. Each surviving negative permanently
+                // destroys |mass| (the <0.05 drain gate skips it forever) —
+                // this is the leading suspect for the ~40% mass leak.
+                int neg_cells = 0;
+                double neg_sum = 0.0;
                 for (int i = 0; i < grid_n3d; ++i) {
                     float d = density_cpu[i];
                     tot_d += d;
@@ -547,6 +627,10 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
                         ++cells_vis;
                     if (d > 1e-5f)
                         ++cells_paint;
+                    if (d < -1e-4f) {
+                        ++neg_cells;
+                        neg_sum += d;
+                    }
                 }
                 const int WIN_XY =
                     std::min(WetbrushSimState::WIN_ALLOC_XY, field->grid_res);
@@ -583,16 +667,33 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
                     for (int i = 0; i < win_n3d; ++i)
                         rastmax = std::max(rastmax, rast[i]);
                 }
+                // [wb-ledger] sample-side liquid (sum of m_j). The dip
+                // (stroke_start, ABSORB pass) is the only external mass
+                // injection; after it sample+swarm+grid must stay constant.
+                float sample_mass = 0.0f;
+                {
+                    const int ns = WetbrushSimState::NUM_BRISTLES *
+                                   WetbrushSimState::SAMPLES_PER_BRISTLE;
+                    auto sliq = readback(
+                        field->sample_liquid,
+                        ns * 4);  // SampleLiquid = float4 stride, mass @ +0
+                    for (int i = 0; i < ns; ++i)
+                        sample_mass += sliq[i * 4];
+                }
                 spdlog::info(
                     "[wb-mass] f={} grid_tot={:.1f} grid_max={:.3f} "
-                    "cells_vis={} cells_paint={} swarm={:.1f} rastmax={:.4f}",
+                    "cells_vis={} cells_paint={} swarm={:.1f} rastmax={:.4f} "
+                    "sample={:.2f} neg_cells={} neg_sum={:.2f}",
                     dump_frame,
                     tot_d,
                     dmax,
                     cells_vis,
                     cells_paint,
                     ptcl_mass,
-                    rastmax);
+                    rastmax,
+                    sample_mass,
+                    neg_cells,
+                    neg_sum);
             }
         }
     }

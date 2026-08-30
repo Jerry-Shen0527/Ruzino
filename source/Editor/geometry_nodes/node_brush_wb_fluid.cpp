@@ -93,6 +93,45 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
     const int S = WetbrushSimState::SAMPLES_PER_BRISTLE;
     const int max_ptcl = WetbrushSimState::MAX_PARTICLES;
 
+    // [wb-xfer] stage probes (WB_LEDGER_PROBE=1): full-global density sum at
+    // four pipeline stations, to localize which stage destroys mass. Full
+    // 268MB readbacks — tail frames only (plus one mid-stroke reference).
+    static int xfer_frame = 0;
+    const bool ledger_probe =
+        [] { const char* e = std::getenv("WB_LEDGER_PROBE"); return e && e[0] == '1'; }();
+    const int xf = xfer_frame++;
+    auto probe_grid_sum = [&](const char* tag) {
+        if (!ledger_probe) return;
+        if (!(xf >= 108 || xf == 30)) return;
+        std::vector<float> data(global_n3d);
+        auto rb = rc.create(
+            nvrhi::BufferDesc{}
+                .setByteSize(static_cast<size_t>(global_n3d) * sizeof(float))
+                .setCpuAccess(nvrhi::CpuAccessMode::Read)
+                .setDebugName("wb_xfer_rb"));
+        auto cmd = rc.create(CommandListDesc{});
+        cmd->open();
+        cmd->copyBuffer(
+            rb, 0, field->density, 0,
+            static_cast<size_t>(global_n3d) * sizeof(float));
+        cmd->close();
+        device->executeCommandList(cmd);
+        device->waitForIdle();
+        void* mapped = device->mapBuffer(rb, nvrhi::CpuAccessMode::Read);
+        memcpy(data.data(), mapped, static_cast<size_t>(global_n3d) * sizeof(float));
+        device->unmapBuffer(rb);
+        rc.destroy(rb);
+        rc.destroy(cmd);
+        double sum = 0.0;
+        int negs = 0;
+        for (int i = 0; i < global_n3d; ++i) {
+            sum += data[i];
+            if (data[i] < -1e-4f) ++negs;
+        }
+        spdlog::info("[wb-xfer] f={} {} sum={:.1f} neg={}", xf, tag, sum, negs);
+    };
+    probe_grid_sum("A_in");
+
     // Brush pose (grid-local) — needed for the particle CBs.
     glm::vec3 brush_pos_3d = bp.pos;
     brush_pos_3d.x -= field->grid_center.x;
@@ -145,6 +184,9 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
             slot = Ruzino::brush_compile_shader(rc, fn);
     };
     ensure_prog(field->advect_program, "fluid_advect.slang");
+    ensure_prog(
+        field->advect_scalar_program,
+        "fluid_advect_upwind.slang");
     ensure_prog(field->jacobi_program, "fluid_jacobi.slang");
     ensure_prog(field->divergence_program, "fluid_divergence.slang");
     ensure_prog(field->gradient_program, "fluid_gradient.slang");
@@ -855,17 +897,23 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
                 sizeof(fluid_cb),
                 "wb_adv_scalar_cb",
                 advect_scalar_cb);
+            // CONSERVATIVE scalar advection: upwind flux-form (see
+            // fluid_advect_upwind.slang's header — the value-based
+            // semi-Lagrangian read created/destroyed canvas mass at the
+            // floor/window boundaries). Window-local advect + window→global
+            // copy back, same plumbing as before; only the transport scheme
+            // changed. Velocity keeps the paper's semi-Lagrangian above.
             auto advect_scalar = [&](nvrhi::BufferHandle& f,
                                      nvrhi::BufferHandle& tmp) {
                 Ruzino::brush_dispatch(
                     rc,
-                    field->advect_program,
+                    field->advect_scalar_program,
                     { { "field_in", f },
                       { "vel_x", field->vel_x },
                       { "vel_y", field->vel_y },
                       { "vel_z", field->vel_z } },
                     { { "field_out", tmp } },
-                    cb_buf,
+                    advect_scalar_cb,
                     window_total);
                 Ruzino::brush_dispatch(
                     rc,
@@ -1044,6 +1092,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
         Ruzino::brush_upload_cb(
             rc, device, &pc, sizeof(pc), "wb_maint_cb", maint_cb);
 
+        probe_grid_sum("B_solve");
+
         // Particle to grid (deposit distant slow particles, §5.2 Eq.16).
         // Binds sample_pos so the shader can compute d_{B,k} (distance to the
         // nearest bristle sample) instead of the brush-center distance.
@@ -1064,6 +1114,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
             maint_cb,
             max_ptcl);
         std::swap(field->ptcl_alive, field->ptcl_alive_b);
+        probe_grid_sum("C_p2g");
 
         // Grid to particle (emit near brush, Eq.15 density subtraction).
         // No counter reset: append past the survivors (compact left them at
@@ -1168,6 +1219,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_fluid)
             copy_back(field->color_b_tmp, field->color_b);
             rc.destroy(g2p_wb_cb);
         }
+        probe_grid_sum("D_g2p");
 
         // Particle compaction. Zero the OUTPUT alive buffer first: compact
         // only writes packed survivors' flags, so slots above the live count
