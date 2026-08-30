@@ -57,14 +57,61 @@ float cloudUnbiasedRandom(inout uint seed)
 // up to maxDist, by ratio tracking: sample Poisson(densityScale) candidate
 // points and multiply (1 - d) at each. No step size, no early-out — the
 // estimate is unbiased regardless of how the density varies between samples.
+//
+// `ss` = Poisson splitting (supersampling): candidates are drawn from a
+// Poisson(ss * densityScale) process and each contributes (1 - d/ss). The
+// expectation is unchanged — for a Poisson(mu) process with per-point factor
+// f, E[prod f(t_i)] = exp(mu * (E[f] - 1)), so ss * sigmaBar * (-d/ss) still
+// integrates to -integral sigma_t — while the variance falls roughly 1/ss.
+// ss=1 is plain Novak-2014 ratio tracking.
+//
+// `tailStartDist` = hybrid estimator switch: ratio tracking up to
+// tailStartDist, then a delta-tracking (Woodcock 1965) tail. Both halves are
+// unbiased and independent, so the product is — the partial ratio product
+// already has expectation exp(-integral over the prefix), and the Woodcock
+// tail samples exp(-integral over the rest) as a bounded 0/1 draw. Why the
+// switch: a LONG pure ratio-tracking tail has catastrophic relative variance
+// exactly where T~1 (grazing rays crossing the slab through gaps — the
+// visible-sky regime), while a plain distance roulette there kills the tail
+// with probability (1-p)^N and blacks the image out. The Woodcock tail is
+// the right tool for both regimes: in a gap its exponential leaps (majorant
+// sigmaBar, no density tap per leap... one tap per leap endpoint) blow
+// through hundreds of meters in a handful of taps and return T~1; in dense
+// cloud a real collision lands within a few taps and returns 0 — the
+// physically correct "opaque" answer, never a variance bomb. tailStartDist
+// huge = pure ratio tracking.
 float cloudRatioTrack(VolumeDesc vd, float3 p, float3 L, float maxDist,
-                      uint seed)
+                      uint seed, int ss = 1, float tailStartDist = 1e30)
 {
-    float sigmaBar = vd.densityScale;
+    float sigmaBar = vd.densityScale * float(ss);
+    float invSs = 1.0 / float(ss);
+    float majorant = vd.densityScale;
     float T = 1.0;
     float t = -log(max(1.0 - cloudUnbiasedRandom(seed), 1e-9)) / sigmaBar;
     while (t < maxDist) {
-        float d = cloudDensity(vd, p + L * t);
+        if (t > tailStartDist) {
+            // Woodcock tail over [t, maxDist): leap with the true majorant,
+            // reject at each candidate, 0 on a real collision. TAIL_SPLIT
+            // independent tails are averaged — pure splitting, variance/TAIL_SPLIT.
+            const int TAIL_SPLIT = 4;
+            float acc = 0.0;
+            for (int k = 0; k < TAIL_SPLIT; k++) {
+                float rest = maxDist - t;
+                float s = -log(max(1.0 - cloudUnbiasedRandom(seed), 1e-9)) / majorant;
+                float Ttail = 1.0;
+                while (s < rest) {
+                    float d = cloudDensity(vd, p + L * (t + s));
+                    if (cloudUnbiasedRandom(seed) < d) {
+                        Ttail = 0.0;
+                        break;
+                    }
+                    s += -log(max(1.0 - cloudUnbiasedRandom(seed), 1e-9)) / majorant;
+                }
+                acc += Ttail;
+            }
+            return T * (acc / float(TAIL_SPLIT));
+        }
+        float d = cloudDensity(vd, p + L * t) * invSs;
         T *= (1.0 - d);
         t += -log(max(1.0 - cloudUnbiasedRandom(seed), 1e-9)) / sigmaBar;
     }

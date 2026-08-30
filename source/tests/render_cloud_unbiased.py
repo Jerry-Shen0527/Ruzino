@@ -18,6 +18,7 @@ next to the biased pipeline's cloud_sunny.png / cloud_overcast.png for A/B.
 """
 import os
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -45,7 +46,12 @@ def main():
     scene_dir = BIN / "cloud_scenes"
     scene_dir.mkdir(parents=True, exist_ok=True)
 
-    WIDTH, HEIGHT, SPP = 640, 480, 4096
+    WIDTH = HEIGHT = int(os.environ.get("CLOUD_RES", "640"))
+    SPP = int(os.environ.get("CLOUD_SPP", "4096"))
+    # Yield time between frames so the Windows desktop compositor can grab
+    # GPU slices — a full-rate render loop otherwise makes the whole desktop
+    # stutter on a single-GPU machine. Negligible wall-clock cost.
+    FRAME_SLEEP = float(os.environ.get("CLOUD_FRAME_SLEEP", "0.005"))
 
     cases = [
         # Same shaping params as the biased pipeline so the two are directly
@@ -72,6 +78,8 @@ def main():
         rc._build_render_graph(hydra, SPP)
         for _ in range(SPP):
             hydra.render()
+            if FRAME_SLEEP:
+                time.sleep(FRAME_SLEEP)
         tex = hydra.get_output_texture()
         img = np.array(tex, dtype=np.float32).reshape(HEIGHT, WIDTH, 4)
         img = np.flipud(img)

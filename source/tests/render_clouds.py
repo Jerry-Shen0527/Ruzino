@@ -17,6 +17,7 @@ Outputs land in Binaries/Release/test_output/clouds/.
 import os
 import sys
 import math
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -257,7 +258,11 @@ def main():
     scene_dir = BIN / "cloud_scenes"
     scene_dir.mkdir(parents=True, exist_ok=True)
 
-    WIDTH, HEIGHT, SPP = 640, 480, 64
+    WIDTH = HEIGHT = int(os.environ.get("CLOUD_RES", "640"))
+    SPP = int(os.environ.get("CLOUD_SPP", "64"))
+    # Yield time between frames so the desktop compositor keeps GPU slices
+    # (single-GPU machine: a full-rate loop otherwise stutters the desktop).
+    FRAME_SLEEP = float(os.environ.get("CLOUD_FRAME_SLEEP", "0.005"))
 
     cases = [
         # (name, coverage, density, sun_elev_deg)
@@ -278,6 +283,8 @@ def main():
         _build_render_graph(hydra, SPP)
         for _ in range(SPP):
             hydra.render()
+            if FRAME_SLEEP:
+                time.sleep(FRAME_SLEEP)
         tex = hydra.get_output_texture()
         img = np.array(tex, dtype=np.float32).reshape(HEIGHT, WIDTH, 4)
         img = np.flipud(img)

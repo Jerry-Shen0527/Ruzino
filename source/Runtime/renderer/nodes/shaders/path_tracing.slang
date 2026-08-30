@@ -1244,6 +1244,18 @@ void CloudShadowHit(inout ShadowPayload payload, in CloudHitAttributes attr)
 // heuristic multi-scatter/powder term: multiple scattering emerges from the
 // phase-sampled path continuation, and the "dark base" from the unbiased
 // T_sun estimates. Higher variance per sample, zero quadrature bias.
+//
+// Variance reduction = Monte Carlo splitting only (supersampled Poisson
+// candidate processes, averaged NEE estimates): every mean is unchanged, so
+// the estimator stays unbiased — see UnbiasedCloudClosestHit.
+static const int SHADOW_SS = 4;
+
+// Transmittance trackers switch from ratio tracking to a delta-tracking
+// tail past this distance (roughly one slab thickness + margin — the layer
+// is y in [5,45]). Bounds the cost of grazing directions whose AABB exit is
+// kilometers away without the variance catastrophe of a blind per-step
+// roulette — see cloudRatioTrack.
+static const float CLOUD_TRACK_TAIL_DIST = 64.0;
 
 [shader("closesthit")]
 void UnbiasedCloudClosestHit(inout RayPayload payload, in CloudHitAttributes attr)
@@ -1265,9 +1277,18 @@ void UnbiasedCloudClosestHit(inout RayPayload payload, in CloudHitAttributes att
     // Exact majorant: the density is in [0,1], so sigma_t <= densityScale.
     float sigmaBar = vd.densityScale;
 
-    // Walk the segment with null-collision free flights. T accumulates the
-    // ratio-tracking transmittance — the unbiased escape transmittance.
-    float T = 1.0;
+    // Variance reduction without bias (both are pure Monte Carlo splitting):
+    //   - Transmittance estimators supersample the Poisson candidate process
+    //     (see cloudRatioTrack's `ss`), variance ~1/ss.
+    //   - The sun NEE averages SUN_SPLIT independent ratio-tracking estimates.
+    // Means are provably unchanged, so the pipeline stays unbiased.
+    const int T_SS = 4;
+    const int SUN_SPLIT = 4;
+
+    // Walk the segment with null-collision free flights. The event position
+    // is distributed with pdf sigma_t(t) * T(t) — the exact free-flight law —
+    // so the in-scatter estimator carries no transmittance factor. The escape
+    // transmittance is estimated by a SEPARATE supersampled tracker below.
     float t = attr.tEnter;
     while (true) {
         t += -log(max(1.0 - random_float(seed), 1e-9)) / sigmaBar;
@@ -1276,7 +1297,6 @@ void UnbiasedCloudClosestHit(inout RayPayload payload, in CloudHitAttributes att
 
         float3 p = rayOrg + rayDir * t;
         float d = cloudDensity(vd, p);
-        T *= (1.0 - d);  // null-collision / ratio-tracking factor
 
         if (random_float(seed) < d) {
             // REAL scatter event — its position is distributed with pdf
@@ -1286,14 +1306,24 @@ void UnbiasedCloudClosestHit(inout RayPayload payload, in CloudHitAttributes att
             float3 li = float3(0.0);
             if (hasSun) {
                 // NEE: unbiased transmittance toward the sun, marched out to
-                // the AABB exit along the sun direction.
+                // the AABB exit along the sun direction. SUN_SPLIT independent
+                // estimates are averaged (splitting, not bias).
                 float sunDist = cloudExitDist(vd, p, sunDirW);
-                float T_sun = cloudRatioTrack(vd, p, sunDirW, sunDist, seed);
+                float T_sun = 0.0;
+                for (int i = 0; i < SUN_SPLIT; i++)
+                    T_sun += cloudRatioTrack(vd, p, sunDirW, sunDist, seed,
+                                             T_SS, CLOUD_TRACK_TAIL_DIST);
+                T_sun *= 1.0 / float(SUN_SPLIT);
                 li += sunColor * evalHenyeyGreenstein(cosTheta, g) * T_sun;
             }
-            // Environment radiance needs no explicit NEE here: the scattered
-            // continuation picks it up through the miss shader once it escapes
-            // the volume — unbiased, at the cost of multi-bounce variance.
+            // Environment (sky) radiance needs no explicit NEE: the scattered
+            // continuation picks it up through the dome-accumulation site
+            // once it escapes the volume. (An upper-hemisphere dome NEE with
+            // balance-MIS pickup weights was tried and measured neutral on
+            // the residual noise, which is dominated by the deep-bounce
+            // flush variance of the conservative medium — the NEE only
+            // pinned the direct term, so it was removed to keep the
+            // estimator lean.)
 
             payload.isVolume = true;
             payload.volumeColor = li;
@@ -1308,8 +1338,12 @@ void UnbiasedCloudClosestHit(inout RayPayload payload, in CloudHitAttributes att
         // Null collision: the path continues straight; nothing else to do.
     }
 
-    // Escaped without scattering: report the unbiased transmittance so the
-    // terrain/sky behind the cloud shows through correctly attenuated.
+    // Escaped without scattering: report an unbiased (supersampled)
+    // transmittance estimate so the terrain/sky behind the cloud shows
+    // through correctly attenuated.
+    float3 segStart = rayOrg + rayDir * attr.tEnter;
+    float T = cloudRatioTrack(vd, segStart, rayDir, attr.tExit - attr.tEnter,
+                              seed, T_SS, CLOUD_TRACK_TAIL_DIST);
     payload.isVolume = true;
     payload.volumeColor = float3(0.0);
     payload.volumeTransmittance = T;
@@ -1330,13 +1364,15 @@ void UnbiasedCloudShadowHit(inout ShadowPayload payload, in CloudHitAttributes a
 
     uint seed = payload.seed;
 
-    // Ratio tracking along the shadow segment: unbiased Beer-Lambert
-    // transmittance, no fixed step grid, no early-out threshold.
-    float sigmaBar = vd.densityScale;
+    // Supersampled ratio tracking along the shadow segment: unbiased
+    // Beer-Lambert transmittance (Poisson splitting, see cloudRatioTrack),
+    // no fixed step grid, no early-out threshold.
+    float sigmaBar = vd.densityScale * float(SHADOW_SS);
+    float invSs = 1.0 / float(SHADOW_SS);
     float T = payload.transmittance;
     float t = attr.tEnter;
     while (t < attr.tExit) {
-        float d = cloudDensity(vd, rayOrg + rayDir * t);
+        float d = cloudDensity(vd, rayOrg + rayDir * t) * invSs;
         T *= (1.0 - d);
         t += -log(max(1.0 - random_float(seed), 1e-9)) / sigmaBar;
     }
