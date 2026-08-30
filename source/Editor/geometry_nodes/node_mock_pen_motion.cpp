@@ -93,6 +93,15 @@ NODE_DECLARATION_FUNCTION(mock_pen_motion)
         .default_val(0.0f)
         .min(-80.0f)
         .max(80.0f);  // deg, extra tilt ramped over the stroke
+    // Tilt Follow Stroke: ignore "Tilt Azimuth" and derive the tilt direction
+    // from the instantaneous stroke heading instead — the pen HANDLE leans
+    // into the drag (tip azimuth = heading + 180deg), so the bristles trail
+    // behind like a dragged real brush. DESCEND lands already slanted along
+    // the initial heading (slanted pen-down); the heading rotates
+    // continuously along the sine path with its analytic yaw rate folded
+    // into angular_vel. Blob mode has no travel, so it keeps the fixed
+    // azimuth (a stab stays a stab).
+    b.add_input<bool>("Tilt Follow Stroke").default_val(false);
     b.add_input<float>("Ink R (RYB)").default_val(1.0f).min(0.0f).max(1.0f);
     b.add_input<float>("Ink Y (RYB)").default_val(0.0f).min(0.0f).max(1.0f);
     b.add_input<float>("Ink B (RYB)").default_val(0.0f).min(0.0f).max(1.0f);
@@ -119,6 +128,7 @@ NODE_EXECUTION_FUNCTION(mock_pen_motion)
     const float tilt_deg = params.get_input<float>("Tilt");
     const float tilt_az_deg = params.get_input<float>("Tilt Azimuth");
     const float tilt_sweep_deg = params.get_input<float>("Tilt Sweep");
+    const bool tilt_follow = params.get_input<bool>("Tilt Follow Stroke");
     const glm::vec3 ink(
         params.get_input<float>("Ink R (RYB)"),
         params.get_input<float>("Ink Y (RYB)"),
@@ -151,10 +161,8 @@ NODE_EXECUTION_FUNCTION(mock_pen_motion)
         // The sine wobble only makes sense while traveling.
         const float amp = blob ? 0.0f : amplitude;
 
-        // Tilt axis: unit horizontal axis so that rotating about it by theta
-        // tips the pen tip (local -Z) toward (cos az, sin az, 0).
-        const float az = glm::radians(tilt_az_deg);
-        const glm::vec3 tilt_axis(std::sin(az), -std::cos(az), 0.0f);
+        // The tilt axis is phase-dependent (azimuth may follow the stroke
+        // heading), so it is built after the phase switch (tilt_axis_cur).
 
         // Stroke path (analytic, s in [0,1]): centered on (cx, cy), matching
         // mock_stroke's shape y = A*sin(4*pi*s) at Cycles=2 so rendered
@@ -171,9 +179,36 @@ NODE_EXECUTION_FUNCTION(mock_pen_motion)
                 amp * std::cos(2.0f * glm::pi<float>() * cycles * s) * 2.0f *
                     glm::pi<float>() * cycles);
         };
+        auto path_ddxy = [&](float s) {
+            // d²(pos_xy)/ds²
+            const float w = 2.0f * glm::pi<float>() * cycles;
+            return glm::vec2(0.0f, -amp * std::sin(w * s) * w * w);
+        };
+        // Stroke heading, in the tilt-azimuth convention (the direction the
+        // pen TIP leans toward). Handle-forward dragging means the tip leans
+        // OPPOSITE the motion: az = atan2(-dy, -dx).
+        auto heading_at = [&](float s) {
+            glm::vec2 dp = path_dxy(s);
+            return std::atan2(-dp.y, -dp.x);
+        };
+        // Analytic yaw rate d(az)/dt. With q = Rz(az)Ry(-theta)Rz(-az), the
+        // spatial angular velocity of the rotating tilt axis is
+        // omega = theta' * tilt_axis + az' * (ez - q*ez); the second term is
+        // the "coning" correction (rotating the azimuth of an upright pen is
+        // a no-op, hence the -q*ez subtraction).
+        auto yaw_rate_at = [&](float s) {
+            glm::vec2 dp = path_dxy(s);
+            glm::vec2 ddp = path_ddxy(s);
+            const float ds_dt = 1.0f / T_s;
+            const float denom = dp.x * dp.x + dp.y * dp.y;
+            if (denom < 1e-12f) return 0.0f;
+            return (dp.x * ddp.y - dp.y * ddp.x) / denom * ds_dt;
+        };
 
         float tilt_cur = tilt_deg;  // deg, varies only during STROKE (sweep)
-        glm::vec3 omega(0.0f);      // rad/s
+        float az_cur = tilt_az_deg;  // deg, follows the stroke when enabled
+        float yaw_rate = 0.0f;       // rad/s, d(az_cur)/dt while following
+        float sweep_rate = 0.0f;     // rad/s, d(theta)/dt during STROKE sweep
 
         if (!enable) {
             // Disabled: park at hover above the stroke start.
@@ -181,11 +216,13 @@ NODE_EXECUTION_FUNCTION(mock_pen_motion)
             out.pos = glm::vec3(p.x, p.y, z_hi);
         }
         else if (tau < T_d) {
-            // DESCEND: straight down at the stroke start point.
+            // DESCEND: straight down at the stroke start point. With tilt
+            // follow, land already slanted along the initial heading.
             float u = tau / T_d;
             glm::vec2 p = path_xy(0.0f);
             out.pos = glm::vec3(p.x, p.y, z_hi + (z_lo - z_hi) * u);
             out.vel = glm::vec3(0.0f, 0.0f, (z_lo - z_hi) / T_d);
+            if (tilt_follow && !blob) az_cur = glm::degrees(heading_at(0.0f));
         }
         else if (tau < T_d + T_s) {
             // STROKE: pressed and traveling. vel = d(pos)/dt with ds/dt=1/T_s.
@@ -199,8 +236,11 @@ NODE_EXECUTION_FUNCTION(mock_pen_motion)
             storage.stroke_started = true;
             // Tilt ramps linearly over the stroke: theta(s) = tilt + sweep*s.
             tilt_cur = tilt_deg + tilt_sweep_deg * s;
-            float sweep_rate = glm::radians(tilt_sweep_deg) / T_s;  // rad/s
-            omega = tilt_axis * sweep_rate;
+            sweep_rate = glm::radians(tilt_sweep_deg) / T_s;  // rad/s
+            if (tilt_follow && !blob) {
+                az_cur = glm::degrees(heading_at(s));
+                yaw_rate = yaw_rate_at(s);
+            }
         }
         else if (tau < T_d + T_s + T_l) {
             // LIFT: straight up at the stroke end point.
@@ -209,6 +249,7 @@ NODE_EXECUTION_FUNCTION(mock_pen_motion)
             out.pos = glm::vec3(p.x, p.y, z_lo + (z_hi - z_lo) * u);
             out.vel = glm::vec3(0.0f, 0.0f, (z_hi - z_lo) / T_l);
             tilt_cur = tilt_deg + tilt_sweep_deg;
+            if (tilt_follow && !blob) az_cur = glm::degrees(heading_at(1.0f));
         }
         else {
             // DONE: parked at hover above the stroke end.
@@ -216,10 +257,21 @@ NODE_EXECUTION_FUNCTION(mock_pen_motion)
             out.pos = glm::vec3(p.x, p.y, z_hi);
             out.vel = glm::vec3(0.0f);
             tilt_cur = tilt_deg + tilt_sweep_deg;
+            if (tilt_follow && !blob) az_cur = glm::degrees(heading_at(1.0f));
         }
 
-        // Orientation from the current tilt angle (identity when tilt = 0).
-        out.orientation = glm::angleAxis(glm::radians(tilt_cur), tilt_axis);
+        // Orientation from the current tilt angle (identity when tilt = 0):
+        // rotating about tilt_axis_cur tips the pen tip (local -Z) toward
+        // (cos az_cur, sin az_cur, 0).
+        const float az_rad = glm::radians(az_cur);
+        const glm::vec3 tilt_axis_cur(std::sin(az_rad), -std::cos(az_rad), 0.0f);
+        out.orientation = glm::angleAxis(glm::radians(tilt_cur), tilt_axis_cur);
+        glm::vec3 omega = tilt_axis_cur * sweep_rate;
+        if (yaw_rate != 0.0f) {
+            // Coning term of the rotating azimuth (see yaw_rate_at).
+            glm::vec3 pen_axis = glm::mat3_cast(out.orientation)[2];
+            omega += yaw_rate * (glm::vec3(0.0f, 0.0f, 1.0f) - pen_axis);
+        }
         out.angular_vel = omega;
         out.has_dynamics = std::getenv("WB_NO_DYNAMICS") == nullptr;
         out.color = ink;

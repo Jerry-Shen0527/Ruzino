@@ -662,8 +662,14 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
     ensure_prog(field->bristle_raster_program, "bristle_rasterize.slang");
     ensure_prog(field->bristle_merge_program, "bristle_merge.slang");
 
-    // Init frame or pen-up: nothing to deposit. Forward the (allocated) field.
-    if (!payload.is_simulating || !bp.active) {
+    // Init frame: no simulation yet — forward the (allocated) field.
+    // Pen-UP frames do NOT return here anymore: the brush still exists in
+    // the air, so the bristle chains must keep following it (paper §4.1
+    // dynamics are contact-independent). The pen-up relax path lives at the
+    // sub-step loop below; skipping the brush entirely left bristle_data
+    // zero-initialized during hover/descend/lift and the debug render showed
+    // a single dot at the world origin.
+    if (!payload.is_simulating) {
         params.set_output("State", zs);
         params.set_output("Stroke Sample", bp);
         return true;
@@ -855,7 +861,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
                           float sub_rot,
                           const glm::vec3& sub_omega,
                           const glm::vec3& sub_omega_dot,
-                          float dt_sub) {
+                          float dt_sub,
+                          bool deposit) {
         Ruzino::BristleConstants bc = {};
         bc.num_bristles = Nb;
         bc.verts_per_bristle = M;
@@ -981,27 +988,32 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
         clear_bristle_grid(field->bristle_color_y);
         clear_bristle_grid(field->bristle_color_b);
 
-        // Step 5: Rasterize samples -> accumulation grids.
+        // Step 5: Rasterize samples -> accumulation grids. SKIPPED on pen-up
+        // relax steps (deposit=false): a hovering brush must not stamp ψ or
+        // velocity BCs — the Step-4 clear then leaves "no brush in the
+        // fluid", which is exactly what the projection should see.
         // Paper §4.2: dried cells are solid in PRESSURE PROJECTION (fluid
         // divergence/Jacobi/gradient), not here. The rasterize shader splats
         // each sample at its actual position; the fluid solve deflects new
         // paint around/above dried cells. (Earlier "deposit climbs above
         // solid" SRVs removed — that hack broke strokes at higher grid res.)
-        Ruzino::brush_dispatch(
-            rc,
-            field->bristle_raster_program,
-            { { "sample_pos", field->sample_pos },
-              { "sample_color", field->sample_color },
-              { "sample_vel", field->sample_vel } },
-            { { "bristle_density", field->bristle_density },
-              { "bristle_vel_x", field->bristle_vel_x },
-              { "bristle_vel_y", field->bristle_vel_y },
-              { "bristle_vel_z", field->bristle_vel_z },
-              { "bristle_color_r", field->bristle_color_r },
-              { "bristle_color_y", field->bristle_color_y },
-              { "bristle_color_b", field->bristle_color_b } },
-            bristle_cb,
-            Nb * S);
+        if (deposit) {
+            Ruzino::brush_dispatch(
+                rc,
+                field->bristle_raster_program,
+                { { "sample_pos", field->sample_pos },
+                  { "sample_color", field->sample_color },
+                  { "sample_vel", field->sample_vel } },
+                { { "bristle_density", field->bristle_density },
+                  { "bristle_vel_x", field->bristle_vel_x },
+                  { "bristle_vel_y", field->bristle_vel_y },
+                  { "bristle_vel_z", field->bristle_vel_z },
+                  { "bristle_color_r", field->bristle_color_r },
+                  { "bristle_color_y", field->bristle_color_y },
+                  { "bristle_color_b", field->bristle_color_b } },
+                bristle_cb,
+                Nb * S);
+        }
 
         // Step 6 (bristle -> main-grid merge) is intentionally OMITTED.
         //
@@ -1046,31 +1058,51 @@ NODE_EXECUTION_FUNCTION(brush_wb_deposit)
                 n_sub = N_SUB_CAP;
         }
 
-        for (int s = 0; s < n_sub; s++) {
-            float t =
-                (static_cast<float>(s) + 0.5f) / static_cast<float>(n_sub);
-            glm::vec3 sub_pos =
-                field->has_prev_brush_pos
-                    ? glm::mix(field->prev_brush_pos, brush_pos_3d, t)
-                    : brush_pos_3d;
-            // Vel/omega are instantaneous rates (NOT divided by n_sub); only
-            // the integration time dt_sub shrinks per sub-step.
-            glm::vec3 sub_vel = brush_vel_3d;
-            glm::vec3 sub_accel = brush_accel_3d;
-            float sub_rot = brush_rotation;
-            glm::vec3 sub_omega = brush_angular_vel;
-            glm::vec3 sub_omega_dot = brush_angular_accel;
-            float dt_sub = dt / static_cast<float>(n_sub);
+        if (bp.active) {
+            for (int s = 0; s < n_sub; s++) {
+                float t =
+                    (static_cast<float>(s) + 0.5f) / static_cast<float>(n_sub);
+                glm::vec3 sub_pos =
+                    field->has_prev_brush_pos
+                        ? glm::mix(field->prev_brush_pos, brush_pos_3d, t)
+                        : brush_pos_3d;
+                // Vel/omega are instantaneous rates (NOT divided by n_sub);
+                // only the integration time dt_sub shrinks per sub-step.
+                glm::vec3 sub_vel = brush_vel_3d;
+                glm::vec3 sub_accel = brush_accel_3d;
+                float sub_rot = brush_rotation;
+                glm::vec3 sub_omega = brush_angular_vel;
+                glm::vec3 sub_omega_dot = brush_angular_accel;
+                float dt_sub = dt / static_cast<float>(n_sub);
 
-            position_window(sub_pos.x, sub_pos.y);
+                position_window(sub_pos.x, sub_pos.y);
+                deposit_at(
+                    sub_pos,
+                    sub_vel,
+                    sub_accel,
+                    sub_rot,
+                    sub_omega,
+                    sub_omega_dot,
+                    dt_sub,
+                    /*deposit=*/true);
+            }
+        } else {
+            // Pen UP — relax step. Paper §4.1 simulates the bristle dynamics
+            // independent of canvas contact, so the chains keep following the
+            // hovering pen (descend/lift phases included). ONE step at the
+            // frame dt, no substeps (nothing is being deposited), and
+            // deposit=false: no ψ/BC raster (the Step-4 clear zeroes the
+            // bristle fields — the fluid sees no brush while hovering).
+            position_window(brush_pos_3d.x, brush_pos_3d.y);
             deposit_at(
-                sub_pos,
-                sub_vel,
-                sub_accel,
-                sub_rot,
-                sub_omega,
-                sub_omega_dot,
-                dt_sub);
+                brush_pos_3d,
+                brush_vel_3d,
+                brush_accel_3d,
+                brush_rotation,
+                brush_angular_vel,
+                brush_angular_accel,
+                dt,
+                /*deposit=*/false);
         }
 
         // Record this frame's brush center + velocity for the next frame.

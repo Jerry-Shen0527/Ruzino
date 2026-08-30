@@ -262,8 +262,63 @@ void main(uint3 tid : SV_DispatchThreadID)
     // chain straight (low bending), and (c) restore each vertex toward its
     // rest pose relative to the brush root — so the bristle "remembers" its
     // vertical rest shape and follows the brush.
+    //
+    // Contact-aware rest shape (paper Fig 3a): a bristle pressed against the
+    // canvas does NOT keep trying to hang straight down — it lies FLAT along
+    // the paper, radially outward in its root-disk fan direction, so the
+    // inextensible constraint spreads it into the long radial line streaks
+    // Fig 3a shows. Without this, the vertical restore fights the canvas
+    // clamp every iteration and the whole brush collapses into a compressed
+    // coplanar disk (measured: segment lengths at ~40% of rest_len, all
+    // vertices at exactly canvas_z, tip velocities 4x brush speed).
     float3 delta_pos[64];
     [unroll] for (int zi = 0; zi < 64; zi++) delta_pos[zi] = float3(0,0,0);
+
+    // Flat fan direction: the root's azimuth in the brush footprint (stable
+    // per bristle, unlike the current vertex azimuth which is degenerate for
+    // a chain still hanging vertically under its root).
+    float2 fan_xy = float2(root_offset.x, root_offset.y);
+    float fan_len = length(fan_xy);
+    float3 fan_dir = (fan_len > 1e-6)
+        ? float3(fan_xy / fan_len, 0.0)
+        : normalize(float3(down_dir.x, down_dir.y, 0.0) + float3(1e-5, 0.0, 0.0));
+
+    // Flat-lie direction, stab vs drag (paper Fig 3a is the STAB case only):
+    // a slanted pen continues its slant along the ground — a dragged brush
+    // trails its hair as one bundle along the stroke (the pen handle leans
+    // into the drag, so the growth axis' XY points backward). A vertical
+    // pen (pure stab) has no slant: fall back to the radial fan starburst.
+    // Blend smoothly so slight tilt keeps a mostly-radial fan.
+    float2 slant_xy = float2(down_dir.x, down_dir.y);
+    float slant_len = length(slant_xy);
+    float slant_w = smoothstep(0.05, 0.25, slant_len);
+    float3 flat_dir = fan_dir;
+    if (slant_w > 1e-4) {
+        float3 slant_dir = normalize(float3(slant_xy / slant_len, 0.0));
+        float3 blend = slant_w * slant_dir + (1.0 - slant_w) * fan_dir;
+        flat_dir = (length(blend.xy) > 1e-6)
+            ? normalize(float3(blend.xy, 0.0))
+            : slant_dir;
+    }
+
+    // Per-bristle flat-contact layout (broom-bristle rest shape). A tilted
+    // pressed brush has root-edge height differences up to R*sin(tilt), so a
+    // uniform "flat from vertex 1" target is geometrically UNREACHABLE for
+    // the upper-edge chains (the inextensible constraint would need to
+    // bridge a 1cm vertical drop with 3mm segments) — the solver then
+    // oscillates and scatters the chains into a radial blob. Instead each
+    // chain descends along down_dir until it TOUCHES the canvas, then
+    // continues in-plane along flat_dir (drag direction). Arc length is
+    // preserved across the bend, so the inextensible constraint is exactly
+    // satisfiable at every vertex.
+    float arc_plane0 = -1.0f;  // arc length at first canvas contact; -1 = never
+    if (root_pos.z <= cb.canvas_z) {
+        arc_plane0 = 0.0f;     // root already at/below the paper: flat at once
+    } else if (down_dir.z < -1e-6f) {
+        // z(arc) = root_z + down_z*arc touches canvas at:
+        float arc_touch = (cb.canvas_z - root_pos.z) / down_dir.z;
+        if (arc_touch < rest_len * float(M - 1)) arc_plane0 = arc_touch;
+    }
 
     for (int iter = 0; iter < 3; iter++) {
         // Inextensible constraint — enforce segment length = rest_len (both
@@ -305,17 +360,26 @@ void main(uint3 tid : SV_DispatchThreadID)
             delta_pos[vi] += correction;
         }
 
-        // Rest-shape restore — gently pull each vertex toward its vertical
-        // rest position relative to the brush root. This makes the bristle
-        // follow the brush (the chain "wants" to hang straight down from the
-        // root) and counteracts any drift from β_B > 0. Without this, the
-        // bilateral length + bending constraints alone cannot anchor the
-        // chain to the brush — they only preserve chain shape, not position.
+        // Rest-shape restore — pull each vertex toward the broom-bristle rest
+        // pose relative to the brush root: hang along down_dir until the
+        // chain's first canvas contact, then lie flat along flat_dir (the
+        // drag/slant direction; pure vertical stab degenerates to the
+        // Fig 3a radial fan via the flat_dir blend). Vertices of chains that
+        // never touch the paper keep the vertical hang (paper Fig 3a: pushed
+        // bristles "spread out a large area" as radial line streaks).
         float restore_stiffness = 0.5; // [0, 1]
         for (int vi = 1; vi < M; vi++) {
             int idx = base + vi;
             float3 p = load_pos(idx);
-            float3 rest_p = root_pos + down_dir * rest_len * float(vi);
+            float arc = rest_len * float(vi);
+            float3 rest_p;
+            if (arc_plane0 < 0.0f || arc <= arc_plane0) {
+                rest_p = root_pos + down_dir * arc;          // hanging part
+            } else {
+                float3 cp = root_pos + down_dir * arc_plane0; // contact point
+                cp.z = cb.canvas_z;
+                rest_p = cp + flat_dir * (arc - arc_plane0);  // flat part
+            }
             float3 correction = (rest_p - p) * restore_stiffness;
             store_pos(idx, p + correction);
             delta_pos[vi] += correction;

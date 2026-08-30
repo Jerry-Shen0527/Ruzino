@@ -1178,8 +1178,31 @@ debug 视角可见完整蓝色压垫 + 黄色颜料脊被推挤 + 红色粒子�
 调试工具链存档：dump→SVD 平面拟合/golden-spiral 回归反推矩阵 → CB 侦察兵
 → offsetof 打印（slang 无 offsetof，用侦察兵实测）。
 
+### 27. 笔刷形态定案：共面饼→星暴/扫帚束 + 斜笔跟随（2026-08-28）
 
+图层隔离（`WB_SHOW_PAINT=0` / `WB_DRAW_BRISTLES=0` + `WB_OUT_DIR`）+
+`WB_DUMP_BRISTLES` 数值测量钉死：**整把笔 100% 顶点 z=0、链压至 40% 段长、
+Extent=根盘**——竖直 rest-restore(0.5×3) 与地板钳制的拉锯把刷子压成共面
+薄饼。论文转录稿无图（jpeg 被剥离），marker 转换
+`pdf-library/wetbrush_single/` 亲验 **Fig 3a = 戳刺星暴**（放射长条细丝），
+用户"平摊应呈线状"的直觉正确；Fig 3a 是结果图，机制论文未给。
 
+修复（bristle_simulate.slang）：静止形态改为**扫帚形**——链沿笔轴垂到各自
+触纸点（arc_plane0 精确求根），其后沿 flat_dir 贴纸平铺；flat_dir =
+radial 扇形（竖直笔=戳，Fig 3a）与笔轴地面投影（斜笔=拖）按 sin(tilt)
+smoothstep 混合。**第一版"从 vi=1 起整条平躺"被 600 毛方位均匀打散**：
+斜笔根盘上缘比纸面高 R·sin(tilt)，该目标与定距约束几何不可达，求解器拉锯
+散射；弧长守恒的扫帚形约束处处可满足，散射消失。
+
+斜笔跟随（node_mock_pen_motion.cpp `Tilt Follow Stroke`）：方位角=瞬时解析
+航向+180°（杆前倾毛后掠），含方位旋转的 coning 项
+ω = θ'·n + φ'·(ẑ−qẑ)；下压即按初航向斜置落纸。验证：悬停悬挂 −116°=解析值；
+按压 600/600 毛同向后掠（合成向量 |mean|=1.00），脚印 0.092→0.050。
+渲染脚本新旋钮 `WB_PEN_TILT` / `WB_PEN_FOLLOW`。
+
+**伴生修复**：`deposit` 的 pen-up 提前返回曾让笔毛缓冲全程保持零初始化
+（抬笔=世界原点一个像素点）；现在抬笔跑单步松弛（不栅格化 ψ/BC，Step-4
+清空笔毛场=流体眼里空中无刷），链条跟随悬停笔。
 
 ## 关键经验教训
 

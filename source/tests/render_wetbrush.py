@@ -48,11 +48,25 @@ from pxr import Usd, UsdGeom, UsdLux, UsdShade, UsdVol, Sdf, Gf, Vt  # noqa: E40
 import stage_py  # noqa: E402
 from ruzino_graph import RuzinoGraph  # noqa: E402
 
-NUM_FRAMES = 60
+# Sized to fit mock_pen_motion's FULL analytic timeline: descend 0.05 s +
+# stroke Length/Speed = 0.3/0.15 = 2.0 s + lift 0.15 s = 2.2 s -> 132 cooks at
+# 60 fps, rounded up to 135 so the last few frames show the pen parked after
+# lifting. The old 60-frame budget covered only ~47% of the path: the retired
+# mock_point_emitter replayed exactly one polyline point per frame regardless
+# of distance (its timestamp-synthesis fallback spaces points at 1/60 s), so
+# Length 0.3 always finished within 60 frames; the analytic node paces
+# physically at Speed u/s instead.
+NUM_FRAMES = 135
 FPS = 60.0
 DT = 1.0 / FPS
 
-OUTPUT_DIR = BIN / "wetbrush_sequence"
+# Layer isolation for A/B inspection: WB_SHOW_PAINT=0 drops the paint volume
+# prim from the scene entirely (bristle capsules render alone on bare paper);
+# WB_DRAW_BRISTLES=0 (in build_marker_scene) hides the bristles instead.
+# WB_OUT_DIR redirects frame output so the isolated runs do not overwrite
+# the combined wetbrush_sequence/.
+SHOW_PAINT = os.environ.get("WB_SHOW_PAINT", "1") == "1"
+OUTPUT_DIR = BIN / os.environ.get("WB_OUT_DIR", "wetbrush_sequence")
 
 # Sim grid parameters — MUST match what build_sim_graph configures on the
 # deposit node, because the marker scene's gridResX/Y/Z + cellSize primvars
@@ -102,11 +116,16 @@ def build_sim_graph(sim_usd: Path):
     g.addEdge(commit, "State", sim_out, "Simulation In")
 
     g.setSocketDefaults({
-        # Speed 0.15 u/s: the 2s stroke (Length 0.3) outlasts the 1s
-        # sequence, so the brush paints every frame — same pacing the old
-        # 60-point/30fps curve replay produced.
+        # Speed 0.15 u/s is the physical stroke pace; NUM_FRAMES above is sized
+        # so descend+stroke+lift all fit inside the sequence (see top note).
         (pen, "Length"): 0.3, (pen, "Amplitude"): 0.05,
         (pen, "Speed"): 0.15,
+        # Tilt knobs (env): WB_PEN_TILT=deg enables a slanted pen;
+        # WB_PEN_FOLLOW=1 makes the tilt azimuth follow the instantaneous
+        # stroke heading (handle leans into the drag, hair trails behind).
+        (pen, "Tilt"): float(os.environ.get("WB_PEN_TILT", "0")),
+        (pen, "Tilt Follow Stroke"):
+            os.environ.get("WB_PEN_FOLLOW", "0") == "1",
         # Resolution 4096 (paper Section 4.2: "we typically set the grid
         # resolution to 4096x4096x64"). At lower resolutions the brush
         # footprint covered too few cells, so trilinear filtering + the
@@ -181,28 +200,33 @@ def build_marker_scene(scene_path: Path):
         scene_path.unlink()
     stage = Usd.Stage.CreateNew(str(scene_path))
 
+    # canvas_z / grid_height are used by the paper plane below too, so they
+    # are computed whether or not the paint volume itself is shown.
+    grid_height = SIM_PAPER * SIM_RES_Z / SIM_RES
+    canvas_z = 0.0
+
     # UsdVolVolume -> Hydra token "volume" -> Hd_RUZINO_WetbrushVolume.
     # The metadata primvars describe the SAME grid the sim packs. The rprim's
     # Sync() reads them, then create_gpu_resources() Phase 1 overrides the
     # buffer source with the registry buffer (and re-asserts the same grid
     # geometry from the registry metadata blob).
-    vol = UsdVol.Volume.Define(stage, "/BrushPaint")
-    pv = UsdGeom.PrimvarsAPI(vol)
-    pv.CreatePrimvar("gridResX", Sdf.ValueTypeNames.Int).Set(int(SIM_RES))
-    pv.CreatePrimvar("gridResY", Sdf.ValueTypeNames.Int).Set(int(SIM_RES))
-    pv.CreatePrimvar("gridResZ", Sdf.ValueTypeNames.Int).Set(int(SIM_RES_Z))
-    pv.CreatePrimvar("cellSize", Sdf.ValueTypeNames.Float).Set(float(CELL_SZ))
-    # gridMin matches the sim's grid layout EXACTLY — see node_brush_wb_commit.cpp
-    # PaintFieldMeta: gridMinZ = grid_center_z - grid_height/2 = canvas_z (since
-    # grid_center_z = canvas_z + height/2). Canvas Z defaults to 0 in the
-    # deposit node, so paint volume occupies Z in [0, grid_height]. The paper
-    # mesh sits just below at Z = -0.0005. (A previous version used
-    # -grid_height/2 here, which mismatched the registry metadata by 32 cells
-    # in Z and smeared the rendered paint.)
-    grid_height = SIM_PAPER * SIM_RES_Z / SIM_RES
-    canvas_z = 0.0
-    gm = Gf.Vec3f(-SIM_PAPER * 0.5, -SIM_PAPER * 0.5, float(canvas_z))
-    pv.CreatePrimvar("gridMin", Sdf.ValueTypeNames.Float3).Set(gm)
+    vol = None
+    if SHOW_PAINT:
+        vol = UsdVol.Volume.Define(stage, "/BrushPaint")
+        pv = UsdGeom.PrimvarsAPI(vol)
+        pv.CreatePrimvar("gridResX", Sdf.ValueTypeNames.Int).Set(int(SIM_RES))
+        pv.CreatePrimvar("gridResY", Sdf.ValueTypeNames.Int).Set(int(SIM_RES))
+        pv.CreatePrimvar("gridResZ", Sdf.ValueTypeNames.Int).Set(int(SIM_RES_Z))
+        pv.CreatePrimvar("cellSize", Sdf.ValueTypeNames.Float).Set(float(CELL_SZ))
+        # gridMin matches the sim's grid layout EXACTLY — see node_brush_wb_commit.cpp
+        # PaintFieldMeta: gridMinZ = grid_center_z - grid_height/2 = canvas_z (since
+        # grid_center_z = canvas_z + height/2). Canvas Z defaults to 0 in the
+        # deposit node, so paint volume occupies Z in [0, grid_height]. The paper
+        # mesh sits just below at Z = -0.0005. (A previous version used
+        # -grid_height/2 here, which mismatched the registry metadata by 32 cells
+        # in Z and smeared the rendered paint.)
+        gm = Gf.Vec3f(-SIM_PAPER * 0.5, -SIM_PAPER * 0.5, float(canvas_z))
+        pv.CreatePrimvar("gridMin", Sdf.ValueTypeNames.Float3).Set(gm)
 
     # OPT-IN particle visualization: WB_DRAW_PARTICLES=1 adds the live-swarm
     # point sprites (debug view of the particle state). Default OFF — the
@@ -218,16 +242,17 @@ def build_marker_scene(scene_path: Path):
                             "wetbrush_debug_bristles", (0.7, 0.7, 0.75))
 
     # Neutral fallback material (the volume hit path colors from the field).
-    mat = UsdShade.Material.Define(stage, "/PaintMaterial")
-    shader = UsdShade.Shader.Define(stage, "/PaintMaterial/Shader")
-    shader.CreateIdAttr("UsdPreviewSurface")
-    shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(
-        (0.85, 0.25, 0.18))
-    shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.55)
-    mat.CreateSurfaceOutput().ConnectToSource(
-        UsdShade.ConnectableAPI(shader), "surface",
-        UsdShade.AttributeType.Output)
-    UsdShade.MaterialBindingAPI.Apply(vol.GetPrim()).Bind(mat)
+    if vol is not None:
+        mat = UsdShade.Material.Define(stage, "/PaintMaterial")
+        shader = UsdShade.Shader.Define(stage, "/PaintMaterial/Shader")
+        shader.CreateIdAttr("UsdPreviewSurface")
+        shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(
+            (0.85, 0.25, 0.18))
+        shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.55)
+        mat.CreateSurfaceOutput().ConnectToSource(
+            UsdShade.ConnectableAPI(shader), "surface",
+            UsdShade.AttributeType.Output)
+        UsdShade.MaterialBindingAPI.Apply(vol.GetPrim()).Bind(mat)
 
     # Paper = the whole canvas (not just a frame around the stroke bbox). The
     # volume's empty cells are transparent (VolumeIntersection only reports on
