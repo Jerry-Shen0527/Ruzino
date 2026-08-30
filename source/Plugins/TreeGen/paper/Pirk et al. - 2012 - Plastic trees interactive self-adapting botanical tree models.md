@@ -1,332 +1,366 @@
-# 可塑性树木：交互式自适应植物树模型
+#### **ACM Reference Format**
 
-**Sören Pirk¹ Ondrej Stava² Julian Kratt¹ Michel Abdul Massih Said² Boris Neubert¹ Radomír Měch³ Bedrich Benes² Oliver Deussen¹**
+Pirk, S., Stava, O., Kratt, J., Said, M., Neubert, B., Mech, R., Benes, B., Deussen, O. 2012. Plastic Trees: Interactive Self-Adapting Botanical Tree Models. *ACM Trans. Graph. 31* 4, Article 50 (July 2012), 10 pages. DOI = 10.1145/2185520.2185546 http://doi.acm.org/10.1145/2185520.2185546.
 
-¹ University of Konstanz, Germany
-² Purdue University, USA
-³ Adobe Systems Inc., USA
+#### **Copyright Notice**
 
----
+Permission to make digital or hard copies of part or all of this work for personal or classroom use is granted without fee provided that copies are not made or distributed for profi t or direct commercial advantage and that copies show this notice on the fi rst page or initial screen of a display along with the full citation. Copyrights for components of this work owned by others than ACM must be honored. Abstracting with credit is permitted. To copy otherwise, to republish, to post on servers, to redistribute to lists, or to use any component of this work in other works requires prior specifi c permission and/or a fee. Permissions may be requested from Publications Dept., ACM, Inc., 2 Penn Plaza, Suite 701, New York, NY 10121-0701, fax +1 (212) 869-0481, or permissions@acm.org. © 2012 ACM 0730-0301/2012/08-ART50 \$15.00 DOI 10.1145/2185520.2185546 http://doi.acm.org/10.1145/2185520.2185546
 
-## 摘要
+# **Plastic Trees: Interactive Self-Adapting Botanical Tree Models**
 
-我们提出了一种动态树木建模和表示技术，使复杂的树木模型能够与其环境进行交互。我们的方法使用光照分布的变化以及与实体障碍物和其他树木的接近程度，作为生物学动机转换的近似，作用于树木主要分支的骨架表示及其程序化生成的树叶。树木的各部分仅在需要时才进行转换，因此我们的方法比常见算法（如Open L-Systems或空间殖民化方法）快得多。输入是基于骨架的树木几何体，可以从常见的树木生成系统或激光扫描重建模型中计算得出。我们的方法使内容创作者能够直接与树木交互，并交互式地创建视觉上令人信服的生态系统。我们展示了不同的交互类型，并通过将我们的转换与基于生物学的生长模拟技术进行比较来评估我们的方法。
+![](images/pirk/_page_0_Picture_1.jpeg)
 
-**CR分类：** I.3.5 [计算机图形学]：计算几何和对象建模；I.3.6 [计算机图形学]：方法和技术—交互技术；I.6.8 [模拟和建模]：模拟类型—视觉
+Sören Pirk<sup>1</sup> Ondrej Stava<sup>2</sup> Julian Kratt<sup>1</sup> Michel Abdul Massih Said<sup>2</sup> Boris Neubert<sup>1</sup> Radomír Mech ˇ <sup>3</sup> Bedrich Benes<sup>2</sup> Oliver Deussen<sup>1</sup>
 
-**关键词：** 生成式树木建模，交互式程序化建模，树木的视觉模型
+<sup>1</sup>University of Konstanz, Germany, <sup>2</sup>Purdue University, USA, <sup>3</sup>Adobe Systems Inc., USA
 
----
+![](images/pirk/_page_0_Picture_4.jpeg)
 
-## 1 引言
+![](images/pirk/_page_0_Figure_5.jpeg)
 
-植物树木模型在许多应用领域中都有使用，包括建筑、城市建模、游戏和电影。然而，对各种树木形状进行建模是一个具有挑战性的问题，因为树木以复杂的方式对周围环境做出反应。它们的形状由其内源信息（单个植物的遗传）和外源影响（其环境）决定。同一树种在开阔空间中生长时可能具有发育良好的树冠，但在森林中生长时可能具有更长的树干和更小的树冠。植物形状的多样性可以通过生长模型来捕捉，但生长模拟耗时且模型通常需要大量输入参数，这使得此类方法不适合交互式设计。许多不同的程序化树木建模技术已经发表，但大多数生成的模型仍然是静态的。如果必须组合树木，或者如果环境发生变化，则必须手动调整模型或重新运行程序化创建。
+<span id="page-0-0"></span>Figure 1: *A 3D model of a tree is imported (a). Our system automatically computes a dynamic model that is able to react interactively to environmental changes such as trees growing together (b) or when obstacles are moved towards the tree and cast shadow on it (c)-(e).*
 
-我们提出了一种动态树木建模和表示技术，旨在将树木基因型的某些方面纳入我们的模型，以使它们能够对环境做出反应。过去，这只能通过使用生长模型（如Open L-systems [Měch and Prusinkiewicz 1996]或空间殖民化算法[Palubicki et al. 2009]）来实现，这些算法会重新生长整个模型，因此表现出令人望而却步的长计算时间。相比之下，我们使用一种近似生物学动机转换的技术，也允许有效地计算动态行为，用户甚至可以与场景中数十个复杂模型进行交互。
+## **Abstract**
 
-我们的方法适用于各种以多边形表面表示的输入模型，我们只假设这些模型对应于在没有其他树木或障碍物影响的情况下设计的树木。我们已成功将我们的方法应用于Open L-systems生成的模型[Měch and Prusinkiewicz 1996]、Xfrog手动设计的模型[Lintermann and Deussen 1999]以及激光扫描和重建的模型。
+We present a dynamic tree modeling and representation technique that allows complex tree models to interact with their environment. Our method uses changes in the light distribution and proximity to solid obstacles and other trees as approximations of biologically motivated transformations on a skeletal representation of the tree's main branches and its procedurally generated foliage. Parts of the tree are transformed only when required, thus our approach is much faster than common algorithms such as Open L-Systems or space colonization methods. Input is a skeleton-based tree geometry that can be computed from common tree production systems or from reconstructed laser scanning models. Our approach enables content creators to directly interact with trees and to create visually convincing ecosystems interactively. We present different interaction types and evaluate our method by comparing our transformations to biologically based growth simulation techniques.
 
-对给定模型进行分析，构建骨架图，并定义一组转换以在环境变化时修改该图的结构。与Livny等人[2011]类似，我们用分布在树冠中的若干叶簇来表示树叶。这些簇内的小树枝和叶子使用GPU程序化创建，使我们能够非常有效地生成必要的几何体。受真实树木的启发，光照分布的变化是影响我们模型的最重要因素。确定树木不同部分的照明，然后用于修改它们的几何结构和叶簇的程序化内容。
+CR Categories: I.3.5 [Computer Graphics]: Computational Geometry and Object Modeling; I.3.6 [Computer Graphics]: Methodology and Techniques—Interaction Techniques I.6.8 [Simulation and Modeling]: Types of Simulation—Visual
 
-所提出的方法可用于交互式建模由多达几十棵不同树木组成的生态系统。图1显示了一个示例。它已程序化创建，然后导入到我们的系统中。我们的树木模型对不断变化的环境因素的自动适应使建模者不必处理树木参数，并允许他们非常快速地构建复杂场景。由于我们模型的大部分几何体可以使用图形硬件即时创建，因此这些模型也可以用于实时场景，如游戏或模拟器。
+Keywords: Generative Tree Modeling, Interactive Procedural Modeling, Visual Models of Trees
 
----
+Links: [DL](http://doi.acm.org/10.1145/2185520.2185546) [PDF](http://portal.acm.org/ft_gateway.cfm?id=2185546&type=pdf) [W](http://graphics.uni-konstanz.de/publikationen/2012/plastic_trees/website/)EB
 
-## 2 相关工作
+## **1 Introduction**
 
-早期的植物模型基于程序化方法，通过将一小组规则重复应用于初始结构来复制生长，从而产生非常复杂的结果。最初，这些规则仅捕获树木的内部属性，如分支角度和节间长度[Aono and Kunii 1984; Honda 1971; Kawaguchi 1982; Oppenheimer 1986; Smith 1984]。后来，添加了更多的几何方面，如纹理和详细的分支[Bloomenthal 1985]，并引入了各种生物发育模型[de Reffye et al. 1988]。
+Botanical tree models are used in a many application areas, including architecture, urban modeling, gaming, and movies. However, modeling the variety of tree shapes is a challenging problem because trees react to the surrounding environment in complex ways. Their shape is determined by their endogenous information (individual plants' genetics) and by exogenous influences (its environment). The same tree species that has a well-developed crown when grown in an open space might have a longer trunk and only a small tree crown when standing in a forest. The variety of plant shapes can be captured by growth models, but the growth simulation is time intensive and models require typically a large set of input parameters, which makes such approaches unsuitable for interactive design. Many different procedural tree modeling techniques have been published, but most of the resulting models are still static. If trees have to be combined, or if the environment changes, models have to be adapted manually or the procedural creation has to be rerun.
 
-然而，在这些方法中，树木的形状只能通过使用程序化模型的参数间接控制。另一类方法包括用户辅助的植物建模。这些方法中最早的工作之一是Weber和Penn [1995]的工作，他们使用复杂的参数模型创建了令人信服的树木模型。Boudon等人[2003]引入了分解图作为植物结构的多尺度表示，以辅助用户控制。Lintermann和Deussen [1999]开发了Xfrog建模技术，该技术结合了基于规则和程序化建模，还允许创建动画模型。在这里，确定了模型的参数关键帧——特定时间的参数集——然后插值以创建树木的生长动画。然而，模型无法动态地对其环境做出反应。
+We present a dynamic modeling and representation technique for trees that aims at incorporating aspects of the trees genotype into our models to allow them to react to the environment. In the past this was only possible using growth models such as Open Lsystems [\[Mech and Prusinkiewicz 1996\]](#page-9-0) or space colonization al- ˇ gorithms [\[Palubicki et al. 2009\]](#page-9-1) that regrow the entire model and thus exhibit prohibitively long computing times. In contrast, we use a technique that approximates biologically motivated transformations and also allows computing dynamic behavior efficiently, users can interact even with dozens of complex models in a scene. Our method works with various kinds of input models that are represented as polygonal surfaces, only we assume that the models correspond to trees that were designed without the influence of other trees or obstacles. We have successfully applied our approach to models generated by Open L-systems [\[Mech and Prusinkiewicz](#page-9-0) ˇ [1996\]](#page-9-0), to manually designed models from Xfrog [\[Lintermann and](#page-9-2) [Deussen](#page-9-2) 1999], and with laser-scanned and reconstructed models.
 
-基于图像的技术使用图像集来生成树木模型。Reche-Martinez等人[2004]必须仔细注册他们的输入图像并从照片重建树木的3D形状，而Neubert等人[2007]的方法适用于松散排列的图像。在这里，主要分支由用户确定，静态模型使用粒子流系统和一些植物学启发式方法构建。Ijiri等人[2006]和Zakaria和Shukri [2007]将基于草图的方法应用于程序化技术生成的树木，桥接了基于规则和基于图像的技术领域。Chen等人[2008]使用一组生物学动机的分支规则从给定的2D草图推断树木模型的3D结构（另见[Okabe et al. 2006]）。Deussen和Lintermann [2005]对各种技术进行了全面概述。
+The given models are analyzed, a skeletal graph is constructed, and a set of transformations is defined to modify the structure of this graph when the environment changes. Similar to Livny et al. [\[2011\]](#page-9-3), we represent the foliage with a number of leaf clusters that are distributed in the tree crown. Tiny twigs and leaves inside
 
-人们已经认识到环境在树木发育中起着重要作用[Sachs and Novoplansky 1995]。环境本身的修改可以用作控制程序化模型的一种方式。Arvo和Kirk [1988]、Greene [1989]以及后来的Benes和Millan [2002]模拟了在支撑结构上生长并受场景子体积中光密度影响的攀缘植物。已经提出了用于计算树木内光照的各种方法，例如Rudnick等人[2007]提出的快速但简化的技术，其中根据树冠形状估计光照，或基于辐射能量传递的更先进方法[Soler et al. 2003]。
+these clusters are created procedurally using a GPU, allowing us to produce the necessary geometry very efficiently. Inspired by real trees, the change in light distribution is the most important factor for influencing our models. The illumination of different parts of the tree is determined and then used to modify their geometric structure and the procedural content of the leaf clusters.
 
-Hart等人[2003]模拟了当树木的部分受到机械应力时产生额外木材。Lam和King [2005]更进一步，提出了一种基于树木内部属性交互的树木生长建模方法，同时考虑水分布和化学流动。Benes等人[2009]引入了一种面向GPU的方法，用于在环境影响下对树木进行建模；然而，他们的生长模型的表达能力仅限于少数落叶树种。
+The proposed method can be used to interactively model ecosystems consisting of up to some dozens of different trees. An example is shown in Figure [1.](#page-0-0) It has been procedurally created and then imported into our system. The automatic adaptation of our tree models to changing environmental factors releases the modeler from dealing with tree parameters and allows them to construct complex scenes very quickly. Because most of the geometry of our models can be created on the fly using graphics hardware, the models can also be used in real-time scenarios such as games or simulators.
 
-可能最发达的植物模拟形式系统是Lindenmayer系统（L-systems）。最初作为细胞发育的数学模型开发[Lindenmayer 1968]，L-systems在[Prusinkiewicz 1986]中通过模拟分支结构的能力得到扩展，后来以各种方式扩展以实现植物发育的动画[Prusinkiewicz et al. 1993]、交互式建模[Power et al. 1999; Prusinkiewicz et al. 2001]等。最重要的扩展之一，Open L-systems [Měch and Prusinkiewicz 1996]，考虑了植物与其环境之间的环境反馈，使模拟光照竞争的影响成为可能。这种资源竞争通过空间殖民化算法[Runions et al. 2007]得到进一步发展，这些算法主要通过在环境中分配资源来控制生长。最近，通过资源竞争起重要作用的技术创建了逼真的基于规则的树木模型[Palubicki et al. 2009; Hua and Kang 2011]。尽管如此，这些技术中的大多数都依赖于生长模型，这使得它们不适合交互式设计。
+## **2 Related Work**
 
----
+Early models of plants were based on procedural approaches that replicated growth by repetitive application of a small set of rules to an initial structure to yield very complex results. Originally, the rules captured only the internal properties of the tree, such as branching angles and internode lengths [\[Aono and Kunii 1984;](#page-7-0) [Honda 1971;](#page-9-4) [Kawaguchi 1982;](#page-9-5) [Oppenheimer 1986;](#page-9-6) [Smith 1984\]](#page-9-7). Later, more geometrical aspects such as textures and detailed branches were added [\[Bloomenthal 1985\]](#page-7-1), and various biological developmental models were introduced [\[de Reffye et al. 1988\]](#page-9-8). However, the shape of the trees in these approaches can be controlled only indirectly by using the parameters of the procedural models. Another class of methods includes user-assisted plant modeling. One of the first of these approaches was the work of Weber and Penn [\[1995\]](#page-9-9), who created convincing tree models using a complex parametric model. [\[Boudon et al. 2003\]](#page-9-10) introduce decomposition graphs as multiscale representations of plant structures to aid user control. Lintermann and Deussen [\[1999\]](#page-9-2) developed the Xfrog modeling technique, which combines rule-based and procedural modeling and also allows for creating animated models. Here, parametric keyframes of a model are determined–sets of parameters for a specific time–and later interpolated to create growth animations of trees. However, it is not possible for models to dynamically react to their environment.
 
-## 3 系统概述
+Image-based techniques use sets of images to produce tree models. While Reche-Martinez et al. [\[2004\]](#page-9-11) have to register their input images carefully and reconstruct the 3D shape of the tree from the photographs, the method of Neubert et al. [\[2007\]](#page-9-12) works with loosely arranged images. Here, the main branches are determined by the user and the static model is constructed using a particle flow system and some botanic heuristics. Ijiri et al. [\[2006\]](#page-9-13) and Zakaria and Shukri [\[2007\]](#page-9-14) applied sketch-based methods to trees generated by procedural techniques, bridging the area of rule-based and image-based techniques. Chen et al. [\[2008\]](#page-9-15) used a set of biologically motivated branching rules to infer the 3D structure of the tree model from a given 2D sketch (also [\[Okabe et al. 2006\]](#page-9-16)). Deussen and Lintermann [\[2005\]](#page-9-17) give a general overview on the various techniques.
 
-环境对树木最年轻部分的影响通常不可见，因为这些部分还没有足够的时间发育。这促使我们主要在树干和主要树枝（树木骨架）上模拟环境的影响。这种方法类似于Livny等人[2011]的想法，他们将输入树木模型分为直接处理的主分支骨架和一组即时程序化填充较小分支和树枝的叶瓣。在我们的方法中，我们输入一个创建为在开阔空间中生长的树木模型，并将其转换为基于图的表示和一组叶簇。与他们的工作相比，我们有一个完整的树木模型，可以直接使用小树枝作为程序化填充的原型，因此我们的方法独立于具有预定义内容的树木模型库。这种近似表示是与环境快速交互和有效渲染树木模型同时保持其视觉保真度的关键。
+It has been recognized that the environment plays an important role in the development of a tree [\[Sachs and Novoplansky 1995\]](#page-9-18). Modification of the environment itself can be used as a way of controlling the procedural model. Arvo and Kirk [\[1988\]](#page-7-2), Greene [\[1989\]](#page-9-19), and later Benes and Millan [\[2002\]](#page-7-3) simulated climbing plants that grow on support structures and are influenced by the light density in subvolumes of the scene. Various methods for computing light within trees have been proposed, such as the fast, but simplified, technique proposed by Rudnick et al. [\[2007\]](#page-9-20), where the light was estimated from the crown shape, or a more advanced method based on radiant energy transfer [\[Soler et al. 2003\]](#page-9-21).
 
-树木形状是资源竞争的结果，其中最重要的是光照[Sachs and Novoplansky 1995]。如果树木在靠近障碍物的地方生长，植物形状的变化（如弯曲或脱落）可能会发生。我们的动态模型模拟了这些影响。
+Hart et al. [\[2003\]](#page-9-22) simulated the production of additional wood when a tree receives mechanical stress to its parts. [\[Lam and King 2005\]](#page-9-23) go even further and propose a method that models tree growth based on the interaction of the tree's internal attributes also considering water distribution and chemical flow. A GPU-oriented approach for modeling trees under the influence of environment was introduced in [\[Benes et al. 2009\]](#page-7-4); however, the expressive power of their growth model was limited only to a few decideous tree species.
 
-我们模型的两个部分对环境变化的反应不同。主分支骨架根据光照分布弯曲和修剪。当局部光照分布变化时，叶簇的程序化内容会被修改。小树枝和细枝向光照方向弯曲，如果叶瓣与实体障碍物交互，则可以修剪。当树木弯曲时，叶瓣的形状可以变形，这也会影响程序化内容。
+Probably the most developed formal systems for plant simulation are Lindenmayer systems (L-systems). Originally developed as a mathematical model for cell development [\[Lindenmayer 1968\]](#page-9-24), Lsystems were extended by the ability to simulate branching structures in [\[Prusinkiewicz 1986\]](#page-9-25), and were later extended in various ways to enable animation of plant development [\[Prusinkiewicz](#page-9-26) [et al. 1993\]](#page-9-26), interactive modeling [\[Power et al. 1999;](#page-9-27) [Prusinkiewicz](#page-9-28) [et al. 2001\]](#page-9-28), etc. One of the most important extensions, Open Lsystems [\[Mech and Prusinkiewicz 1996\]](#page-9-0), account for environmen- ˇ tal feedback between the plant and its environment making it possible to simulate the effects of competition for light. This competition for resources was further developed using space colonization algorithms [\[Runions et al. 2007\]](#page-9-29) that controlled the growth mostly by distributing resources in the environment. Recently, realistic rulebased models of trees have been created by techniques in which the competition for resources plays an important role [\[Palubicki et al.](#page-9-1) [2009;](#page-9-1) [Hua and Kang 2011\]](#page-9-30). Still, most of these techniques rely on growth models, which makes them impractical for interactive design.
 
-本文的其余部分组织如下。在下一节中，我们描述了我们的方法所需的必要先决条件以及输入模型的处理。第5节概述了我们基于转换的建模和交互以及它们的高效实现。第6节对该方法进行了评估，我们展示了许多结果，并将它们与允许与环境交互的基于规则的系统进行比较。
+## **3 System Overview**
 
----
+The effect of the environment on the youngest parts of the tree is usually not visible, as those parts have not had enough time to develop. This motivated us to simulate the effect of the environment mostly on the trunk and the main tree branches (the tree skeleton). This approach is similar to the idea of Livny et al. [\[2011\]](#page-9-3), who separated the input tree model into a main branching skeleton that is handled directly and a set of lobes that are filled with smaller branches and twigs procedurally on the fly. In our approach, we input a tree model that was created as if it was grown in an open space and convert it into a graph-based representation and a set of leaf clusters. In contrast to their work, we have a complete tree model and can directly use small twigs as prototypes for the procedural filling, and thus our approach is independent of a tree model library with predefined content. This approximate representation is the key for fast interaction with the environment and an efficient rendering of tree models while maintaining their visual fidelity.
 
-## 4 树木分析
+A tree shape is a result of the competition for resources, the most important of which is light [\[Sachs and Novoplansky 1995\]](#page-9-18). If a tree has been grown close to an obstacle, changes in the plant shape, such as bending or shedding, can occur. These effects are simulated by our dynamic models.
 
-单个分支的响应和给定输入树木对不断变化的环境条件的敏感性是从树木的几何和拓扑信息计算得出的。因此，我们假设它应该在没有外部障碍物的隔离空间中生长。然而，即使在没有外部障碍物的情况下，输入树木的形状也会受到自阴影的影响。为了考虑这种影响，我们首先估计影响树木结构的环境条件，然后估计其内在形态特性。我们使用这些属性来构建一个程序化模型，该模型定义每个分支的行为。该模型可由一组环境参数控制，因此能够动态地对环境变化做出反应。
+The two parts of our models react differently to environmental changes. The main branching skeleton is bent and pruned according to the light distribution. When the local light distribution changes, the procedural content of the leaf clusters is modified. Small branches and twigs bend towards the light and can be pruned if the lobes interact with a solid obstacle. The shape of the lobes can be deformed when the tree is bent, which also affects the procedural content.
 
-为了估计树枝的形态参数，如它们的期望方向或它们对光量不足的响应，我们首先需要估计影响输入树木结构的环境条件。如上所述，我们专注于光照分布，因为这是树木生长的最重要因素。对于我们的输入模型，我们假设光照分布仅受树木本身的影响：叶子和树枝投下影响下层树枝生长的阴影。
+The remainder of the paper is organized as follows. In the next section we describe the necessary prerequisites for our method
 
-树木内的阴影在树木生长过程中是变化的，因为新的树枝和叶子不断被创造，旧的树枝和叶子死亡。为了估计输入树木的生长参数，我们需要计算其生长不同阶段的时间光照条件。这种光照条件影响树枝的局部生长速率，因此可以从中揭示。
+and the processing of the input models. Section [5](#page-4-0) outlines our transformation-based modeling and interaction as well as their efficient implementation. An evaluation of the method is given in Section [6,](#page-5-0) where we show a number of results and compare them to rule-based systems that allow for interaction with an environment.
 
-### 4.1 计算分支年龄
+#### **4 Tree Analysis**
 
-如果我们知道整棵树的生长速率，就可以确定分支年龄的估计值。单个分支的生长速率由给定分支在一个季节产生多少节间（没有芽的段）决定。这种生长速率可以在整棵树中变化，因为它受到给定分支在生长过程中获得的资源量的影响。因此，为了计算分支年龄的近似值，我们需要估计树木各分支的节间长度和生长速率（参见图2a）。
+The response of individual branches and the sensitivity of the given input tree to changing environmental conditions is calculated from the tree's geometrical and topological information. Therefore, we assume that it should have been grown in an isolated space with no external obstacles. However, the shape of the input tree is affected by self-shadowing even when external obstacles are not present. To account for this effect, we first estimate the environmental conditions that influenced the tree structure, and then we estimate its intrinsic morphological properties. We use these properties to construct a procedural model that defines the behavior of each branch. This model is controllable by a set of environmental parameters and thus is able to react dynamically to environmental changes.
 
-节间的长度 $l_i$ 是从最近分支节点之间的距离分布中估计的。我们使用平均节间长度进行估计，这是使用mean-shift聚类找到的分布中最显著的峰值点。为了估计给定分支段 $s$ 的生长速率 $\nu_s$，我们首先计算相对生长速率 $\hat{\nu}_s$：
+To estimate morphological parameters of the tree branches, such as their desired orientation or their response to insufficient amounts of light, we first need to estimate the environmental conditions that affected the structure of the input tree. As mentioned above, we concentrate on the light distribution since this is the most important factor for the tree growth. For our input models we assume that the light distribution is affected only by the tree itself: leaves and branches cast shadows that influence the growth of underlying branches.
 
-$$\hat{\nu}_s = \frac{d_{s,l}}{d_r - d_{s,r}}, \tag{1}$$
+The shadows within a tree are changing during the tree growth because new branches and leaves are constantly created and old ones die off. In order to estimate the growth parameters of the input tree, we need to compute the temporal light conditions at different stages of its growth. Such light conditions affect the local growth rates of branches and thus can be revealed from them.
 
-其中 $d_{s,l}$ 是从给定段到其最远叶节点的距离，$d_{s,r}$ 是从段到树根的距离，$d_r$ 是从树根到其最远叶节点的距离。计算的值指定给定分支与生长最快的分支相比必须生长多慢，以确保所有分支同时到达其叶节点。当我们靠近叶节点时，相对生长速率的估计会失去准确性；因此，我们仅对到叶节点的距离大于阈值距离 $d_t = 0.2d_r$ 的段使用上述估计。对于其余的分支段，我们从其父分支复制相对生长速率。
+#### <span id="page-2-2"></span>**4.1 Computing the Branch Age**
 
-当为所有分支估计相对生长速率时，我们计算绝对生长速率 $\nu_s = \hat{\nu}_s/\hat{\nu}_{min}$，其中 $\hat{\nu}_{min}$ 是所有分支段的最小相对生长速率。每个分支 $t_s$ 的年龄然后计算为：
+An estimate of the branch age can be determined if we know the growth rates across the entire tree. The growth rate of an individual branch is determined by how many internodes (segments without buds) a given branch produces in one season. This growth rate can vary across the tree, as it is influenced by the amount of resources that a given branch receives during its growth. Therefore, to compute an approximate of the branch age we need to estimate both the internode length and the growth rate of individual branches of the tree (cf. Figure [2a](#page-2-0)).
 
-$$t_s = \frac{l_s}{l_i}\nu_s + t_{s_p}, \tag{2}$$
+The length of an internode l<sup>i</sup> is estimated from the distribution of distances between nearest branching nodes. We use the mean internode length for our estimation which is then the most significant peak point in the distribution that is found using mean-shift clustering. To estimate the growth rate ν<sup>s</sup> of a given branch segment s, we first compute a relative growth rate νˆ<sup>s</sup> as:
 
-其中 $l_s$ 是分支段的长度，$t_{s_p}$ 是其父分支的年龄。然后将每个分支段的最终估计年龄钳制到最近的较低整数，该整数表示创建给定分支段的季节。
+$$\hat{\nu}_s = \frac{d_{s,l}}{d_r - d_{s,r}}, \quad (1)$$
 
-![alt text](images/image-3.png)
-**图2：** 生长过程中光照暴露的估计。a) 分支年龄的确定；b) 带有叶簇的输入模型；c) 计算的具有移动和部分移除叶簇的更年轻版本。
+where ds,l is the distance from a given segment to its furthest leaf node, ds,r is the distance from the segment to the root of the tree, and d<sup>r</sup> is the distance from the root of the tree to its furthest leaf node. The computed value specifies how much slower a given branch has to grow compared to the fastest growing branch in order to ensure that all branches reach their leaf nodes at the same time. The estimation of the relative growth rate loses its accuracy as we move closer to the leaf nodes; therefore, we use the above estimation only for segments whose distance to the leaf node is larger than a threshold distance d<sup>t</sup> = 0.2dr. For the remaining branch segments, we copy the relative growth rate from their parent branches.
 
-### 4.2 时间光照条件
+When the relative growth rate is estimated for all branches, we compute the absolute growth rate ν<sup>s</sup> = ˆνs/νˆmin, where νˆmin is the minimum relative growth rate from all branch segments. The age of each branch t<sup>s</sup> is then computed as
 
-一旦知道了分支年龄，我们就可以估计树木生长不同阶段的光照条件。单独模拟每片叶子的影响是不可行的；因此，我们通过虚拟叶簇来近似叶子分布。初始簇是从输入树木的叶瓣创建的。簇使用简化的光照模型在树木的其余部分投射阴影，该模型考虑了Palubicki等人[2009]提出的一天内的典型入射光。尽管存在用于植物的高级照明模型[Soler et al. 2003]，但我们使用适合快速计算的简化模型。为了计算在给定点 **p** 接收到的光照，我们从代表天空的半球积分入射光：
+$$t_s = \frac{l_s}{l_i} \nu_s + t_{sp}, \quad (2)$$
 
-$$i(\mathbf{p}) = c \int_0^{2\pi} \int_0^{\pi} I(\theta, \phi)(1 - O(\mathbf{p}, \theta, \phi)) \sin \theta \, d\theta d\phi, \tag{3}$$
+where l<sup>s</sup> is the length of the branch segment and t<sup>s</sup><sup>p</sup> is the age of its parent branch. The final estimated age of each branch segment is then clamped to the nearest lower integer, which represents the season in which a given branch segment was created.
 
-其中 $I$ 是来自特定方向的光量（辐照度），$O$ 是从给定点 **p** 看半球的可见性，由给定方向上所有障碍物的综合半透明度 $\gamma$ 决定：$O(\mathbf{p}, \theta, \phi) = 1 - \prod \gamma(\mathbf{p}, \theta, \phi)$。最后，$c$ 是一个归一化常数，将入射光量带入范围 $[0, 1]$。相同的方法也用于计算平均光照方向，其中上述方程中的被积函数乘以由 $(\theta, \phi)$ 定义的单位向量。
+<span id="page-2-0"></span>![](images/pirk/_page_2_Diagram_8.jpeg)
 
-在这项工作中，我们通过使用 $I(\theta, \phi) = \cos^2(\Delta\sigma(\theta, \phi))$ 来近似来自天空的光照强度，其中 $\Delta\sigma$ 是给定方向 $(\theta, \phi)$ 与天空上最亮点方向之间的角距离。
+Figure 2: *Estimation of the light exposition during growth. a) Determination of branch age; b) input model with leaf clusters; c) computed younger version with moved and partially removed leaf cluster.*
 
-阴影使用附加到每个阴影投射者的阴影体积进行计算并集成到场景中。阴影体积表示阴影投射者的影响仍然显著的体积，它们用于快速确定应在方程(3)中包括哪些障碍物。由于我们仅对障碍物使用简单的几何形状，因此我们能够解析地评估光照模型；对于更复杂的情况，可以采用数值解决方案，例如[Měch and Prusinkiewicz 1996; Soler et al. 2003]中使用的解决方案。
+#### **4.2 Temporal Light Conditions**
 
-为了确定投射阴影的强度，叶簇的半透明度 $\gamma_c$ 从其半径 $r_c$ 近似为：
+Once the branch age is known, we can estimate the light conditions for the different stages of the tree growth. It would be infeasible to simulate the effect of each leaf individually; therefore, we approximate the leaf distribution by virtual leaf clusters. The initial clusters are created from the lobes of the input tree. The clusters cast shadows onto the rest of the tree using a simplified light model that accounts for the typical incident light within a day as proposed by Palubicki et al. [\[2009\]](#page-9-1). Although advanced illumination models for plants exist [\[Soler et al. 2003\]](#page-9-21), we use a simplified model suitable for fast calculation. To compute the light received at a given point p, we integrate the incoming light from a hemisphere that represents the sky:
 
-$$\gamma_c = \gamma_{c_0}^{r_c}, \tag{4}$$
+<span id="page-2-1"></span>
+$$i(\mathbf{p}) = c \int_0^{2\pi} \int_0^\pi I(\theta, \phi) (1 - O(\mathbf{p}, \theta, \phi)) \sin \theta \, d\theta d\phi, \quad (3)$$
 
-其中 $\gamma_{c_0}$ 是叶簇的基本单位半透明度。我们使用粗略的物种无关近似，$\gamma_{c_0} = 0.5$，同时知道不同物种的半透明度不同。
+where I is the amount of light coming from a specific direction (irradiance) and O is the visibility of the hemisphere from the given point p that is determined by the combined translucency γ of all obstacles that are in the given direction Q O(p, θ, φ) = 1 − γ(p, θ, φ). Finally, c is a normalization constant that brings the amount of incoming light into range [0, 1]. The same approach is also used to compute the average light direction, where the integrand in the above equation is multiplied by a unit vector defined by (θ, φ).
 
-为了计算树木生命早期阶段的光照条件，我们将叶簇向根传播，如图2b所示。在每次迭代中，我们将活动阈值年龄减少1，并删除所有早于阈值的节点。然后将包含已删除节点的叶簇传播到现在是叶子的节点。每个簇的中心 $c_n$ 由分配给它的节点的质心确定；新簇 $r_n$ 的半径是从子节点中移除的叶簇集的属性估计的：
+In this work, we approximate the intensity of the light coming from the sky by using I(θ, φ) = cos<sup>2</sup> (∆σ(θ, φ)), where ∆σ is the angular distance between a given direction (θ, φ) and the direction of the brightest point on the sky.
 
-$$r_n = \sqrt[3]{\sum_{i \in C_p} r_i^3 \prod_{i \in C_p} \frac{d_n}{d_i}}, \tag{5}$$
+The shadows are computed and integrated into the scene using shadow volumes that are attached to each shadow caster. Shadow volumes represent a volume where the influence of the shadow caster is still significant, and they are used to quickly determine which obstacles should be included in Eq. [\(3\)](#page-2-1). Since we use only simple geometric shapes for the obstacles, we are able to evaluate the light model analytically; for more complex cases a numerical solution might be employed such as one used in [\[Mech and](#page-9-0) ˇ [Prusinkiewicz 1996;](#page-9-0) [Soler et al. 2003\]](#page-9-21).
 
-其中 $r_i$ 是单个子簇的半径，$d_i$ 是从根到子叶簇 $i$ 的质心的距离，$d_n$ 是从根到新叶簇的距离。新叶簇具有所有子叶簇的组合体积，按它们到树根的距离的相对差异缩小。
+To determine the intensity of cast shadows, the translucency of the leaf clusters γ<sup>c</sup> is approximated from their radius r<sup>c</sup> as:
 
-### 4.3 逆向向性
+$$\gamma_c = \gamma_{c_0}^{r_c}, \quad (4)$$
 
-一旦知道了树木发育不同阶段的环境条件，我们就可以计算环境对输入树木形状的影响。我们能够计算的第一个影响是向性对树木生长的影响。向性是分支朝向或远离某个实体生长的趋势。一般来说，树木的结构可以受到不同向性的影响，其中每个向性 $\tau$ 由向量 $\vec{t}_0^{\tau} = w_\tau \vec{t}_\tau$ 定义，其中 $\vec{t}_\tau$ 是向性的单位方向，$w_\tau$ 是其强度。
+where γ<sup>c</sup><sup>0</sup> is the base unit translucency of a leaf cluster. We use a rough species-independent approximation with γ<sup>c</sup><sup>0</sup> = 0.5, while knowing that different species differ in their translucency.
 
-在这项工作中，我们关注趋光性和向重力性。趋光性是给定分支朝向光照方向生长的趋势。我们使用上述描述的时间光照模型估计分支生长时每个分支的趋光性影响。向重力性控制分支远离或朝向重力的弯曲。虽然我们直接从输入树木计算向性的强度，但我们稍后将其作为参数公开，用户可以修改以控制树木的转换行为。
+To compute the light conditions at earlier stages of the tree life, we propagate the leaf clusters towards the root as illustrated in Figure [2b](#page-2-0)). At each iteration we decrease the active threshold age by one, and we remove all nodes that are older than the threshold. The leaf clusters that contained the removed nodes are then propagated to the nodes that are now leaves. The center of each cluster c<sup>n</sup> is determined by the centroid of the nodes assigned to it; the radius of a new cluster r<sup>n</sup> is estimated from the properties of the set of removed leaf clusters in child nodes C<sup>p</sup> as:
 
-作用于分支段（沿归一化方向 $\vec{d}_o$ 生长）的向性将分支弯曲到新方向 $\vec{h}$，计算为：
+$$r_n = \sqrt[3]{\sum_{i \in C_p} r_i^3 \prod_{i \in C_p} \frac{d_n}{d_i}}, \quad (5)$$
 
-$$\vec{h} = w_s \vec{d}_o + (1 - w_s) \frac{\sum w_\tau \vec{t}_\tau}{\sum w_\tau} = w_s \vec{d}_o + (1 - w_s)\vec{t}, \tag{6}$$
+where r<sup>i</sup> is the radius of a single child cluster, d<sup>i</sup> is the distance from the root to the centroid of child leaf cluster i and d<sup>n</sup> from the root to the new leaf cluster. The new leaf cluster has the combined volume of all child leaf clusters scaled down by the relative difference of their distances to the root of the tree.
 
-其中 $\vec{t}$ 是所有向性的线性组合，$w_\tau$ 是权重，$\sum w_\tau < 1$，$w_s$ 是长度为 $l_s$ 的分支段的原始方向的权重。这个权重可以通过以下方式确定：
+#### **4.3 Inverse Tropism**
 
-$$w_s = \left(1 - \sum w_\tau\right)^{\frac{l_s}{l_i}}, \tag{7}$$
+Once the environmental conditions at different stages of the tree's development are known, we can calculate the effects of the environment on the shape of the input tree. The first effect we are able to compute is the influence of tropisms on the tree growth. A tropism is the tendency of the branches to grow towards or away from some entity. In general the structure of the tree can be affected by different tropisms where each tropism τ is defined by a vector ~t 0 <sup>τ</sup> = w<sup>τ</sup> ~t<sup>τ</sup> , where ~t<sup>τ</sup> is the unit direction of the tropism and w<sup>τ</sup> is its strength.
 
-其中指数表示向性在分支段长度上的累积效应，由节间长度 $l_i$ 归一化。
+In this work, we focus on phototropism and gravitropism. Phototropism is the tendency of a given branch to grow towards the light direction. We estimate the effects of phototropism for each branch at the time the branch was growing using our temporal light model described above. Gravitropism controls bending of the branches either away from or towards gravity. While we compute the strength of the tropisms directly from the input tree, we later expose it as a parameter that the user can modify to control the transformation behavior of the trees.
 
-![alt text](images/image-4.png)
-**图3：** 计算逆向向性。有关向量的描述，请参阅文本。
+A tropism that acts on a branch segment (growing in normalized direction d~o) bends the branch into a new direction ~h, which is computed as:
 
-为了计算当树木环境发生变化时向性对输入树木的影响，我们首先需要找到树木创建时向性对树木结构的影响。我们将此问题称为计算逆向向性，因为我们的输入是已经弯曲的分支，我们试图找出如果消除向性的影响，分支会是什么样子。
+<span id="page-3-0"></span>
+$$\vec{h} = w_s \vec{d}_o + (1 - w_s) \frac{\sum w_\tau \vec{t}_\tau}{\sum w_\tau} = w_s \vec{d}_o + (1 - w_s) \vec{t}, \quad (6)$$
 
-计算逆向向性意味着用已知的 $\vec{h}$ 求解方程(6)中的 $\vec{d}_o$，$\vec{h}$ 由输入树木中分支的方向定义。方程(6)中 $\vec{h}$ 的实际长度可以变化，因为它是从不同向量的线性组合计算的。因此，我们必须通过引入线参数 $p$ 来修改方程(6)：
+the branch segment with length ls. This weight can be determined by:
 
-$$w_s \vec{d}_o = p\vec{h} - (1 - w_s)\vec{t}. \tag{8}$$
+$$w_s = \left(1 - \sum w_\tau\right)^{\frac{l_s}{l_i}}, \quad (7)$$
 
-该方程具有以下几何解释（见图3）：我们寻找向量 $w_s \vec{d}_0$ 的方向，当添加到 $(1 - w_s)\vec{t}$ 时，会产生一个位于由 $\vec{h}$ 定义的线上的向量。如果我们将该线与半径等于 $w_s$ 的球体相交，则可以找到向量 $\vec{d}_o$ 具有单位大小的线参数 $p$。参数 $p$ 然后是以下二次方程的最大解：
+where the exponent represents the accumulated effect of tropisms over the length of the branch segment, normalized by the internode length li.
 
-$$w_s^2 = p^2|\vec{h}|^2 - 2p(\vec{h} \cdot \vec{t}_w) + |\vec{t}_w|^2, \tag{9}$$
+<span id="page-3-1"></span>![](images/pirk/_page_3_Diagram_5.jpeg)
 
-其中 $\vec{t}_w = (1 - w_s)\vec{t}$。
+Figure 3: *Computing the inverse tropism. For a description of the vectors please refer to the text.*
 
-如果方程(9)没有解，我们使用它的一阶导数来计算定义线上最接近球体的点的 $p$ 值。然后将该值插入方程(8)以计算向量 $\vec{d}_o$。知道输入树木每个分支段的这个方向，我们可以使用方程(6)在环境变化时调整分支的弯曲。
+In order to compute the effects of tropisms on the input tree when its environment is changed, we first need to find the effects of tropisms on the structure of the tree at the time when it was created. We refer to this problem as computing the *inverse tropism* since our inputs are branches that have been already bent, and we try to find out what branches would look like if effects of tropisms were removed.
 
-### 4.4 修剪估计
+Computing the inverse tropism means solving Eq. [\(6\)](#page-3-0) for d~<sup>o</sup> with known ~h, defined by the orientation of the branches in the input trees. The actual length of ~h in Eq. [\(6\)](#page-3-0) can vary because it is computed from a linear combination of different vectors. Therefore, we have to modify Eq. [\(6\)](#page-3-0) by introducing a line parameter p:
 
-自然修剪影响大多数物种的树木结构，因此确定何时应修剪给定分支对我们至关重要。我们用树木从光照中收集的资源（光合产物）来表示。请注意，我们无法捕捉修剪艺术。
+<span id="page-3-3"></span>
 
-芽中的顶端分生细胞根据它们接收到的光量产生木材或植物器官。如果芽长时间处于阴影中，它会减慢其活动。长时间不接收光照的分支最终会死亡。
+| $w_s \vec{d}_o = p \vec{h} - (1 - w_s) \vec{t}$ | (8) |
+|-------------------------------------------------|-----|
+|-------------------------------------------------|-----|
 
-我们使用类似于[Palubicki et al. 2009]的方法，其中分支的修剪是基于到所有叶节点 $l_t$ 的节点距离总和以及由其子叶簇 $\zeta_t$ 收集的资源量来计算的。当比率 $\zeta_t/l_t$ 小于某个称为**修剪因子** $\psi$ 的阈值时，分支被修剪。对于给定的分支段 $s$，收集的资源量 $\zeta_{t_s}$ 是从位于分支段 $s$ 的子节点上的叶簇 $C_s$ 接收到的光照计算的：
+This equation has the following geometric interpretation (see Figure [3\)](#page-3-1): we look for a direction of a vector wsd~<sup>0</sup> that when added to (1 − ws)~t results in a vector that lies on a line defined by ~h. The line parameter p, for which the vector d~o, has a unit size, can be found if we intersect the line with a sphere that has radius equal to ws. The parameter p is then the maximal solution to the following quadratic equation:
 
-$$\zeta_{t_s} = \sum_{c \in C_s} 2\pi r_c^2 i_c, \tag{10}$$
+<span id="page-3-2"></span>
+$$w^2 = p^2 |\vec{h}|^2 - 2p(\vec{h} \cdot \vec{t}_w) + |\vec{t}_w|^2, \quad (9)$$
 
-其中 $r_c$ 是给定叶簇的半径，$i_c$ 是簇接收的归一化光量。
+where ~t<sup>w</sup> = (1 − ws)~t.
 
-由于我们方法的输入是已经生长且分支已被修剪的树木，我们无法直接计算修剪因子 $\psi$。相反，对于分支段 $s$，我们为树木生长的每个阶段 $t$ 计算局部修剪因子 $\psi_s(t)$。局部修剪因子允许我们确定给定分支在生长过程中未被脱落的最小修剪因子。由于我们只能计算粗略的近似值，我们使用所有 $\psi_s(t)$ 分布的第5百分位数作为我们的参考修剪因子 $\psi_{ref}$。这使我们能够获得估计。现在为每个分支 $s$ 计算个体修剪因子：
+If Eq. [\(9\)](#page-3-2) does not have a solution, we use the first derivative of it to compute a value of p that defines the point on the line that is closest to the sphere. This value is then inserted into Eq. [\(8\)](#page-3-3) to compute the vector d~o. Knowing this direction for every branch segment of the input tree, we can use Eq. [\(6\)](#page-3-0) to adjust the bending of the branches when the environment changes.
 
-$$\psi_{s_{min}} = c_\psi \min(\psi_{ref}, \min_{\forall t}(\psi_s(t))), \tag{11}$$
+#### **4.4 Pruning Estimation**
 
-其中 $c_\psi$ 是用户可控的参数，用于确定修剪的强度。我们使用默认值 $c_\psi = 0.8$。
+Natural pruning influences the tree structure of most species and therefore it is crucial for us to determine when a given branch should be pruned. We express this in terms of the resources (photosynthates) gathered by the tree from the light. Please note that we cannot capture topiary.
 
----
+for a long period of time, it slows down its activity. A branch that does not receive light for a longer period of time eventually dies off.
 
-## 5 动态交互
+We use an approach similar to [\[Palubicki et al. 2009\]](#page-9-1), where the pruning of a branch is computed based on the sum of node distances to all leaf nodes l<sup>t</sup> and the amount of resources gathered by their child leaf clusters ζt. A branch is pruned when the ratio ζt/l<sup>t</sup> is smaller than some threshold value called *pruning factor* ψ. For a given branch segment s, the gathered amount of resources ζ<sup>t</sup><sup>s</sup> is computed from the light that is received on the leaf clusters C<sup>s</sup> that are located on the child nodes of a branch segment s:
 
-在分析输入树木以估计生长行为和修剪强度之后，我们可以有效地建模与其环境的交互。在交互期间，我们首先计算环境中的变化量；然后通过更新叶簇的形状和修改它们的程序化内容来转换主分支来表达树木响应。
+$$\zeta_{t_s} = \sum_{c \in C_s} 2\pi r_c^2 i c, \quad (10)$$
 
-### 5.1 树图转换
+where r<sup>c</sup> is the radius of a given leaf cluster and i<sup>c</sup> is the normalized amount of light that the cluster receives.
 
-转换应该表示树木生长的变化。我们根据它们的估计年龄（第4.1节）以及作为对使用我们的时间光照模型的新光照条件的反应来转换单个分支段。
+Since the input to our method is an already grown tree where the branches have been pruned, we cannot compute the pruning factor ψ directly. Instead, for a branch segment s we compute a local pruning factor ψs(t) for every stage of the tree growth t. The local pruning factor allows us to determine the minimum pruning factor when a given branch was not shed during growth. Since we can only compute a rough approximation, we use the fifth percentile of the distribution of all ψs(t) as our reference pruning factor ψref . This allows us to receive an estimation. The individual pruning factor is now computed for every branch s by
 
-入射光的方向用于从方程(6)生成弯曲转换。分支段的旋转传播到其子分支。当分支被转换时，还需要更新其关联的叶簇，这些簇可能在较年轻的分支上投射阴影。
+$$\psi_{s_{min}} = c_\psi \min(\psi_{ref}, \min_{\forall t}(\psi_s(t))), \quad (11)$$
 
-在给定年龄的所有分支都已转换后，计算修剪转换。当级别 $t$ 上的所有分支都已转换后，我们为年龄在0到 $t$ 之间的所有分支计算资源分配 $\zeta_{t_s}$（见方程(10)）。然后将资源与所有现有子分支的总长度进行比较，并计算修剪因子 $\psi_s(t)$。所有资源小于 $\psi_{s_{min}}$ 的分支（及其子分支）都被修剪。
+<span id="page-4-2"></span>![](images/pirk/_page_4_Picture_13.jpeg)
 
-### 5.2 叶簇建模
+where c<sup>ψ</sup> is a user-controllable parameter that determines the strength of the pruning. We use a default value c<sup>ψ</sup> = 0.8.
 
-为了模拟簇对光照的响应，我们首先计算每个簇接收的光量。然后使用此信息来调整簇内分支的创建、它们的方向以及每个分支的叶子数量。如Livny等人[2011]所述，程序化创建是将小枝（从输入模型获得的小分支）添加到主分支骨架上叶簇的某些初始种子点的重复过程。我们通过期望的簇密度来参数化此过程。
+### <span id="page-4-0"></span>**5 Dynamic Interaction**
 
-入射光 $i$ 与归一化密度 $\rho_l$ 之间的关系表示为：
+After analyzing the input tree to estimate growth behavior and pruning strength, we can efficiently model the interaction with its environment. During the interaction we first calculate the amount of changes in the environment; the tree response is then expressed by transforming the main branches by updating the shape of the leaf clusters and by modifying their procedural content.
 
-$$\rho_l = \frac{\rho_{l_0}}{\rho(i_{l_0})} \rho(i). \tag{12}$$
+#### **5.1 Tree Graph Transformations**
 
-对于具有初始光值 $i_{l_0}$ 的初始密度 $\rho_{l_0}$ 的叶簇 $l$。
+The transformations should represent changes in the tree growth. We transform individual branch segments according to their estimated age (Section [4.1\)](#page-2-2) and as a reaction to the new light conditions using our temporal light model.
 
-当叶簇与障碍物碰撞时，它会被相交，如图4所示。我们根据簇的新外壳逐帧调整小枝的选择。请注意，由于簇填充的近似性质，小分支有时会从外壳中长出，因此可能进入障碍物。到目前为止，我们不修剪此类分支，因为我们发现这种影响可以忽略不计，但将来可能会添加。
+The direction of the incident light is used to generate the bending transformation from Eq. [\(6\)](#page-3-0). The rotation of a branch segment is propagated to its child branches. When a branch is transformed, it is also necessary to update its associated leaf clusters that may cast shadows onto younger branches.
 
-如果对象不是实体（例如，另一棵树模型），簇不会相交但会重叠并共享空间。通过这种方式，我们能够为靠近的树模型实现令人信服的分支冠层（参见图11）。
+The pruning transformations are computed after all branches of a given age have been transformed. When all branches on level t have been transformed, we compute the resource allocation ζ<sup>t</sup><sup>s</sup> for all branches with ages between 0 and t (see Eq. [\(10\)](#page-4-1)). The resources are then compared with the total length of all existing child branches and the pruning factor ψs(t) is computed. All branches (and their children) with resources smaller than ψ<sup>s</sup>min are pruned.
 
-![alt text](images/image-2.png)
-**图4：** 与实体障碍物碰撞后的叶瓣相交。
+#### **5.2 Modeling of Leaf-Clusters**
 
-当分支弯曲或修剪掉时，会更新关联的叶簇（填充几何体以及包络形状）。通过计算所有节点从其初始位置的平均偏移来更新所有叶簇的位置。然后将此偏移添加到簇质心。
+In order to simulate a cluster's response to light, we first calculate the amount of light each cluster receives. This information is then used to adjust the creation of branches within a cluster, their orientation, and the number of leaves per branch. As described by Livny et al. [\[2011\]](#page-9-3), procedural creation is a repeating process of adding branchlets (small branches obtained from the input model) to some initial seed points of the leaf cluster on the main branching skeleton. We parameterize this process by the desired cluster density.
 
-如果删除了属于簇的树图的部分，则删除相应的种子点，更新叶瓣的程序化填充，并更新其半透明度 $\gamma_c$：
+The relationship between the incoming light i and the normalized density ρ<sup>l</sup> is denoted by
 
-$$\gamma_c' = \gamma_c^{\frac{n_c}{n_0}}, \tag{13}$$
+$$\rho_l = \frac{\rho_{l_0}}{\rho(i_{l_0})} \rho(i). \quad (12)$$
 
-其中 $n_c$ 是当前存在的节点数，$n_0$ 是初始数。如果删除了簇的所有节点，则删除叶簇本身。
+<span id="page-4-1"></span>for leaf cluster l with an initial density ρ<sup>l</sup><sup>0</sup> for the initial light valuei<sup>l</sup><sup>0</sup> .
 
-### 5.3 交互类型
+When a leaf cluster collides with an obstacle it is intersected as shown in Figure [4.](#page-4-2) We adjust the selection of branchlets according to the new hull of the cluster on a frame-by-frame basis. Please note that due to the approximate nature of cluster filling, small branches sometimes grow out of the hull and thus might enter an obstacle. We do not prune such branches so far since we found this effect negligible, but in the future this might be added.
 
-上述转换允许三种类型的交互，代表在建模过程中可能遇到的最常见场景：树-障碍物交互、树-树交互和全局光照交互。
+If the object is not solid (e.g., another tree model), the clusters are not intersected but overlap and share the space. This way we are able to achieve convincing branch canopies for close tree models (cf. Figure [11\)](#page-8-0).
 
-**树-障碍物交互** 发生在树木移动到靠近障碍物的地方或反之亦然时。然后，障碍物成为环境的一部分，通过在其生长的整个生命周期内投射阴影来影响树木。
+Figure 4: *Lobe intersection after a collision with solid obstacles.*
 
-**树-树交互** 在两棵或更多树木移动得如此接近以至于它们的相互阴影影响它们的生长时触发。为了正确模拟这种交互，我们在所有涉及的树木中并行处理单个分支的转换。分支根据其年龄进行处理。如果树木的最大年龄高于其竞争对手，我们改变较年轻树木的分支的处理时间，以便在所有树木的相同完成时间结束。
+When a branch is bent or pruned away, the associated leaf clusters (filling geometry and also the envelope shape) are updated. The position of all leaf clusters is updated by computing the average offset of all their nodes from their initial position. This offset is then added to the cluster centroid.
 
-**全局光照交互** 表示场景全局光照条件的变化。当我们将场景从南半球移动到北半球或改变场景的方向时，可能会发生此类变化。此类变化通过改变方程(3)中的方向 $I(\theta, \phi)$ 来表示。每当全局光照条件发生变化时，我们需要重新计算所有树木的转换。
+If parts of the tree graph that belong to a cluster are removed, the respective seed points are removed, the procedural filling of the lobe is updated, and its translucency γ<sup>c</sup> is updated:
 
-在大多数场景中，上述交互同时发生。例如，当我们将墙移动到森林中时，墙会转换附近的树木，这反过来可能会影响其相邻树木的形状。
+$$\gamma'_c = \gamma_c^{\frac{n_c}{n_0}}, \quad (13)$$
 
----
+where n<sup>c</sup> is the current number of existing nodes and n<sup>0</sup> is the initial number. If all nodes of a cluster are removed, the leaf cluster itself is deleted.
 
-## 6 评估
+#### **5.3 Types of Interaction**
 
-由于在静态条件下生长的树木表现出大量的随机性，我们比较模拟树木与转换树木的基础树图。我们使用Ferraro等人[Ferraro and Godin 2000]的方法，该方法建立在无序标记树图之间的约束编辑距离[Zhang 1996]之上。两个树图之间的不相似性可以测量为它们之间的编辑距离——将一个图转换为另一个图的加权最小操作量。可能的编辑操作是：i) 删除节点（节点的子节点成为父节点的子节点，节点被删除），ii) 节点插入（删除的逆操作），或iii) 更改节点（为节点分配新标签）。每个编辑操作的成本取决于特定应用；在我们的方法中，成本与分支厚度（与其年龄相关）成正比。
+The above-described transformations allow three types of interaction representing the most common scenarios that can be encountered during modeling: tree–obstacle interaction, tree–tree interaction, and global light interaction.
 
-将我们的模型与真实树木进行比较是不切实际的，因为很难正确估计它们的环境条件。因此，我们使用Palubicki等人[2009]提出的生长模型创建的树木。为了比较树木，我们首先使用生长模型创建单独的树木模型，并将它们用作我们系统的输入。我们创建了三种类型的树木，它们的向性不同。树1表现出0.25的趋光性和0.12的向重力性，树2的向性分别为0.45和0.44，树3表现出0.03的趋光性和0.23的向重力性。前两棵树的年龄相同，表现出相同的修剪因子。最后一棵树年龄较大，修剪因子较小。我们为每种树类型创建了三个树集：
+*Tree–obstacle interaction* occurs when a tree is moved close to an obstacle or vice versa. The obstacle then becomes a part of the environment that influences the tree by casting a shadow for the entire life span of its growth.
 
-- **集合O：** 使用生长模型创建的树木，没有障碍物，只有光照和自阴影影响生长。
-- **集合G：** 具有与O相同生长参数的树木，使用生长模型在靠近墙的地方生长。
-- **集合T：** 具有与O相同生长参数的树木，形状使用我们的系统在与G相同的条件下计算。
+*Tree–tree interaction* is triggered when two or more trees are moved so close to each other that their mutual shadows influence their growth. For a proper simulation of this kind of interaction, we process the transformations of individual branches in all involved trees in parallel. Branches are processed according to their age. If the maximal age of a tree is higher than its competitors, we change the processing time for the branches of the younger trees in order to end up at the same completion time for all trees.
 
-计算了四组不同的五十个值。这些值表示从上述集合中选择的树对之间的距离，以便没有树被使用两次。不同的组是T-T、T-O、T-G和G-G。这些字母表示比较的树对的组。
+*Global light interaction* represents changes in the global light conditions of a scene. Such changes might happen when we move the scene from a southern hemisphere to a northern one or when the orientation of the scene is altered. Such changes are represented by altering the direction I(θ, φ) in Eq. [\(3\)](#page-2-1). Whenever global light conditions change, we need to recompute the transformations for all trees.
 
-为了表明集合T的转换树与生长模型生长的集合G的树之间没有显著差异，我们在T-G和G-G之间进行了alpha为0.05的双尾t检验。为了表明集合T的转换树与集合O的树显著不同，在组T-O和T-T之间进行t检验。表1总结了获得的结果。
+In most scenarios the above interactions happen at the same time. For example, when we move a wall into a forest then the wall transforms nearby trees, which in turn might affect the shape of their neighboring trees.
 
-这表明在没有约束的情况下生长的树木与墙旁边的树木之间存在显著差异。另一方面，在相同条件下，使用生长模型生长的适应树木与使用我们的方法转换的树木之间没有显著差异。
+### <span id="page-5-0"></span>**6 Evaluation**
 
-![alt text](images/image.png)
+Since trees grown in static conditions exhibit a large amount of randomness, we compare the underlying tree graphs of simulated versus transformed trees. We use the approach of Ferraro et al. [\[Fer](#page-9-31)[raro and Godin 2000\]](#page-9-31) that builds upon the constrained edit distance between unordered labeled tree graphs [\[Zhang 1996\]](#page-9-32). Dissimilarity between two tree graphs can be measured as an edit distance between them–the weighted minimum amount of operations that would convert one graph into the other. The possible edit operations are i) deletion of a node (the children of the node become the children of the parent node and the node is deleted), ii) node insertion (inverse of deletion), or iii) changing a node (which assigns a new label to the node). The cost of each edit operation depends on the particular application; in our approach the cost is proportional to the branch thickness (which is related to its age).
 
-**表1：** 为不同组T-T、T-O、T-G和G-G获得的结果。字母表示比较的树对的组。
+<span id="page-5-2"></span>![](images/pirk/_page_5_Diagram_10.jpeg)
 
-此外，图5显示了生长模型和我们的转换获得的变化的视觉比较。这些模型在开阔空间中生长，然后导入到我们的系统（左）。接下来，它们使用生长模型（中）在不同的光照条件下生长，并使用我们的方法（右列）进行转换。
+![](images/pirk/_page_5_Picture_11.jpeg)
 
-![alt text](images/image-1.png)
-**图5：** 三个树模型的视觉比较。
+It would be impractical to compare our models to real trees because it is difficult to correctly estimate their environmental conditions. Therefore, we use trees created by a growth model proposed by Palubicki et al. [\[2009\]](#page-9-1). In order to compare the trees, we first create solitary tree models using the growth model and use them as an input for our system. We created three types of trees that differ in their tropisms. Tree 1 presents 0.25 phototropism and 0.12 gravitropism, the tropisms for Tree 2 are 0.45 and 0.44, rsp. and Tree 3 presents 0.03 phototropism and 0.23 gravitropism. The first two trees are the same age and present the same pruning factor. The last tree is older having a smaller pruning factor. We created three tree sets for each tree type:
 
----
+- Set *O*: Trees created using the growth model with no obstacles where only light and self-shadowing influences the growth.
+- Set *G*: Trees with the same growth parameters as *O* grown using the growth model close to a wall.
+- Set *T*: Trees with the same growth parameters as *O* with the shape calculated using our system under the same conditions as *G*.
 
-## 7 实现和结果
+Four different groups of fifty values each were computed. The values represent distances between pairs of trees selected from the sets described above so that no tree was used twice. The different groups were *T-T*, *T-O*, *T-G*, and *G-G*. The letters represent the groups for the pairs of trees that were compared.
 
-我们的系统使用OpenGL和GLSL在C++中实现。本文中的所有示例都是在配备Intel i7 CPU @ 3.7GHz和16GB内存的台式计算机上生成的。大部分渲染直接在GPU（Nvidia GeForce GTX 580，1.5GB专用内存）上完成。
+In order to show that there is no significant difference between the
 
-我们树模型的视觉外观主要由其主分支的结构决定，而不是由叶簇的确切结构决定。因此，我们为分支的厚度定义了一个阈值，该阈值确定是否应渲染给定分支。厚度高于阈值的所有分支都存储在树图中，而较小的分支从树中删除并转换为叶簇。为了与大量树模型实时交互，我们应用了一组细节层次（LOD）技术。与Livny等人[2011]类似，产生的几何体数量取决于簇大小、光照情况和LOD阶段。如果树木远离相机，则仅产生一小部分叶子，并根据Cook等人[2007]引入的随机修剪进行缩放。我们使用alpha to coverage渲染树叶；这是一种用于包含大量透明纹素的纹理层的有效方法。
+transformed trees from set *T* and the trees grown by the growth model from set *G*, we performed a two-tailed t-test between the *T-G* and *G-G* with an alpha of 0.05. To show that the transformed trees from set *T* are significantly different to the trees from *O*, a ttest is performed between groups *T-O* and *T-T*. Table [1](#page-5-1) summarizes the obtained results.
 
-由于树木表现出大量的自相似性，我们能够使用实例化的小枝子集（分支块）来近似叶簇。使用来自输入模型的一组小枝来填充体积。这些块存储在GPU上的纹理缓冲区中，主分支结构和叶簇的块几何体组合以制作完整的树图。
+This suggests a significant difference between trees grown without constraints versus trees next to a wall. On the other hand, there is no significant difference between the adapted trees grown with the growth model and the trees transformed with our approach under the same conditions.
 
-为了能够对树图应用转换，我们将主分支结构存储在CPU内存中，该内存映射到GPU上经常更新的顶点缓冲区对象。骨架的几何体由广义圆柱体表示。为了允许渲染许多树模型，我们逐帧调整图和网格生成。
+<span id="page-5-1"></span>
 
-表2显示了使用Open L-systems和我们的转换的构建时间的比较。每组年龄为10、20和30的树木使用Open L-system生长了二十个模型，导致几何体越来越复杂。记录并平均了生长时间。另外三组二十棵树输入到我们的系统中，并记录了转换时间。
+| Groups             | T-G    | G-G    | T-O    | T-T     |
+|--------------------|--------|--------|--------|---------|
+| Mean Type          | 236.29 | 229.65 | 347.19 | 225.38  |
+| Standard Deviation | 35.27  | 52.71  | 91.33  | 33.94   |
+| p-value            | p      | = 0.46 | p      | < 0.001 |
+| Mean Type          | 431.73 | 396.81 | 471.63 | 413.64  |
+| Standard Deviation | 112.79 | 71.32  | 70.65  | 90.76   |
+| p-value            | p      | = 0.06 | p      | < 0.001 |
+| Mean Type          | 756.27 | 841.79 | 927.64 | 550.63  |
+| Standard Deviation | 266.84 | 239.57 | 207.85 | 83.33   |
+| p-value            | p      | = 0.13 | p      | < 0.001 |
 
-重要的是要注意，模拟适用于从头开始重新生长整棵树，而转换仅应用于受影响的区域。通常，我们的方法快两个数量级。
+Table 1: *Results obtained for the different groups T-T, T-O, T-G and G-G. The letters represent the groups for the pairs of trees that were compared.*
 
-![表2：不同年龄树木的复杂性和模拟时间](表2图片)
+Figure 5: *Visual comparison of three tree models.*
 
-**表2：** 不同年龄树木的复杂性和模拟时间。
+Furthermore, Figure [5](#page-5-2) shows a visual comparison of the changes obtained by the growth model and our transformations. The models were grown in an open space and then imported to our system (left). Next, they were grown in different light conditions using the growth model (middle) and also transformed using our approach (right column).
 
-### 7.1 结果
+### **7 Implementation and Results**
 
-图6中的第一个示例演示了墙对树木投射的阴影的环境影响。将在开放条件下生长的树木模型与转换后的模型进行比较，每个节点的位移量表示为颜色。正如预期的那样，最大的变化在树的顶端，因为误差通过主骨架累积。
+Our system is implemented in C++ using OpenGL and GLSL. All examples in this paper were generated on a desktop computer equipped with Intel i7 CPU @ 3.7GHz with 16GB of memory. Most of the rendering was done directly on the GPU (Nvidia GeForce GTX 580 with a 1.5GB of dedicated memory).
 
-![图6：墙投射的阴影的环境影响](图6说明)
-**图6：** 墙投射的阴影的环境影响。颜色表示输入树木(a)和转换版本之间的差异。以红色表示的弯曲量(b)，以蓝色表示的修剪分支(c)，两种变换(d)，最终模型(e)。
+The visual appearance of our tree models is mostly determined by the structure of their main branches and not by the exact structure of leaf clusters. We therefore define a threshold for the thickness of branches that determines whether a given branch should be rendered or not. All branches with a thickness above the threshold are
 
-图7显示了三种不同的物种——(a) 柳树，(b) 凤凰木和(c) 桃花心木对障碍物的反应。原始树木使用[Livny et al. 2011]的方法从LiDAR扫描重建。树木通过弯曲（寻求光照）对阴影的接近做出反应，并脱落靠近墙的分支。图9显示了两个Xfrog模型的结果。
+<span id="page-6-1"></span>![](images/pirk/_page_6_Figure_1.jpeg)
 
-![图7：暴露于变化条件的不同树模型（LiDAR、Xfrog）](图7说明)
-**图7：** 暴露于变化条件的不同树模型（LiDAR、Xfrog）。当障碍物靠近时，树木弯曲其形状，一些分支被修剪。
+Figure 6: *The environmental effect of a shadow cast by a wall. The color represents the difference between the input tree (a) and the transformed versions. The amount of bending expressed in red (b), pruned branches colored blue (c), both transforms (d), the final model (e).*
 
-到目前为止，我们已经演示了典型的欧洲和北美树木。更特殊的树木是棕榈树或松树，如图10所示。它们的图结构没有侧枝，主分支是一条线，每片叶子是另一条线；这里不能应用叶瓣。这些模型是使用Xfrog生成的，它们对环境的反应仍然是可预期的。棕榈树朝着与阴影相反的方向弯曲，试图捕获更多的光。松树通常不弯曲，只对较低分支的光照不足做出反应。正如预期的那样，我们的模型修剪低分支，同时在顶部保持完整的分支结构。
+![](images/pirk/_page_6_Picture_3.jpeg)
 
-图8显示了一些不同的输入模型（Open L-systems、Xfrog、LiDAR扫描），这是附带视频中的一帧。树木受到相互阴影以及从两侧包围它们的墙的影响。生态系统中的分支填充可用空间，就像真实生态系统中的情况一样。
+![](images/pirk/_page_6_Figure_4.jpeg)
 
-![图8：演示各种输入模型交互的小型生态系统](图8说明)
-**图8：** 演示各种输入模型交互的小型生态系统。我们在此示例中使用了Open L-systems生成的模型、Xfrog和LiDAR重建的树木。
+Figure 7: *Different tree models (LiDAR, Xfrog) exposed to changing conditions. As the obstacle moves close, the tree bends its shape, and some branches are pruned.*
 
-图11中的示例显示了在Xfrog中建模的两棵桃花心木树彼此靠近移动。资源竞争使单个树冠出现，每棵树都部分贡献。图13显示了一个移入森林的四边形。虽然我们无法再交互式地显示所有交互和转换的如此大的场景（此场景在我们的机器上有5 fps），但树形状令人信服地适应，用户仍然能够与场景交互。
+stored in a tree graph, while the smaller branches are removed from the tree and converted into the leaf-clusters. To interact with large amounts of tree models in real time, we apply a set of level of detail (LOD) techniques. Similar to Livny et al. [\[2011\]](#page-9-3), the amount of produced geometry depends on the cluster size, the light situation, and the LOD stage. If the tree is far away from the camera, only a small subset of leaves is produced and scaled according to stochastic pruning, as introduced by Cook et al. [\[2007\]](#page-9-33). We render the tree foliage with alpha to coverage; an efficient method for layers of textures containing large numbers of transparent texels.
 
-![图9：Xfrog树模型对不断变化的环境条件的交互](图9说明)
-**图9：** Xfrog树模型对不断变化的环境条件的交互。
+Since trees exhibit a large amount of self-similarity, we are able to approximate the leaf clusters using small subsets of branchlets (branch patches) that are instantiated. A set of branchlets from the input model is used to populate the volumes. These patches are stored in a texture buffer on the GPU, and the main branching structure and the patch geometry of the leaf clusters are combined to make a complete graph of the tree.
 
-![图10：与障碍物交互的特殊树模型](图10说明)
-**图10：** 与障碍物交互的特殊树模型。
+To be able to apply the transformation to the tree graph, we store the main branching structure on the CPU memory that is mapped to a frequently updated vertex buffer object on the GPU. The geometry of the skeleton is represented by generalized cylinders. To allow rendering of many tree models, we adjust the graph and mesh generation on a frame-by-frame basis.
 
-![图11：两棵程序化生成的树非常靠近地生长在一起，形成类似于单棵树的树冠](图11说明)
-**图11：** 两棵程序化生成的树非常靠近地生长在一起，形成类似于单棵树的树冠。
+Table [2](#page-6-0) shows a comparison of construction times using Open Lsystems and our transformations. Twenty models per group of tree ages 10, 20, and 30 were grown with an Open L-system, leading to an increasingly complex geometry. The growth times were recorded and averaged. Another three groups of twenty trees were
 
-![图12：两棵Xfrog树（从左到右）：静态；弯曲和修剪的组合；强修剪；夸张的弯曲](图12说明)
-**图12：** 两棵Xfrog树（从左到右）：静态；弯曲和修剪的组合；强修剪；夸张的弯曲。
+<span id="page-6-0"></span>Table 2: *Complexity and simulation time for tree in different ages.*
 
-![图13：移入密集生态系统的障碍物的影响](图13说明)
-**图13：** 移入密集生态系统的障碍物的影响。
+|    | Tree age | Average nodes |          | Growth |       | Transforms |
+|----|----------|---------------|----------|--------|-------|------------|
+| 10 | years    | 530           | 216.3    | ms     | 3.82  | ms         |
+| 20 | years    | 2541          | 8855.6   | ms     | 50.5  | ms         |
+| 30 | years    | 9134          | 61,843.9 | ms     | 222.8 | ms         |
 
----
+input in our system and the transformation times were recorded. It is important to note that the simulation applies to the regrowth of the entire tree from scratch, while the transformations are applied only in the affected areas. Generally, our approach is two orders of magnitude faster.
 
-## 8 结论
+#### **7.1 Results**
 
-我们提出了一种用于复杂树模型的动态模型表示和交互方法。所有类型的多边形输入模型都可以转换为我们的表示。我们估计向性的影响和其他环境影响，如输入模型的阴影。当创建模型时，它们对障碍物和光照变化做出反应。高效的实现使我们甚至能够以交互速率操纵复杂场景。
+The first example in Figure [6](#page-6-1) demonstrates the environmental effect of the shadow cast on a tree by a wall. A tree model grown in open conditions is compared with transformed models, and the amount of displacement of each node is expressed as color. As expected, the biggest change is on the tip of the tree because the error accumulates through the main skeleton.
 
-然而，到目前为止，我们的方法不允许为主骨架产生新的分支：我们总是变形和操纵给定的基本结构。此外，输入仅限于单独的树模型，因为到目前为止我们无法假设最终死亡的主骨架的分支。一个示例（图14左）显示了从LiDAR扫描和重建的树木，该树木已经被早期创伤或在靠近障碍物的地方生长严重修改。这棵树显示出朝向障碍物的不自然弯曲，这通过转换部分缓解，但仍然作为主要生长方向存在。结果树（图14右）看起来不太自然。
+Figure [7](#page-6-1) shows three different species–(a) Willow, (b) Delonix, and (c) Mahogany with their reaction to an obstacle. The original trees were reconstructed from LiDAR scans using the approach of [\[Livny](#page-9-3) [et al. 2011\]](#page-9-3). The trees react to the proximity of the shadow by bending away (light seeking) and by shedding branches that are close to the wall. Figure [9](#page-7-5) shows the results for two Xfrog models.
 
-![图14：从LiDAR数据重建的已经弯曲的树](图14说明)
-**图14：** 从LiDAR数据重建的已经弯曲的树。此类模型通常无法正确更改。
+<span id="page-7-5"></span>Figure 8: *A small ecosystem demonstrating various input models interacting. We have used models generated by Open L-systems, Xfrog, and LiDAR reconstructed trees in this example.*
 
-到目前为止，我们在能够整合的效果方面也受到限制。到目前为止，我们包括了环境因素，如光照和向性，但没有风效应或土壤中的营养变化。此外，可以通过将系统与真实世界的树木进行比较来更好地评估系统。另一个限制是我们的系统需要一些用户定义的参数，例如树模型的新添加向性的量。到目前为止，我们也没有用于程序化内容的通用GPU建模过程。我们使用预定义的物种库作为参数，使我们能够产生许多树叶类型，但不是全部。
+![](images/pirk/_page_7_Picture_6.jpeg)
 
----
+Figure 9: *Xfrog Tree models interacting to changing environmental conditions.*
 
-## 致谢
+So far we have demonstrated the typical European and North American trees. More special trees are palm trees or pines, as shown in Figure [10.](#page-8-0) Their graph structure has no lateral branches, it is a line for the main branches and another line through each of the leaves; the lobes cannot be applied here. The models were generated using Xfrog, and their reaction to the environment is still expectable. The palm tree bends in the direction opposite to the shadow in an attempt to capture more light. Pine trees usually do not bend and only react to the lack of light for lower branches. As expected, our model prunes low branches while maintaining a complete branching structure at the top.
 
-我们感谢匿名审稿人。这项工作得到了DFG研究培训小组GK-1042"大型信息空间的探索性分析和可视化"、康斯坦茨大学、NSF IIS-0964302"集成行为、几何和图形建模以模拟和可视化城市区域"和Adobe Inc.资助"约束程序化建模"的支持。
+Some different input models (Open L-systems, Xfrog, LiDAR scan) are shown in Figure [8,](#page-7-6) a frame from the accompanying video. The trees are affected by mutual shadowing as well as by the walls enclosing them from two sides. The branches in the ecosystem fill the available space as they would in the case of a real ecosystem.
 
----
+The example in Figure [11](#page-8-0) shows two mahogany trees modeled in Xfrog that are moved close to each other. The competition for resources lets a single crown emerge in which each tree contributes in part. Figure [13](#page-8-0) shows a quad that is moved into a forest. Though we are not able to show such big scenes with all interactions and transformations interactively any more (this scene has 5 fps on our machine), the tree shapes adapt convincingly and the user is still able to interact with the scene.
 
-## 参考文献
+### **8 Conclusion**
 
-[参考文献列表保持原样，因为它们是标准的学术引用格式]
+We presented a dynamic model representation and interaction method for complex tree models. All kinds of polygonal input models can be converted into our representation. We estimate the influences of tropisms and other environmental effects such as shadowing of the input model. When the models are created they react to obstacles and changes in the lighting. An efficient implementation allows us to manipulate even complex scenes at interactive rates.
 
----
+<span id="page-7-6"></span>![](images/pirk/_page_7_Picture_2.jpeg)
 
-**ACM参考格式：**
-Pirk, S., Stava, O., Kratt, J., Said, M., Neubert, B., Mech, R., Benes, B., Deussen, O. 2012. Plastic Trees: Interactive Self-Adapting Botanical Tree Models. ACM Trans. Graph. 31 4, Article 50 (July 2012), 10 pages. DOI = 10.1145/2185520.2185546
+Our method, however, so far does not allow the production of new branches for the main skeleton: we always deform and manipulate the given basic structure. Furthermore, the input is limited to solitary tree models since so far we cannot hypothesize branches of the main skeleton that eventually died off. An example (Figure [14](#page-7-7) left) shows a LiDAR scanned and reconstructed tree that has already been severely modified either by some early age trauma or by growing close to an obstacle. This tree shows an unnatural bending towards the obstacle that is partially alleviated by the transformations, but still prevails as the main growth direction. The resulting tree (Figure [14](#page-7-7) right) does not seem very natural.
 
-**版权声明：**
-允许免费制作本作品的部分或全部的数字或硬拷贝用于个人或课堂使用，前提是拷贝不是为了利润或直接商业利益而制作或分发，并且拷贝在第一页或显示器的初始屏幕上显示此通知以及完整引用。由ACM以外的其他人拥有的本作品组件的版权必须得到尊重。允许在注明出处的情况下进行摘要。以其他方式复制、重新发布、在服务器上发布、重新分发到列表或在其他作品中使用本作品的任何组件都需要事先获得特定许可和/或付费。可以从ACM出版部申请许可，地址：2 Penn Plaza, Suite 701, New York, NY 10121-0701，传真+1 (212) 869-0481，或permissions@acm.org。
+<span id="page-7-7"></span>![](images/pirk/_page_7_Picture_4.jpeg)
 
-© 2012 ACM 0730-0301/2012/08-ART50 $15.00 DOI 10.1145/2185520.2185546
+Figure 14: *A tree reconstructed from LiDAR data that is already bent. Such models often cannot be altered properly.*
+
+We are also limited in the effects we are able to integrate. So far we included environmental factors such as light and tropisms, but no wind effects or nutrition changes in the soil. Furthermore, the system could be evaluated better by comparing it to real-world trees.
+
+Another limitation is that our system needs some user-defined parameters, such as the amount of newly added tropism for the tree models. So far we also do not have a general-purpose GPU-based modeling process for the procedural content. We use a pre-defined species library for the parameters that allows us to produce a number of foliage types, but not all.
+
+#### **Acknowledgements**
+
+We thank the anonymous reviewers. This work was supported by the DFG Research Training Group GK-1042 "Explorative Analysis and Visualization of Large Information Spaces", University of Konstanz, by NSF IIS-0964302 Integrating Behavioral, Geometrical and Graphical Modeling to Simulate and Visualize Urban Areas and Adobe Inc. grant Constrained Procedural Modeling.
+
+### **References**
+
+<span id="page-7-4"></span><span id="page-7-3"></span><span id="page-7-2"></span><span id="page-7-1"></span><span id="page-7-0"></span>AONO, M., AND KUNII, T. 1984. Botanical tree image generation. *IEEE Computer Graphics and Applications 4(5)*, 10–34. ARVO, J., AND KIRK, D. 1988. Modeling plants with environment-sensitive automata. In *Proceedings of Ausgraph '88*, 27–33. BENES, B., AND MILLÁN, E. 2002. Virtual climbing plants competing for space. In *IEEE Proceedings of the Computer Animation 2002*, IEEE Computer Society, N. Magnenat-Thalmann, Ed., 33–42. BENES, B., ANDRYSCO, N., AND ŠTAVA <sup>ˇ</sup> , O. 2009. Interactive modeling of virtual ecosystems. In *Eurographics Workshop on Natural Phenomena*, Eurographics Association, 9–16. BLOOMENTHAL, J. 1985. Modeling the mighty maple. *SIG-GRAPH Computer Graphics 19*, 3, 305–311.
+
+Figure 10: *Special tree models interacting with obstacles.*
+
+![](images/pirk/_page_8_Picture_3.jpeg)
+
+Figure 11: *Two procedurally generated trees that have been grown very close to each other form a crown that resembles a single tree.*
+
+![](images/pirk/_page_8_Picture_5.jpeg)
+
+Figure 12: *Two Xfrog trees (left to right): static; combination of bending and pruning; strong pruning; exaggerated bending.*
+
+![](images/pirk/_page_8_Picture_7.jpeg)
+
+Figure 13: *Influence of an obstacle moved into a dense ecosystem.* ACM Transactions on Graphics, Vol. 31, No. 4, Article 50, Publication Date: July 2012
+
+<span id="page-8-0"></span>![](images/pirk/_page_8_Picture_1.jpeg)
+
+- <span id="page-9-16"></span><span id="page-9-12"></span><span id="page-9-6"></span>BOUDON, F., PRUSINKIEWICZ, P., FEDERL, P., GODIN, C., AND KARWOWSKI, R. 2003. Interactive design of bonsai tree models. *Computer Graphics Forum. Proceedings of Eurographics 22*, 3, 591–599. CHEN, X., NEUBERT, B., XU, Y.-Q., DEUSSEN, O., AND KANG,
+- <span id="page-9-33"></span><span id="page-9-32"></span><span id="page-9-31"></span><span id="page-9-30"></span><span id="page-9-29"></span><span id="page-9-28"></span><span id="page-9-27"></span><span id="page-9-26"></span><span id="page-9-25"></span><span id="page-9-24"></span><span id="page-9-23"></span><span id="page-9-22"></span><span id="page-9-21"></span><span id="page-9-20"></span><span id="page-9-19"></span><span id="page-9-18"></span><span id="page-9-17"></span><span id="page-9-15"></span><span id="page-9-14"></span><span id="page-9-13"></span><span id="page-9-11"></span><span id="page-9-10"></span><span id="page-9-9"></span><span id="page-9-8"></span><span id="page-9-7"></span><span id="page-9-5"></span><span id="page-9-4"></span><span id="page-9-3"></span><span id="page-9-2"></span><span id="page-9-1"></span><span id="page-9-0"></span>S. B. 2008. Sketch-based tree modeling using markov random field. *ACM Trans. Graph. 27*, 5, 109–117. COOK, R. L., HALSTEAD, J., PLANCK, M., AND RYU, D. 2007. Stochastic simplification of aggregate detail. *ACM Trans. Graph. 26*, 3, 79. DE REFFYE, P., EDELIN, C., FRANÇON, J., JAEGER, M., AND PUECH, C. 1988. Plant models faithful to botanical structure and development. In *Proceedings of SIGGRAPH '88*, 151–158. DEUSSEN, O., AND LINTERMANN, B. 2005. *Digital Design of Nature: Computer Generated Plants and Organics*. Springer-Verlag New York, Inc. FERRARO, P., AND GODIN, C. 2000. A distance measure between plant architectures. *Annals of Forest Science 57*, 5/6, 445–461. GREENE, N. 1989. Voxel space automata: modeling with stochastic growth processes in voxel space. *SIGGRAPH Computer Graphics 23*, 3, 175–184. HART, J. C., BAKER, B., AND MICHAELRAJ, J. 2003. Structural simulation of tree growth and response. *The Visual Computer 19*, 2-3, 151–163. HONDA, H. 1971. Description of the form of trees by the parameters of the tree-like body: effects of the branching angle and the branch length on the shape of the tree-like body. *Journal of Theoretical Biology 31*, 331–338. HUA, J., AND KANG, M. 2011. Functional tree models reacting to the environment. In *ACM SIGGRAPH 2011 Posters*, ACM, New York, NY, USA, SIGGRAPH '11, 60:1–60:1. IJIRI, T., OWADA, S., AND IGARASHI, T. 2006. The sketch L-System: Global control of tree modeling using free-form strokes. *Smart Graphics*, 138–146. KAWAGUCHI, Y. 1982. A morphological study of the form of nature. In *SIGGRAPH '82: Proceedings of the 9th annual conference on Computer graphics and interactive techniques*, ACM Press, New York, NY, USA, 223–232. LAM, Z., AND KING, S. A. 2005. Simulating tree growth based on internal and environmental factors. In *Proceedings of the 3rd international conference on Computer graphics and interactive techniques in Australasia and South East Asia*, ACM, New York, NY, USA, GRAPHITE '05, 99–107. LINDENMAYER, A. 1968. Mathematical models for cellular interaction in development. *Journal of Theoretical Biology Parts I and II*, 18, 280–315. LINTERMANN, B., AND DEUSSEN, O. 1999. Interactive modeling of plants. *IEEE Comput. Graph. 19*, 1, 56–65. LIVNY, Y., PIRK, S., CHENG, Z., YAN, F., DEUSSEN, O., COHEN-OR, D., AND CHEN, B. 2011. Texture-lobes for tree modelling. *ACM Trans. Graph. 30* (August), 53:1–53:10. MECH ˇ , R., AND PRUSINKIEWICZ, P. 1996. Visual models of plants interacting with their environment. In *Proceedings of the 23rd annual conference on Computer graphics and interactive techniques*, SIGGRAPH '96, 397–410. NEUBERT, B., FRANKEN, T., AND DEUSSEN, O. 2007. Approximate image-based tree-modeling using particle flows. *ACM Trans. Graph. 26*, 3, Article 71, 8 pages. OKABE, M., OWADA, S., AND IGARASHI, T. 2006. Interactive design of botanical trees using freehand sketches and examplebased editing. *Comput. Graph. Forum 24*, 3, 487–496. OPPENHEIMER, P. E. 1986. Real time design and animation of fractal plants and trees. *SIGGRAPH Comput. Graph. 20*, 4, 55–
+  - 64. PALUBICKI, W., HOREL, K., LONGAY, S., RUNIONS, A., LANE, B., MECH ˇ , R., AND PRUSINKIEWICZ, P. 2009. Self-organizing tree models for image synthesis. In *Proceedings of SIGGRAPH '09*, 1–10. POWER, J. L., BRUSH, A. J. B., PRUSINKIEWICZ, P., AND SALESIN, D. H. 1999. Interactive arrangement of botanical l-system models. In *Proceedings of the 1999 symposium on Interactive 3D graphics*, ACM Press, 175–182. PRUSINKIEWICZ, P., HAMMEL, M. S., AND MJOLSNESS, E. 1993. Animation of plant development. In *SIGGRAPH '93: Proceedings of the 20th annual conference on Computer graphics and interactive techniques*, ACM Press, New York, NY, USA, 351–360. PRUSINKIEWICZ, P., MÜNDERMANN, L., KARWOWSKI, R., AND LANE, B. 2001. The use of positional information in the modeling of plants. In *SIGGRAPH '01*, 289–300. PRUSINKIEWICZ, P. 1986. Graphical applications of l-systems. In *Proceedings on Graphics Interface '86/Vision Interface '86*, 247–253. RECHE-MARTINEZ, A., MARTIN, I., AND DRETTAKIS, G. 2004. Volumetric reconstruction and interactive rendering of trees from photographs. *ACM Trans. Graph. 23*, 3, 720–727. RUDNICK, S., LINSEN, L., AND MCPHERSON, E. G. 2007. Inverse modeling and animation of growing single-stemmed trees at interactive rates. In *in The 15th International Conference in Central Europe on Computer Graphics, Visualization and Computer Vision 2007, 2007*, 217–224. RUNIONS, A., LANE, B., AND PRUSINKIEWICZ, P. 2007. Modeling trees with a space colonization algorithm. In *Proceedings of Eurographics Workshop on Natural Phenomena 2007*, 63–70. SACHS, T., AND NOVOPLANSKY, A. 1995. Tree from: Architectural models do not suffice. *Israel Journal of Plant Sciences 43*, 203–212. SMITH, A. R. 1984. Plants, fractals, and formal languages. In *SIGGRAPH '84: Proceedings of the 11th annual conference on Computer graphics and interactive techniques*, ACM Press, New York, NY, USA, 1–10. SOLER, C., SILLION, F. X., BLAISE, F., AND DEREFFYE, P. 2003. An efficient instantiation algorithm for simulating radiant energy transfer in plant models. *ACM Trans. Graph. 22*, 2, 204–233. WEBER, J., AND PENN, J. 1995. Creation and rendering of realistic trees. In *Proceedings of SIGGRAPH '95*, 119–128. ZAKARIA M., N., AND SHUKRI, S. 2007. A sketch-and-spray interface for modeling trees. 23–35. ZHANG, K. 1996. A constrained edit distance between unordered labeled trees. *Algorithmica 15*, 3, 205–222.

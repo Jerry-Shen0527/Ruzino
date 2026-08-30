@@ -35,8 +35,25 @@ struct TreeBud {
     float illumination = 1.0f;  // Light received
     float auxin_level = 0.0f;   // Hormone concentration
 
+    // Local light direction: visibility-weighted average of the sampled sky
+    // hemisphere (Pirk et al. 2012 style). Crown-edge buds see sky in their
+    // outward direction, so phototropism spreads the crown instead of
+    // pulling every shoot straight up.
+    glm::vec3 light_direction = glm::vec3(0.0f, 1.0f, 0.0f);
+
     int age = 0;    // Age in growth cycles
     int level = 0;  // Branch level (0=trunk)
+
+    // Distance from the start of the parent branch along its axis (used for
+    // branch-wise auxin distance, Eq. 3 of Stava et al. 2014)
+    float along_branch = 0.0f;
+
+    // Set when the bud flushed during the current cycle; auxin sources for
+    // the NEXT cycle are exactly these buds (delta_j in Eq. 3)
+    bool flushed_this_cycle = false;
+
+    // A bud that has ever flushed became a shoot and never flushes again
+    bool has_ever_flushed = false;
 
     TreeBranch* parent_branch = nullptr;
 };
@@ -85,6 +102,9 @@ struct TreeBranch {
 
     // For structural bending
     float accumulated_weight = 0.0f;
+
+    // Accumulated gravity-bending angle (Appendix A of Stava et al. 2014)
+    float accumulated_bending = 0.0f;
 
     // Plastic Trees specific - environmental adaptation
     glm::vec3 original_direction =
@@ -156,17 +176,18 @@ struct TreeStructure {
         }
     }
 
-    // Helper to collect all active buds
-    void collect_active_buds()
+    // Helper to collect all living buds (Active and Dormant — dormant buds
+    // stay in the pool and may flush in later cycles; Dead buds are dropped)
+    void collect_living_buds()
     {
         all_buds.clear();
         for (auto& branch : all_branches) {
             if (branch->apical_bud &&
-                branch->apical_bud->state == BudState::Active) {
+                branch->apical_bud->state != BudState::Dead) {
                 all_buds.push_back(branch->apical_bud);
             }
             for (auto& bud : branch->lateral_buds) {
-                if (bud->state == BudState::Active) {
+                if (bud->state != BudState::Dead) {
                     all_buds.push_back(bud);
                 }
             }

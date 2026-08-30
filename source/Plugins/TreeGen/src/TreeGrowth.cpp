@@ -2,11 +2,18 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/rotate_vector.hpp>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace TreeGen {
+
+namespace {
+constexpr float kPi = 3.14159265358979f;
+constexpr float kGoldenAngle = 137.5077640500379f;
+}  // namespace
 
 TreeGrowth::TreeGrowth(const TreeParameters& params)
     : params_(params),
@@ -47,7 +54,7 @@ TreeStructure TreeGrowth::initialize_tree()
     root->age = 0;
     root->parent = nullptr;
 
-    // Create apical bud
+    // Create apical bud at the top node of the root internode
     auto apical_bud = std::make_shared<TreeBud>();
     apical_bud->type = BudType::Apical;
     apical_bud->state = BudState::Active;
@@ -56,6 +63,7 @@ TreeStructure TreeGrowth::initialize_tree()
     apical_bud->level = 0;
     apical_bud->age = 0;
     apical_bud->illumination = 1.0f;
+    apical_bud->along_branch = root->length;
     apical_bud->parent_branch = root.get();
 
     root->apical_bud = apical_bud;
@@ -77,52 +85,47 @@ void TreeGrowth::grow_tree(TreeStructure& tree, int cycles)
 
 void TreeGrowth::grow_one_cycle(TreeStructure& tree)
 {
-    // Step 1: Update bud states (death, dormancy)
+    // Step 1: bud extinction (phi_ABD / phi_LBD) and aging
     update_bud_states(tree);
 
-    // Step 2: Calculate illumination (Plastic Trees - with leaf clusters)
+    // Step 2: illumination for every living bud and branch (Pirk et al. 2012
+    // style cluster shadows when plasticity is on, height model otherwise)
     if (params_.enable_plasticity) {
         create_leaf_clusters(tree);
         calculate_illumination_with_clusters(tree);
-    }
-    else {
+    } else {
         calculate_illumination(tree);
     }
 
-    // Step 3: Calculate auxin levels for lateral buds
+    // Step 3: auxin received by lateral buds from last cycle's flushing buds
     calculate_auxin_levels(tree);
 
-    // Step 4: Determine which buds will flush
+    // Step 4: decide which buds flush (Eqs. 2 and 3)
     determine_bud_flushing(tree);
 
-    // Step 5: Grow shoots from flushing buds
-    // Make a copy of active buds to avoid iterator invalidation
+    // Step 5: grow shoots from flushing buds
     std::vector<std::shared_ptr<TreeBud>> flushing_buds;
     for (auto& bud : tree.all_buds) {
-        if (bud->state == BudState::Active) {
+        bud->flushed_this_cycle = false;
+        if (bud->state == BudState::Active && !bud->has_ever_flushed) {
             flushing_buds.push_back(bud);
         }
     }
-
     for (auto& bud : flushing_buds) {
         grow_shoot_from_bud(tree, bud);
     }
 
-    // Step 6: Apply Plastic Trees environmental adaptation
-    if (params_.enable_plasticity) {
-        apply_plasticity_transform(tree);
-        apply_environmental_bending(tree);
-    }
-
-    // Step 7: Update structural properties
+    // Step 6: pipe-model radii, then gravity bending (Appendix A)
     update_branch_radii(tree);
     apply_structural_bending(tree);
+
+    // Step 7: shedding — remove low and shadowed branches for real
     prune_branches(tree);
 
-    // Step 8: Rebuild branch and bud lists
+    // Step 8: rebuild flat lists (living buds only, Dormant included)
     tree.all_branches.clear();
     tree.collect_branches(tree.root);
-    tree.collect_active_buds();
+    tree.collect_living_buds();
     tree.collect_all_leaves();
 }
 
@@ -132,7 +135,6 @@ void TreeGrowth::update_bud_states(TreeStructure& tree)
         if (bud->state == BudState::Dead)
             continue;
 
-        // Determine death probability
         float death_prob = (bud->type == BudType::Apical)
                                ? params_.apical_bud_death
                                : params_.lateral_bud_death;
@@ -147,127 +149,160 @@ void TreeGrowth::update_bud_states(TreeStructure& tree)
 
 void TreeGrowth::calculate_illumination(TreeStructure& tree)
 {
-    // Simplified illumination model
-    // In a full implementation, this would do shadow casting
-    // For now, we use a simple height-based approximation
+    // Height-based approximation used when the cluster light model is off
+    float max_height = 0.0f;
+    for (auto& b : tree.all_buds) {
+        if (b->state == BudState::Dead)
+            continue;
+        max_height = std::max(max_height, b->position.y);
+    }
 
     for (auto& bud : tree.all_buds) {
         if (bud->state == BudState::Dead)
             continue;
 
-        // Higher buds get more light
-        float height = bud->position.y;
-        float max_height = 0.0f;
-        for (auto& b : tree.all_buds) {
-            max_height = std::max(max_height, b->position.y);
-        }
-
-        // Normalize illumination between 0.3 and 1.0
-        if (max_height > 0.0f) {
-            bud->illumination = 0.3f + 0.7f * (height / max_height);
-        }
-        else {
+        if (max_height > 1e-5f) {
+            bud->illumination =
+                0.3f + 0.7f * std::max(0.0f, bud->position.y) / max_height;
+        } else {
             bud->illumination = 1.0f;
         }
     }
 }
 
+float TreeGrowth::compute_auxin_for_bud(const TreeBud& bud,
+                                        const TreeStructure& tree)
+{
+    (void)tree;
+    // Sum over buds that flushed during the previous cycle (delta_j = 1),
+    // located ABOVE the given lateral bud, weighted by the branch-wise
+    // distance d(b_i, b_j):
+    //   auxin += phi_ADBF * phi_ADAF^t * phi_ADDF^d
+    // "Above" means: buds further out on the same branch, plus the apical
+    // buds of every ancestor branch (children attach at the parent's end,
+    // so only the ancestor's apical bud lies above the fork point).
+    float auxin = 0.0f;
+    float age_factor = std::pow(params_.apical_dominance_age,
+                                static_cast<float>(tree.current_age));
+    float addf = glm::clamp(params_.apical_dominance_distance, 1e-3f, 0.999f);
+
+    const TreeBranch* branch = bud.parent_branch;
+    float fork_along = bud.along_branch;
+    float path_length = 0.0f;
+
+    int guard = 0;
+    while (branch && guard++ < 256) {
+        for (const auto& other : branch->lateral_buds) {
+            if (other->state == BudState::Dead || !other->flushed_this_cycle)
+                continue;
+            if (other->along_branch <= fork_along + 1e-4f)
+                continue;
+            float d = path_length + (other->along_branch - fork_along);
+            auxin += params_.apical_dominance_base * age_factor *
+                     std::pow(addf, d);
+        }
+        const auto& apical = branch->apical_bud;
+        if (apical && apical->flushed_this_cycle &&
+            apical.get() != &bud && branch->length > fork_along - 1e-4f) {
+            float d = path_length +
+                      std::max(0.0f, branch->length - fork_along);
+            auxin +=
+                params_.apical_dominance_base * age_factor * std::pow(addf, d);
+        }
+
+        path_length += std::max(0.0f, branch->length - fork_along);
+        fork_along = branch->length;
+        branch = branch->parent;
+    }
+
+    return auxin;
+}
+
 void TreeGrowth::calculate_auxin_levels(TreeStructure& tree)
 {
-    // Calculate auxin concentration for lateral buds
-    // Auxin is produced by apical buds and inhibits lateral bud growth
-
     for (auto& bud : tree.all_buds) {
         if (bud->type != BudType::Lateral)
             continue;
         if (bud->state == BudState::Dead)
             continue;
-
-        float auxin = 0.0f;
-
-        // Find all buds above this one
-        for (auto& other_bud : tree.all_buds) {
-            if (other_bud->state == BudState::Dead)
-                continue;
-
-            // Check if other_bud is above this bud (approximate)
-            if (other_bud->position.y > bud->position.y) {
-                // Calculate branch-wise distance (simplified as Euclidean)
-                float distance =
-                    glm::length(other_bud->position - bud->position);
-
-                // Add auxin contribution
-                float age_factor =
-                    std::pow(params_.apical_dominance_age, tree.current_age);
-                auxin +=
-                    std::exp(-distance * params_.apical_dominance_distance) *
-                    params_.apical_dominance_base * age_factor;
-            }
-        }
-
-        bud->auxin_level = auxin;
+        bud->auxin_level = compute_auxin_for_bud(*bud, tree);
     }
 }
 
 void TreeGrowth::determine_bud_flushing(TreeStructure& tree)
 {
     for (auto& bud : tree.all_buds) {
-        if (bud->state != BudState::Active)
+        if (bud->state == BudState::Dead)
             continue;
+        if (bud->has_ever_flushed)
+            continue;  // a bud that became a shoot never flushes again
 
         float flush_prob =
             (bud->type == BudType::Apical)
-                ? calculate_apical_flush_probability(*bud)
-                : calculate_lateral_flush_probability(*bud, tree);
+                ? std::pow(glm::clamp(bud->illumination, 0.0f, 1.0f),
+                           params_.apical_light_factor)
+                : std::pow(glm::clamp(bud->illumination, 0.0f, 1.0f),
+                           params_.lateral_light_factor) *
+                      std::exp(-bud->auxin_level);
 
-        // If random value is less than flush probability, bud flushes (stays
-        // active) Otherwise it becomes dormant
-        if (random_uniform() >= flush_prob) {
-            bud->state = BudState::Dormant;
+        if (random_uniform() < flush_prob) {
+            bud->state = BudState::Active;  // will grow in step 5
+        } else {
+            bud->state = BudState::Dormant;  // stays in the pool
         }
-        // else bud stays Active and will flush
     }
 }
 
-float TreeGrowth::calculate_apical_flush_probability(const TreeBud& bud)
+float TreeGrowth::calculate_growth_rate(int branch_level, int tree_age)
 {
-    // P(F) = I^(light_factor)
-    return std::pow(bud.illumination, params_.apical_light_factor);
+    // Eq. 1: phi'_GR = phi_GR / phi_AC^zeta_k          (phi_AC > 1)
+    //              = phi_GR / phi_AC^(zeta_k - zeta_max) otherwise
+    // where zeta_k is the level of the parent branch and phi_AC decays with
+    // tree age via the apical control age factor.
+    float ac = params_.apical_control *
+               std::pow(params_.apical_control_age_factor,
+                        static_cast<float>(tree_age));
+
+    if (ac <= 1e-3f)
+        return params_.growth_rate;
+
+    if (ac > 1.0f) {
+        return params_.growth_rate /
+               std::pow(ac, static_cast<float>(std::max(0, branch_level)));
+    }
+
+    int zeta_max = std::max(1, branch_level);
+    return params_.growth_rate /
+           std::pow(ac, static_cast<float>(branch_level - zeta_max));
 }
 
-float TreeGrowth::calculate_lateral_flush_probability(
-    const TreeBud& bud,
-    const TreeStructure& tree)
+float TreeGrowth::calculate_internode_length(int tree_age)
 {
-    // P(F) = I^(light_factor) * exp(-auxin)
-    float light_term = std::pow(bud.illumination, params_.lateral_light_factor);
-    float auxin_term = std::exp(-bud.auxin_level);
-
-    return light_term * auxin_term;
+    return params_.internode_base_length *
+           std::pow(params_.internode_length_age_factor,
+                    static_cast<float>(tree_age));
 }
 
-void TreeGrowth::grow_shoot_from_bud(
-    TreeStructure& tree,
-    std::shared_ptr<TreeBud> bud)
+void TreeGrowth::grow_shoot_from_bud(TreeStructure& tree,
+                                     std::shared_ptr<TreeBud> bud)
 {
-    if (bud->state != BudState::Active)
+    if (bud->state != BudState::Active || bud->has_ever_flushed)
         return;
 
-    // Calculate number of internodes to grow
-    float growth_rate = calculate_growth_rate(bud->level, tree.current_age);
-    int num_internodes = static_cast<int>(std::round(growth_rate));
-
-    if (num_internodes < 1)
+    // Eq. 1 uses zeta_k = the level of the PARENT branch (the branch the bud
+    // sits on), not the shoot level the bud will create
+    int parent_level =
+        bud->parent_branch ? bud->parent_branch->level : bud->level;
+    int num_internodes = static_cast<int>(
+        std::round(calculate_growth_rate(parent_level, tree.current_age)));
+    if (num_internodes < 1) {
+        bud->state = BudState::Dormant;
         return;
+    }
 
-    // Calculate growth direction with tropisms
-    glm::vec3 growth_dir = calculate_growth_direction(
-        bud->direction, bud->position, bud->illumination);
-
-    // Find parent branch properly
+    // Find the parent branch object for the new shoot chain
     std::shared_ptr<TreeBranch> parent_branch = nullptr;
     if (bud->parent_branch) {
-        // Search for the shared_ptr in all_branches
         for (auto& branch : tree.all_branches) {
             if (branch.get() == bud->parent_branch) {
                 parent_branch = branch;
@@ -276,39 +311,19 @@ void TreeGrowth::grow_shoot_from_bud(
         }
     }
 
-    // Create internodes
-    create_internodes(
-        tree,
-        parent_branch,
-        bud->position,
-        growth_dir,
-        num_internodes,
-        bud->level);
+    create_internodes(tree,
+                      parent_branch,
+                      bud->position,
+                      bud->direction,
+                      num_internodes,
+                      bud->level,
+                      bud->illumination,
+                      bud->light_direction);
 
-    // Mark bud as flushed (it created a shoot)
+    // The bud became a shoot: it is spent and produces auxin next cycle
+    bud->has_ever_flushed = true;
+    bud->flushed_this_cycle = true;
     bud->state = BudState::Dormant;
-}
-
-float TreeGrowth::calculate_growth_rate(int branch_level, int tree_age)
-{
-    // Apply apical control: higher level branches grow slower
-    float age_factor = std::pow(params_.apical_control_age_factor, tree_age);
-    float control = params_.apical_control * age_factor;
-
-    if (control > 1.0f) {
-        return params_.growth_rate / std::pow(control, branch_level);
-    }
-    else {
-        return params_.growth_rate /
-               std::pow(control, std::max(0, branch_level - 1));
-    }
-}
-
-float TreeGrowth::calculate_internode_length(int tree_age)
-{
-    // Length decreases with age
-    return params_.internode_base_length *
-           std::pow(params_.internode_length_age_factor, tree_age);
 }
 
 void TreeGrowth::create_internodes(
@@ -317,7 +332,9 @@ void TreeGrowth::create_internodes(
     const glm::vec3& start_pos,
     const glm::vec3& initial_dir,
     int num_internodes,
-    int branch_level)
+    int branch_level,
+    float bud_illumination,
+    const glm::vec3& bud_light_dir)
 {
     glm::vec3 current_pos = start_pos;
     glm::vec3 current_dir = glm::normalize(initial_dir);
@@ -326,7 +343,11 @@ void TreeGrowth::create_internodes(
     float internode_len = calculate_internode_length(tree.current_age);
 
     for (int i = 0; i < num_internodes; ++i) {
-        // Create new branch (internode)
+        // Tropism bends EVERY internode (Palubicki et al. 2009 approach),
+        // not just the first one of the shoot
+        current_dir = apply_tropism(current_dir, bud_illumination, bud_light_dir);
+        current_dir = glm::normalize(current_dir);
+
         auto branch = std::make_shared<TreeBranch>();
         branch->start_position = current_pos;
         branch->direction = current_dir;
@@ -335,98 +356,84 @@ void TreeGrowth::create_internodes(
         branch->level = branch_level;
         branch->age = 0;
         branch->parent = current_parent.get();
+        branch->radius = params_.initial_radius;
 
-        // Set initial small radius (will be updated by pipe model)
-        branch->radius = params_.initial_radius * 0.1f;
-
-        // Add to parent's children
         if (current_parent) {
             current_parent->children.push_back(branch);
         }
 
-        // Create lateral buds along this internode
-        create_lateral_buds(branch);
+        // Lateral buds at the node on TOP of this internode
+        create_lateral_buds(branch, i);
 
-        // Create leaves if enabled and at appropriate level
-        if (params_.generate_leaves && branch_level >= params_.min_leaf_level) {
-            create_leaves(branch);
+        if (i == num_internodes - 1) {
+            // Only the shoot TIP carries a flushable apical bud — one shoot,
+            // one apical bud. Interior nodes get none (the old code created a
+            // flushable bud per internode, so every node of the trunk
+            // sprouted its own shoot and the tree collapsed into a thicket).
+            glm::vec3 apical_dir = apply_apical_spherical_angle(current_dir);
+
+            auto apical_bud = std::make_shared<TreeBud>();
+            apical_bud->type = BudType::Apical;
+            apical_bud->state = BudState::Active;
+            apical_bud->position = branch->end_position;
+            apical_bud->direction = apical_dir;
+            apical_bud->level = branch_level;
+            apical_bud->age = 0;
+            apical_bud->illumination = bud_illumination;
+            apical_bud->light_direction = bud_light_dir;
+            apical_bud->along_branch = branch->length;
+            apical_bud->parent_branch = branch.get();
+            branch->apical_bud = apical_bud;
+
+            current_dir = apical_dir;
         }
 
-        // Create apical bud at the end
-        auto apical_bud = std::make_shared<TreeBud>();
-        apical_bud->type = BudType::Apical;
-        apical_bud->state = BudState::Active;
-        apical_bud->position = branch->end_position;
-
-        // Add some randomness to apical direction
-        float angle_variance = glm::radians(params_.apical_angle_variance);
-        float theta = random_normal(0.0f, angle_variance);
-        float phi = random_uniform(0.0f, 2.0f * 3.14159f);
-
-        glm::vec3 perturbed_dir = current_dir;
-        glm::vec3 perp = get_perpendicular(current_dir);
-        perturbed_dir = glm::rotate(perturbed_dir, theta, perp);
-        perturbed_dir = glm::rotate(perturbed_dir, phi, current_dir);
-
-        apical_bud->direction = glm::normalize(perturbed_dir);
-        apical_bud->level = branch_level;
-        apical_bud->age = 0;
-        apical_bud->illumination = 1.0f;
-        apical_bud->parent_branch = branch.get();
-
-        branch->apical_bud = apical_bud;
-
-        // Update for next iteration
         current_pos = branch->end_position;
-        current_dir = apical_bud->direction;
         current_parent = branch;
 
-        // If this is the first branch and no parent, set as root
+        // Safety: a shoot without a parent becomes its own root
         if (i == 0 && !parent) {
             tree.root = branch;
         }
     }
 }
 
-glm::vec3 TreeGrowth::calculate_growth_direction(
-    const glm::vec3& bud_direction,
-    const glm::vec3& position,
-    float illumination)
+glm::vec3 TreeGrowth::apply_tropism(const glm::vec3& direction,
+                                    float illumination,
+                                    const glm::vec3& local_light_dir)
 {
-    glm::vec3 dir = bud_direction;
+    // Phototropism bends towards the bud's LOCAL sky-opening direction
+    // (scaled by how much light the source bud sees), gravitropism bends
+    // away from gravity
+    glm::vec3 dir = direction;
+    glm::vec3 light_dir = (glm::length(local_light_dir) > 1e-5f)
+                              ? glm::normalize(local_light_dir)
+                              : glm::normalize(params_.light_direction);
+    glm::vec3 gravity_dir = glm::normalize(params_.gravity_direction);
 
-    // Apply phototropism
-    if (params_.phototropism > 0.0f) {
-        dir = apply_phototropism(dir, params_.phototropism);
-    }
+    dir += light_dir * params_.phototropism *
+           (params_.enable_plasticity ? glm::clamp(illumination, 0.2f, 1.0f)
+                                      : 1.0f);
+    dir -= gravity_dir * params_.gravitropism;
 
-    // Apply gravitropism
-    if (params_.gravitropism > 0.0f) {
-        dir = apply_gravitropism(dir, params_.gravitropism);
-    }
-
-    return glm::normalize(dir);
+    return dir;
 }
 
-glm::vec3 TreeGrowth::apply_phototropism(
-    const glm::vec3& direction,
-    float strength)
+glm::vec3 TreeGrowth::apply_apical_spherical_angle(const glm::vec3& direction)
 {
-    // Bend towards light direction
-    glm::vec3 result = direction + params_.light_direction * strength;
-    return glm::normalize(result);
+    float theta = random_normal(0.0f, glm::radians(params_.apical_angle_variance));
+    float phi = random_uniform(0.0f, 2.0f * kPi);
+
+    // Random azimuth picks the tilt plane, theta tilts within it (the old
+    // code rotated the vector around itself for phi, a no-op that biased
+    // all apical buds into one deterministic plane)
+    glm::vec3 dir = glm::normalize(direction);
+    glm::vec3 perp = glm::rotate(get_perpendicular(dir), phi, dir);
+    return glm::normalize(glm::rotate(dir, theta, perp));
 }
 
-glm::vec3 TreeGrowth::apply_gravitropism(
-    const glm::vec3& direction,
-    float strength)
-{
-    // Bend away from gravity (upward)
-    glm::vec3 result = direction - params_.gravity_direction * strength;
-    return glm::normalize(result);
-}
-
-void TreeGrowth::create_lateral_buds(std::shared_ptr<TreeBranch> branch)
+void TreeGrowth::create_lateral_buds(std::shared_ptr<TreeBranch> branch,
+                                     int node_index)
 {
     int num_buds = params_.num_lateral_buds;
 
@@ -435,19 +442,16 @@ void TreeGrowth::create_lateral_buds(std::shared_ptr<TreeBranch> branch)
         lateral_bud->type = BudType::Lateral;
         lateral_bud->state = BudState::Active;
 
-        // Position along the branch
-        float t = (i + 1.0f) / (num_buds + 1.0f);
-        lateral_bud->position =
-            branch->start_position +
-            (branch->end_position - branch->start_position) * t;
+        // Buds sit at the node on top of the internode
+        lateral_bud->position = branch->end_position;
+        lateral_bud->along_branch = branch->length;
 
-        // Calculate direction
-        lateral_bud->direction =
-            calculate_lateral_direction(branch->direction, i, num_buds);
+        lateral_bud->direction = calculate_lateral_direction(
+            branch->direction, i, num_buds, node_index);
 
         lateral_bud->level = branch->level + 1;
         lateral_bud->age = 0;
-        lateral_bud->illumination = 1.0f;
+        lateral_bud->illumination = branch->illumination;
         lateral_bud->auxin_level = 0.0f;
         lateral_bud->parent_branch = branch.get();
 
@@ -455,69 +459,55 @@ void TreeGrowth::create_lateral_buds(std::shared_ptr<TreeBranch> branch)
     }
 }
 
-glm::vec3 TreeGrowth::calculate_lateral_direction(
-    const glm::vec3& parent_dir,
-    int bud_index,
-    int total_buds)
+glm::vec3 TreeGrowth::calculate_lateral_direction(const glm::vec3& parent_dir,
+                                                  int bud_index,
+                                                  int total_buds,
+                                                  int node_index)
 {
-    // Calculate branching angle from parent direction
-    float branch_angle = glm::radians(random_normal(
-        params_.branching_angle_mean, params_.branching_angle_variance));
+    // Roll: per-node increment phi_RAM (orientation difference between
+    // successive internodes) + even spacing around the node + variance
+    float roll = glm::radians(params_.roll_angle_mean) *
+                     static_cast<float>(node_index + 1) +
+                 static_cast<float>(bud_index) * (2.0f * kPi /
+                                                  static_cast<float>(total_buds)) +
+                 glm::radians(random_normal(0.0f, params_.roll_angle_variance));
 
-    // Calculate roll angle (phyllotaxis) - golden angle distribution
-    // Each bud is rotated around the parent axis by approximately 137.5 degrees
-    float base_roll =
-        params_.roll_angle_mean;  // Default: 137.5 degrees (golden angle)
-    float roll_angle = glm::radians(random_normal(
-        base_roll * (bud_index + 1.0f), params_.roll_angle_variance));
+    // Branching angle from the parent shoot direction
+    float branch_angle = glm::radians(glm::clamp(
+        random_normal(params_.branching_angle_mean,
+                      params_.branching_angle_variance),
+        1.0f, 179.0f));
 
-    // Get perpendicular vector to parent direction
-    glm::vec3 perp = get_perpendicular(parent_dir);
-
-    // Rotate perpendicular by roll angle around parent direction
-    glm::vec3 radial = glm::rotate(perp, roll_angle, parent_dir);
-
-    // Rotate parent direction by branch angle towards radial direction
-    glm::vec3 axis = glm::normalize(glm::cross(parent_dir, radial));
-    glm::vec3 lateral_dir = glm::rotate(parent_dir, branch_angle, axis);
-
-    return glm::normalize(lateral_dir);
+    glm::vec3 dir = glm::normalize(parent_dir);
+    glm::vec3 radial = glm::rotate(get_perpendicular(dir), roll, dir);
+    glm::vec3 axis = glm::normalize(glm::cross(dir, radial));
+    return glm::normalize(glm::rotate(dir, branch_angle, axis));
 }
 
 void TreeGrowth::update_branch_radii(TreeStructure& tree)
 {
-    // Pipe model: parent cross-sectional area = sum of child cross-sectional
-    // areas Process branches from tips to root
-
+    // Pipe model, tips-to-root: r_parent^2 = sum(r_child^2); terminal
+    // internodes keep the base tip radius
     std::function<void(std::shared_ptr<TreeBranch>)> update_radius;
     update_radius = [&](std::shared_ptr<TreeBranch> branch) {
         if (!branch)
             return;
 
-        // Recursively update children first
         for (auto& child : branch->children) {
             update_radius(child);
         }
 
-        // Calculate this branch's radius based on children
         if (!branch->children.empty()) {
-            // Sum of child cross-sectional areas
             float child_area_sum = 0.0f;
             for (auto& child : branch->children) {
                 child_area_sum += child->radius * child->radius;
             }
-            // Parent radius from total area: r = sqrt(sum(r_child^2))
             branch->radius = std::sqrt(child_area_sum);
-        }
-        else {
-            // Terminal branch (no children) - use base radius scaled by level
-            branch->radius = params_.initial_radius *
-                             std::pow(params_.thickness_ratio, branch->level);
+        } else {
+            branch->radius = params_.initial_radius;
         }
 
-        // Ensure minimum radius
-        branch->radius =
-            std::max(branch->radius, params_.initial_radius * 0.05f);
+        branch->radius = std::max(branch->radius, 1e-3f);
     };
 
     if (tree.root) {
@@ -527,316 +517,415 @@ void TreeGrowth::update_branch_radii(TreeStructure& tree)
 
 void TreeGrowth::apply_structural_bending(TreeStructure& tree)
 {
-    // Simplified structural bending
-    // In full implementation, this would simulate weight-induced sagging
-    // For now, we skip this for simplicity
+    // Appendix A of Stava et al. 2014. At each node p0 with orientation h:
+    //   f_b      = phi_GBS * m_c * |(c - p0) . h_H| * (1 - |h . g|)
+    //   beta_max = (pi/2) * phi_GBA^d
+    //   beta     = max(0, beta_max * exp(-|f_b| / beta_max) - beta^(t-1))
+    //   beta^(t) = beta^(t-1) + beta
+    // m_c is the supported subtree mass with centroid c, h_H the horizontal
+    // part of h, d the branch thickness. The branch direction rotates
+    // towards gravity by beta around the h x g axis.
+    if (params_.gravity_bending_strength <= 0.0f ||
+        params_.gravity_bending_angle <= 0.0f || !tree.root) {
+        return;
+    }
+
+    glm::vec3 gravity_dir = glm::normalize(params_.gravity_direction);
+
+    // Mass in units of "one tip internode of wood" so phi_GBS is scale-free
+    // (the paper's m_c is a physical mass; without normalization the raw
+    // len*r^2 proxy is vanishingly small for thin twigs and the bending
+    // never engages)
+    const float m_ref = std::max(
+        params_.internode_base_length * params_.initial_radius *
+            params_.initial_radius,
+        1e-10f);
+    // Softening constant for the saturating force->angle response
+    const float kBetaSoftening = 10.0f;
+
+    // Post-order pass: subtree mass (len * r^2 proxy) and its centroid
+    std::function<float(const std::shared_ptr<TreeBranch>&, glm::vec3&)>
+        subtree_mass = [&](const std::shared_ptr<TreeBranch>& branch,
+                           glm::vec3& centroid) -> float {
+        if (!branch)
+            return 0.0f;
+
+        float own_mass = branch->length * branch->radius * branch->radius;
+        glm::vec3 own_center =
+            (branch->start_position + branch->end_position) * 0.5f;
+
+        float total = own_mass;
+        glm::vec3 weighted = own_center * own_mass;
+        for (auto& child : branch->children) {
+            glm::vec3 child_centroid(0.0f);
+            float child_mass = subtree_mass(child, child_centroid);
+            total += child_mass;
+            weighted += child_centroid * child_mass;
+        }
+
+        centroid = (total > 1e-9f) ? weighted / total : own_center;
+        return total;
+    };
+
+    // Pre-order pass: rotate each branch, hand the new end position down
+    std::function<void(const std::shared_ptr<TreeBranch>&, const glm::vec3&)>
+        bend = [&](const std::shared_ptr<TreeBranch>& branch,
+                   const glm::vec3& start) {
+            if (!branch)
+                return;
+
+            branch->start_position = start;
+            glm::vec3 h = glm::normalize(branch->direction);
+            glm::vec3 centroid(0.0f);
+            float mass = subtree_mass(branch, centroid);
+
+            glm::vec3 h_horizontal(h.x, 0.0f, h.z);
+            float h_h_len = glm::length(h_horizontal);
+            float verticality = 1.0f - std::abs(glm::dot(h, gravity_dir));
+
+            // Level-0 (trunk chain) segments are exempt: once the trunk
+            // tilts even slightly the bending force feeds back on itself
+            // (tilt -> verticality grows -> more torque) and kinks the trunk
+            if (branch->level > 0 && mass > 1e-9f && h_h_len > 1e-4f &&
+                verticality > 1e-3f) {
+                float arm = std::abs(glm::dot(centroid - branch->start_position,
+                                              h_horizontal / h_h_len));
+                float f_b = params_.gravity_bending_strength * (mass / m_ref) *
+                            arm * verticality;
+
+                float beta_max =
+                    (kPi * 0.5f) *
+                    std::pow(glm::clamp(params_.gravity_bending_angle,
+                                        1e-3f, 0.999f),
+                             branch->radius);
+                // Force-driven saturation: zero force bends nothing, force
+                // asymptotically approaches beta_max. (The paper's literal
+                // form beta_max*exp(-|f_b|/beta_max) is maximal at ZERO
+                // force — clearly inverted — so we use the saturating form
+                // that preserves the documented semantics: force bends the
+                // branch, thickness caps the angle, accumulation hardens it.)
+                float beta_target =
+                    beta_max *
+                    (1.0f - std::exp(-f_b /
+                                     (beta_max * kBetaSoftening)));
+                float beta = std::max(0.0f, beta_target -
+                                                branch->accumulated_bending);
+                branch->accumulated_bending += beta;
+                branch->accumulated_bending =
+                    std::min(branch->accumulated_bending, kPi * 0.5f);
+
+                if (beta > 1e-5f) {
+                    glm::vec3 axis =
+                        glm::normalize(glm::cross(h, gravity_dir));
+                    if (glm::length(axis) > 1e-4f) {
+                        h = glm::rotate(h, beta, axis);
+                    }
+                }
+            }
+
+            branch->direction = h;
+            branch->end_position =
+                branch->start_position + h * branch->length;
+
+            for (auto& child : branch->children) {
+                bend(child, branch->end_position);
+            }
+        };
+
+    bend(tree.root, tree.root->start_position);
 }
 
 void TreeGrowth::prune_branches(TreeStructure& tree)
 {
-    // Remove branches based on illumination and height
-    // Simplified: mark low branches and poorly lit branches for removal
+    // Shedding (phi_PF): branches receiving less light than the pruning
+    // factor are shed. Low-branch pruning (phi_LBPF): all LATERAL branches
+    // below this height are shed — the trunk (level 0) is never removed.
+    std::unordered_set<TreeBranch*> removed;
+    std::function<void(std::shared_ptr<TreeBranch>)> mark;
+    mark = [&](std::shared_ptr<TreeBranch> branch) {
+        if (!branch || branch->is_pruned)
+            return;
 
-    for (auto& branch : tree.all_branches) {
-        // Low branch pruning
-        if (branch->start_position.y < params_.low_branch_pruning_factor) {
-            // Mark for removal (simplified, just reduce radius)
-            branch->radius *= 0.5f;
+        bool shed = false;
+        if (branch->level > 0) {
+            if (branch->start_position.y < params_.low_branch_pruning_factor) {
+                shed = true;
+            } else if (branch->illumination < params_.pruning_factor &&
+                       params_.enable_plasticity) {
+                shed = true;
+            }
         }
 
-        // Light-based pruning
-        if (branch->apical_bud &&
-            branch->apical_bud->illumination < params_.pruning_factor) {
-            branch->radius *= 0.7f;
+        if (shed) {
+            removed.insert(branch.get());
+            branch->is_pruned = true;
+            // Descendants die with their parent
+            std::function<void(std::shared_ptr<TreeBranch>)> mark_subtree =
+                [&](std::shared_ptr<TreeBranch> node) {
+                    if (!node)
+                        return;
+                    removed.insert(node.get());
+                    node->is_pruned = true;
+                    for (auto& child : node->children)
+                        mark_subtree(child);
+                };
+            for (auto& child : branch->children)
+                mark_subtree(child);
+            return;
         }
+
+        for (auto& child : branch->children)
+            mark(child);
+    };
+    if (tree.root) {
+        mark(tree.root);
+    }
+
+    if (removed.empty())
+        return;
+
+    // Detach removed branches from their (surviving) parents
+    std::function<void(std::shared_ptr<TreeBranch>)> detach;
+    detach = [&](std::shared_ptr<TreeBranch> branch) {
+        if (!branch)
+            return;
+        if (!branch->children.empty()) {
+            std::vector<std::shared_ptr<TreeBranch>> kept;
+            kept.reserve(branch->children.size());
+            for (auto& child : branch->children) {
+                if (removed.count(child.get()))
+                    continue;
+                kept.push_back(child);
+            }
+            branch->children = std::move(kept);
+        }
+        for (auto& child : branch->children)
+            detach(child);
+    };
+    if (tree.root) {
+        detach(tree.root);
     }
 }
 
-float TreeGrowth::calculate_branch_distance(
-    const TreeBud& bud1,
-    const TreeBud& bud2)
+void TreeGrowth::generate_foliage(TreeStructure& tree)
 {
-    // Simplified as Euclidean distance
-    // Full implementation would traverse branch hierarchy
-    return glm::length(bud2.position - bud1.position);
-}
-
-glm::vec3 TreeGrowth::rotate_vector(
-    const glm::vec3& vec,
-    const glm::vec3& axis,
-    float angle)
-{
-    return glm::rotate(vec, angle, axis);
-}
-
-glm::vec3 TreeGrowth::get_perpendicular(const glm::vec3& vec)
-{
-    // Find a vector perpendicular to input
-    glm::vec3 arbitrary = (std::abs(vec.x) < 0.9f)
-                              ? glm::vec3(1.0f, 0.0f, 0.0f)
-                              : glm::vec3(0.0f, 1.0f, 0.0f);
-
-    return glm::normalize(glm::cross(vec, arbitrary));
-}
-
-void TreeGrowth::create_leaves(std::shared_ptr<TreeBranch> branch)
-{
+    // Section 4.2: foliage is generated procedurally AT THE END of the
+    // growth cycle, located along the terminal branches. A "terminal branch"
+    // is the whole outermost unbranched shoot chain: from each branch with
+    // no children we walk up through single-child ancestors (up to 3
+    // internodes) and distribute leaves along that span, so bare twigs don't
+    // end in an isolated tuft.
     if (!params_.generate_leaves)
         return;
-    if (branch->level < params_.min_leaf_level)
-        return;
 
-    // Calculate tree's maximum depth from this branch
-    int max_depth = branch->max_depth();
+    tree.all_leaves.clear();
 
-    // Check if this branch should have leaves (terminal branches only if
-    // specified)
-    if (!should_have_leaves(branch, max_depth))
-        return;
+    glm::vec3 light_dir = glm::normalize(params_.light_direction);
+    glm::vec3 up(0.0f, 1.0f, 0.0f);
 
-    int num_leaves = params_.leaves_per_internode;
+    std::function<void(std::shared_ptr<TreeBranch>)> place;
+    place = [&](std::shared_ptr<TreeBranch> branch) {
+        if (!branch)
+            return;
 
-    // Calculate tree height for normalization
-    float tree_height = 0.0f;
-    std::shared_ptr<TreeBranch> current = branch;
-    while (current) {
-        tree_height = std::max(tree_height, current->end_position.y);
-        current = (current->parent) ? std::shared_ptr<TreeBranch>(
-                                          current->parent, [](TreeBranch*) { })
-                                    : nullptr;
+        bool terminal = branch->children.empty();
+        bool eligible =
+            terminal ? (branch->level >= 0)
+                     : (!params_.leaves_on_terminal_only &&
+                        branch->level >= params_.min_leaf_level);
+
+        if (eligible && branch->length > 1e-4f) {
+            // Collect the terminal chain: this branch plus up to five
+            // ancestors (root-side first). Forks do NOT interrupt the chain:
+            // the parent limb continues through them, and its outer
+            // internodes carry foliage in real trees too. Stop before the
+            // trunk (level 0).
+            std::vector<std::shared_ptr<TreeBranch>> chain;
+            chain.push_back(branch);
+            TreeBranch* node = branch->parent;
+            while (node && chain.size() < 6 && node->level > 0) {
+                std::shared_ptr<TreeBranch> node_shared;
+                if (node->parent) {
+                    for (auto& c : node->parent->children) {
+                        if (c.get() == node) {
+                            node_shared = c;
+                            break;
+                        }
+                    }
+                } else if (tree.root.get() == node) {
+                    node_shared = tree.root;
+                }
+                if (!node_shared)
+                    break;
+                chain.push_back(node_shared);
+                node = node->parent;
+            }
+            std::reverse(chain.begin(), chain.end());
+
+            float chain_length = 0.0f;
+            for (auto& c : chain)
+                chain_length += c->length;
+
+            // Leaves along the whole chain span
+            float internodes = std::max(
+                1.0f,
+                chain_length / std::max(0.05f, params_.internode_base_length));
+            int num_leaves = static_cast<int>(std::lround(
+                internodes * static_cast<float>(params_.leaves_per_internode)));
+            num_leaves = glm::clamp(num_leaves, 1, 48);
+
+            // Leaf-branch tilt: 0 deg = along the branch, 90 deg = straight
+            // out; driven by the inclination parameter
+            float tilt = glm::radians(glm::clamp(
+                random_normal(params_.leaf_inclination_mean,
+                              params_.leaf_inclination_variance),
+                5.0f, 85.0f));
+
+            float phyl_offset = random_uniform(0.0f, 360.0f);
+
+            // Distribute leaves over the OUTER ~3 internodes of the chain
+            // only — the inner span runs through the crown interior where
+            // foliage would leave bare tufted tips sticking out
+            float outer_span = std::min(
+                chain_length, 3.0f * std::max(0.05f,
+                                              params_.internode_base_length));
+            float s_start = chain_length - outer_span * 0.94f;
+            float s_end = chain_length - outer_span * 0.06f;
+
+            for (int i = 0; i < num_leaves; ++i) {
+                auto leaf = std::make_shared<TreeLeaf>();
+
+                // Arc-length position along the chain polyline
+                float s = s_start +
+                          (s_end - s_start) *
+                              ((static_cast<float>(i) + 0.5f) /
+                               static_cast<float>(num_leaves));
+                std::shared_ptr<TreeBranch> seg;
+                for (auto& c : chain) {
+                    if (s <= c->length || c.get() == chain.back().get()) {
+                        seg = c;
+                        break;
+                    }
+                    s -= c->length;
+                }
+                glm::vec3 dir = glm::normalize(seg->direction);
+                leaf->position = seg->start_position + dir * std::min(s, seg->length);
+
+                float phyl = glm::radians(phyl_offset + kGoldenAngle *
+                                                             static_cast<float>(i));
+                glm::vec3 radial =
+                    glm::rotate(get_perpendicular(dir), phyl, dir);
+
+                // Leaf length axis: out of the branch at the tilt angle
+                glm::vec3 tangent = glm::normalize(dir * std::cos(tilt) +
+                                                   radial * std::sin(tilt));
+
+                // Leaf plane normal: outward, biased up and towards light
+                glm::vec3 normal = glm::normalize(
+                    radial * 0.7f + up * 0.45f +
+                    light_dir * params_.leaf_phototropism * 0.35f);
+                glm::vec3 binormal =
+                    glm::normalize(glm::cross(normal, tangent));
+                normal = glm::cross(tangent, binormal);
+
+                // Keep the plane facing the light
+                if (glm::dot(normal, light_dir) < 0.0f) {
+                    normal = -normal;
+                    binormal = -binormal;
+                }
+
+                leaf->tangent = tangent;
+                leaf->normal = normal;
+                leaf->binormal = binormal;
+
+                leaf->size = std::max(
+                    0.02f,
+                    random_normal(params_.leaf_size_base,
+                                  params_.leaf_size_variance));
+                leaf->length = leaf->size * params_.leaf_aspect_ratio;
+                leaf->width = leaf->size;
+
+                // Residual per-leaf tilt around the binormal (radians)
+                leaf->inclination =
+                    glm::radians(random_normal(0.0f, 8.0f));
+                leaf->rotation =
+                    glm::radians(random_normal(
+                        0.0f, params_.leaf_rotation_variance));
+                leaf->curvature = glm::clamp(
+                    random_normal(params_.leaf_curvature, 0.1f), 0.0f, 1.0f);
+
+                leaf->age = 0;
+                leaf->parent_level = branch->level;
+                leaf->parent_branch = branch.get();
+                leaf->attachment_direction = dir;
+
+                branch->leaves.push_back(leaf);
+            }
+        }
+
+        for (auto& child : branch->children)
+            place(child);
+    };
+
+    if (tree.root) {
+        place(tree.root);
     }
 
-    for (int i = 0; i < num_leaves; ++i) {
-        auto leaf = std::make_shared<TreeLeaf>();
-
-        // Position along the branch (avoid exact start and end)
-        float t = (i + 0.5f) / num_leaves;
-        t = random_normal(t, 0.1f);
-        t = glm::clamp(t, 0.1f, 0.9f);
-
-        leaf->position = branch->start_position +
-                         (branch->end_position - branch->start_position) * t;
-
-        // Calculate leaf orientation with improved phyllotaxis
-        glm::vec3 branch_dir = glm::normalize(branch->direction);
-
-        // Calculate normal with phototropism
-        leaf->normal = calculate_leaf_normal(branch_dir, leaf->position, i);
-
-        // Calculate tangent and binormal
-        calculate_leaf_orientation(
-            leaf->normal, branch_dir, leaf->tangent, leaf->binormal);
-
-        // Leaf size decreases with branch level but increases in terminal
-        // branches
-        float level_factor =
-            std::pow(0.85f, branch->level - params_.min_leaf_level);
-
-        // Terminal branches have larger leaves
-        float terminal_bonus = branch->is_terminal() ? 1.3f : 1.0f;
-
-        leaf->size = random_normal(
-            params_.leaf_size_base * level_factor * terminal_bonus,
-            params_.leaf_size_variance);
-        leaf->size = std::max(0.01f, leaf->size);
-
-        // Apply aspect ratio
-        leaf->length = leaf->size * params_.leaf_aspect_ratio;
-        leaf->width = leaf->size;
-
-        // Calculate inclination (angle from horizontal)
-        float height_factor =
-            (tree_height > 0.0f) ? (leaf->position.y / tree_height) : 0.5f;
-        leaf->inclination =
-            calculate_leaf_inclination(leaf->position, height_factor);
-
-        // Add rotation variation around the normal
-        leaf->rotation =
-            random_normal(0.0f, glm::radians(params_.leaf_rotation_variance));
-
-        // Curvature
-        leaf->curvature = random_normal(params_.leaf_curvature, 0.1f);
-        leaf->curvature = glm::clamp(leaf->curvature, 0.0f, 1.0f);
-
-        leaf->age = 0;
-        leaf->parent_level = branch->level;
-        leaf->parent_branch = branch.get();
-        leaf->attachment_direction = branch_dir;
-
-        branch->leaves.push_back(leaf);
-    }
+    tree.collect_all_leaves();
 }
 
-bool TreeGrowth::should_have_leaves(
-    std::shared_ptr<TreeBranch> branch,
-    int max_depth)
-{
-    if (!params_.leaves_on_terminal_only) {
-        return true;  // All branches can have leaves
-    }
-
-    // Only terminal branches (within certain depth from tips)
-    return max_depth <= params_.leaf_terminal_levels;
-}
-
-glm::vec3 TreeGrowth::calculate_leaf_normal(
-    const glm::vec3& branch_dir,
-    const glm::vec3& position,
-    int leaf_index)
-{
-    // Use golden angle phyllotaxis for spiral arrangement
-    float phyllotaxis = glm::radians(params_.leaf_phyllotaxis_angle);
-    float angle = phyllotaxis * (leaf_index + 1.0f);
-
-    // Get perpendicular to branch
-    glm::vec3 perp = get_perpendicular(branch_dir);
-
-    // Rotate around branch direction to get radial direction
-    glm::vec3 radial = glm::rotate(perp, angle, branch_dir);
-
-    // Start with radial direction (pointing outward from branch)
-    glm::vec3 normal = radial;
-
-    // Apply phototropism - bend towards light
-    if (params_.leaf_phototropism > 0.0f) {
-        glm::vec3 to_light = glm::normalize(params_.light_direction);
-        normal = glm::normalize(normal + to_light * params_.leaf_phototropism);
-    }
-
-    // Add slight upward bias to avoid pointing down (most leaves face upward)
-    glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
-    float dot_up = glm::dot(normal, up);
-    if (dot_up < 0.2f) {
-        // If pointing too far down, add more upward component
-        normal = glm::normalize(normal + up * 0.3f);
-    }
-
-    return glm::normalize(normal);
-}
-
-void TreeGrowth::calculate_leaf_orientation(
-    const glm::vec3& normal,
-    const glm::vec3& branch_dir,
-    glm::vec3& tangent,
-    glm::vec3& binormal)
-{
-    // Tangent should be perpendicular to normal and roughly aligned with branch
-    // direction This represents the "length" direction of the leaf
-
-    // Project branch direction onto plane perpendicular to normal
-    glm::vec3 branch_projected =
-        branch_dir - normal * glm::dot(branch_dir, normal);
-
-    if (glm::length(branch_projected) < 0.01f) {
-        // Branch is parallel to normal, use arbitrary perpendicular
-        tangent = get_perpendicular(normal);
-    }
-    else {
-        tangent = glm::normalize(branch_projected);
-    }
-
-    // Binormal is perpendicular to both (represents leaf "width" direction)
-    binormal = glm::normalize(glm::cross(normal, tangent));
-
-    // Ensure right-handed coordinate system
-    tangent = glm::normalize(glm::cross(binormal, normal));
-}
-
-float TreeGrowth::calculate_leaf_inclination(
-    const glm::vec3& position,
-    float height_factor)
-{
-    // Leaves lower in the tree tend to be more horizontal to catch light
-    // Leaves higher up can be more angled
-
-    float base_inclination = params_.leaf_inclination_mean;
-
-    // Lower leaves are more horizontal
-    float height_adjustment = -20.0f * (1.0f - height_factor);
-
-    float inclination = random_normal(
-        base_inclination + height_adjustment,
-        params_.leaf_inclination_variance);
-
-    // Clamp to reasonable range
-    return glm::clamp(inclination, 0.0f, 85.0f);
-}
-
-// ===== Plastic Trees Methods (Pirk et al. 2012) =====
+// ===== Illumination (Pirk et al. 2012 style) =====
 
 void TreeGrowth::create_leaf_clusters(TreeStructure& tree)
 {
-    // Clear existing clusters
+    // Proxy foliage during growth: one translucent cluster per terminal
+    // branch. Outer shoots shade the inner crown, which drives bud flushing
+    // and shedding towards the paper's self-organizing behaviour.
     tree.leaf_clusters.clear();
 
-    if (tree.all_leaves.empty()) {
-        return;
-    }
-
-    // Simple clustering: group leaves by branch
-    std::unordered_map<TreeBranch*, std::vector<std::shared_ptr<TreeLeaf>>>
-        branch_leaves;
-
-    for (auto& leaf : tree.all_leaves) {
-        if (leaf && leaf->parent_branch) {
-            branch_leaves[leaf->parent_branch].push_back(leaf);
+    std::function<void(std::shared_ptr<TreeBranch>)> collect;
+    collect = [&](std::shared_ptr<TreeBranch> branch) {
+        if (!branch)
+            return;
+        if (branch->children.empty()) {
+            auto cluster = std::make_shared<LeafCluster>();
+            cluster->center = (branch->start_position +
+                               branch->end_position) * 0.5f;
+            cluster->radius = params_.leaf_cluster_radius +
+                              branch->length * 0.5f;
+            cluster->translucency =
+                glm::clamp(params_.cluster_translucency, 0.05f, 1.0f);
+            cluster->parent_branch = branch.get();
+            tree.leaf_clusters.push_back(cluster);
+            return;
         }
-    }
+        for (auto& child : branch->children)
+            collect(child);
+    };
 
-    // Create cluster for each branch with leaves
-    for (auto& [branch, leaves] : branch_leaves) {
-        if (leaves.empty())
-            continue;
-
-        auto cluster = std::make_shared<LeafCluster>();
-        cluster->leaves = leaves;
-        cluster->parent_branch = branch;
-
-        // Calculate cluster center as average of leaf positions
-        glm::vec3 center(0.0f);
-        for (auto& leaf : leaves) {
-            center += leaf->position;
-        }
-        center /= static_cast<float>(leaves.size());
-        cluster->center = center;
-
-        // Calculate cluster radius as max distance from center
-        float max_dist = 0.0f;
-        for (auto& leaf : leaves) {
-            float dist = glm::length(leaf->position - center);
-            max_dist = std::max(max_dist, dist);
-        }
-        cluster->radius = max_dist + params_.leaf_cluster_radius;
-
-        // Set translucency based on cluster density
-        cluster->translucency =
-            std::pow(params_.cluster_translucency, cluster->radius);
-
-        tree.leaf_clusters.push_back(cluster);
+    if (tree.root) {
+        collect(tree.root);
     }
 }
 
 void TreeGrowth::calculate_illumination_with_clusters(TreeStructure& tree)
 {
-    // Use Plastic Trees illumination model with leaf cluster shadows
-    glm::vec3 light_dir = glm::normalize(params_.light_direction);
-
-    // If no leaf clusters exist yet (early growth), use simple illumination
     if (tree.leaf_clusters.empty()) {
         calculate_illumination(tree);
         return;
     }
 
-    // Calculate illumination for each bud
-    for (auto& bud : tree.all_buds) {
-        if (bud->state != BudState::Active)
-            continue;
+    glm::vec3 light_dir = glm::normalize(params_.light_direction);
 
-        bud->illumination =
-            calculate_point_illumination(bud->position, tree, light_dir);
+    for (auto& bud : tree.all_buds) {
+        if (bud->state == BudState::Dead)
+            continue;
+        glm::vec3 local_light(0.0f, 1.0f, 0.0f);
+        bud->illumination = calculate_point_illumination(
+            bud->position, tree, light_dir, &local_light);
+        bud->light_direction = local_light;
     }
 
-    // Calculate illumination for each branch
     for (auto& branch : tree.all_branches) {
         glm::vec3 mid_pos =
             (branch->start_position + branch->end_position) * 0.5f;
@@ -848,28 +937,28 @@ void TreeGrowth::calculate_illumination_with_clusters(TreeStructure& tree)
 float TreeGrowth::calculate_point_illumination(
     const glm::vec3& point,
     const TreeStructure& tree,
-    const glm::vec3& light_dir)
+    const glm::vec3& light_dir,
+    glm::vec3* out_light_direction)
 {
-    // Equation (3) from Plastic Trees paper
-    // Simplified: we sample light from multiple directions around the sky
-    // hemisphere
-
+    // Hemisphere sampling with cluster transmittance (Eq. 3 of Pirk et al.
+    // 2012, simplified). The sky is a uniform dome (overcast-sky assumption,
+    // as in PHL*09): every upward sample carries equal weight, so a bud's
+    // illumination is its mean sky visibility and the visibility-weighted
+    // average direction points at the local sky opening — outward for
+    // crown-edge buds, which is what makes phototropism spread the crown.
     const int num_samples = 16;
     float total_illumination = 0.0f;
+    glm::vec3 weighted_direction(0.0f);
 
     for (int i = 0; i < num_samples; ++i) {
-        // Sample hemisphere around primary light direction
         float theta =
-            (i / static_cast<float>(num_samples)) * glm::pi<float>() * 0.5f;
-        float phi = (i * 137.5f) * glm::pi<float>() / 180.0f;  // Golden angle
+            (i / static_cast<float>(num_samples)) * kPi * 0.5f;
+        float phi = (i * kGoldenAngle);
 
-        // Convert to direction
-        glm::vec3 sample_dir(
-            std::sin(theta) * std::cos(phi),
-            std::cos(theta),
-            std::sin(theta) * std::sin(phi));
+        glm::vec3 sample_dir(std::sin(theta) * std::cos(phi),
+                             std::cos(theta),
+                             std::sin(theta) * std::sin(phi));
 
-        // Rotate towards light direction
         glm::vec3 up(0.0f, 1.0f, 0.0f);
         if (std::abs(glm::dot(light_dir, up)) > 0.99f) {
             up = glm::vec3(1.0f, 0.0f, 0.0f);
@@ -881,168 +970,60 @@ float TreeGrowth::calculate_point_illumination(
                               sample_dir.z * forward;
         direction = glm::normalize(direction);
 
-        // Calculate visibility (1 - occlusion)
         float visibility = 1.0f;
-
-        // Check occlusion by leaf clusters
         for (const auto& cluster : tree.leaf_clusters) {
-            // Ray-sphere intersection
+            // Skip the cluster the point sits inside (no self-shading)
+            if (glm::length(cluster->center - point) < cluster->radius)
+                continue;
+
             glm::vec3 to_cluster = cluster->center - point;
             float proj = glm::dot(to_cluster, direction);
+            if (proj <= 0.0f)
+                continue;
 
-            if (proj > 0) {  // Cluster is in direction of light
-                glm::vec3 closest = point + direction * proj;
-                float dist = glm::length(closest - cluster->center);
-
-                if (dist < cluster->radius) {
-                    // Cluster occludes this light ray
-                    visibility *= cluster->translucency;
-                }
+            glm::vec3 closest = point + direction * proj;
+            float dist = glm::length(closest - cluster->center);
+            if (dist < cluster->radius) {
+                // Fraction of the ray inside the cluster
+                float chord = 2.0f * std::sqrt(
+                    std::max(0.0f, cluster->radius * cluster->radius -
+                                       dist * dist));
+                float overlap =
+                    glm::clamp(chord / (2.0f * cluster->radius), 0.0f, 1.0f);
+                visibility *= std::pow(cluster->translucency, overlap);
             }
         }
 
-        // Light intensity based on angle to primary light direction
-        float angle_diff =
-            std::acos(glm::clamp(glm::dot(direction, light_dir), -1.0f, 1.0f));
-        float intensity = std::pow(std::cos(angle_diff), 2.0f);
-
-        total_illumination += visibility * intensity;
+        total_illumination += visibility;
+        weighted_direction += direction * visibility;
     }
 
-    return glm::clamp(total_illumination / num_samples, 0.0f, 1.0f);
+    if (out_light_direction) {
+        if (glm::length(weighted_direction) > 1e-4f) {
+            *out_light_direction = glm::normalize(weighted_direction);
+        } else {
+            *out_light_direction = light_dir;
+        }
+    }
+
+    return glm::clamp(total_illumination / static_cast<float>(num_samples),
+                      0.0f, 1.0f);
 }
 
-void TreeGrowth::apply_environmental_bending(TreeStructure& tree)
+glm::vec3 TreeGrowth::rotate_vector(const glm::vec3& vec,
+                                    const glm::vec3& axis,
+                                    float angle)
 {
-    // Apply bending to branches based on environmental factors
-    // Similar to equation (6) from Plastic Trees paper
-
-    glm::vec3 light_dir = glm::normalize(params_.light_direction);
-    glm::vec3 gravity_dir = glm::normalize(params_.gravity_direction);
-
-    for (auto& branch : tree.all_branches) {
-        if (!branch || branch->level == 0)
-            continue;  // Don't bend root
-
-        // Calculate environmental influence
-        float phototropism_weight = params_.phototropism *
-                                    params_.environmental_sensitivity *
-                                    branch->illumination;
-        float gravitropism_weight =
-            params_.gravitropism * params_.environmental_sensitivity;
-
-        // Original direction without environmental influence
-        glm::vec3 original_dir = branch->original_direction;
-        if (glm::length(original_dir) < 0.01f) {
-            original_dir = branch->direction;
-            branch->original_direction = original_dir;
-        }
-
-        // Calculate target direction from environmental factors
-        glm::vec3 env_direction = original_dir;
-
-        // Apply phototropism
-        env_direction += light_dir * phototropism_weight;
-
-        // Apply gravitropism
-        env_direction += gravity_dir * gravitropism_weight;
-
-        // Normalize
-        env_direction = glm::normalize(env_direction);
-
-        // Blend with current direction based on branch flexibility
-        float flexibility =
-            params_.branch_flexibility *
-            (1.0f /
-             (1.0f + branch->level * 0.5f));  // Older branches less flexible
-
-        branch->direction = glm::normalize(
-            branch->direction * (1.0f - flexibility) +
-            env_direction * flexibility);
-
-        // Update end position based on new direction
-        branch->end_position =
-            branch->start_position + branch->direction * branch->length;
-
-        // Propagate to children
-        for (auto& child : branch->children) {
-            if (child) {
-                child->start_position = branch->end_position;
-            }
-        }
-    }
+    return glm::rotate(vec, angle, axis);
 }
 
-glm::vec3 TreeGrowth::calculate_inverse_tropism(
-    const glm::vec3& bent_direction,
-    const glm::vec3& position,
-    float branch_length,
-    float illumination)
+glm::vec3 TreeGrowth::get_perpendicular(const glm::vec3& vec)
 {
-    // Equation from Plastic Trees paper to recover original direction
-    // Given bent direction, calculate what the direction would be without
-    // tropisms
+    glm::vec3 arbitrary = (std::abs(vec.x) < 0.9f)
+                              ? glm::vec3(1.0f, 0.0f, 0.0f)
+                              : glm::vec3(0.0f, 1.0f, 0.0f);
 
-    glm::vec3 light_dir = glm::normalize(params_.light_direction);
-    glm::vec3 gravity_dir = glm::normalize(params_.gravity_direction);
-
-    // Calculate weights (same as in forward tropism)
-    float photo_weight = params_.phototropism * illumination;
-    float grav_weight = params_.gravitropism;
-
-    float total_weight = photo_weight + grav_weight;
-    if (total_weight < 0.01f) {
-        return bent_direction;  // No tropism applied
-    }
-
-    // Combined tropism direction
-    glm::vec3 tropism_dir =
-        (light_dir * photo_weight + gravity_dir * grav_weight) / total_weight;
-
-    // Calculate original direction using equation (7) from paper
-    float segment_factor = std::pow(
-        1.0f - total_weight, branch_length / params_.internode_base_length);
-
-    // Solve for original direction
-    glm::vec3 original_dir =
-        bent_direction - tropism_dir * (1.0f - segment_factor);
-    original_dir = glm::normalize(original_dir / segment_factor);
-
-    return original_dir;
-}
-
-void TreeGrowth::apply_plasticity_transform(TreeStructure& tree)
-{
-    // Apply Plastic Trees transformations
-    // Prune branches with insufficient light
-
-    for (auto& branch : tree.all_branches) {
-        if (!branch)
-            continue;
-
-        // Mark branches for pruning if illumination too low
-        if (branch->illumination < params_.min_illumination) {
-            branch->environmental_stress += 0.1f;
-
-            if (branch->environmental_stress > 1.0f) {
-                branch->is_pruned = true;
-            }
-        }
-        else {
-            // Recover from stress
-            branch->environmental_stress =
-                std::max(0.0f, branch->environmental_stress - 0.05f);
-        }
-
-        // Store inverse tropism for future adaptation
-        if (branch->level > 0) {
-            branch->original_direction = calculate_inverse_tropism(
-                branch->direction,
-                branch->start_position,
-                branch->length,
-                branch->illumination);
-        }
-    }
+    return glm::normalize(glm::cross(vec, arbitrary));
 }
 
 }  // namespace TreeGen

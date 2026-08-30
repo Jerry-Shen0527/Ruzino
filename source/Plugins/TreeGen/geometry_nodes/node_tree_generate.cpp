@@ -1,4 +1,8 @@
+#include <cmath>
+#include <cstdlib>
+#include <functional>
 #include <glm/gtx/rotate_vector.hpp>
+#include <unordered_map>
 
 #include "GCore/Components/CurveComponent.h"
 #include "GCore/Components/MeshComponent.h"
@@ -14,7 +18,7 @@ NODE_DEF_OPEN_SCOPE
 NODE_DECLARATION_FUNCTION(tree_generate)
 {
     // Tree parameters
-    b.add_input<int>("Growth Years").min(1).max(10).default_val(4);
+    b.add_input<int>("Growth Years").min(1).max(30).default_val(8);
     b.add_input<int>("Random Seed").min(0).max(10000).default_val(42);
 
     // Geometric parameters
@@ -23,20 +27,20 @@ NODE_DECLARATION_FUNCTION(tree_generate)
         .max(90.0f)
         .default_val(38.0f);
     b.add_input<int>("Lateral Buds").min(1).max(10).default_val(4);
-    b.add_input<float>("Branch Angle").min(10.0f).max(90.0f).default_val(45.0f);
-    b.add_input<float>("Growth Rate").min(0.5f).max(10.0f).default_val(3.0f);
+    b.add_input<float>("Branch Angle").min(10.0f).max(90.0f).default_val(38.0f);
+    b.add_input<float>("Growth Rate").min(0.1f).max(10.0f).default_val(0.98f);
     b.add_input<float>("Internode Length")
         .min(0.05f)
         .max(2.0f)
-        .default_val(0.3f);
-    b.add_input<float>("Apical Control").min(0.5f).max(5.0f).default_val(2.0f);
+        .default_val(1.02f);
+    b.add_input<float>("Apical Control").min(0.1f).max(5.0f).default_val(2.4f);
 
     // Bud fate parameters
     b.add_input<float>("Apical Dominance")
         .min(0.0f)
         .max(5.0f)
         .default_val(1.0f);
-    b.add_input<float>("Light Factor").min(0.0f).max(1.0f).default_val(0.6f);
+    b.add_input<float>("Light Factor").min(0.0f).max(2.0f).default_val(1.13f);
 
     // Environmental parameters (Plastic Trees - Pirk et al. 2012)
     b.add_input<bool>("Enable Plasticity").default_val(true);
@@ -45,7 +49,7 @@ NODE_DECLARATION_FUNCTION(tree_generate)
         .max(1.0f)
         .default_val(0.5f);
     b.add_input<float>("Phototropism").min(0.0f).max(1.0f).default_val(0.3f);
-    b.add_input<float>("Gravitropism").min(0.0f).max(1.0f).default_val(0.2f);
+    b.add_input<float>("Gravitropism").min(0.0f).max(1.0f).default_val(0.61f);
     b.add_input<float>("Branch Flexibility")
         .min(0.0f)
         .max(1.0f)
@@ -63,16 +67,16 @@ NODE_DECLARATION_FUNCTION(tree_generate)
     b.add_input<bool>("Generate Leaves").default_val(true);
     b.add_input<bool>("Terminal Leaves Only").default_val(true);
     b.add_input<int>("Leaf Terminal Levels").min(1).max(10).default_val(3);
-    b.add_input<int>("Leaves Per Internode").min(0).max(10).default_val(4);
-    b.add_input<float>("Leaf Size").min(0.01f).max(1.0f).default_val(0.15f);
+    b.add_input<int>("Leaves Per Internode").min(0).max(30).default_val(14);
+    b.add_input<float>("Leaf Size").min(0.01f).max(1.0f).default_val(0.28f);
     b.add_input<float>("Leaf Aspect Ratio")
         .min(0.5f)
         .max(10.0f)
-        .default_val(2.0f);
+        .default_val(2.2f);
     b.add_input<float>("Leaf Inclination")
         .min(0.0f)
         .max(90.0f)
-        .default_val(45.0f);
+        .default_val(50.0f);
     b.add_input<float>("Leaf Phototropism")
         .min(0.0f)
         .max(1.0f)
@@ -135,11 +139,59 @@ NODE_EXECUTION_FUNCTION(tree_generate)
     // Create tree growth system
     TreeGrowth growth(tree_params);
 
-    // Initialize and grow tree
+    // Initialize and grow tree, then place foliage along terminal branches
+    // (Stava et al. 2014, Section 4.2)
     TreeStructure tree = growth.initialize_tree();
     growth.grow_tree(tree, tree_params.growth_time);
+    growth.generate_foliage(tree);
 
-    // Convert tree structure to curve geometry for visualization
+    if (std::getenv("TREEGEN_STATS") != nullptr) {
+        std::unordered_map<int, int> level_count;
+        int terminals = 0;
+        int bare_terminals = 0;
+        float max_height = 0.0f;
+        std::function<void(const std::shared_ptr<TreeBranch>&)> walk =
+            [&](const std::shared_ptr<TreeBranch>& branch) {
+                if (!branch)
+                    return;
+                level_count[branch->level]++;
+                if (branch->children.empty()) {
+                    terminals++;
+                    if (branch->leaves.empty()) {
+                        if (bare_terminals < 5) {
+                            fprintf(stderr,
+                                    "[treegen]   bare terminal lvl=%d "
+                                    "len=%.2f age=%d pos=(%.2f,%.2f,%.2f)\n",
+                                    branch->level, branch->length,
+                                    branch->age, branch->end_position.x,
+                                    branch->end_position.y,
+                                    branch->end_position.z);
+                        }
+                        bare_terminals++;
+                    }
+                }
+                max_height = std::max(max_height, branch->end_position.y);
+                for (const auto& child : branch->children)
+                    walk(child);
+            };
+        walk(tree.root);
+        fprintf(stderr, "[treegen] age=%d branches=%zu terminals=%d "
+                        "bare=%d leaves=%zu height=%.2f levels=%zu\n",
+                tree.current_age, tree.all_branches.size(), terminals,
+                bare_terminals, tree.all_leaves.size(), max_height,
+                level_count.size());
+        for (auto& [level, count] : level_count) {
+            fprintf(stderr, "[treegen]   level %d: %d branches\n", level,
+                    count);
+        }
+    }
+
+    // Convert the tree to polylines for meshing: one polyline per maximal
+    // unbranched shoot chain, with one width per point. Segment i tapers
+    // from the width at its start point to the width at its end point, so
+    // the swept tube is continuous through every node (no ring steps at
+    // internode joints). At a fork the child chain starts with the parent's
+    // radius, sealing the joint with a short cone.
     Geometry curve_geom = Geometry::CreateCurve();
     auto curve = curve_geom.get_component<CurveComponent>();
 
@@ -147,19 +199,50 @@ NODE_EXECUTION_FUNCTION(tree_generate)
     std::vector<int> curve_counts;
     std::vector<float> curve_widths;
 
-    // Convert each branch to a curve segment
-    for (const auto& branch : tree.all_branches) {
+    std::function<void(std::shared_ptr<TreeBranch>)> emit_chain;
+    emit_chain = [&](std::shared_ptr<TreeBranch> branch) {
         if (!branch)
-            continue;
+            return;
 
-        // Add branch start and end points
-        curve_vertices.push_back(branch->start_position);
-        curve_vertices.push_back(branch->end_position);
-        curve_counts.push_back(2);  // Two points per branch segment
+        bool chain_start =
+            (branch->parent == nullptr) ||
+            (branch->parent->children.size() >= 2);
 
-        // Add radius information as width
-        curve_widths.push_back(branch->radius);
-        curve_widths.push_back(branch->radius);
+        if (chain_start) {
+            std::vector<glm::vec3> pts;
+            std::vector<float> ws;
+
+            pts.push_back(branch->start_position);
+            ws.push_back(branch->parent ? branch->parent->radius
+                                        : branch->radius);
+
+            std::shared_ptr<TreeBranch> cur = branch;
+            while (cur && cur->children.size() == 1) {
+                if (glm::length(cur->end_position - pts.back()) > 1e-5f) {
+                    pts.push_back(cur->end_position);
+                    ws.push_back(cur->radius);
+                }
+                cur = cur->children[0];
+            }
+            if (cur) {
+                if (glm::length(cur->end_position - pts.back()) > 1e-5f) {
+                    pts.push_back(cur->end_position);
+                    ws.push_back(cur->radius);
+                }
+            }
+
+            curve_vertices.insert(curve_vertices.end(), pts.begin(), pts.end());
+            curve_widths.insert(curve_widths.end(), ws.begin(), ws.end());
+            curve_counts.push_back(static_cast<int>(pts.size()));
+        }
+
+        for (auto& child : branch->children) {
+            emit_chain(child);
+        }
+    };
+
+    if (tree.root) {
+        emit_chain(tree.root);
     }
 
     curve->set_vertices(curve_vertices);
@@ -227,9 +310,10 @@ NODE_EXECUTION_FUNCTION(tree_generate)
             glm::vec3 v2 = leaf->position - leaf_tangent * half_length;  // base
             glm::vec3 v3 = leaf->position - leaf_binormal * half_width;  // left
 
-            // Apply curvature (bend leaf slightly along its length)
+            // Apply curvature (gentle lengthwise fold — strong folds read
+            // as spiky arrows at crown scale)
             if (leaf->curvature > 0.01f) {
-                float curve_amount = leaf->curvature * half_length * 0.3f;
+                float curve_amount = leaf->curvature * half_length * 0.12f;
                 // Bend the tip and base towards the normal direction
                 v0 += leaf_normal * curve_amount;
                 v2 += leaf_normal * curve_amount * 0.5f;
