@@ -84,7 +84,9 @@ NODE_DECLARATION_FUNCTION(mock_pen_motion)
     // Press-and-hold time in blob mode (Length <= 0): the pen stays at
     // Press Z for this long instead of traveling.
     b.add_input<float>("Hold Duration").default_val(0.3f).min(0.01f).max(5.0f);
-    b.add_input<float>("Tilt").default_val(0.0f).min(0.0f).max(80.0f);  // deg
+    // 30deg is the DEFAULT: the validated drag pose (section 27/28 runs).
+    // Upright (0deg) is the special case — set WB_PEN_TILT=0 explicitly.
+    b.add_input<float>("Tilt").default_val(30.0f).min(0.0f).max(80.0f);  // deg
     b.add_input<float>("Tilt Azimuth")
         .default_val(0.0f)
         .min(-180.0f)
@@ -101,7 +103,7 @@ NODE_DECLARATION_FUNCTION(mock_pen_motion)
     // continuously along the sine path with its analytic yaw rate folded
     // into angular_vel. Blob mode has no travel, so it keeps the fixed
     // azimuth (a stab stays a stab).
-    b.add_input<bool>("Tilt Follow Stroke").default_val(false);
+    b.add_input<bool>("Tilt Follow Stroke").default_val(true);
     b.add_input<float>("Ink R (RYB)").default_val(1.0f).min(0.0f).max(1.0f);
     b.add_input<float>("Ink Y (RYB)").default_val(0.0f).min(0.0f).max(1.0f);
     b.add_input<float>("Ink B (RYB)").default_val(0.0f).min(0.0f).max(1.0f);
@@ -201,11 +203,12 @@ NODE_EXECUTION_FUNCTION(mock_pen_motion)
             glm::vec2 ddp = path_ddxy(s);
             const float ds_dt = 1.0f / T_s;
             const float denom = dp.x * dp.x + dp.y * dp.y;
-            if (denom < 1e-12f) return 0.0f;
+            if (denom < 1e-12f)
+                return 0.0f;
             return (dp.x * ddp.y - dp.y * ddp.x) / denom * ds_dt;
         };
 
-        float tilt_cur = tilt_deg;  // deg, varies only during STROKE (sweep)
+        float tilt_cur = tilt_deg;   // deg, varies only during STROKE (sweep)
         float az_cur = tilt_az_deg;  // deg, follows the stroke when enabled
         float yaw_rate = 0.0f;       // rad/s, d(az_cur)/dt while following
         float sweep_rate = 0.0f;     // rad/s, d(theta)/dt during STROKE sweep
@@ -222,7 +225,8 @@ NODE_EXECUTION_FUNCTION(mock_pen_motion)
             glm::vec2 p = path_xy(0.0f);
             out.pos = glm::vec3(p.x, p.y, z_hi + (z_lo - z_hi) * u);
             out.vel = glm::vec3(0.0f, 0.0f, (z_lo - z_hi) / T_d);
-            if (tilt_follow && !blob) az_cur = glm::degrees(heading_at(0.0f));
+            if (tilt_follow && !blob)
+                az_cur = glm::degrees(heading_at(0.0f));
         }
         else if (tau < T_d + T_s) {
             // STROKE: pressed and traveling. vel = d(pos)/dt with ds/dt=1/T_s.
@@ -249,7 +253,8 @@ NODE_EXECUTION_FUNCTION(mock_pen_motion)
             out.pos = glm::vec3(p.x, p.y, z_lo + (z_hi - z_lo) * u);
             out.vel = glm::vec3(0.0f, 0.0f, (z_hi - z_lo) / T_l);
             tilt_cur = tilt_deg + tilt_sweep_deg;
-            if (tilt_follow && !blob) az_cur = glm::degrees(heading_at(1.0f));
+            if (tilt_follow && !blob)
+                az_cur = glm::degrees(heading_at(1.0f));
         }
         else {
             // DONE: parked at hover above the stroke end.
@@ -257,14 +262,16 @@ NODE_EXECUTION_FUNCTION(mock_pen_motion)
             out.pos = glm::vec3(p.x, p.y, z_hi);
             out.vel = glm::vec3(0.0f);
             tilt_cur = tilt_deg + tilt_sweep_deg;
-            if (tilt_follow && !blob) az_cur = glm::degrees(heading_at(1.0f));
+            if (tilt_follow && !blob)
+                az_cur = glm::degrees(heading_at(1.0f));
         }
 
         // Orientation from the current tilt angle (identity when tilt = 0):
         // rotating about tilt_axis_cur tips the pen tip (local -Z) toward
         // (cos az_cur, sin az_cur, 0).
         const float az_rad = glm::radians(az_cur);
-        const glm::vec3 tilt_axis_cur(std::sin(az_rad), -std::cos(az_rad), 0.0f);
+        const glm::vec3 tilt_axis_cur(
+            std::sin(az_rad), -std::cos(az_rad), 0.0f);
         out.orientation = glm::angleAxis(glm::radians(tilt_cur), tilt_axis_cur);
         glm::vec3 omega = tilt_axis_cur * sweep_rate;
         if (yaw_rate != 0.0f) {

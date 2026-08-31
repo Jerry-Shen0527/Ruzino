@@ -5,7 +5,7 @@ via the ZERO-COPY GPU buffer path (no bake / no CPU readback / no USD primvar).
 
 Architecture (interleaved per-frame animation):
   Stage 1: build the streaming Wetbrush zone graph (mock_pen_motion ->
-           brush_wb_deposit -> bristle -> fluid -> commit -> simulation_out,
+           brush_wb_sim -> commit -> simulation_out,
            feedback) and a marker render scene (UsdVolVolume carrying grid
            metadata primvars but NO paintField, plus the Paper mesh, camera,
            lights). The graph is NOT driven here. The analytic pen-motion node
@@ -56,7 +56,7 @@ from ruzino_graph import RuzinoGraph  # noqa: E402
 # of distance (its timestamp-synthesis fallback spaces points at 1/60 s), so
 # Length 0.3 always finished within 60 frames; the analytic node paces
 # physically at Speed u/s instead.
-NUM_FRAMES = 135
+NUM_FRAMES = int(os.environ.get("WB_FRAMES", "135"))
 FPS = 60.0
 DT = 1.0 / FPS
 
@@ -77,9 +77,14 @@ OUTPUT_DIR = BIN / os.environ.get("WB_OUT_DIR", "wetbrush_sequence")
 # e.g. on a 12 GB card:
 #   WETBRUSH_RES=1024 python ../../source/tests/render_wetbrush_cross.py
 # 1024²×64 fits in ~7 GB; 2048²×64 needs ~28 GB.
-SIM_RES = int(os.environ.get("WETBRUSH_RES", "4096"))
+# WORLD SCALE (doc §33): 1 unit = 1 cm. Canvas 10×10 cm, brush head 1 cm
+# (radius 0.5). At res 1024 a brush diameter spans 102 cells (2.5× the old
+# paper-1.0/res-1024 density). res 4096 on the 10 cm canvas needs sparse
+# Group-A buffers (112 GB — doc §30); default 1024.
+SIM_RES = int(os.environ.get("WETBRUSH_RES", "1024"))
 SIM_RES_Z = int(os.environ.get("WETBRUSH_RES_Z", "64"))
-SIM_PAPER = 1.0
+# Canvas coverage in cm.
+SIM_PAPER = float(os.environ.get("WETBRUSH_PAPER", "10.0"))
 CELL_SZ = SIM_PAPER / SIM_RES
 
 
@@ -96,19 +101,14 @@ def build_sim_graph(sim_usd: Path):
     pen = g.createNode("mock_pen_motion", name="PenMotion")
     init_state = g.createNode("brush_wb_init_state", name="InitState")
     sim_in, sim_out = g.createSimulationZone()
-    deposit = g.createNode("brush_wb_deposit", name="Deposit")
-    bristle = g.createNode("brush_wb_bristle", name="Bristle")
-    fluid = g.createNode("brush_wb_fluid", name="Fluid")
+    sim = g.createNode("brush_wb_sim", name="Sim")
     commit = g.createNode("brush_wb_commit", name="Commit")
     write = g.createNode("write_usd", name="Output")
 
     g.addEdge(init_state, "State", sim_in, "Simulation In")
-    g.addEdge(pen, "Stroke Sample", deposit, "Stroke Sample")
-    g.addEdge(sim_in, "Simulation Out", deposit, "State")
-    g.addEdge(deposit, "Stroke Sample", fluid, "Stroke Sample")
-    g.addEdge(deposit, "State", bristle, "State")
-    g.addEdge(bristle, "State", fluid, "State")
-    g.addEdge(fluid, "State", commit, "State")
+    g.addEdge(pen, "Stroke Sample", sim, "Stroke Sample")
+    g.addEdge(sim_in, "Simulation Out", sim, "State")
+    g.addEdge(sim, "State", commit, "State")
     # commit's Paint Field 3D output still feeds write_usd so the sim USD has
     # a populated prim for downstream inspection, but the renderer does NOT
     # read it — it consumes the zero-copy registry buffer.
@@ -116,28 +116,44 @@ def build_sim_graph(sim_usd: Path):
     g.addEdge(commit, "State", sim_out, "Simulation In")
 
     g.setSocketDefaults({
-        # Speed 0.15 u/s is the physical stroke pace; NUM_FRAMES above is sized
-        # so descend+stroke+lift all fit inside the sequence (see top note).
-        (pen, "Length"): 0.3, (pen, "Amplitude"): 0.05,
-        (pen, "Speed"): 0.15,
-        # Tilt knobs (env): WB_PEN_TILT=deg enables a slanted pen;
-        # WB_PEN_FOLLOW=1 makes the tilt azimuth follow the instantaneous
-        # stroke heading (handle leans into the drag, hair trails behind).
-        (pen, "Tilt"): float(os.environ.get("WB_PEN_TILT", "0")),
+        # Pen fixture in the 1u=1cm world: a 5 cm wavy stroke at 2.5 cm/s
+        # (a real hand pace for a 1 cm brush) → T_s = 2 s = 120 frames; the
+        # NUM_FRAMES above is sized so descend+stroke+lift all fit (top note).
+        (pen, "Length"): 5.0, (pen, "Amplitude"): 1.0,
+        (pen, "Speed"): 2.5, (pen, "Hover Z"): 0.2,
+        # Tilt knobs (env). SLANTED IS THE DEFAULT (30deg + follow, the
+        # validated drag pose of sections 27/28): the handle leans into the
+        # drag and the bristles trail behind. WB_PEN_TILT=0 opts back into
+        # the upright stab; WB_PEN_FOLLOW=0 pins the azimuth.
+        (pen, "Tilt"): float(os.environ.get("WB_PEN_TILT", "30")),
         (pen, "Tilt Follow Stroke"):
-            os.environ.get("WB_PEN_FOLLOW", "0") == "1",
-        # Resolution 4096 (paper Section 4.2: "we typically set the grid
-        # resolution to 4096x4096x64"). At lower resolutions the brush
-        # footprint covered too few cells, so trilinear filtering + the
-        # 2-cell gradient normal rode cell-boundary density steps and the
-        # Lambertian shading flickered across the stroke.
-        (deposit, "Resolution"): SIM_RES, (deposit, "Resolution Z"): SIM_RES_Z,
-        (deposit, "Paper Size"): SIM_PAPER,
-        (deposit, "Brush Radius"): 0.02, (deposit, "Brush Pressure"): 1.0,
-        (deposit, "Ink Amount"): 0.8,
-        (bristle, "Brush Radius"): 0.02,
-        (fluid, "Viscosity"): 0.5, (fluid, "Diffusion Rate"): 0.0001,
-        (fluid, "Drying Rate"): 0.1, (fluid, "Brush Radius"): 0.02,
+            os.environ.get("WB_PEN_FOLLOW", "1") == "1",
+        (sim, "Resolution"): SIM_RES, (sim, "Resolution Z"): SIM_RES_Z,
+        (sim, "Paper Size"): SIM_PAPER,
+        # Canvas Height 1.0 = 1 cm slab: the auto formula (paper·rz/res) gives
+        # 0.625 cm which would clip the bristle chains (rest length 1.5R =
+        # 0.75 cm). cell_z = 1.0/64 ≈ 1.6× cell_xy — mildly anisotropic,
+        # already handled everywhere.
+        (sim, "Canvas Height"):
+            float(os.environ.get("WB_HEIGHT", "1.0")),
+        (sim, "Brush Radius"): 0.5, (sim, "Brush Pressure"): 1.0,
+        (sim, "Ink Amount"): 0.8,
+        # Viscosity: kinematic viscosity in cm²/s since the §34 fix (the
+        # Jacobi coefficient is a = dt·ν/h², world-absolute; the pre-§34
+        # dt·ν·N² form assumed a unit canvas and 100×-overstated ν after the
+        # 1u=1cm rescale — that homogenized the window velocity per substep
+        # and dragged/flickered the wake). Thick-acrylic 2–20 freezes the
+        # trail within a frame. WB_VISCOSITY overrides for A/B ladders.
+        (sim, "Viscosity"):
+            float(os.environ.get("WB_VISCOSITY", "2.0")),
+        (sim, "Diffusion Rate"): 0.0001,
+        # Drying Rate: the §4.2 trail-freezing mechanism (dry cells ignore
+        # velocity / act solid, and §34: the Eq.15 drain no longer touches
+        # them). 12/s = touch-dry in ~0.08 s so only the wet head under the
+        # brush participates in the drain/deposit churn. WB_DRYING overrides
+        # for A/B.
+        (sim, "Drying Rate"):
+            float(os.environ.get("WB_DRYING", "12.0")),
     })
     assert sim_in.paired_node is sim_out, "zone pairing not established"
 
@@ -282,17 +298,16 @@ def build_marker_scene(scene_path: Path):
         UsdShade.AttributeType.Output)
     UsdShade.MaterialBindingAPI.Apply(paper.GetPrim()).Bind(paper_mat)
 
-    # Camera: tight 3/4 view framing the stroke region (the strokes span
-    # ~0.3×0.3 around the origin — `length`=0.3 in mock_strokes). Aiming at the
-    # whole 1.0 canvas from ~2.0 away left the brush a tiny speck; pull in to
-    # ~0.55 distance and target the stroke center so the paint fills the frame.
-    # Paper mesh still extends ±0.5 so it shows as the paper around the stroke.
+    # Camera: tight 3/4 view framing the stroke region (the stroke spans
+    # 5 cm along x, ±1 cm of sine wobble in y, plus brush radius). Pull in to
+    # ~7 cm framing so the paint fills the frame; the paper sheet (10 cm)
+    # extends past the frame edges as the surrounding paper.
     cam = UsdGeom.Camera.Define(stage, "/Camera")
     cam.GetFocalLengthAttr().Set(50.0)
     cam.GetHorizontalApertureAttr().Set(36.0)
     cam.GetVerticalApertureAttr().Set(20.25)
     cam.GetClippingRangeAttr().Set((0.1, 100.0))
-    frame_size = 0.35  # roughly the stroke span + a little breathing room
+    frame_size = 7.0  # cm — stroke span + breathing room
     cx = cy = cz = 0.0
     eye = np.array([cx + frame_size * 0.5,
                     cy - frame_size * 1.1,

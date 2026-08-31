@@ -50,21 +50,16 @@ def main():
     init_state = g.createNode("brush_wb_init_state", name="InitState")
     sim_in, sim_out = g.createSimulationZone()
     emitter = g.createNode("mock_point_emitter", name="Emitter")
-    deposit = g.createNode("brush_wb_deposit", name="Deposit")
-    bristle = g.createNode("brush_wb_bristle", name="Bristle")
-    fluid = g.createNode("brush_wb_fluid", name="Fluid")
+    sim = g.createNode("brush_wb_sim", name="Sim")
     commit = g.createNode("brush_wb_commit", name="Commit")
     write_ptcl = g.createNode("write_usd", name="WriteParticles")
 
     g.addEdge(mock, "Stroke Curves", sim_in, "Simulation In")
     g.addEdge(init_state, "State", sim_in, "Simulation In")
     g.addEdge(sim_in, "Simulation Out", emitter, "Stroke Curves")
-    g.addEdge(emitter, "Stroke Sample", deposit, "Stroke Sample")
-    g.addEdge(sim_in, "Simulation Out", deposit, "State")
-    g.addEdge(deposit, "Stroke Sample", fluid, "Stroke Sample")
-    g.addEdge(deposit, "State", bristle, "State")
-    g.addEdge(bristle, "State", fluid, "State")
-    g.addEdge(fluid, "State", commit, "State")
+    g.addEdge(emitter, "Stroke Sample", sim, "Stroke Sample")
+    g.addEdge(sim_in, "Simulation Out", sim, "State")
+    g.addEdge(sim, "State", commit, "State")
     g.addEdge(sim_in, "Simulation Out", commit, "Stroke Curves")
     g.addEdge(commit, "Paint Particles", write_ptcl, "Geometry")
     g.addEdge(commit, "State", sim_out, "Simulation In")
@@ -73,12 +68,12 @@ def main():
     g.setSocketDefaults({
         (mock, "Num Points"): 30, (mock, "Length"): 0.3,
         (mock, "Stroke 0 Duration"): 0.5, (mock, "Stroke 1 Start"): 0.5,
-        (deposit, "Resolution"): 512, (deposit, "Paper Size"): 1.0,
-        (deposit, "Brush Radius"): 0.02, (deposit, "Brush Pressure"): 1.0,
-        (deposit, "Ink Amount"): 0.8,
-        (bristle, "Brush Radius"): 0.02,
-        (fluid, "Viscosity"): 0.5, (fluid, "Diffusion Rate"): 0.0001,
-        (fluid, "Drying Rate"): 2.0, (fluid, "Brush Radius"): 0.02,
+        (sim, "Resolution"): 512, (sim, "Paper Size"): 1.0,
+        (sim, "Brush Radius"): 0.02, (sim, "Brush Pressure"): 1.0,
+        (sim, "Ink Amount"): 0.8,
+        (sim, "Brush Radius"): 0.02,
+        (sim, "Viscosity"): 0.5, (sim, "Diffusion Rate"): 0.0001,
+        (sim, "Drying Rate"): 2.0, (sim, "Brush Radius"): 0.02,
         # Write particles under /Brush/Particles so they don't redefine /Brush
         # (created as a Mesh below — UsdGeomPoints::Define on the same path
         # would crash Ruzino.exe's stage inspector).

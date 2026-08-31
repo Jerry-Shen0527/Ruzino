@@ -87,7 +87,12 @@ void main(uint3 tid : SV_DispatchThreadID)
     // 2.5-cell kernel: wide enough that retiring-particle deposits merge
     // into a continuous band instead of a chain of one-cell clumps with
     // sub-threshold gaps between them (Σw=1 keeps mass exact).
-    float h = cb.cell_size * 2.5;  // kernel radius (XY)
+    // WORLD-absolute kernel radius (doc §33): 0.0244 cm ≈ a bristle
+    // thickness (0.2–0.5 mm), and = 2.5 cells at the design grid
+    // (res 1024 over the 10 cm canvas). The old cell-relative
+    // `2.5 × cell_size` shrank with the canvas, thinning deposits below the
+    // render threshold on denser grids.
+    float h = 0.0244f;  // kernel radius (cm, XY)
     int res = cb.grid_res, res_z = cb.grid_res_z;
 
     int cx = int(floor((pos.x - cb.grid_center_x + half_p) / cb.cell_size));

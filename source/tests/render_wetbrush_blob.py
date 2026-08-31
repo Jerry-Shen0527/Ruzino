@@ -52,16 +52,18 @@ OUTPUT_DIR = BIN / "wetbrush_blob_sequence"
 
 SIM_RES = int(os.environ.get("WETBRUSH_RES", "1024"))
 SIM_RES_Z = int(os.environ.get("WETBRUSH_RES_Z", "64"))
-SIM_PAPER = 1.0
+# 1u = 1cm calibration (doc §33): the canvas is 10 cm, the brush head 1 cm.
+SIM_PAPER = float(os.environ.get("WETBRUSH_PAPER", "10.0"))
 CELL_SZ = SIM_PAPER / SIM_RES
 
 # Pen motion (mock_pen_motion, blob mode = Length 0): descend 0.05 s, press
-# 0.3 s at z=0 (full press — the bristles, length 0.03, squash onto the
-# canvas), then lift to z=0.08 over 0.15 s (clear of the bristle extent AND
-# the D0 zone). Pen goes UP at lift start (no more deposit while lifting —
-# the old curve fixture kept pen_down=true through the whole lift).
+# 0.3 s at z=0 (full press — the bristles, length 1.5R = 0.75 cm, squash onto
+# the canvas), then lift to z=2.0 cm over 0.15 s (clear of the bristle extent
+# AND the D0 = 1 cm adhesion bulb). Pen goes UP at lift start (no more deposit
+# while lifting — the old curve fixture kept pen_down=true through the whole
+# lift).
 PRESS_Z = 0.0
-HOVER_Z = 0.08
+HOVER_Z = 2.0
 HOLD_DUR = 0.3
 LIFT_DUR = 0.15
 DESCEND_DUR = 0.05
@@ -74,19 +76,14 @@ def build_sim_graph(sim_usd: Path):
     pen = g.createNode("mock_pen_motion", name="PenMotion")
     init_state = g.createNode("brush_wb_init_state", name="InitState")
     sim_in, sim_out = g.createSimulationZone()
-    deposit = g.createNode("brush_wb_deposit", name="Deposit")
-    bristle = g.createNode("brush_wb_bristle", name="Bristle")
-    fluid = g.createNode("brush_wb_fluid", name="Fluid")
+    sim = g.createNode("brush_wb_sim", name="Sim")
     commit = g.createNode("brush_wb_commit", name="Commit")
     write = g.createNode("write_usd", name="Output")
 
     g.addEdge(init_state, "State", sim_in, "Simulation In")
-    g.addEdge(pen, "Stroke Sample", deposit, "Stroke Sample")
-    g.addEdge(sim_in, "Simulation Out", deposit, "State")
-    g.addEdge(deposit, "Stroke Sample", fluid, "Stroke Sample")
-    g.addEdge(deposit, "State", bristle, "State")
-    g.addEdge(bristle, "State", fluid, "State")
-    g.addEdge(fluid, "State", commit, "State")
+    g.addEdge(pen, "Stroke Sample", sim, "Stroke Sample")
+    g.addEdge(sim_in, "Simulation Out", sim, "State")
+    g.addEdge(sim, "State", commit, "State")
     g.addEdge(commit, "Paint Field 3D", write, "Geometry")
     g.addEdge(commit, "State", sim_out, "Simulation In")
 
@@ -98,13 +95,18 @@ def build_sim_graph(sim_usd: Path):
         (pen, "Hold Duration"): HOLD_DUR,
         (pen, "Lift Duration"): LIFT_DUR,
         (pen, "Descend Duration"): DESCEND_DUR,
-        (deposit, "Resolution"): SIM_RES, (deposit, "Resolution Z"): SIM_RES_Z,
-        (deposit, "Paper Size"): SIM_PAPER,
-        (deposit, "Brush Radius"): 0.02, (deposit, "Brush Pressure"): 1.0,
-        (deposit, "Ink Amount"): 0.8,
-        (bristle, "Brush Radius"): 0.02,
-        (fluid, "Viscosity"): 0.5, (fluid, "Diffusion Rate"): 0.0001,
-        (fluid, "Drying Rate"): 0.1, (fluid, "Brush Radius"): 0.02,
+        (sim, "Resolution"): SIM_RES, (sim, "Resolution Z"): SIM_RES_Z,
+        (sim, "Paper Size"): SIM_PAPER,
+        (sim, "Brush Radius"): 0.5, (sim, "Brush Pressure"): 1.0,
+        (sim, "Ink Amount"): 0.8,
+        # Same §34 calibration as render_wetbrush.py: Viscosity in cm²/s
+        # (world-absolute Jacobi a = dt·ν/h²), Drying 12/s so the pressed
+        # blob sags while wet under the brush and fixes after the lift.
+        (sim, "Viscosity"):
+            float(os.environ.get("WB_VISCOSITY", "2.0")),
+        (sim, "Diffusion Rate"): 0.0001,
+        (sim, "Drying Rate"):
+            float(os.environ.get("WB_DRYING", "12.0")),
     })
     assert sim_in.paired_node is sim_out, "zone pairing not established"
 
@@ -202,17 +204,17 @@ def build_marker_scene(scene_path: Path):
 
     # SIDE VIEW: X horizontal, Z vertical — the blob's Z profile (settling,
     # hovering) is directly readable. Slight X offset for a depth cue; the
-    # frame (~0.16) covers the blob (~0.05 footprint), the volume height
-    # (0.0625) and the lifted brush (z up to 0.08+bristles).
+    # frame (~1.6 cm) covers the blob (~0.5 cm footprint), the canvas height
+    # (1.0 cm) and the lifted brush (z up to 2.0 cm + bristles).
     cam = UsdGeom.Camera.Define(stage, "/Camera")
     cam.GetFocalLengthAttr().Set(50.0)
     cam.GetHorizontalApertureAttr().Set(36.0)
     cam.GetVerticalApertureAttr().Set(20.25)
     cam.GetClippingRangeAttr().Set((0.1, 100.0))
-    frame_size = 0.16
+    frame_size = 1.6
     eye = np.array([frame_size * 0.35, -frame_size * 2.6,
                     frame_size * 0.45])
-    target = np.array([0.0, 0.0, 0.03])
+    target = np.array([0.0, 0.0, 0.3])
     up = np.array([0.0, 0.0, 1.0])
     fwd = target - eye
     fwd = fwd / np.linalg.norm(fwd)

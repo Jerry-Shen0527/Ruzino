@@ -1,11 +1,10 @@
 // Common helpers, shader-constant structs, and the shared simulation-state
 // types for the streaming Wetbrush brush-paint nodes.
 //
-// The streaming pipeline (brush_wb_deposit -> brush_wb_bristle ->
-// brush_wb_fluid -> brush_wb_commit, wired as a simulation-zone chain)
-// includes this header so all four nodes share the EXACT same buffer-layout,
-// shader-binding, and constant-buffer conventions — no duplicated logic that
-// can drift.
+// The streaming pipeline (brush_wb_sim -> brush_wb_commit, wired as a
+// simulation-zone chain) includes this header so all nodes share the EXACT
+// same buffer-layout, shader-binding, and constant-buffer conventions — no
+// duplicated logic that can drift.
 //
 // Everything here lives in namespace Ruzino. The helper functions are
 // marked `inline` so multiple .cpp files can include this header without
@@ -245,10 +244,10 @@ struct SimConstants {
     // fluid_advect: 1 = field_in window-local (velocity family), 0 = global
     // canvas field. field_out is always window-local.
     int advect_field_window_local;
-    // Gravity (world units/s²): grid-side body force (fluid cells) and
-    // particle-side a_k component. Physically scaled: 1 unit ≈ 27.5 cm →
-    // g ≈ 35.7 units/s². Host env WB_GRAVITY_X/Y/Z (direction-adjustable
-    // for experiments). Must match common.slangh SimConstants.
+    // Gravity (world units/s²). WORLD SCALE 1 unit = 1 cm → g = 981 cm/s² =
+    // 981 u/s². Applied to fluid cells (§4.2 standard Eulerian body force)
+    // and particles (§4.3 a_k). Direction-adjustable for experiments via
+    // WB_GRAVITY_X/Y/Z. Must match common.slangh SimConstants.
     float gravity_x;
     float gravity_y;
     float gravity_z;
@@ -410,11 +409,10 @@ struct ConstraintModeCB {
 // StrokeSample — one sample of the PEN DYNAMICS along a stroke, the
 // per-frame contract between the trajectory source and the wetbrush zone.
 //
-// Produced by node_mock_point_emitter (one per simulation frame, replaying
-// the captured trajectory) and consumed by node_brush_wb_deposit (which
-// advances the paint state by one step from this single sample). Defined
-// here in the shared header so both nodes — compiled into separate .dlls —
-// see the SAME type identity and can pass it through a socket.
+// Produced by the pen-motion source (one per simulation frame) and
+// consumed by node_brush_wb_sim (which advances the paint state by one step
+// from this single sample). Defined in the shared header so the producer and
+// the sim node see the SAME type identity and can pass it through a socket.
 //
 // Formerly `BrushPoint`: position-only, which forced deposit to
 // finite-difference every derivative (accel = double-differentiated
@@ -452,9 +450,8 @@ struct StrokeSample {
 };
 
 // ============================================================
-// WetbrushSimState — the SHARED cross-node + cross-frame state for the
-// streaming simulation-zone brush chain (brush_wb_deposit ->
-// brush_wb_bristle -> brush_wb_fluid -> brush_wb_commit).
+// WetbrushSimState — the SHARED cross-frame state for the streaming
+// simulation-zone brush chain (brush_wb_sim -> brush_wb_commit).
 //
 // This struct carries the FULL persistent buffer set. An earlier "lean subset"
 // idea (only density/color/wetness/oil_density/canvas) was physically wrong:
@@ -481,10 +478,13 @@ struct WetbrushSimState {
     // Single definition so the dip load and the capacity cannot drift apart.
     // The paper never gives M_max; it is the free parameter that sets HOW
     // MUCH PAINT ONE DIP CARRIES (stroke length before the brush runs dry).
-    // 0.03 drained in ~15 frames; 0.15 sustains a 60-frame stroke. Must stay
-    // coupled with rho_0 (bristle node) so the emission radius
-    // R_j = cbrt(3·M_max/(4π·ρ₀)) ≈ 0.36×brush_radius stays inside D1.
-    static constexpr float WB_M_MAX = 0.15f;
+    // History: 0.03 drained in ~15 frames; 0.15 sustained one 60-frame
+    // stroke but ran out ~60% into the 5 cm / 2 s fixture stroke at the
+    // 1u=1cm scale; 0.30 covers the full fixture stroke. Must stay coupled
+    // with rho_0 (bristle node) so the emission radius
+    // R_j = cbrt(3·M_max/(4π·ρ₀)) ≈ 0.36×brush_radius stays inside D1
+    // (ρ₀ = 12.3 for M_max = 0.3 → R_j ≈ 0.18 cm < D1 = 0.3 cm).
+    static constexpr float WB_M_MAX = 0.30f;
 
     // --- Global 3D fluid grid (allocated at gridRes × gridRes × gridRes_z;
     // the persistent paint store. Paper §4.2: a large 3D grid stores all
@@ -664,7 +664,22 @@ struct WetbrushSimState {
     float grid_center_z = 0.0f;
     bool center_initialized = false;
 
-    static constexpr int WIN_ALLOC_XY = 128;
+    // Active-window XY allocation, in CELLS (paper §4.2: window "typically
+    // 128×128×32" — a window in brush diameters, not absolute cells). The
+    // window's WORLD coverage is win_cells × paper_size / grid_res and must
+    // span several brush diameters (footprint + D0 shell + flow room). At
+    // the design scale (1 unit = 1 cm, paper 10 cm, res 1024 → cell 0.00977
+    // cm) 320 cells = 3.1 cm ≈ 6.25 brush radii — the same relative room the
+    // paper's 128-cell window has around its brush. WB_WIN_XY overrides.
+    static int win_alloc_xy()
+    {
+        static const int cells = [] {
+            const char* e = std::getenv("WB_WIN_XY");
+            const int n = e ? std::atoi(e) : 320;
+            return n < 64 ? 320 : n;
+        }();
+        return cells;
+    }
     int win_alloc_z = 0;
     int win_origin_x = 0;
     int win_origin_y = 0;
@@ -860,19 +875,6 @@ struct WetbrushSimState {
         destroy_prog(debug_pack_voxels_program);
         destroy_prog(debug_pack_bristles_program);
     }
-};
-
-// BristleSampleOutputs — 2-node field (written by brush_wb_bristle, read by
-// brush_wb_fluid's particle emit/update). Carried as a regular socket value so
-// callers that only want the samples (e.g. a readback node) don't have to
-// unpack the whole WetbrushSimState. The authoritative buffers still live in
-// WetbrushSimState; this carries handles to the same GPU memory.
-struct BristleSampleOutputs {
-    nvrhi::BufferHandle sample_pos;    // bristle sample positions (Nb*S)
-    nvrhi::BufferHandle sample_color;  // bristle sample RYB color
-    nvrhi::BufferHandle sample_frame;  // bristle Bishop frame (packed float4)
-
-    static constexpr bool has_storage = false;
 };
 
 // ============================================================

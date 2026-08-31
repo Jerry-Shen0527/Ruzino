@@ -115,7 +115,7 @@ bool WetbrushVolumeImpl::buildDensityResource(
     //
     // Requirements (all met on the producer side):
     //   - packed_paint is created with CanHaveRawViews (matches the
-    //     RawBuffer_SRV binding below) — see node_brush_wb_deposit.cpp.
+    //     RawBuffer_SRV binding below) — see node_brush_wb_sim.cpp.
     //   - commit flushes the pack dispatch + transitions the buffer to
     //     ShaderResource before registering — see node_brush_wb_commit.cpp.
     // ------------------------------------------------------------------

@@ -4,11 +4,9 @@ Test the Wetbrush paint simulation via the streaming 4-node zone chain.
 Pipeline (simulation zone, fed back every frame):
 
     brush_wb_init_state --State--> [ simulation_in ]   (boundary slot, seed)
-      mock_pen_motion --StrokeSample--> brush_wb_deposit   (zone interior)
-      [ simulation_in ] --State--> brush_wb_deposit
-      brush_wb_deposit --State--> brush_wb_bristle --State--> brush_wb_fluid
-        --State--> brush_wb_commit
-      brush_wb_deposit --StrokeSample--> brush_wb_fluid
+      mock_pen_motion --StrokeSample--> brush_wb_sim   (zone interior)
+      [ simulation_in ] --State--> brush_wb_sim
+      brush_wb_sim --State--> brush_wb_commit
       brush_wb_commit --Paint Particles--> write_usd
       brush_wb_commit --State--> [ simulation_out ]   (fed back)
 
@@ -66,19 +64,14 @@ def _build_zone_graph(enable=True):
     pen = g.createNode("mock_pen_motion", name="PenMotion")
     init_state = g.createNode("brush_wb_init_state", name="InitState")
     sim_in, sim_out = g.createSimulationZone()
-    deposit = g.createNode("brush_wb_deposit", name="Deposit")
-    bristle = g.createNode("brush_wb_bristle", name="Bristle")
-    fluid = g.createNode("brush_wb_fluid", name="Fluid")
+    sim = g.createNode("brush_wb_sim", name="Sim")
     commit = g.createNode("brush_wb_commit", name="Commit")
     write = g.createNode("write_usd", name="Output")
 
     g.addEdge(init_state, "State", sim_in, "Simulation In")
-    g.addEdge(pen, "Stroke Sample", deposit, "Stroke Sample")
-    g.addEdge(sim_in, "Simulation Out", deposit, "State")
-    g.addEdge(deposit, "Stroke Sample", fluid, "Stroke Sample")
-    g.addEdge(deposit, "State", bristle, "State")
-    g.addEdge(bristle, "State", fluid, "State")
-    g.addEdge(fluid, "State", commit, "State")
+    g.addEdge(pen, "Stroke Sample", sim, "Stroke Sample")
+    g.addEdge(sim_in, "Simulation Out", sim, "State")
+    g.addEdge(sim, "State", commit, "State")
     g.addEdge(commit, "Paint Particles", write, "Geometry")
     g.addEdge(commit, "State", sim_out, "Simulation In")
 
@@ -87,16 +80,14 @@ def _build_zone_graph(enable=True):
         (pen, "Length"): 0.3,
         (pen, "Amplitude"): 0.05,
         (pen, "Speed"): 0.15,
-        (deposit, "Resolution"): 256,
-        (deposit, "Paper Size"): 1.0,
-        (deposit, "Brush Radius"): 0.02,
-        (deposit, "Brush Pressure"): 1.0,
-        (deposit, "Ink Amount"): 0.8,
-        (bristle, "Brush Radius"): 0.02,
-        (fluid, "Viscosity"): 0.5,
-        (fluid, "Diffusion Rate"): 0.0001,
-        (fluid, "Drying Rate"): 0.1,
-        (fluid, "Brush Radius"): 0.02,
+        (sim, "Resolution"): 256,
+        (sim, "Paper Size"): 1.0,
+        (sim, "Brush Radius"): 0.02,
+        (sim, "Brush Pressure"): 1.0,
+        (sim, "Ink Amount"): 0.8,
+        (sim, "Viscosity"): 0.5,
+        (sim, "Diffusion Rate"): 0.0001,
+        (sim, "Drying Rate"): 0.1,
     })
 
     assert sim_in.paired_node is sim_out, "zone pairing not established"

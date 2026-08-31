@@ -5,11 +5,9 @@ Builds the streaming brush pipeline purely from the Python node-graph API:
 
     <init/feedback> --WetbrushZoneState--> [ simulation_in ]  (boundary: field)
 
-      mock_pen_motion --StrokeSample--> brush_wb_deposit "Stroke Sample"  (zone interior)
-      [ simulation_in ] --State--> brush_wb_deposit "state"
-      brush_wb_deposit --StrokeSample--> brush_wb_fluid   (so fluid knows pen up/down)
-      brush_wb_deposit --State--> brush_wb_bristle --State--> brush_wb_fluid
-        --State--> brush_wb_commit
+      mock_pen_motion --StrokeSample--> brush_wb_sim "Stroke Sample"  (zone interior)
+      [ simulation_in ] --State--> brush_wb_sim "state"
+      brush_wb_sim --State--> brush_wb_commit
       brush_wb_commit --Paint Particles--> write_usd   (interior)
       brush_wb_commit --State--> [ simulation_out ]   (fed back as WetbrushZoneState)
       [ simulation_out ] --Paint Particles--> ...
@@ -63,11 +61,9 @@ def _build_streaming_graph():
 
     Topology:
       <init frame / feedback> --State--> [ simulation_in ]
-      mock_pen_motion --StrokeSample--> brush_wb_deposit
-      [ simulation_in ] --State--> brush_wb_deposit
-      brush_wb_deposit --State--> brush_wb_bristle --State--> brush_wb_fluid
-        --State--> brush_wb_commit
-      brush_wb_deposit --StrokeSample--> brush_wb_fluid
+      mock_pen_motion --StrokeSample--> brush_wb_sim
+      [ simulation_in ] --State--> brush_wb_sim
+      brush_wb_sim --State--> brush_wb_commit
       brush_wb_commit --Paint Particles--> write_usd   (interior)
       brush_wb_commit --State--> [ simulation_out ]   (fed back)
 
@@ -81,9 +77,7 @@ def _build_streaming_graph():
     pen = g.createNode("mock_pen_motion", name="PenMotion")
     init_state = g.createNode("brush_wb_init_state", name="InitState")
     sim_in, sim_out = g.createSimulationZone()
-    deposit = g.createNode("brush_wb_deposit", name="Deposit")
-    bristle = g.createNode("brush_wb_bristle", name="Bristle")
-    fluid = g.createNode("brush_wb_fluid", name="Fluid")
+    sim = g.createNode("brush_wb_sim", name="Sim")
     commit = g.createNode("brush_wb_commit", name="Commit")
     write = g.createNode("write_usd", name="Output")
 
@@ -94,18 +88,15 @@ def _build_streaming_graph():
     # pen_motion -> deposit: the analytic per-frame pen sample (interior
     # edge; mock_pen_motion has no graph inputs — it reads the sim clock from
     # the global payload and re-cooks every frame via ALWAYS_DIRTY).
-    g.addEdge(pen, "Stroke Sample", deposit, "Stroke Sample")
+    g.addEdge(pen, "Stroke Sample", sim, "Stroke Sample")
     # sim_in -> deposit: the fed-back paint field. On the init frame this is
     # empty/null and deposit allocates it; on advance frames it carries the
     # committed canvas + live fields.
-    g.addEdge(sim_in, "Simulation Out", deposit, "State")
+    g.addEdge(sim_in, "Simulation Out", sim, "State")
     # deposit -> fluid: forward the sample so the fluid node knows pen
     # up/down (pen-up frames still relax the fluid but skip emission).
-    g.addEdge(deposit, "Stroke Sample", fluid, "Stroke Sample")
-    # The wb chain: the field flows deposit -> bristle -> fluid -> commit.
-    g.addEdge(deposit, "State", bristle, "State")
-    g.addEdge(bristle, "State", fluid, "State")
-    g.addEdge(fluid, "State", commit, "State")
+        # The wb chain: the field flows sim -> commit.
+    g.addEdge(sim, "State", commit, "State")
     # commit -> write_usd (interior): Paint Particles reaches write_usd
     # without crossing the boundary, so the zone feedback stays per-slot.
     g.addEdge(commit, "Paint Particles", write, "Geometry")
@@ -116,16 +107,14 @@ def _build_streaming_graph():
         (pen, "Length"): 0.3,
         (pen, "Amplitude"): 0.05,
         (pen, "Speed"): 0.15,
-        (deposit, "Resolution"): 256,
-        (deposit, "Paper Size"): 1.0,
-        (deposit, "Brush Radius"): 0.02,
-        (deposit, "Brush Pressure"): 1.0,
-        (deposit, "Ink Amount"): 0.8,
-        (bristle, "Brush Radius"): 0.02,
-        (fluid, "Viscosity"): 0.5,
-        (fluid, "Diffusion Rate"): 0.0001,
-        (fluid, "Drying Rate"): 0.1,
-        (fluid, "Brush Radius"): 0.02,
+        (sim, "Resolution"): 256,
+        (sim, "Paper Size"): 1.0,
+        (sim, "Brush Radius"): 0.02,
+        (sim, "Brush Pressure"): 1.0,
+        (sim, "Ink Amount"): 0.8,
+        (sim, "Viscosity"): 0.5,
+        (sim, "Diffusion Rate"): 0.0001,
+        (sim, "Drying Rate"): 0.1,
     })
 
     assert sim_in.paired_node is sim_out, "zone pairing not established"
@@ -138,13 +127,12 @@ def test_streaming_graph_builds():
 
     labels = [n.name for n in g.nodes]
     for needed in ("PenMotion", "InitState", "SimulationIn",
-                   "Deposit", "Bristle", "Fluid", "Commit", "SimulationOut",
-                   "Output"):
+                   "Sim", "Commit", "SimulationOut", "Output"):
         assert needed in labels, f"missing node {needed}: {labels}"
 
     assert sim_in.paired_node is sim_out
     assert sim_out.paired_node is sim_in
-    assert len(g.links) >= 8, f"expected >=8 links, got {len(g.links)}"
+    assert len(g.links) >= 5, f"expected >=5 links, got {len(g.links)}"
 
 
 def test_streaming_simulation_runs():

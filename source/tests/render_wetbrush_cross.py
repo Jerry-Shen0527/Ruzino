@@ -60,21 +60,16 @@ def build_sim_graph_cross(sim_usd: Path):
     init_state = g.createNode("brush_wb_init_state", name="InitState")
     sim_in, sim_out = g.createSimulationZone()
     emitter = g.createNode("mock_point_emitter", name="Emitter")
-    deposit = g.createNode("brush_wb_deposit", name="Deposit")
-    bristle = g.createNode("brush_wb_bristle", name="Bristle")
-    fluid = g.createNode("brush_wb_fluid", name="Fluid")
+    sim = g.createNode("brush_wb_sim", name="Sim")
     commit = g.createNode("brush_wb_commit", name="Commit")
     write = g.createNode("write_usd", name="Output")
 
     g.addEdge(mock, "Stroke Curves", sim_in, "Simulation In")
     g.addEdge(init_state, "State", sim_in, "Simulation In")
     g.addEdge(sim_in, "Simulation Out", emitter, "Stroke Curves")
-    g.addEdge(emitter, "Stroke Sample", deposit, "Stroke Sample")
-    g.addEdge(sim_in, "Simulation Out", deposit, "State")
-    g.addEdge(deposit, "Stroke Sample", fluid, "Stroke Sample")
-    g.addEdge(deposit, "State", bristle, "State")
-    g.addEdge(bristle, "State", fluid, "State")
-    g.addEdge(fluid, "State", commit, "State")
+    g.addEdge(emitter, "Stroke Sample", sim, "Stroke Sample")
+    g.addEdge(sim_in, "Simulation Out", sim, "State")
+    g.addEdge(sim, "State", commit, "State")
     g.addEdge(sim_in, "Simulation Out", commit, "Stroke Curves")
     g.addEdge(commit, "Paint Field 3D", write, "Geometry")
     g.addEdge(commit, "State", sim_out, "Simulation In")
@@ -84,17 +79,17 @@ def build_sim_graph_cross(sim_usd: Path):
         (mock, "Num Points"): 30, (mock, "Length"): 0.3,
         (mock, "Stroke 0 Duration"): 0.5, (mock, "Stroke 1 Start"): 0.5,
         # Resolution 4096 (paper Section 4.2: "4096x4096x64").
-        (deposit, "Resolution"): rw.SIM_RES, (deposit, "Resolution Z"): rw.SIM_RES_Z,
-        (deposit, "Paper Size"): rw.SIM_PAPER,
-        (deposit, "Brush Radius"): 0.02, (deposit, "Brush Pressure"): 1.0,
-        (deposit, "Ink Amount"): 0.8,
-        (bristle, "Brush Radius"): 0.02,
-        (fluid, "Viscosity"): 0.5, (fluid, "Diffusion Rate"): 0.0001,
+        (sim, "Resolution"): rw.SIM_RES, (sim, "Resolution Z"): rw.SIM_RES_Z,
+        (sim, "Paper Size"): rw.SIM_PAPER,
+        (sim, "Brush Radius"): 0.02, (sim, "Brush Pressure"): 1.0,
+        (sim, "Ink Amount"): 0.8,
+        (sim, "Brush Radius"): 0.02,
+        (sim, "Viscosity"): 0.5, (sim, "Diffusion Rate"): 0.0001,
         # Drying rate tuned so stroke 0 (drawn frames 0-30) has dried to solid
         # (wetness < 0.01) by the time stroke 1 begins at frame ~30. This makes
         # the red paint act as a solid wall that deflects the blue stroke
         # upward, producing coverage instead of in-place mixing.
-        (fluid, "Drying Rate"): 2.0, (fluid, "Brush Radius"): 0.02,
+        (sim, "Drying Rate"): 2.0, (sim, "Brush Radius"): 0.02,
     })
     assert sim_in.paired_node is sim_out, "zone pairing not established"
 

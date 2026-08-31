@@ -25,6 +25,17 @@ StructuredBuffer<float> color_b : register(t3);
 StructuredBuffer<float> vel_x : register(t4);
 StructuredBuffer<float> vel_y : register(t5);
 StructuredBuffer<float> vel_z : register(t6);
+// §4.2 dryness: "once the dryness of a cell reaches a threshold, we ignore
+// its velocity and we treat it as a solid cell in pressure projection."
+// DRIED PAINT IS SOLID — the §5.2 drain converts LIQUID to particles and
+// must not resurrect solid paint. Without this gate the drain disc
+// (brush_radius + D0 ≈ 1.5 cm at the 1u=1cm calibration) re-liquefied the
+// dried trail every frame: each drain→redeposit round trip jitter-walks the
+// mass one cell, so the trail edge random-walked below the render threshold
+// (paint "vanishing then reappearing", sawtooth scales after the window
+// scroll). Wetness < 0.01 = the SAME solid threshold as is_solid in
+// fluid_jacobi / damp_dry.
+StructuredBuffer<float> wetness : register(t7);
 RWByteAddressBuffer ptcl_counter : register(u0);
 RWStructuredBuffer<float4> ptcl_pos : register(u1);
 RWStructuredBuffer<float4> ptcl_vel : register(u2);
@@ -70,6 +81,8 @@ void main(uint3 tid : SV_DispatchThreadID)
     uint gidx = grid_idx_3d(uint(x), uint(y), uint(z), res, res_z);
     float cell_density = density[gidx];
     if (cell_density < 0.05) return;
+    // Dried paint is solid (§4.2) — never drained (see wetness decl above).
+    if (wetness[gidx] < 0.01) return;
 
     float half_p = cb.paper_size * 0.5;
     float half_h = cb.height_extent * 0.5;
@@ -99,11 +112,11 @@ void main(uint3 tid : SV_DispatchThreadID)
     if (d_to_brush > cb.brush_radius + cb.D0) return;
 
     // Stratified sampling: 27 candidate positions (3×3×3 sub-grid per cell)
-    // 2.5-cell kernel on the ±1 drain window (tighter than particle_to_grid's
-    // ±2 deposit on purpose: the drain stays inside the adhesion bulb while
-    // deposits feather outward, so each convert→re-deposit cycle smooths the
-    // trail instead of notching it).
-    float h = cell_sz * 2.5;  // smoothing kernel radius (XY-isotropic approx)
+    // Same WORLD-absolute kernel radius as particle_to_grid (0.0244 cm ≈ a
+    // bristle thickness; = 2.5 cells at the design grid) — the drain stays
+    // inside the adhesion bulb while deposits feather outward, so each
+    // convert→re-deposit cycle smooths the trail instead of notching it.
+    float h = 0.0244f;  // smoothing kernel radius (cm, XY-isotropic approx)
 
     // Particle mass per sub-cell: equal share of cell density
     float mass_per_candidate = cell_density / 27.0;
@@ -157,6 +170,10 @@ void main(uint3 tid : SV_DispatchThreadID)
                     for (int dx = -1; dx <= 1; dx++) {
                         int nx = cx + dx, ny = cy + dy, nz = cz + dz;
                         if (nx < 0 || nx >= res || ny < 0 || ny >= res || nz < 0 || nz >= res_z) continue;
+                        // Only LIQUID density can convert (dry neighbors are
+                        // solid — excluded from the normalization too, so the
+                        // interpolated value stays a pure liquid density).
+                        if (wetness[grid_idx_3d(uint(nx), uint(ny), uint(nz), res, res_z)] < 0.01f) continue;
                         float3 npos = float3(
                             (float(nx) + 0.5) * cell_sz - half_p + cb.grid_center_x,
                             (float(ny) + 0.5) * cell_sz - half_p + cb.grid_center_y,
@@ -171,6 +188,7 @@ void main(uint3 tid : SV_DispatchThreadID)
                     for (int dx = -1; dx <= 1; dx++) {
                         int nx = cx + dx, ny = cy + dy, nz = cz + dz;
                         if (nx < 0 || nx >= res || ny < 0 || ny >= res || nz < 0 || nz >= res_z) continue;
+                        if (wetness[grid_idx_3d(uint(nx), uint(ny), uint(nz), res, res_z)] < 0.01f) continue;
                         float3 npos = float3(
                             (float(nx) + 0.5) * cell_sz - half_p + cb.grid_center_x,
                             (float(ny) + 0.5) * cell_sz - half_p + cb.grid_center_y,
@@ -216,6 +234,9 @@ void main(uint3 tid : SV_DispatchThreadID)
                 for (int sdx = -1; sdx <= 1; sdx++) {
                     int nx = pcx + sdx, ny = pcy + sdy, nz = pcz + sdt;
                     if (nx < 0 || nx >= res || ny < 0 || ny >= res || nz < 0 || nz >= res_z) continue;
+                    // Never subtract from DRY (solid) neighbors — solid paint
+                    // cannot be carried by a liquid particle (§4.2 dryness).
+                    if (wetness[grid_idx_3d(uint(nx), uint(ny), uint(nz), res, res_z)] < 0.01f) continue;
                     float3 npos = float3(
                         (float(nx) + 0.5) * cell_sz - half_p + cb.grid_center_x,
                         (float(ny) + 0.5) * cell_sz - half_p + cb.grid_center_y,
@@ -230,6 +251,7 @@ void main(uint3 tid : SV_DispatchThreadID)
                 for (int sdx = -1; sdx <= 1; sdx++) {
                     int nx = pcx + sdx, ny = pcy + sdy, nz = pcz + sdt;
                     if (nx < 0 || nx >= res || ny < 0 || ny >= res || nz < 0 || nz >= res_z) continue;
+                    if (wetness[grid_idx_3d(uint(nx), uint(ny), uint(nz), res, res_z)] < 0.01f) continue;
                     float3 npos = float3(
                         (float(nx) + 0.5) * cell_sz - half_p + cb.grid_center_x,
                         (float(ny) + 0.5) * cell_sz - half_p + cb.grid_center_y,

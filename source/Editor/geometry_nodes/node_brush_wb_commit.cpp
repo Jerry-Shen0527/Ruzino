@@ -135,7 +135,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
         pack_cb.window_origin_y = field->win_origin_y;
         pack_cb.window_origin_z = 0;
         pack_cb.window_size_x =
-            std::min(WetbrushSimState::WIN_ALLOC_XY, field->grid_res);
+            std::min(WetbrushSimState::win_alloc_xy(), field->grid_res);
         pack_cb.window_size_y = pack_cb.window_size_x;
         pack_cb.window_size_z = field->grid_res_z;
         nvrhi::BufferHandle pack_cb_buf;
@@ -160,8 +160,9 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
                 field->field_clear_program =
                     Ruzino::brush_compile_shader(rc, "field_clear.slang");
             if (!field->ptcl_raster_render_program)
-                field->ptcl_raster_render_program = Ruzino::brush_compile_shader(
-                    rc, "particle_rasterize_render.slang");
+                field->ptcl_raster_render_program =
+                    Ruzino::brush_compile_shader(
+                        rc, "particle_rasterize_render.slang");
 
             nvrhi::BufferHandle* pack_rasters[] = {
                 std::addressof(field->ptcl_density),
@@ -315,8 +316,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
         // divergence_buf is WINDOW-SIZED (paper §4.2 transient solve field) —
         // read only the window extent.
         const int win_n3d_div =
-            std::min(WetbrushSimState::WIN_ALLOC_XY, field->grid_res) *
-            std::min(WetbrushSimState::WIN_ALLOC_XY, field->grid_res) *
+            std::min(WetbrushSimState::win_alloc_xy(), field->grid_res) *
+            std::min(WetbrushSimState::win_alloc_xy(), field->grid_res) *
             field->grid_res_z;
         auto div_cpu = readback(field->divergence_buf, win_n3d_div);
         double div_sum = 0.0;
@@ -345,8 +346,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
     // nothing (position/alive problem).
     double ptcl_d_sum = 0.0;
     int win_n3d_diag = field->win_alloc_z > 0
-                           ? WetbrushSimState::WIN_ALLOC_XY *
-                                 WetbrushSimState::WIN_ALLOC_XY *
+                           ? WetbrushSimState::win_alloc_xy() *
+                                 WetbrushSimState::win_alloc_xy() *
                                  field->win_alloc_z
                            : 0;
     if (field->ptcl_density && win_n3d_diag > 0) {
@@ -495,7 +496,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
             float pmax = 0.0f, dmax = 0.0f;
             {
                 const int WIN_XY =
-                    std::min(WetbrushSimState::WIN_ALLOC_XY, field->grid_res);
+                    std::min(WetbrushSimState::win_alloc_xy(), field->grid_res);
                 const int win_n3d = WIN_XY * WIN_XY * field->grid_res_z;
                 auto read_win = [&](nvrhi::BufferHandle buf) {
                     std::vector<float> data(win_n3d);
@@ -565,7 +566,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
             int gv_lx = -1, gv_ly = -1, gv_lz = -1;
             if (gv_argi >= 0) {
                 const int WIN_XY_d =
-                    std::min(WetbrushSimState::WIN_ALLOC_XY, field->grid_res);
+                    std::min(WetbrushSimState::win_alloc_xy(), field->grid_res);
                 gv_lz = gv_argi / (WIN_XY_d * WIN_XY_d);
                 int rem = gv_argi - gv_lz * WIN_XY_d * WIN_XY_d;
                 gv_ly = rem / WIN_XY_d;
@@ -633,7 +634,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
                     }
                 }
                 const int WIN_XY =
-                    std::min(WetbrushSimState::WIN_ALLOC_XY, field->grid_res);
+                    std::min(WetbrushSimState::win_alloc_xy(), field->grid_res);
                 const int win_n3d = WIN_XY * WIN_XY * field->grid_res_z;
                 float rastmax = 0.0f;
                 {

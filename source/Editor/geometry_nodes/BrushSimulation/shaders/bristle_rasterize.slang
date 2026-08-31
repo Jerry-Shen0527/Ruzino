@@ -108,7 +108,23 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     float3 pos = sample_pos[sample_idx].xyz;
     float4 col = sample_color[sample_idx];  // r, y, b, density
-    float3 vel = sample_vel[sample_idx].xyz;
+
+    // §4.2 moving-wall velocity: the RIGID brush velocity at the sample
+    // position (v_B + ω_B × (p − x_B)), NOT the raw sample_vel. The bristle
+    // dynamics inflate vertex velocities to 2.3-4.1× brush speed (PBD
+    // correction / spring whip, measured 2026-08-31 with WB_DUMP_BRISTLES);
+    // rasterizing those into the §4.2 wall boundary made the pressure
+    // projection pump a 1.3-4.4 u/s floor jet (10-30× brush speed) that
+    // dragged the particle sheet faster than the §5.2 slow-deposit gate for
+    // the whole stroke — 76% of the ink stayed airborne until pen-up, then
+    // dumped in one frame (the terminal pile). The boundary of a brush with
+    // β_B ≈ 0 (bristles track the brush tightly) moves with the brush, so
+    // the rigid field is the artifact-free wall velocity.
+    float3 p_rel = pos - float3(cb.brush_pos_x, cb.brush_pos_y, cb.brush_pos_z);
+    float3 vel = float3(cb.brush_vel_x, cb.brush_vel_y, cb.brush_vel_z) +
+                 cross(float3(cb.brush_angular_vel_x, cb.brush_angular_vel_y,
+                              cb.brush_angular_vel_z),
+                       p_rel);
 
     float base_deposit = col.w * 0.15;
 
