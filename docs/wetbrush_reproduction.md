@@ -2,7 +2,9 @@
 
 > 复现 Wetbrush (Chen et al., SIGGRAPH Asia 2015) 的 GPU bristle-level 3D 绘画
 > 仿真与渲染。本文档记录架构演进、已完成工作、关键经验教训、遗留目标。
-> 论文原文见 `docs/Wetbrush_GPU_based_3D_painting_simulation_at_the.md`。
+> 论文原文（带图转录）见 `docs/paper_wetbrush_chen2015/`；
+> `docs/Wetbrush_GPU_based_3D_painting_simulation_at_the.md` 为纯文本旧版
+> （图片链接已失效、公式上标有 OCR 损伤，优先用前者）。
 
 ## 目标
 
@@ -26,7 +28,9 @@
 ```
 每帧:
   stage.tick(dt)
-    └─ RuzinoGraph zone: deposit → bristle → fluid → commit
+    └─ RuzinoGraph zone: brush_wb_sim → commit
+       （brush_wb_sim = 单 execute 三 phase：PHASE 1 笔毛/窗口/蘸墨 →
+         PHASE 2 ABSORB/EMIT → PHASE 3 粒子+流体解算+§5.2 移交；§30 合并）
        commit 每帧:
          1. pack_float4 dispatch: density + color_r/y/b → packed_paint (Float4)
          2. SharedGPUBufferRegistry.register("wetbrush_paint_field", packed_paint, meta)
@@ -38,7 +42,7 @@
          → Phase 1: 直接复用 packed_paint GPU buffer（零拷贝，RawBuffer_SRV）
          → gridRes/cellSize/gridMin 从 registry metadata 读
     └─ wetbrush_render 节点 dispatch:
-         → VolumeIntersection: 只在射线穿过 paint cell (density>0.02) 时 ReportHit
+         → VolumeIntersection: 只在射线穿过 paint cell (density>0.012) 时 ReportHit
          → VolumeClosestHit: first-cross + penetration blend + Lambertian + AO
          → 空 volume 段不 ReportHit，射线继续到 Paper mesh
 ```
@@ -46,7 +50,8 @@
 ### 关键设计决策
 
 - **全局持久 grid + 局部计算窗口**（paper §4.2）：一个覆盖整张 canvas 的大 3D grid
-  是 paint 的持久存储；每帧只在笔刷周围的 active window (128×128×res_z) 内计算。
+  是 paint 的持久存储；每帧只在笔刷周围的 active window（默认 320×320×res_z，
+  `WB_WIN_XY`，§33；paper 原文 128×128×32）内计算。
   窗口只是 dispatch 范围，不 commit/clear。
 - **零拷贝 sim→render**（详见下文）：sim 的 `packed_paint` GPU buffer 通过
   `SharedGPUBufferRegistry` 直接给 render rprim 用，无 CPU readback / USD primvar
@@ -1226,6 +1231,8 @@ cell_xy 的 1/4，dtz=dt/cell_z≈68，一步回溯 13.7 格：贴地薄板被�
 全域 XY 边/顶盖）取墙。**一维 CFL 钳（每面 ≤1）多维不稳**（三轴和 ≤3，
 f60 起 1109 负格，f67 密度爆到 1.5e15），改 `h/(3dt)`（和 ≤1，单调性恢复）。
 速度场保持论文半拉格朗日（非守恒量，每子步重投影）。
+（2026-08-31 更新：修复二已按论文忠实性复位为可选——默认恢复 semi-Lagrangian，
+upwind 转入 `WB_SCALAR_ADVECT=upwind` 逃生口，代价账见 §35；本节修复一保留。）
 
 验收：f5 蘸墨 10980 → f135 **10977（−0.03%）**，全程 neg=0；大沉积帧
 swarm 3639→0 与 grid +3652 严格对账。遗留（非守恒 bug）：①粒子池仍打满
@@ -1487,6 +1494,33 @@ dry=12/WB_DRYING、相机 frame 1.6）。验证见 §34.1。
 `WB_FRAMES`（默认 135）；WB_DRYING 默认 2.0→12；节点 Viscosity 语义改
 cm²/s（默认 2.0、max 50），Drying Rate 默认 12.0、max 50。
 
+### 35. 标量平流回归论文默认：semi-Lagrangian 复位，upwind 降为逃生口（2026-08-31）
+
+**动机**：§28 修复二把标量场改成迎风通量式，是当时唯一能止血质量泄漏的手段，但论文 §4.2
+原文是 "we advect **all** of the fields using the semi-Lagrangian method"——迎风是复现
+自创偏离，且其一阶格式带来的数值耗散（笔触边缘钝化）与论文不同。fidelity 审核对齐：默认
+回归论文方法，偏离降级为可选。
+
+**改动**（`node_brush_wb_sim.cpp`）：`advect_scalar_program` 默认载入
+`fluid_advect.slang`（与速度场同一 shader，其全局读入路径 flag=0 本来就在）；新增
+`WB_SCALAR_ADVECT=upwind` 环境变量恢复迎风式（`fluid_advect_upwind.slang` 留盘）。
+注意点：标量段必须显式复位 `advect_field_window_local=0`——速度段把它留在 1（窗口
+局部），semi-Lagrangian 据此决定 field_in 全局/局部索引，漏复位会读错数据（upwind
+不受影响，它恒按全局读）。§28 修复一（fluid_gradient 地板 no-flux 钳制）**保留不动**。
+
+**A/B 账本**（同 fixture 同参数 135 帧，`wb_ledger_run.py`，蘸墨基线 ≈22330）：
+
+| 方案 | 总漂移 | 最差单帧 | 负格 |
+|---|---|---|---|
+| semi-Lagrangian（默认） | **+4.56%** | 0.31% | 84/135 帧，峰值 285 格（Σ−10.3） |
+| upwind（逃生口） | −0.02% | 0.05% | 9/135 帧，峰值 58 格（Σ−0.4） |
+
+**如实记录的代价**：论文默认是"造质量"侧漂移（+4.6%/笔，无灾难步——§30/§31 修复后
+地板射流放大器已不存在，旧 −66%/步事故不会复现；最差 +0.31%/帧）。迎风的严格守恒
+（−0.02%）与半拉格朗日的论文一致性不可兼得，默认取论文；需要严格守恒的账本排查用
+`WB_SCALAR_ADVECT=upwind`。负格是微量级别（Σ−10 vs 总量 22330，−0.05%），semi-
+Lagrangian 的凸插值本身不产负值，来源是 §5.2 转移 clamp 的残差，不追。
+
 ## 遗留目标
 
 ### 高优先级
@@ -1494,8 +1528,9 @@ cm²/s（默认 2.0、max 50），Drying Rate 默认 12.0、max 50。
 - **Group A 全 grid buffer 稀疏化**：26 个核心 sim field 在 4096 下要 112GB。需要
   sparse / block-allocated grid（只为有 paint 的区域分配）。这是真正上 4096（paper
   分辨率）的前提。12 GB 卡当前用 `WETBRUSH_RES=1024` 跑（~7 GB），2048 需 28 GB。
-- **压感输入接入**：`node_brush_capture` 已能捕获鼠标轨迹，但 `node_brush_input` 的
-  BrushPressure 是 socket 常量（默认 1.0），无 Wintab / Windows Ink / pen pressure
+- **压感输入接入**：`node_brush_capture` 已能捕获鼠标轨迹，但笔刷压力目前只是
+  `brush_wb_sim` 的 BrushPressure socket 常量（默认 1.0；原 `node_brush_input`
+  节点已删除），无 Wintab / Windows Ink / pen pressure
   输入。压感→bristle 压扁→容量 Eq.12→注入量这条链目前断开。接入真压感会让 footprint
   随力度动态变化。
   （注：bristle 物理本身已 faithful 实现，见 `bristle_simulate.slang` 的 Eq.2 非惯性
@@ -1525,20 +1560,28 @@ cm²/s（默认 2.0、max 50），Drying Rate 默认 12.0、max 50。
 | Registry（generic） | `source/Core/RHI/include/RHI/shared_buffer_registry.hpp` | key→buffer+meta |
 | Registry impl | `source/Core/RHI/source/shared_buffer_registry.cpp` | Meyers singleton |
 | Pack shader | `source/Editor/geometry_nodes/BrushSimulation/shaders/pack_float4.slang` | 4 float→1 Float4 |
-| Sim state | `source/Editor/geometry_nodes/brush_sim_common.hpp` | WetbrushSimState, NUM_BRISTLES, packed_paint |
-| Sim nodes | `node_brush_wb_{deposit,bristle,fluid,commit}.cpp` | global grid |
+| Sim state | `source/Editor/geometry_nodes/BrushSimulation/brush_sim_common.hpp` | WetbrushSimState, NUM_BRISTLES, packed_paint |
+| Sim nodes | `source/Editor/geometry_nodes/BrushSimulation/node_brush_wb_{init_state,sim,commit}.cpp` | global grid（2026-08-30 deposit/bristle/fluid 三合一进 sim；2026-08-31 移入 BrushSimulation/） |
+| Pen/粒子输入 mock | `source/Editor/geometry_nodes/BrushSimulation/node_mock_pen_motion.cpp`、`node_mock_point_emitter.cpp` | StrokeSample 生产者（2026-08-31 随迁） |
 | Shader indexing | `BrushSimulation/shaders/common.slangh` | window_map, bristle_gi/grid_gi |
-| Mock strokes | `node_mock_strokes.cpp` | 双色交叉笔画测试 fixture |
-| Render rprim | `source/Runtime/renderer/source/geometries/wetbrush_volume.{h,cpp}` | Phase 1 零拷贝 lookup |
+| Mock strokes | `source/Editor/geometry_nodes/node_mock_strokes.cpp` | 双色交叉笔画测试 fixture（留在根目录） |
+| Render rprim | `source/Runtime/renderer/source/geometries/volume_impl/wetbrush_volume_impl.{h,cpp}` | 零拷贝 lookup（VolumeImpl 子类） |
 | Render node | `source/Runtime/renderer/nodes/wetbrush_render.cpp` | geom_dirty reset |
 | Renderer | `source/Runtime/renderer/source/renderer.cpp` | registry version poll, reset fold |
 | Render param | `source/Runtime/renderer/source/renderParam.h` | pending_force_reset, registry version |
 | Render delegate | `source/Runtime/renderer/source/renderDelegate.cpp` | HdRuzinoRenderParam setting |
 | Python binding | `source/Runtime/renderer/python/renderer.cpp` | reset_accumulation() API |
-| Volume shader | `source/Runtime/renderer/nodes/shaders/shaders/wetbrush_render.slang` | VolumeClosestHit/Intersection |
-| Volume helpers | `source/Runtime/renderer/nodes/shaders/shaders/volume_intersection.slang` | samplePaintField, intersectSlab |
+| Volume shader | `source/Runtime/renderer/nodes/shaders/wetbrush_render.slang` | VolumeClosestHit/Intersection |
+| Volume helpers | `source/Runtime/renderer/nodes/shaders/volume_intersection.slang` | samplePaintField, intersectSlab |
 | Test driver | `source/tests/render_wetbrush.py` | interleaved sim+render |
 | Cross test | `source/tests/render_wetbrush_cross.py` | 双色交叉混合 |
+
+> 2026-08-31 整理：wb 三节点 + `brush_sim_common.hpp` + 两个 mock 输入节点从
+> `geometry_nodes/` 根目录移入 `BrushSimulation/`（与 shaders/ 同处；CMake 在
+> `add_nodes` 里给该目录追加了一个 `SRC_DIRS`，节点注册 JSON 不变）。
+> `node_brush_input.cpp` 已删除（下游 `brush_paint_sim` 早已不存在）；
+> `node_brush_capture.cpp` 保留在根目录（视口捕获路径）。历史小节中出现的
+> `node_brush_wb_{deposit,bristle,fluid}.cpp` 均为合并前的旧文件名。
 
 ## 构建 / 运行
 
@@ -1554,9 +1597,10 @@ cd Binaries/Release
 python ../../source/tests/render_wetbrush_cross.py
 # 输出: Binaries/Release/wetbrush_cross_sequence/frame_XXXX.png
 #
-# 显存不够跑 4096（默认，需 ~112 GB）时用环境变量降分辨率：
-# WETBRUSH_RES=1024 python ../../source/tests/render_wetbrush_cross.py   # ~7 GB
+# 默认即 1024²×64（~7 GB，§33）。要升分辨率时（4096 全 grid 分配需 ~112 GB，
+# 须先稀疏化）用环境变量：
 # WETBRUSH_RES=2048 python ../../source/tests/render_wetbrush_cross.py   # ~28 GB
+# WETBRUSH_RES=4096 python ../../source/tests/render_wetbrush_cross.py   # ~112 GB
 # （Python 须 3.13；PATH 里的默认 python 若是 3.12 会报
 #  "Module use of python313.dll conflicts"——用 scoop 的 python313 或
 #  Binaries/Release/python.exe）
@@ -1565,16 +1609,24 @@ python ../../source/tests/render_wetbrush_cross.py
 Shaders 运行时编译（非 build 时）。编辑 `.slang` 后无需 rebuild，但 renderer 加载的
 是 deployed copy（如 `Binaries/Release/usd/hd_RUZINO/resources/shaders/`）。
 
-分辨率/参数在 `render_wetbrush.py` 顶部（SIM_RES 默认 4096，可用 `WETBRUSH_RES` 环境变量
-覆盖；SIM_RES_Z / SPP 同理）和 `brush_sim_common.hpp`（NUM_BRISTLES）。
+分辨率/参数在 `render_wetbrush.py` 顶部（SIM_RES 默认 1024、SIM_RES_Z 默认 64，
+可用 `WETBRUSH_RES` / `WETBRUSH_RES_Z` 环境变量覆盖；SPP 同理）和
+`BrushSimulation/brush_sim_common.hpp`（NUM_BRISTLES、WB_M_MAX、WB_WIN_XY）。
 
 ## 参数对照（paper Table 1 vs 当前）
 
 | 参数 | Paper | 当前 | 备注 |
 |---|---|---|---|
-| Grid 分辨率 | 4096×4096×64 | 默认 4096（env 可降：1024 ~7GB / 2048 ~28GB） | 全 grid 分配，需稀疏化才能在消费级卡跑满 4096 |
-| D₀ (grid→particle range) | 1 cm 固定 | brush_radius×1.8 | 论文 SI→相对换算（R≈0.55cm）；§21 恢复论文比例 |
-| D₁ (bristle adhesion) | 0.3 cm | brush_radius×0.55 | 同上；D₁/D₀=0.3 与论文一致，R_j(0.36R)<D₁ |
+| Grid 分辨率 | 4096×4096×64 | 脚本默认 1024²×64（`WETBRUSH_RES[_Z]`；节点 socket 默认 512/32） | §33 后 102 格/刷头直径；4096 全 grid 分配需稀疏化 |
+| D₀ (grid→particle range) | 1 cm 固定 | **1.0 cm 绝对**（`node_brush_wb_sim.cpp` PHASE 3） | §33 起论文 SI 值逐字可用；旧 1.8R 推断已弃 |
+| D₁ (bristle adhesion) | 0.3 cm | **0.3 cm 绝对** | 同上；R_j≈0.36R < D₁ |
+| ρ₀ (paint density) | 1.0e3 kg/m³ (SI) | 12.3（与 M_max 配对调定） | §33；R_j=cbrt(3·M_max/(4πρ₀))≈0.18cm |
+| M_max (蘸墨容量) | — | 0.30（`WB_M_MAX`） | §33；0.15 会在 5cm 笔画 60% 处耗尽 |
+| 粘度 ν | 0.5（论文单位） | 2.0 cm²/s（max 50） | §34：a=dt·ν/h²（旧 dt·ν·N² 在 paper=10 下错标 ×100） |
+| Drying Rate | 无数值（"small amount"） | 12/s（max 50） | §32 曾 2.0；§34 提至 12 + g2p 加 wetness<0.01 固体门 |
+| slow_deposit | 无数值（"moves slowly"） | 2.0 cm/s | §33 |
+| 沉积/排水核长 h | — | 0.0244 cm 世界绝对（p2g/g2p 同款） | §33；≈2.5 格@1024=鬃毛粗细 |
+| 活动窗口 | 128×128×32 | 默认 320×320×res_z（`WB_WIN_XY`） | §33；世界覆盖 3.1cm≈6.25R，与论文相对空间一致 |
 | γ (FLIP/PIC blend) | 0.8 | 0.8 | ✓ |
 | δ (particle friction) | 1/0.2 cm | 5.0/D₀ | 单位换算后一致 |
 | α (pressure solver) | 1 | 1 | ✓ |
