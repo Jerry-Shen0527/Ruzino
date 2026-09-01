@@ -86,6 +86,78 @@ void Hd_RUZINO_Volume::create_gpu_resources(Hd_RUZINO_RenderParam* render_param)
     vd.boundsMax = float3(bmax[0], bmax[1], bmax[2]);
     impl_->fillVolumeDesc(vd);
     volume_desc_buffer->write_data(&vd);
+    {
+        // Runtime truth of the volume mapping (alignment hunt): what the
+        // ray-march will actually use this frame.
+        spdlog::info(
+            "[wb-vol-desc] bounds=[{:.4f},{:.4f}]x[{:.4f},{:.4f}]x[{:.4f},"
+            "{:.4f}] gridMin=({:.4f},{:.4f},{:.4f}) cell={:.6f} "
+            "res=({},{},{})",
+            vd.boundsMin.x,
+            vd.boundsMax.x,
+            vd.boundsMin.y,
+            vd.boundsMax.y,
+            vd.boundsMin.z,
+            vd.boundsMax.z,
+            vd.gridMin.x,
+            vd.gridMin.y,
+            vd.gridMin.z,
+            vd.cellSize,
+            vd.gridResX,
+            vd.gridResY,
+            vd.gridResZ);
+        // GPU-side forensic: read the pool row BACK and dump its first raw
+        // words. If the readback disagrees with `vd` above, the write path /
+        // pool slotting is corrupt; if it agrees but slang's StructuredBuffer
+        // layout differs from the C++ packing, the raw word dump shows which
+        // bytes the shader would misread (C++ float3 is a 12-byte unaligned
+        // struct, slang may align float3 to 16 in structured buffers).
+        VolumeDesc back{};
+        volume_desc_buffer->read_data(&back);
+        spdlog::info(
+            "[wb-vol-desc-gpu] sizeof(C++)={} slot_index={} readback: "
+            "bindless={} res=({},{},{}) cell={:.6f} gridMin=({:.4f},{:.4f},"
+            "{:.4f}) boundsMin=({:.4f},{:.4f},{:.4f}) boundsMax=({:.4f},{:.4f},"
+            "{:.4f}) kind={}",
+            sizeof(VolumeDesc),
+            volume_desc_buffer->index(),
+            back.bindlessIndex,
+            back.gridResX,
+            back.gridResY,
+            back.gridResZ,
+            back.cellSize,
+            back.gridMin.x,
+            back.gridMin.y,
+            back.gridMin.z,
+            back.boundsMin.x,
+            back.boundsMin.y,
+            back.boundsMin.z,
+            back.boundsMax.x,
+            back.boundsMax.y,
+            back.boundsMax.z,
+            back.volumeKind);
+        uint32_t raw[10] = {};
+        {
+            // read_data has no length parameter (always reads the whole
+            // slot), so read into a slot-sized scratch and keep the head.
+            std::vector<uint32_t> slot_bytes(sizeof(VolumeDesc) / 4 + 1);
+            volume_desc_buffer->read_data(slot_bytes.data());
+            std::copy(slot_bytes.begin(), slot_bytes.begin() + 10, raw);
+        }
+        spdlog::info(
+            "[wb-vol-desc-gpu] raw words[0..9]={:x} {:x} {:x} {:x} {:x} {:x} "
+            "{:x} {:x} {:x} {:x}",
+            raw[0],
+            raw[1],
+            raw[2],
+            raw[3],
+            raw[4],
+            raw[5],
+            raw[6],
+            raw[7],
+            raw[8],
+            raw[9]);
+    }
 
     _valid = true;
 }
@@ -143,6 +215,19 @@ void Hd_RUZINO_Volume::updateTLAS(
     rt_instance.instanceID = instanceBuffer->index();
 
     rt_instanceBuffer->write_data(&rt_instance);
+
+    // Alignment-hunt probe: which VolumeDesc row does this instance route to,
+    // and what transform does the TLAS apply (a scale here would shrink the
+    // BVH box — crop-only for our world-space slab march, but log it anyway).
+    const uint32_t hit_group = rt_instance.instanceContributionToHitGroupIndex;
+    spdlog::info(
+        "[wb-vol-tlas] vol_desc_row={} transform_diag=({:.4f},{:.4f},{:.4f}) "
+        "hit_group={}",
+        instance_data.geometryID,
+        transform[0][0],
+        transform[1][1],
+        transform[2][2],
+        hit_group);
 
     render_param->InstanceCollection->set_require_rebuild_tlas();
 }

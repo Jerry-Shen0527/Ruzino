@@ -708,6 +708,191 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
     params.set_output("Particle Count", ptcl_count);
     params.set_output("Total Particle Mass", ptcl_mass);
 
+    // WB_DUMP_CANVAS=<path-prefix>: 2D max-projection (over z) of the GLOBAL
+    // canvas density, one res*res float per dump (grid coords, gi =
+    // (y*res+x)). Zero render involvement — measures where the canvas REALLY
+    // holds paint (stroke-path vs overlay alignment hunt). NOTE: re-reads
+    // field->density here instead of reusing the early density_cpu — the
+    // early readback races the sim's dispatches and returns zeros (the
+    // census's waitForIdle syncs above are what make later readbacks valid).
+    if (const char* cv = std::getenv("WB_DUMP_CANVAS")) {
+        static int cv_frame = 0;
+        bool do_dump = cv_frame % 4 == 2;
+        ++cv_frame;
+        if (do_dump) {
+            auto den_synced = readback(field->density, grid_n3d);
+            std::string path =
+                std::string(cv) + "_" + std::to_string(cv_frame - 1) + ".bin";
+            std::vector<float> sl(
+                size_t(field->grid_res) * size_t(field->grid_res));
+            for (int y = 0; y < field->grid_res; ++y) {
+                for (int x = 0; x < field->grid_res; ++x) {
+                    float dmax = 0.0f;
+                    for (int z = 0; z < field->grid_res_z; ++z) {
+                        float d = den_synced
+                            [(z * field->grid_res + y) * field->grid_res + x];
+                        dmax = std::max(dmax, d);
+                    }
+                    sl[size_t(y) * field->grid_res + x] = dmax;
+                }
+            }
+            float dmax_dump = 0.0f;
+            for (float v : sl)
+                dmax_dump = std::max(dmax_dump, v);
+            spdlog::info(
+                "[wb-canvas-dump] cook={} slice_max={} path={}",
+                cv_frame - 1,
+                dmax_dump,
+                path);
+            std::ofstream f(path, std::ios::binary | std::ios::trunc);
+            if (f)
+                f.write(
+                    reinterpret_cast<const char*>(sl.data()),
+                    std::streamsize(sl.size() * sizeof(float)));
+        }
+    }
+
+    // WB_PACK_DEBUG_DOTS=1: overwrite packed_paint with green dot COLUMNS
+    // (3x3-cell patches, iz 0..7) at known world positions on a 0.5cm grid
+    // over +-4cm — synthetic calibration marks. Renders through the volume
+    // path; where the dots appear vs where they were written measures the
+    // volume pipeline's true world->pixel mapping with zero sim involvement.
+    // 0.5cm spacing + 3x3 patches so a 1-spp ray can't slip between marks and
+    // the least-squares affine fit has enough points to expose any translation
+    // or per-axis component (a pure center-scale alone would under-determine).
+    static const bool pack_debug_dots = [] {
+        const char* e = std::getenv("WB_PACK_DEBUG_DOTS");
+        return e && e[0] == '1';
+    }();
+    if (pack_debug_dots) {
+        struct DotCell {
+            uint32_t byte_offset;
+            float x, y, z, w;
+        };
+        std::vector<DotCell> cells;
+        const float half_p = field->grid_paper * 0.5f;
+        for (float wx = -4.0f; wx <= 4.001f; wx += 0.5f) {
+            for (float wy = -4.0f; wy <= 4.001f; wy += 0.5f) {
+                int cx = int((wx + half_p) / cell_sz);
+                int cy = int((wy + half_p) / cell_sz);
+                for (int ox = -1; ox <= 1; ++ox) {
+                    for (int oy = -1; oy <= 1; ++oy) {
+                        int ix = cx + ox, iy = cy + oy;
+                        if (ix < 0 || ix >= field->grid_res || iy < 0 ||
+                            iy >= field->grid_res)
+                            continue;
+                        for (int iz = 0; iz < 8 && iz < field->grid_res_z;
+                             ++iz) {
+                            uint32_t gi = uint32_t(iz * field->grid_res + iy) *
+                                              uint32_t(field->grid_res) +
+                                          uint32_t(ix);
+                            cells.push_back(
+                                { gi * 16u, 1.0f, 0.0f, 1.0f, 0.0f });
+                        }
+                    }
+                }
+            }
+        }
+        size_t bytes = cells.size() * sizeof(DotCell);
+        auto up = rc.create(
+            nvrhi::BufferDesc{}
+                .setByteSize(bytes)
+                .setCpuAccess(nvrhi::CpuAccessMode::Write)
+                .setDebugName("wb_dot_upload"));
+        void* mapped = device->mapBuffer(up, nvrhi::CpuAccessMode::Write);
+        memcpy(mapped, cells.data(), bytes);
+        device->unmapBuffer(up);
+        auto dot_cmd = rc.create(CommandListDesc{});
+        dot_cmd->open();
+        for (size_t i = 0; i < cells.size(); ++i)
+            dot_cmd->copyBuffer(
+                field->packed_paint,
+                cells[i].byte_offset,
+                up,
+                uint32_t(i * sizeof(DotCell) + 4),
+                16);
+        dot_cmd->close();
+        device->executeCommandList(dot_cmd);
+        device->waitForIdle();
+        {
+            // write-then-read probe: did the FIRST dot's copies land?
+            int dix = int((-4.0f + half_p) / cell_sz);
+            int diy = int((-4.0f + half_p) / cell_sz);
+            uint32_t dot_gi = uint32_t(0 * field->grid_res + diy) *
+                                  uint32_t(field->grid_res) +
+                              uint32_t(dix);
+            auto rb2 = rc.create(
+                nvrhi::BufferDesc{}
+                    .setByteSize(16)
+                    .setCpuAccess(nvrhi::CpuAccessMode::Read)
+                    .setDebugName("wb_dot_chk"));
+            auto cmd2 = rc.create(CommandListDesc{});
+            cmd2->open();
+            cmd2->copyBuffer(
+                rb2, 0, field->packed_paint, size_t(dot_gi) * 16, 16);
+            cmd2->close();
+            device->executeCommandList(cmd2);
+            device->waitForIdle();
+            void* m2 = device->mapBuffer(rb2, nvrhi::CpuAccessMode::Read);
+            float vals[4];
+            memcpy(vals, m2, 16);
+            device->unmapBuffer(rb2);
+            rc.destroy(rb2);
+            rc.destroy(cmd2);
+            spdlog::info(
+                "[wb-dot-probe] dot cell ({},{}) gi={} readback d={:.3f} "
+                "rgb=({:.3f},{:.3f},{:.3f}) (want d=1 g=1)",
+                dix,
+                diy,
+                dot_gi,
+                vals[0],
+                vals[1],
+                vals[2],
+                vals[3]);
+        }
+        rc.destroy(up);
+        rc.destroy(dot_cmd);
+        spdlog::info("[wb-dot-probe] wrote {} dot cells", cells.size());
+    }
+    if (const char* pk = std::getenv("WB_DUMP_PACKED")) {
+        static int pk_frame = 0;
+        {
+            auto pk_cpu = readback(field->packed_paint, grid_n3d * 4);
+            std::string path =
+                std::string(pk) + "_" + std::to_string(pk_frame) + ".bin";
+            std::vector<float> sl(
+                size_t(field->grid_res) * size_t(field->grid_res));
+            for (int y = 0; y < field->grid_res; ++y) {
+                for (int x = 0; x < field->grid_res; ++x) {
+                    float dmax = 0.0f;
+                    for (int z = 0; z < field->grid_res_z; ++z) {
+                        float d = pk_cpu[(
+                            size_t(
+                                (z * field->grid_res + y) * field->grid_res +
+                                x) *
+                            4)];
+                        dmax = std::max(dmax, d);
+                    }
+                    sl[size_t(y) * field->grid_res + x] = dmax;
+                }
+            }
+            float dmax_dump = 0.0f;
+            for (float v : sl)
+                dmax_dump = std::max(dmax_dump, v);
+            spdlog::info(
+                "[wb-packed-dump] cook={} slice_max={} path={}",
+                pk_frame,
+                dmax_dump,
+                path);
+            std::ofstream f(path, std::ios::binary | std::ios::trunc);
+            if (f)
+                f.write(
+                    reinterpret_cast<const char*>(sl.data()),
+                    std::streamsize(sl.size() * sizeof(float)));
+        }
+        ++pk_frame;
+    }
+
     // ======================================================================
     // DEBUG DRAW PACK: build three debug-visualization buffers (live
     // active-window particles, non-zero grid voxels, bristle capsule

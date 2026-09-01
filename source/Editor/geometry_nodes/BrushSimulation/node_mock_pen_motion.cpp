@@ -37,8 +37,10 @@
 // captured-trajectory replay / multi-stroke color-mixing fixtures; this node
 // is the primary input for physics tests.
 
+#include <array>
 #include <cmath>
 #include <cstdlib>
+#include <string>
 
 #include "GCore/GOP.h"
 #include "GCore/geom_payload.hpp"
@@ -46,6 +48,36 @@
 #include "geom_node_base.h"
 
 NODE_DEF_OPEN_SCOPE
+
+// Stroke pattern (the "Shape" socket).
+enum class PenShape { Line, Circle, Square, Figure8, Triangle, Star, Spiral };
+
+// Regularized power f(u) = u·(u²+ε²)^((k−1)/2), k = 1/3 — behaves like the
+// real cube root for |u| ≫ ε but is LINEAR with bounded slope ε^(−2/3) near
+// 0 (the cube root's slope diverges, which would spike the arc-length table
+// of the square shape). C∞ everywhere. f' and f'' in closed form:
+//   f'  = g^m + 2·m·u²·g^(m−1),  f'' = 6·m·u·g^(m−1) + 4·m·(m−1)·u³·g^(m−2)
+// with g = u² + ε², m = (k−1)/2.
+constexpr float SQ_REG_EPS2 = 1.0e-4f;    // ε = 1e-2 cm
+constexpr float SQ_REG_M = -1.0f / 3.0f;  // (k−1)/2 with k = 1/3
+inline float reg_pow(float u)
+{
+    const float g = u * u + SQ_REG_EPS2;
+    return u * std::pow(g, SQ_REG_M);
+}
+inline float reg_pow_d(float u)
+{
+    const float g = u * u + SQ_REG_EPS2;
+    return std::pow(g, SQ_REG_M) +
+           2.0f * SQ_REG_M * u * u * std::pow(g, SQ_REG_M - 1.0f);
+}
+inline float reg_pow_dd(float u)
+{
+    const float g = u * u + SQ_REG_EPS2;
+    return 6.0f * SQ_REG_M * u * std::pow(g, SQ_REG_M - 1.0f) +
+           4.0f * SQ_REG_M * (SQ_REG_M - 1.0f) * u * u * u *
+               std::pow(g, SQ_REG_M - 2.0f);
+}
 
 // Per-instance playback clock. Not serialized (has_storage=false): playback
 // restarts from the beginning when the graph is reloaded — same policy as
@@ -68,6 +100,15 @@ NODE_DECLARATION_FUNCTION(mock_pen_motion)
     b.add_input<float>("Center Y").default_val(0.0f).min(-1.0f).max(1.0f);
     b.add_input<float>("Length").default_val(0.3f).min(0.0f).max(2.0f);
     b.add_input<float>("Amplitude").default_val(0.05f).min(0.0f).max(1.0f);
+    // Stroke pattern. "line" = the legacy wavy stroke (Length = X travel,
+    // Cycles = sine wobbles). The closed shapes ("circle", "square",
+    // "figure8", "triangle", "star") are arc-length normalized: Length =
+    // perimeter, Cycles = loops, Speed = exact average speed. "spiral"
+    // (Archimedean, Cycles = turns) is likewise arc-length normalized with
+    // Length = total arc. Every shape eases in/out (C1 velocity at
+    // touchdown/liftoff/corners) — see the continuity note in the execution
+    // body.
+    b.add_input<std::string>("Shape").default_val("line");
     b.add_input<float>("Cycles").default_val(2.0f).min(0.0f).max(10.0f);
     b.add_input<float>("Speed").default_val(0.15f).min(0.001f).max(
         5.0f);  // world units / s along +X while pressed
@@ -120,6 +161,7 @@ NODE_EXECUTION_FUNCTION(mock_pen_motion)
     const float cy = params.get_input<float>("Center Y");
     const float length = params.get_input<float>("Length");
     const float amplitude = params.get_input<float>("Amplitude");
+    const std::string shape_name = params.get_input<std::string>("Shape");
     const float cycles = params.get_input<float>("Cycles");
     const float speed = params.get_input<float>("Speed");
     const float hover_z = params.get_input<float>("Hover Z");
@@ -162,50 +204,254 @@ NODE_EXECUTION_FUNCTION(mock_pen_motion)
         const float T_l = std::max(lift_dur, 1e-4f);
         // The sine wobble only makes sense while traveling.
         const float amp = blob ? 0.0f : amplitude;
+        // A held stab has no pattern to follow.
+        PenShape shape = PenShape::Line;
+        if (!blob) {
+            if (shape_name == "circle")
+                shape = PenShape::Circle;
+            else if (shape_name == "square")
+                shape = PenShape::Square;
+            else if (shape_name == "figure8")
+                shape = PenShape::Figure8;
+            else if (shape_name == "triangle")
+                shape = PenShape::Triangle;
+            else if (shape_name == "star")
+                shape = PenShape::Star;
+            else if (shape_name == "spiral")
+                shape = PenShape::Spiral;
+        }
 
-        // The tilt axis is phase-dependent (azimuth may follow the stroke
-        // heading), so it is built after the phase switch (tilt_axis_cur).
+        // ---- C1 continuity contract --------------------------------------
+        // This fixture feeds the fluid's moving-wall BC and the merge pass:
+        // a velocity STEP here becomes a pressure impulse in the sim (the
+        // §31 floor-jet lesson). Every phase transition therefore eases
+        // through a smootherstep profile (value AND slope reach 0 together):
+        //   DESCEND: z eases down,        vz = 0 at touchdown
+        //   STROKE:  path fraction eases, XY speed = 0 at both ends
+        //   LIFT:    z eases up,          vz = 0 at liftoff
+        auto smootherstep = [](float u) {
+            u = std::min(std::max(u, 0.0f), 1.0f);
+            return u * u * u * (u * (6.0f * u - 15.0f) + 10.0f);
+        };
+        auto smootherstep_d = [](float u) {
+            u = std::min(std::max(u, 0.0f), 1.0f);
+            const float w = u - 1.0f;
+            return 30.0f * u * u * w * w;
+        };
 
-        // Stroke path (analytic, s in [0,1]): centered on (cx, cy), matching
-        // mock_stroke's shape y = A*sin(4*pi*s) at Cycles=2 so rendered
-        // strokes stay visually comparable across the fixture swap.
-        auto path_xy = [&](float s) {
-            return glm::vec2(
-                cx + (s - 0.5f) * length,
-                cy + amp * std::sin(2.0f * glm::pi<float>() * cycles * s));
+        // ---- stroke patterns ----------------------------------------------
+        // Unit parametrizations (t in [0,1], centered at the origin). Line
+        // keeps the legacy geometry (Length = X travel, sine wobble, NOT
+        // arc-length normalized). The closed shapes are built at unit size
+        // and scaled so their TOTAL arc length equals Length — Speed is then
+        // the exact average speed, and Cycles counts loops.
+        //
+        // The square is the superellipse |x|^6 + |y|^6 = 1: real corners with
+        // BOUNDED curvature. A polygon's tangent direction steps 90° at each
+        // vertex = a velocity jump; the superellipse rotates the tangent
+        // continuously through the corner. Its raw θ-parametrization has
+        // |dp/dθ| → ∞ at the side centers, so non-line shapes reparametrize
+        // by arc length through a per-cook CDF table (2048 intervals): the
+        // stroke runs at uniform speed with the smootherstep ease at the
+        // ends, and the tangent direction still turns analytically.
+        const float w = 2.0f * glm::pi<float>() * cycles;
+        const float pi = glm::pi<float>();
+        auto unit_path = [&](float t) -> glm::vec2 {
+            switch (shape) {
+                case PenShape::Circle: {
+                    const float th = -pi * 0.5f + w * t;
+                    return { std::cos(th), std::sin(th) };
+                }
+                case PenShape::Square: {
+                    // Superellipse |x|^6 + |y|^6 = 1 through the REGULARIZED
+                    // power f(u) = u·(u²+ε²)^((k−1)/2), k = 1/3: equal to
+                    // cbrt(u) for |u| ≫ ε, LINEAR with bounded slope ε^(k−1)
+                    // near 0 — the raw cbrt parametrization has |dp/dθ| → ∞ at
+                    // the side centers, which would spike the arc-length table.
+                    const float th = -pi * 0.5f + w * t;
+                    const float c = std::cos(th), sn = std::sin(th);
+                    return { reg_pow(c), reg_pow(sn) };
+                }
+                case PenShape::Figure8:
+                    return { std::sin(2.0f * w * t + pi * 0.5f),
+                             0.6f * std::sin(w * t) };
+                case PenShape::Triangle:
+                case PenShape::Star: {
+                    // Harmonic polar: r = 1 + A·cos(N·(θ−θ0)) — a rounded
+                    // N-lobe closed curve (N=3 reads as a rounded triangle, N=5
+                    // as a five-pointed star). C∞ everywhere, curvature
+                    // alternates sign around the lobes.
+                    const float N = shape == PenShape::Triangle ? 3.0f : 5.0f;
+                    const float A = shape == PenShape::Triangle ? 0.38f : 0.35f;
+                    const float th = pi * 0.5f + w * t;
+                    const float r = 1.0f + A * std::cos(N * (th - pi * 0.5f));
+                    return { r * std::cos(th), r * std::sin(th) };
+                }
+                case PenShape::Spiral: {
+                    // Archimedean, unit OUTER radius 1 shrinking to 0.24 at the
+                    // center; Cycles = number of turns. The pen continuously
+                    // approaches its own previous pass — the drain disc
+                    // re-enters existing liquid the whole way in.
+                    const float th = -pi * 0.5f + w * t;
+                    const float r = 1.0f - 0.76f * t;
+                    return { r * std::cos(th), r * std::sin(th) };
+                }
+                case PenShape::Line:
+                default: return { (t - 0.5f) * length, amp * std::sin(w * t) };
+            }
         };
-        auto path_dxy = [&](float s) {
-            // d(pos_xy)/ds
-            return glm::vec2(
-                length,
-                amp * std::cos(2.0f * glm::pi<float>() * cycles * s) * 2.0f *
-                    glm::pi<float>() * cycles);
+        auto unit_dpath = [&](float t) -> glm::vec2 {
+            switch (shape) {
+                case PenShape::Circle: {
+                    const float th = -pi * 0.5f + w * t;
+                    return { -w * std::sin(th), w * std::cos(th) };
+                }
+                case PenShape::Square: {
+                    // x' = f'(c)·c', c' = −sinθ; y' = f'(s)·cosθ.  (f'
+                    // bounded.)
+                    const float th = -pi * 0.5f + w * t;
+                    const float c = std::cos(th), sn = std::sin(th);
+                    return { -w * sn * reg_pow_d(c), w * c * reg_pow_d(sn) };
+                }
+                case PenShape::Figure8: {
+                    const float p2 = 2.0f * w * t + pi * 0.5f;
+                    return { 2.0f * w * std::cos(p2),
+                             0.6f * w * std::cos(w * t) };
+                }
+                case PenShape::Triangle:
+                case PenShape::Star: {
+                    // dp/dθ = r'·e_r + r·e_θ, times dθ/dt = w.
+                    // r' w.r.t. θ = −A·N·sin(N(θ−θ0)).
+                    const float N = shape == PenShape::Triangle ? 3.0f : 5.0f;
+                    const float A = shape == PenShape::Triangle ? 0.38f : 0.35f;
+                    const float th = pi * 0.5f + w * t;
+                    const float phi = N * (th - pi * 0.5f);
+                    const float r = 1.0f + A * std::cos(phi);
+                    const float rt = -A * N * std::sin(phi);
+                    const float ct = std::cos(th), st = std::sin(th);
+                    return { w * (rt * ct - r * st), w * (rt * st + r * ct) };
+                }
+                case PenShape::Spiral: {
+                    // dp/dt = r'·e_r + r·θ'·e_θ with r' = −0.76 (dr/dt).
+                    const float th = -pi * 0.5f + w * t;
+                    const float r = 1.0f - 0.76f * t;
+                    const float ct = std::cos(th), st = std::sin(th);
+                    return { -0.76f * ct - r * w * st,
+                             -0.76f * st + r * w * ct };
+                }
+                case PenShape::Line:
+                default: return { length, amp * w * std::cos(w * t) };
+            }
         };
-        auto path_ddxy = [&](float s) {
-            // d²(pos_xy)/ds²
-            const float w = 2.0f * glm::pi<float>() * cycles;
-            return glm::vec2(0.0f, -amp * std::sin(w * s) * w * w);
+        auto unit_ddpath = [&](float t) -> glm::vec2 {
+            switch (shape) {
+                case PenShape::Circle: {
+                    const float th = -pi * 0.5f + w * t;
+                    return { -w * w * std::cos(th), -w * w * std::sin(th) };
+                }
+                case PenShape::Square: {
+                    // x'' = w²·(f''(c)·sin²θ − f'(c)·cosθ),
+                    // y'' = w²·(f''(s)·cos²θ − f'(s)·sinθ).
+                    const float th = -pi * 0.5f + w * t;
+                    const float c = std::cos(th), sn = std::sin(th);
+                    const float xpp =
+                        reg_pow_dd(c) * sn * sn - reg_pow_d(c) * c;
+                    const float ypp =
+                        reg_pow_dd(sn) * c * c - reg_pow_d(sn) * sn;
+                    return { w * w * xpp, w * w * ypp };
+                }
+                case PenShape::Figure8: {
+                    const float p2 = 2.0f * w * t + pi * 0.5f;
+                    return { -4.0f * w * w * std::sin(p2),
+                             -0.6f * w * w * std::sin(w * t) };
+                }
+                case PenShape::Triangle:
+                case PenShape::Star: {
+                    // d²p/dθ² = (r'' − r)·e_r + 2r'·e_θ, times w².
+                    // r'' = −A·N²·cos(N(θ−θ0)).
+                    const float N = shape == PenShape::Triangle ? 3.0f : 5.0f;
+                    const float A = shape == PenShape::Triangle ? 0.38f : 0.35f;
+                    const float th = pi * 0.5f + w * t;
+                    const float phi = N * (th - pi * 0.5f);
+                    const float r = 1.0f + A * std::cos(phi);
+                    const float rt = -A * N * std::sin(phi);
+                    const float rtt = -A * N * N * std::cos(phi);
+                    const float ar = rtt - r;
+                    const float ct = std::cos(th), st = std::sin(th);
+                    return { w * w * (ar * ct - 2.0f * rt * st),
+                             w * w * (ar * st + 2.0f * rt * ct) };
+                }
+                case PenShape::Spiral: {
+                    // d²p/dt² = −r·θ'²·e_r + 2r'·θ'·e_θ (r'' = 0).
+                    const float th = -pi * 0.5f + w * t;
+                    const float r = 1.0f - 0.76f * t;
+                    const float ct = std::cos(th), st = std::sin(th);
+                    return { -r * w * w * ct - 2.0f * 0.76f * w * (-st),
+                             -r * w * w * st - 2.0f * 0.76f * w * ct };
+                }
+                case PenShape::Line:
+                default: return { 0.0f, -amp * w * w * std::sin(w * t) };
+            }
         };
+
+        // Arc-length table for the closed shapes: cumulative arclength
+        // FRACTIONS C[k] at t_k = k/N (scale-invariant, built on the unit
+        // shape), per-interval density D[k] = dC/dt. Inversion returns
+        // (t, dt/ds) for a stroke fraction s — |dp/ds| ends up uniform.
+        // Legacy line skips this: s IS t, preserving the original pacing.
+        constexpr int ARC_N = 2048;
+        std::array<float, ARC_N + 1> arc_c{};
+        std::array<float, ARC_N> arc_d{};
+        float arc_total = 1.0f;
+        float shape_scale = 1.0f;
+        if (shape != PenShape::Line) {
+            glm::vec2 prev = unit_path(0.0f);
+            arc_c[0] = 0.0f;
+            for (int k = 1; k <= ARC_N; ++k) {
+                const glm::vec2 cur = unit_path(float(k) / float(ARC_N));
+                arc_c[k] = arc_c[k - 1] + glm::length(cur - prev);
+                prev = cur;
+            }
+            arc_total = std::max(arc_c[ARC_N], 1e-6f);
+            // Normalize to fractions BEFORE deriving densities: the lookup
+            // receives the stroke fraction s in [0,1].
+            for (int k = 0; k <= ARC_N; ++k)
+                arc_c[k] /= arc_total;
+            for (int k = 0; k < ARC_N; ++k)
+                arc_d[k] = (arc_c[k + 1] - arc_c[k]) * float(ARC_N);
+            // Length = total perimeter of the (multi-loop) shape.
+            shape_scale = length / arc_total;
+        }
+        auto arc_lookup = [&](float s, float& t, float& dt_ds) {
+            s = std::min(std::max(s, 0.0f), 1.0f);
+            int lo = 0, hi = ARC_N;  // C[lo] <= s <= C[hi]
+            while (hi - lo > 1) {
+                const int mid = (lo + hi) / 2;
+                (arc_c[mid] <= s ? lo : hi) = mid;
+            }
+            const float span = std::max(arc_c[hi] - arc_c[lo], 1e-9f);
+            const float wgt =
+                std::min(std::max((s - arc_c[lo]) / span, 0.0f), 1.0f);
+            t = (float(lo) + wgt) / float(ARC_N);
+            const float density = std::max(
+                arc_d[lo] +
+                    wgt * (arc_d[hi < ARC_N ? hi : ARC_N - 1] - arc_d[lo]),
+                1e-9f);
+            dt_ds = 1.0f / density;
+        };
+
+        auto path_xy = [&](float t) {
+            return glm::vec2(cx, cy) + unit_path(t) * shape_scale;
+        };
+        auto path_dxy = [&](float t) { return unit_dpath(t) * shape_scale; };
+        auto path_ddxy = [&](float t) { return unit_ddpath(t) * shape_scale; };
+
         // Stroke heading, in the tilt-azimuth convention (the direction the
         // pen TIP leans toward). Handle-forward dragging means the tip leans
         // OPPOSITE the motion: az = atan2(-dy, -dx).
-        auto heading_at = [&](float s) {
-            glm::vec2 dp = path_dxy(s);
+        auto heading_at = [&](float t) {
+            const glm::vec2 dp = path_dxy(t);
             return std::atan2(-dp.y, -dp.x);
-        };
-        // Analytic yaw rate d(az)/dt. With q = Rz(az)Ry(-theta)Rz(-az), the
-        // spatial angular velocity of the rotating tilt axis is
-        // omega = theta' * tilt_axis + az' * (ez - q*ez); the second term is
-        // the "coning" correction (rotating the azimuth of an upright pen is
-        // a no-op, hence the -q*ez subtraction).
-        auto yaw_rate_at = [&](float s) {
-            glm::vec2 dp = path_dxy(s);
-            glm::vec2 ddp = path_ddxy(s);
-            const float ds_dt = 1.0f / T_s;
-            const float denom = dp.x * dp.x + dp.y * dp.y;
-            if (denom < 1e-12f)
-                return 0.0f;
-            return (dp.x * ddp.y - dp.y * ddp.x) / denom * ds_dt;
         };
 
         float tilt_cur = tilt_deg;   // deg, varies only during STROKE (sweep)
@@ -219,39 +465,64 @@ NODE_EXECUTION_FUNCTION(mock_pen_motion)
             out.pos = glm::vec3(p.x, p.y, z_hi);
         }
         else if (tau < T_d) {
-            // DESCEND: straight down at the stroke start point. With tilt
-            // follow, land already slanted along the initial heading.
-            float u = tau / T_d;
-            glm::vec2 p = path_xy(0.0f);
-            out.pos = glm::vec3(p.x, p.y, z_hi + (z_lo - z_hi) * u);
-            out.vel = glm::vec3(0.0f, 0.0f, (z_lo - z_hi) / T_d);
+            // DESCEND: straight down at the stroke start point, z eased so
+            // vz = 0 at touchdown (no vertical velocity step into STROKE).
+            const float u = std::min(tau / T_d, 1.0f);
+            const glm::vec2 p = path_xy(0.0f);
+            out.pos =
+                glm::vec3(p.x, p.y, z_hi + (z_lo - z_hi) * smootherstep(u));
+            out.vel =
+                glm::vec3(0.0f, 0.0f, (z_lo - z_hi) * smootherstep_d(u) / T_d);
             if (tilt_follow && !blob)
                 az_cur = glm::degrees(heading_at(0.0f));
         }
         else if (tau < T_d + T_s) {
-            // STROKE: pressed and traveling. vel = d(pos)/dt with ds/dt=1/T_s.
-            float s = std::min((tau - T_d) / T_s, 1.0f);
-            glm::vec2 p = path_xy(s);
-            glm::vec2 dp = path_dxy(s);
-            out.pos = glm::vec3(p.x, p.y, press_z);
-            out.vel = glm::vec3(dp.x / T_s, dp.y / T_s, 0.0f);
+            // STROKE: pressed and traveling. The eased fraction s(u) plus
+            // the arc-length reparam (t, dt/ds) give a C1 speed profile:
+            // zero at both ends (continuous with DESCEND/LIFT), uniform in
+            // between for the closed shapes.
+            const float u = std::min((tau - T_d) / T_s, 1.0f);
+            const float s = smootherstep(u);
+            float t = s;
+            float dt_ds = 1.0f;
+            if (shape != PenShape::Line)
+                arc_lookup(s, t, dt_ds);
+            const glm::vec2 dp = path_dxy(t);
+            const float v = dt_ds * smootherstep_d(u) / T_s;
+            out.pos = glm::vec3(path_xy(t), press_z);
+            out.vel = glm::vec3(dp.x * v, dp.y * v, 0.0f);
             out.active = true;
             out.stroke_start = !storage.stroke_started;
             storage.stroke_started = true;
-            // Tilt ramps linearly over the stroke: theta(s) = tilt + sweep*s.
+            // Tilt ramps over the stroke: theta(s) = tilt + sweep*s.
             tilt_cur = tilt_deg + tilt_sweep_deg * s;
             sweep_rate = glm::radians(tilt_sweep_deg) / T_s;  // rad/s
             if (tilt_follow && !blob) {
-                az_cur = glm::degrees(heading_at(s));
-                yaw_rate = yaw_rate_at(s);
+                az_cur = glm::degrees(heading_at(t));
+                // Analytic yaw rate d(az)/dt = signed curvature x speed.
+                // With q = Rz(az)Ry(-theta)Rz(-az), the spatial angular
+                // velocity of the rotating tilt axis is omega = theta' *
+                // tilt_axis + az' * (ez - q*ez); the second term is the
+                // "coning" correction (rotating the azimuth of an upright
+                // pen is a no-op, hence the -q*ez subtraction).
+                const glm::vec2 ddp = path_ddxy(t);
+                const float denom = dp.x * dp.x + dp.y * dp.y;
+                if (denom > 1e-12f) {
+                    const float crossv = dp.x * ddp.y - dp.y * ddp.x;
+                    const float sp = glm::length(glm::vec2(out.vel));
+                    yaw_rate = crossv * sp / (denom * std::sqrt(denom));
+                }
             }
         }
         else if (tau < T_d + T_s + T_l) {
-            // LIFT: straight up at the stroke end point.
-            float u = (tau - T_d - T_s) / T_l;
-            glm::vec2 p = path_xy(1.0f);
-            out.pos = glm::vec3(p.x, p.y, z_lo + (z_hi - z_lo) * u);
-            out.vel = glm::vec3(0.0f, 0.0f, (z_hi - z_lo) / T_l);
+            // LIFT: straight up at the stroke end point, z eased so vz = 0
+            // at liftoff (continuous with the stroke's final speed).
+            const float u = std::min((tau - T_d - T_s) / T_l, 1.0f);
+            const glm::vec2 p = path_xy(1.0f);
+            out.pos =
+                glm::vec3(p.x, p.y, z_lo + (z_hi - z_lo) * smootherstep(u));
+            out.vel =
+                glm::vec3(0.0f, 0.0f, (z_hi - z_lo) * smootherstep_d(u) / T_l);
             tilt_cur = tilt_deg + tilt_sweep_deg;
             if (tilt_follow && !blob)
                 az_cur = glm::degrees(heading_at(1.0f));
@@ -275,7 +546,7 @@ NODE_EXECUTION_FUNCTION(mock_pen_motion)
         out.orientation = glm::angleAxis(glm::radians(tilt_cur), tilt_axis_cur);
         glm::vec3 omega = tilt_axis_cur * sweep_rate;
         if (yaw_rate != 0.0f) {
-            // Coning term of the rotating azimuth (see yaw_rate_at).
+            // Coning term of the rotating azimuth (see the STROKE branch).
             glm::vec3 pen_axis = glm::mat3_cast(out.orientation)[2];
             omega += yaw_rate * (glm::vec3(0.0f, 0.0f, 1.0f) - pen_axis);
         }

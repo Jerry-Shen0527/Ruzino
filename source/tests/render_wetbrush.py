@@ -119,8 +119,25 @@ def build_sim_graph(sim_usd: Path):
         # Pen fixture in the 1u=1cm world: a 5 cm wavy stroke at 2.5 cm/s
         # (a real hand pace for a 1 cm brush) → T_s = 2 s = 120 frames; the
         # NUM_FRAMES above is sized so descend+stroke+lift all fit (top note).
-        (pen, "Length"): 5.0, (pen, "Amplitude"): 1.0,
-        (pen, "Speed"): 2.5, (pen, "Hover Z"): 0.2,
+        # WB_PEN_LENGTH/WB_PEN_SPEED resize/pace any shape (closed shapes are
+        # arc-length normalized: Length = perimeter, Speed = average speed).
+        (pen, "Length"):
+            float(os.environ.get("WB_PEN_LENGTH", "5.0")),
+        (pen, "Amplitude"): 1.0,
+        (pen, "Speed"):
+            float(os.environ.get("WB_PEN_SPEED", "2.5")),
+        (pen, "Hover Z"): 0.2,
+        # Shape: "line" (legacy wavy stroke) | "circle" | "square" |
+        # "figure8". Closed shapes are arc-length normalized (Length =
+        # perimeter, Cycles = loops); every shape eases in/out so the pen
+        # dynamics stay C1 across touchdown/liftoff/corners.
+        (pen, "Shape"): os.environ.get("WB_PEN_SHAPE", "line"),
+        # Closed shapes read better with a single loop (Length 5 cm →
+        # circle R = 0.8 cm, square side ≈ 1.3 cm); line keeps 2 wobbles.
+        (pen, "Cycles"):
+            float(os.environ.get("WB_PEN_CYCLES", "1"
+                                 if os.environ.get("WB_PEN_SHAPE", "line")
+                                 != "line" else "2")),
         # Tilt knobs (env). SLANTED IS THE DEFAULT (30deg + follow, the
         # validated drag pose of sections 27/28): the handle leans into the
         # drag and the bristles trail behind. WB_PEN_TILT=0 opts back into
@@ -252,7 +269,10 @@ def build_marker_scene(scene_path: Path):
     draw = os.environ.get("WB_DRAW_PARTICLES", "0") == "1"
     if draw:
         add_registry_points(stage, "/LiquidParticles",
-                            "wetbrush_debug_particles", (0.8, 0.3, 0.3))
+                            "wetbrush_debug_particles",
+                            (0.2, 0.9, 0.3) if os.environ.get(
+                                "WB_PARTICLE_GREEN", "0") == "1"
+                            else (0.8, 0.3, 0.3))
     if os.environ.get("WB_DRAW_BRISTLES", "1") == "1":
         add_registry_points(stage, "/BrushBristles",
                             "wetbrush_debug_bristles", (0.7, 0.7, 0.75))
@@ -307,7 +327,9 @@ def build_marker_scene(scene_path: Path):
     cam.GetHorizontalApertureAttr().Set(36.0)
     cam.GetVerticalApertureAttr().Set(20.25)
     cam.GetClippingRangeAttr().Set((0.1, 100.0))
-    frame_size = 7.0  # cm — stroke span + breathing room
+    # framing in cm (half-extent of the stroke bbox + breathing room); big
+    # shapes run with WB_CAM_FRAME=9.5 so a 6 cm square fits with context.
+    frame_size = float(os.environ.get("WB_CAM_FRAME", "7.0"))
     cx = cy = cz = 0.0
     eye = np.array([cx + frame_size * 0.5,
                     cy - frame_size * 1.1,
