@@ -1238,8 +1238,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
 
         // Lazily compile the liquid shaders (they live in the field).
         if (!field->bri_liquid_transfer_program)
-            field->bri_liquid_transfer_program =
-                Ruzino::brush_compile_shader(rc, "bristle_liquid_transfer.slang");
+            field->bri_liquid_transfer_program = Ruzino::brush_compile_shader(
+                rc, "bristle_liquid_transfer.slang");
         if (!field->bri_liquid_emit_program)
             field->bri_liquid_emit_program =
                 Ruzino::brush_compile_shader(rc, "bristle_liquid_emit.slang");
@@ -1401,7 +1401,19 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
     const float D1 = 0.3f;
     // §5.2 "moves slowly": the paper gives no number. Real units now — a
     // trail's liquid behind the brush settles below ~2 cm/s.
-    const float slow_deposit_speed = 2.0f;
+    // WB_DEPOSIT_SLOW=<v>: override the threshold (cm/s). v<=0 disables the
+    // slow gate entirely (threshold → huge): a particle deposits the moment
+    // it leaves the bristles' D0 ball, closing the 1-2 frame raster→canvas
+    // handoff gap behind the wet head (see the window-edge flicker
+    // diagnosis). Physics knob — the paper's literal gate IS "moves slowly",
+    // so 0 is a deliberate departure from the literal reading.
+    const float slow_deposit_speed = [] {
+        const char* env = std::getenv("WB_DEPOSIT_SLOW");
+        if (!env)
+            return 2.0f;
+        float v = std::atof(env);
+        return v > 0.0f ? v : 1.0e30f;
+    }();
 
     // Gravity (world units/s²): 1 unit = 1 cm → g = 981 cm/s² = 981 u/s².
     // Applied to particles (§4.3 a_k "including the gravity and the

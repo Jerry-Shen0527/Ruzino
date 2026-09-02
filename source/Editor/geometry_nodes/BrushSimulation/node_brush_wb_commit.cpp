@@ -699,6 +699,85 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
         }
     }
 
+    // WB_DUMP_PTCLXYZ=<prefix>: per-cook ALIVE-particle snapshot for the
+    // raster->canvas handoff (flicker) hunt. File layout: uint32 n, then
+    // n * (pos4 + color4) floats. pos.w is always 0 (the sim writes it so);
+    // the pigment+MASS lives in color4 (w = mass) — read from the census's
+    // ptcl_colors, not from a second velocity readback.
+    if (const char* px = std::getenv("WB_DUMP_PTCLXYZ")) {
+        static int px_frame = 0;
+        ++px_frame;
+        int n = std::min(ptcl_count, max_ptcl);
+        std::vector<float> out;
+        out.reserve(size_t(n) * 8);
+        int live = 0;
+        for (int i = 0; i < n; ++i) {
+            if (ptcl_alive_flags.empty() || ptcl_alive_flags[i] == 0)
+                continue;
+            ++live;
+            for (int c = 0; c < 4; ++c)
+                out.push_back(ptcl_positions[size_t(i) * 4 + c]);
+            for (int c = 0; c < 4; ++c)
+                out.push_back(ptcl_colors[size_t(i) * 4 + c]);
+        }
+        std::string path =
+            std::string(px) + "_" + std::to_string(px_frame - 1) + ".bin";
+        std::ofstream f(path, std::ios::binary | std::ios::trunc);
+        if (f) {
+            uint32_t hdr = static_cast<uint32_t>(live);
+            f.write(reinterpret_cast<const char*>(&hdr), sizeof(hdr));
+            f.write(
+                reinterpret_cast<const char*>(out.data()),
+                std::streamsize(out.size() * sizeof(float)));
+        }
+        spdlog::info(
+            "[wb-ptclxyz] cook={} live={} path={}", px_frame - 1, live, path);
+
+        // Raster-write vs pack-read split: total + peak of the window preview
+        // raster AFTER the render splat, plus the window origin used by both
+        // the splat and the pack. If raster_sum collapses on a cook where the
+        // particle dump shows mass near the canvas, the splat itself skipped;
+        // if raster_sum is normal but packed is bit-zero in a region, the
+        // window-local addressing desynced.
+        if (field->ptcl_density) {
+            const int WSX2 =
+                std::min(WetbrushSimState::win_alloc_xy(), field->grid_res);
+            const size_t win_bytes =
+                size_t(WSX2) * WSX2 * field->grid_res_z * 4;
+            std::vector<float> ras(size_t(WSX2) * WSX2 * field->grid_res_z);
+            auto rb = rc.create(
+                nvrhi::BufferDesc{}
+                    .setByteSize(win_bytes)
+                    .setCpuAccess(nvrhi::CpuAccessMode::Read)
+                    .setDebugName("wb_raster_sum_rb"));
+            auto cmd = rc.create(CommandListDesc{});
+            cmd->open();
+            cmd->copyBuffer(rb, 0, field->ptcl_density, 0, win_bytes);
+            cmd->close();
+            device->executeCommandList(cmd);
+            device->waitForIdle();
+            void* mapped = device->mapBuffer(rb, nvrhi::CpuAccessMode::Read);
+            memcpy(ras.data(), mapped, win_bytes);
+            device->unmapBuffer(rb);
+            rc.destroy(rb);
+            rc.destroy(cmd);
+            double sum = 0.0;
+            float mx = 0.0f;
+            for (float v : ras) {
+                sum += v;
+                mx = std::max(mx, v);
+            }
+            spdlog::info(
+                "[wb-raster-sum] cook={} sum={:.3f} max={:.4f} "
+                "win_origin=({},{})",
+                px_frame - 1,
+                sum,
+                mx,
+                field->win_origin_x,
+                field->win_origin_y);
+        }
+    }
+
     params.set_output("Max Divergence", max_div);
     params.set_output("Mean Divergence", mean_div);
     params.set_output("Total Density", static_cast<float>(tot_density));
@@ -717,7 +796,15 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
     // census's waitForIdle syncs above are what make later readbacks valid).
     if (const char* cv = std::getenv("WB_DUMP_CANVAS")) {
         static int cv_frame = 0;
-        bool do_dump = cv_frame % 4 == 2;
+        // WB_DUMP_CANVAS_EVERY=<n>: dump cadence (default 4). Set to 1 to
+        // catch 1-2 frame transients (e.g. drain-rim pickup/redeposit dips)
+        // that alias under coarser sampling.
+        static int cv_every = [] {
+            const char* e = std::getenv("WB_DUMP_CANVAS_EVERY");
+            int n = e ? std::atoi(e) : 4;
+            return n > 0 ? n : 4;
+        }();
+        bool do_dump = cv_frame % cv_every == (cv_every > 1 ? 2 : 0);
         ++cv_frame;
         if (do_dump) {
             auto den_synced = readback(field->density, grid_n3d);
