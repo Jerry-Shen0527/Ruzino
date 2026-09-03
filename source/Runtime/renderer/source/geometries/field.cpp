@@ -26,6 +26,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include "../hydra2Ingest.h"
 #include "../renderParam.h"
 #include "pxr/imaging/hd/tokens.h"
 
@@ -62,7 +63,12 @@ void Hd_RUZINO_Field::Sync(
 
     // Get field file path
     if (*dirtyBits & HdField::DirtyParams) {
-        VtValue filePathValue = sceneDelegate->Get(id, HdFieldTokens->filePath);
+        // Hydra 2.0 direct read (volumeField container) with legacy fallback.
+        VtValue filePathValue;
+        if (!Ruzino_Hydra2::ReadVolumeFieldParam(
+                sceneDelegate, id, HdFieldTokens->filePath, &filePathValue)) {
+            filePathValue = sceneDelegate->Get(id, HdFieldTokens->filePath);
+        }
         if (!filePathValue.IsEmpty() &&
             filePathValue.IsHolding<SdfAssetPath>()) {
             SdfAssetPath assetPath = filePathValue.Get<SdfAssetPath>();
@@ -74,8 +80,11 @@ void Hd_RUZINO_Field::Sync(
         }
 
         // Get field name
-        VtValue fieldNameValue =
-            sceneDelegate->Get(id, HdFieldTokens->fieldName);
+        VtValue fieldNameValue;
+        if (!Ruzino_Hydra2::ReadVolumeFieldParam(
+                sceneDelegate, id, HdFieldTokens->fieldName, &fieldNameValue)) {
+            fieldNameValue = sceneDelegate->Get(id, HdFieldTokens->fieldName);
+        }
         if (!fieldNameValue.IsEmpty() && fieldNameValue.IsHolding<TfToken>()) {
             _fieldName = fieldNameValue.Get<TfToken>().GetString();
         }

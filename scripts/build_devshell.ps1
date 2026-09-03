@@ -14,12 +14,28 @@ param(
     [string]$Target = "",
     [string]$BuildDir = "build",
     [string]$BuildType = "Release",
+    # 可选：覆盖根 CMakeLists 的 SDK 变体目录（SDK/OpenUSD/<SdkFolder> 等），
+    # 用于针对并排 SDK 前缀构建，如 -SdkFolder 26.08-Release。留空走默认逻辑。
+    [string]$SdkFolder = "",
+    # 可选：覆盖运行时输出目录（默认 Binaries/<BuildType>）。
+    # 换 SDK 构建时务必与 -SdkFolder 搭配使用（如 -OutBinaryDir Binaries/Release-2608），
+    # 避免不同 SDK ABI 的 DLL 混进共享 Binaries。
+    [string]$OutBinaryDir = "",
     [string]$LogFile = "",
     [switch]$MachineReadable
 )
 
 $ErrorActionPreference = "Stop"
 $RootDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+
+# -SdkFolder 单独使用时，构建产物会落进共享 Binaries/<BuildType>，把不同
+# SDK ABI 的 DLL 混在一起（2026-09-02 的 Binaries 混态事故就是这一模式）。
+# 强制与 -OutBinaryDir 搭配；反向单独使用 -OutBinaryDir（仅隔离输出目录）无碍。
+if ($SdkFolder -and -not $OutBinaryDir) {
+    Write-Host "✗ 指定了 -SdkFolder 但缺少 -OutBinaryDir：不同 SDK ABI 的 DLL 会写进共享 Binaries。" -ForegroundColor Red
+    Write-Host "  请同时传 -OutBinaryDir（如 -OutBinaryDir Binaries/Release-2608），或去掉 -SdkFolder 走默认 SDK。" -ForegroundColor Red
+    exit 1
+}
 
 # ======== Step 1: 进入 VS DevShell ========
 $VSDir = "C:\Program Files\Microsoft Visual Studio\18\Community"
@@ -55,13 +71,23 @@ if ($Reconfigure -or -not (Test-Path "$BuildPath\build.ninja")) {
         New-Item -ItemType Directory -Path $BuildPath | Out-Null
     }
     Push-Location $BuildPath
-    # NOTE: $BuildType 必须用双引号包裹。PowerShell 把 `-DCMAKE_BUILD_TYPE=$var`
-    # 这种「连字符开头 + 等号 + 变量」的 token 作为 native argument 传给 cmake.exe 时,
-    # 若不加引号,变量插值会失效,字面量 "$BuildType" 会被原样写入 CMakeCache.txt。
-    # 后果是 ninja 生成的 rules.ninja 里出现非法配置名(如 CXX_COMPILER__gmock_$BuildType),
-    # 在 `ninja -t recompact` 阶段以 "expected newline, got lexing error" 崩溃。
-    # 加双引号后参数被强制当作单一可插值字符串处理,插值才稳定生效。
-    cmake -G Ninja "-DCMAKE_BUILD_TYPE=$BuildType" -DRUZINO_WITH_CUDA=ON -DUSTC_HOMEWORK_PLUGINS=OFF ..
+    # NOTE: -D 变量参数必须整体作为单一 token 传给 cmake.exe。历史教训：
+    # ① `$BuildType` 这类变量若插值失效，字面量会被写进 CMakeCache.txt，
+    #   rules.ninja 出现非法配置名（CXX_COMPILER__gmock_$BuildType），在
+    #   `ninja -t recompact` 阶段崩 "expected newline, got lexing error"；
+    # ② -DSDK_FOLDER=26.08-Release 这类含点号的值被拆成多个 token，吃掉
+    #   后面的 `..` 源目录参数。用参数数组 + splatting（cmake @cmakeArgs）
+    #   每个元素天然是单一参数，插值稳定，两种坑都规避。
+    $cmakeArgs = @(
+        "-G", "Ninja",
+        "-DCMAKE_BUILD_TYPE=$BuildType",
+        "-DRUZINO_WITH_CUDA=ON",
+        "-DUSTC_HOMEWORK_PLUGINS=OFF"
+    )
+    if ($SdkFolder) { $cmakeArgs += "-DSDK_FOLDER=$SdkFolder" }
+    if ($OutBinaryDir) { $cmakeArgs += "-DOUT_BINARY_DIR=$OutBinaryDir" }
+    $cmakeArgs += ".."
+    cmake @cmakeArgs
     if ($LASTEXITCODE -ne 0) {
         Write-Host "✗ CMake 配置失败" -ForegroundColor Red
         # 自检:cache 里的 CMAKE_BUILD_TYPE 必须是 Debug/Release/RelWithDebInfo/MinSizeRel

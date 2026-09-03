@@ -14,6 +14,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include "../hydra2Ingest.h"
 #include "../instancer.h"
 #include "../renderParam.h"
 #include "material/material.h"
@@ -248,7 +249,12 @@ void Hd_RUZINO_Volume::Sync(
     bool update_gpu_resources = false;
 
     if (*dirtyBits & HdChangeTracker::DirtyTransform) {
-        transform = GfMatrix4f(sceneDelegate->GetTransform(id));
+        GfMatrix4d xform;
+        if (Ruzino_Hydra2::ReadTransform(sceneDelegate, id, &xform)) {
+            transform = GfMatrix4f(xform);
+        } else {
+            transform = GfMatrix4f(sceneDelegate->GetTransform(id));
+        }
     }
 
     // Pull the type-specific primvars. First resolve/select the impl from the
@@ -266,7 +272,12 @@ void Hd_RUZINO_Volume::Sync(
     }
 
     if (*dirtyBits & HdChangeTracker::DirtyMaterialId) {
-        SdfPath const& newMaterialId = sceneDelegate->GetMaterialId(id);
+        SdfPath newMaterialId;
+        if (Ruzino_Hydra2::ReadMaterialId(sceneDelegate, id, &newMaterialId)) {
+            // served from the data-source path
+        } else {
+            newMaterialId = sceneDelegate->GetMaterialId(id);
+        }
         if (GetMaterialId() != newMaterialId) {
             SetMaterialId(newMaterialId);
         }

@@ -8,6 +8,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include "../../hydra2Ingest.h"
+
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
 
@@ -18,9 +20,13 @@ bool CloudVolumeImpl::parsePrimvars(
 {
     bool update_gpu_resources = false;
 
-    // Cloud params (all optional, with sensible defaults).
+    // Cloud params (all optional, with sensible defaults). Hydra 2.0 direct
+    // read with legacy fallback (shared helper).
     auto readFloat = [&](const char* name, float def) -> float {
-        VtValue v = sceneDelegate->Get(id, TfToken(name));
+        VtValue v;
+        if (!Ruzino_Hydra2::ReadPrimvar(sceneDelegate, id, TfToken(name), &v)) {
+            v = sceneDelegate->Get(id, TfToken(name));
+        }
         if (v.IsHolding<float>())
             return v.UncheckedGet<float>();
         if (v.IsHolding<double>())
@@ -28,7 +34,10 @@ bool CloudVolumeImpl::parsePrimvars(
         return def;
     };
     auto readVec3f = [&](const char* name, GfVec3f def) -> GfVec3f {
-        VtValue v = sceneDelegate->Get(id, TfToken(name));
+        VtValue v;
+        if (!Ruzino_Hydra2::ReadPrimvar(sceneDelegate, id, TfToken(name), &v)) {
+            v = sceneDelegate->Get(id, TfToken(name));
+        }
         if (v.IsHolding<GfVec3f>())
             return v.UncheckedGet<GfVec3f>();
         return def;

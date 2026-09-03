@@ -6,6 +6,7 @@
 #include <spdlog/spdlog.h>
 
 #include "../gpu_compute.h"
+#include "../hydra2Ingest.h"
 #include "../instancer.h"
 #include "../renderParam.h"
 #include "RHI/shared_buffer_registry.hpp"
@@ -518,7 +519,11 @@ void Hd_RUZINO_Points::Sync(
     // node_brush_wb_commit's debug-draw pack) instead of USD point data.
     if (*dirtyBits &
         (HdChangeTracker::DirtyPrimvar | HdChangeTracker::InitRepr)) {
-        VtValue key_v = sceneDelegate->Get(id, TfToken("debugKey"));
+        VtValue key_v;
+        if (!Ruzino_Hydra2::ReadPrimvar(
+                sceneDelegate, id, TfToken("debugKey"), &key_v)) {
+            key_v = sceneDelegate->Get(id, TfToken("debugKey"));
+        }
         std::string key;
         if (!key_v.IsEmpty()) {
             if (key_v.IsHolding<std::string>())
@@ -552,20 +557,48 @@ void Hd_RUZINO_Points::Sync(
     // ---- regular USD points path ----------------------------------------
     // Handle points data
     if (*dirtyBits & HdChangeTracker::DirtyPoints) {
-        VtValue pointsValue = sceneDelegate->Get(id, HdTokens->points);
-        points = pointsValue.Get<VtArray<GfVec3f>>();
-        _pointsValid = true;
-        update_gpu_resources = true;
+        VtValue pointsValue;
+        if (!Ruzino_Hydra2::ReadPrimvar(
+                sceneDelegate, id, HdTokens->points, &pointsValue)) {
+            pointsValue = sceneDelegate->Get(id, HdTokens->points);
+        }
+        if (pointsValue.IsHolding<VtArray<GfVec3f>>()) {
+            points = pointsValue.UncheckedGet<VtArray<GfVec3f>>();
+            _pointsValid = true;
+            update_gpu_resources = true;
 
-        spdlog::info(
-            "Points {}: loaded {} points", id.GetText(), points.size());
+            spdlog::info(
+                "Points {}: loaded {} points", id.GetText(), points.size());
+        }
+        else if (!pointsValue.IsEmpty()) {
+            spdlog::warn(
+                "Points {}: points primvar holds {} (expected point3f[]), "
+                "keeping previous points",
+                id.GetText(),
+                pointsValue.GetTypeName());
+        }
     }
 
     // Handle widths/radii
     if (*dirtyBits & HdChangeTracker::DirtyWidths) {
-        VtValue widthsValue = sceneDelegate->Get(id, HdTokens->widths);
-        if (!widthsValue.IsEmpty()) {
-            widths = widthsValue.Get<VtFloatArray>();
+        VtValue widthsValue;
+        if (!Ruzino_Hydra2::ReadPrimvar(
+                sceneDelegate, id, HdTokens->widths, &widthsValue)) {
+            widthsValue = sceneDelegate->Get(id, HdTokens->widths);
+        }
+        if (!widthsValue.IsEmpty() && widthsValue.IsHolding<VtFloatArray>()) {
+            widths = widthsValue.UncheckedGet<VtFloatArray>();
+        }
+        else if (!widthsValue.IsEmpty()) {
+            spdlog::warn(
+                "Points {}: widths primvar holds {} (expected float[]), "
+                "using default widths",
+                id.GetText(),
+                widthsValue.GetTypeName());
+            widths.resize(points.size());
+            for (size_t i = 0; i < points.size(); ++i) {
+                widths[i] = 0.1f;  // Default radius
+            }
         }
         else {
             // Default width if not specified
@@ -582,7 +615,11 @@ void Hd_RUZINO_Points::Sync(
 
     // Handle per-point displayColor (vertex interpolation).
     if (*dirtyBits & HdChangeTracker::DirtyPrimvar) {
-        VtValue col_v = sceneDelegate->Get(id, HdTokens->displayColor);
+        VtValue col_v;
+        if (!Ruzino_Hydra2::ReadPrimvar(
+                sceneDelegate, id, HdTokens->displayColor, &col_v)) {
+            col_v = sceneDelegate->Get(id, HdTokens->displayColor);
+        }
         if (!col_v.IsEmpty() && col_v.IsHolding<VtVec3fArray>()) {
             VtVec3fArray cols = col_v.UncheckedGet<VtVec3fArray>();
             if (cols.size() == points.size()) {

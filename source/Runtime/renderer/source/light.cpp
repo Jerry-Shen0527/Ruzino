@@ -10,6 +10,7 @@
 #include "../nodes/shaders/Scene/Lights/LightData.slang"
 #include "RHI/Hgi/format_conversion.hpp"
 #include "RHI/shaderCompiler.h"
+#include "hydra2Ingest.h"
 #include "nvrhi/utils.h"
 #include "pxr/imaging/glf/simpleLight.h"
 #include "pxr/imaging/hd/changeTracker.h"
@@ -23,6 +24,24 @@
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 using namespace pxr;
+
+namespace {
+// Hydra 2.0 migration (Track A): read a light parameter straight from the
+// terminal scene index's "light" container, falling back to the legacy
+// delegate pull when the data-source path cannot serve it.
+VtValue _GetLightParam(
+    HdSceneDelegate* sceneDelegate,
+    SdfPath const& id,
+    TfToken const& name)
+{
+    VtValue v;
+    if (!Ruzino_Hydra2::ReadLightParam(sceneDelegate, id, name, &v)) {
+        v = sceneDelegate->GetLightParamValue(id, name);
+    }
+    return v;
+}
+}  // namespace
+
 void Hd_RUZINO_Light::Sync(
     HdSceneDelegate* sceneDelegate,
     HdRenderParam* renderParam,
@@ -52,7 +71,15 @@ void Hd_RUZINO_Light::Sync(
 
     // Transform
     if (bits & DirtyTransform) {
-        _params[HdTokens->transform] = VtValue(sceneDelegate->GetTransform(id));
+        // Hydra 2.0 direct read (xform schema) with legacy fallback.
+        GfMatrix4d xform;
+        if (Ruzino_Hydra2::ReadTransform(sceneDelegate, id, &xform)) {
+            _params[HdTokens->transform] = VtValue(xform);
+        }
+        else {
+            _params[HdTokens->transform] =
+                VtValue(sceneDelegate->GetTransform(id));
+        }
     }
 
     // Lighting Params
@@ -70,8 +97,10 @@ void Hd_RUZINO_Light::Sync(
         }
 
         if (_lightType == HdPrimTypeTokens->simpleLight) {
+            // The adapter routes generic Get() on a simpleLight to
+            // GetLightParamValue, i.e. the "light" container.
             _params[HdLightTokens->params] =
-                sceneDelegate->Get(id, HdLightTokens->params);
+                _GetLightParam(sceneDelegate, id, HdLightTokens->params);
         }
         // else if (_lightType == HdPrimTypeTokens->domeLight)
         //{
@@ -103,8 +132,8 @@ void Hd_RUZINO_Light::Sync(
         // params...
         if (_lightType == HdPrimTypeTokens->domeLight) {
             // Apply domeOffset if present
-            VtValue domeOffset = sceneDelegate->GetLightParamValue(
-                id, HdLightTokens->domeOffset);
+            VtValue domeOffset =
+                _GetLightParam(sceneDelegate, id, HdLightTokens->domeOffset);
             if (domeOffset.IsHolding<GfMatrix4d>()) {
                 transform = domeOffset.UncheckedGet<GfMatrix4d>() * transform;
             }
@@ -132,16 +161,14 @@ void Hd_RUZINO_Light::Sync(
             }
             else if (_lightType == HdPrimTypeTokens->sphereLight) {
                 _params[HdLightTokens->radius] =
-                    sceneDelegate->GetLightParamValue(
-                        id, HdLightTokens->radius);
+                    _GetLightParam(sceneDelegate, id, HdLightTokens->radius);
             }
             auto diffuse =
-                sceneDelegate->GetLightParamValue(id, HdLightTokens->diffuse)
+                _GetLightParam(sceneDelegate, id, HdLightTokens->diffuse)
                     .Get<float>();
-            auto color =
-                sceneDelegate->GetLightParamValue(id, HdLightTokens->color)
-                    .Get<GfVec3f>() *
-                diffuse;
+            auto color = _GetLightParam(sceneDelegate, id, HdLightTokens->color)
+                             .Get<GfVec3f>() *
+                         diffuse;
             light.SetDiffuse(GfVec4f(color[0], color[1], color[2], 0));
             light.SetPosition(pos);
             _params[HdLightTokens->params] = VtValue(light);
@@ -151,13 +178,13 @@ void Hd_RUZINO_Light::Sync(
     // Shadow Params
     if (bits & DirtyShadowParams) {
         _params[HdLightTokens->shadowParams] =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->shadowParams);
+            _GetLightParam(sceneDelegate, id, HdLightTokens->shadowParams);
     }
 
     // Shadow Collection
     if (bits & DirtyCollection) {
-        VtValue vtShadowCollection = sceneDelegate->GetLightParamValue(
-            id, HdLightTokens->shadowCollection);
+        VtValue vtShadowCollection =
+            _GetLightParam(sceneDelegate, id, HdLightTokens->shadowCollection);
 
         // Optional
         if (vtShadowCollection.IsHolding<HdRprimCollection>()) {
@@ -236,16 +263,15 @@ void Hd_RUZINO_Simple_Light::Sync(
         lightData.posW = float3(pos[0], pos[1], pos[2]);
 
         // Get color and intensity with standard USD Light API
-        auto diffuse =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->diffuse)
-                .GetWithDefault<float>(1.0f);
-        auto color = sceneDelegate->GetLightParamValue(id, HdLightTokens->color)
+        auto diffuse = _GetLightParam(sceneDelegate, id, HdLightTokens->diffuse)
+                           .GetWithDefault<float>(1.0f);
+        auto color = _GetLightParam(sceneDelegate, id, HdLightTokens->color)
                          .GetWithDefault<GfVec3f>(GfVec3f(1, 1, 1));
         auto intensity =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->intensity)
+            _GetLightParam(sceneDelegate, id, HdLightTokens->intensity)
                 .GetWithDefault<float>(1.0f);
         auto exposure =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->exposure)
+            _GetLightParam(sceneDelegate, id, HdLightTokens->exposure)
                 .GetWithDefault<float>(0.0f);
 
         float finalIntensity = intensity * pow(2.0f, exposure);
@@ -280,7 +306,7 @@ void Hd_RUZINO_Distant_Light::Sync(
 
         // Get angle parameter if available
         VtValue angleValue =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->angle);
+            _GetLightParam(sceneDelegate, id, HdLightTokens->angle);
         if (!angleValue.IsEmpty()) {
             _angle = angleValue.Get<float>();
         }
@@ -298,16 +324,15 @@ void Hd_RUZINO_Distant_Light::Sync(
         lightData.cosSubtendedAngle = cos(_angle);
 
         // Get color and intensity with exposure
-        auto diffuse =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->diffuse)
-                .GetWithDefault<float>(1.0f);
-        auto color = sceneDelegate->GetLightParamValue(id, HdLightTokens->color)
+        auto diffuse = _GetLightParam(sceneDelegate, id, HdLightTokens->diffuse)
+                           .GetWithDefault<float>(1.0f);
+        auto color = _GetLightParam(sceneDelegate, id, HdLightTokens->color)
                          .GetWithDefault<GfVec3f>(GfVec3f(1, 1, 1));
         auto intensity =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->intensity)
+            _GetLightParam(sceneDelegate, id, HdLightTokens->intensity)
                 .GetWithDefault<float>(1.0f);
         auto exposure =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->exposure)
+            _GetLightParam(sceneDelegate, id, HdLightTokens->exposure)
                 .GetWithDefault<float>(0.0f);
 
         float finalIntensity = intensity * pow(2.0f, exposure);
@@ -334,7 +359,7 @@ void Hd_RUZINO_Sphere_Light::Sync(
 
     if (bits & DirtyParams) {
         VtValue radiusValue =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->radius);
+            _GetLightParam(sceneDelegate, id, HdLightTokens->radius);
         if (!radiusValue.IsEmpty()) {
             _radius = radiusValue.Get<float>();
         }
@@ -358,16 +383,15 @@ void Hd_RUZINO_Sphere_Light::Sync(
         lightData.posW = float3(pos[0], pos[1], pos[2]);
 
         // Get color and intensity with exposure
-        auto diffuse =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->diffuse)
-                .GetWithDefault<float>(1.0f);
-        auto color = sceneDelegate->GetLightParamValue(id, HdLightTokens->color)
+        auto diffuse = _GetLightParam(sceneDelegate, id, HdLightTokens->diffuse)
+                           .GetWithDefault<float>(1.0f);
+        auto color = _GetLightParam(sceneDelegate, id, HdLightTokens->color)
                          .GetWithDefault<GfVec3f>(GfVec3f(1, 1, 1));
         auto intensity =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->intensity)
+            _GetLightParam(sceneDelegate, id, HdLightTokens->intensity)
                 .GetWithDefault<float>(1.0f);
         auto exposure =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->exposure)
+            _GetLightParam(sceneDelegate, id, HdLightTokens->exposure)
                 .GetWithDefault<float>(0.0f);
 
         float finalIntensity = intensity * pow(2.0f, exposure);
@@ -398,13 +422,13 @@ void Hd_RUZINO_Rect_Light::Sync(
 
     if (bits & DirtyParams) {
         VtValue widthValue =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->width);
+            _GetLightParam(sceneDelegate, id, HdLightTokens->width);
         if (!widthValue.IsEmpty()) {
             _width = widthValue.Get<float>();
         }
 
         VtValue heightValue =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->height);
+            _GetLightParam(sceneDelegate, id, HdLightTokens->height);
         if (!heightValue.IsEmpty()) {
             _height = heightValue.Get<float>();
         }
@@ -451,16 +475,15 @@ void Hd_RUZINO_Rect_Light::Sync(
             float3(yVec.x / yLen, yVec.y / yLen, yVec.z / yLen) * _height;
 
         // Get color and intensity with exposure
-        auto diffuse =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->diffuse)
-                .GetWithDefault<float>(1.0f);
-        auto color = sceneDelegate->GetLightParamValue(id, HdLightTokens->color)
+        auto diffuse = _GetLightParam(sceneDelegate, id, HdLightTokens->diffuse)
+                           .GetWithDefault<float>(1.0f);
+        auto color = _GetLightParam(sceneDelegate, id, HdLightTokens->color)
                          .GetWithDefault<GfVec3f>(GfVec3f(1, 1, 1));
         auto intensity =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->intensity)
+            _GetLightParam(sceneDelegate, id, HdLightTokens->intensity)
                 .GetWithDefault<float>(1.0f);
         auto exposure =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->exposure)
+            _GetLightParam(sceneDelegate, id, HdLightTokens->exposure)
                 .GetWithDefault<float>(0.0f);
 
         // Combine intensity with exposure: intensity * 2^exposure
@@ -687,7 +710,7 @@ void Hd_RUZINO_Disk_Light::Sync(
 
     if (bits & DirtyParams) {
         VtValue radiusValue =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->radius);
+            _GetLightParam(sceneDelegate, id, HdLightTokens->radius);
         if (!radiusValue.IsEmpty()) {
             _radius = radiusValue.Get<float>();
         }
@@ -733,16 +756,15 @@ void Hd_RUZINO_Disk_Light::Sync(
             float3(yVec.x / yLen, yVec.y / yLen, yVec.z / yLen) * _radius;
 
         // Get color and intensity with exposure
-        auto diffuse =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->diffuse)
-                .GetWithDefault<float>(1.0f);
-        auto color = sceneDelegate->GetLightParamValue(id, HdLightTokens->color)
+        auto diffuse = _GetLightParam(sceneDelegate, id, HdLightTokens->diffuse)
+                           .GetWithDefault<float>(1.0f);
+        auto color = _GetLightParam(sceneDelegate, id, HdLightTokens->color)
                          .GetWithDefault<GfVec3f>(GfVec3f(1, 1, 1));
         auto intensity =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->intensity)
+            _GetLightParam(sceneDelegate, id, HdLightTokens->intensity)
                 .GetWithDefault<float>(1.0f);
         auto exposure =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->exposure)
+            _GetLightParam(sceneDelegate, id, HdLightTokens->exposure)
                 .GetWithDefault<float>(0.0f);
 
         float finalIntensity = intensity * pow(2.0f, exposure);
@@ -772,13 +794,13 @@ void Hd_RUZINO_Cylinder_Light::Sync(
 
     if (bits & DirtyParams) {
         VtValue radiusValue =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->radius);
+            _GetLightParam(sceneDelegate, id, HdLightTokens->radius);
         if (!radiusValue.IsEmpty()) {
             _radius = radiusValue.Get<float>();
         }
 
         VtValue lengthValue =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->length);
+            _GetLightParam(sceneDelegate, id, HdLightTokens->length);
         if (!lengthValue.IsEmpty()) {
             _length = lengthValue.Get<float>();
         }
@@ -809,13 +831,12 @@ void Hd_RUZINO_Cylinder_Light::Sync(
         lightData.dirW = float3(zDir[0], zDir[1], zDir[2]);
 
         // Get color and intensity
-        auto diffuse =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->diffuse)
-                .GetWithDefault<float>(1.0f);
-        auto color = sceneDelegate->GetLightParamValue(id, HdLightTokens->color)
+        auto diffuse = _GetLightParam(sceneDelegate, id, HdLightTokens->diffuse)
+                           .GetWithDefault<float>(1.0f);
+        auto color = _GetLightParam(sceneDelegate, id, HdLightTokens->color)
                          .GetWithDefault<GfVec3f>(GfVec3f(1, 1, 1));
         auto intensity =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->intensity)
+            _GetLightParam(sceneDelegate, id, HdLightTokens->intensity)
                 .GetWithDefault<float>(1.0f);
         lightData.intensity =
             float3(color[0], color[1], color[2]) * diffuse * intensity;
@@ -835,7 +856,7 @@ void Hd_RUZINO_Dome_Light::_PrepareDomeLight(
     HdSceneDelegate* sceneDelegate)
 {
     const VtValue v =
-        sceneDelegate->GetLightParamValue(id, HdLightTokens->textureFile);
+        _GetLightParam(sceneDelegate, id, HdLightTokens->textureFile);
 
     // Only get texture file if the value is not empty and holds the correct
     // type
@@ -845,18 +866,16 @@ void Hd_RUZINO_Dome_Light::_PrepareDomeLight(
             HioImage::OpenForReading(textureFileName.GetAssetPath(), 0, 0);
     }
 
-    auto diffuse = sceneDelegate->GetLightParamValue(id, HdLightTokens->diffuse)
+    auto diffuse = _GetLightParam(sceneDelegate, id, HdLightTokens->diffuse)
                        .GetWithDefault<float>(1.0f);
-    radiance = sceneDelegate->GetLightParamValue(id, HdLightTokens->color)
+    radiance = _GetLightParam(sceneDelegate, id, HdLightTokens->color)
                    .GetWithDefault<GfVec3f>(GfVec3f(1.0f, 1.0f, 1.0f)) *
                diffuse;
 
-    auto intensity =
-        sceneDelegate->GetLightParamValue(id, HdLightTokens->intensity)
-            .GetWithDefault<float>(1.0f);
-    auto exposure =
-        sceneDelegate->GetLightParamValue(id, HdLightTokens->exposure)
-            .GetWithDefault<float>(0.0f);
+    auto intensity = _GetLightParam(sceneDelegate, id, HdLightTokens->intensity)
+                         .GetWithDefault<float>(1.0f);
+    auto exposure = _GetLightParam(sceneDelegate, id, HdLightTokens->exposure)
+                        .GetWithDefault<float>(0.0f);
 
     // Combine with exposure: intensity * 2^exposure
     float finalIntensity = intensity * pow(2.0f, exposure);
@@ -883,10 +902,10 @@ void Hd_RUZINO_Dome_Light::Sync(
         // convention, matching inputs:intensity) will NOT be found. Try both
         // forms.
         VtValue shaderPathValue =
-            sceneDelegate->GetLightParamValue(id, TfToken("shader_path"));
+            _GetLightParam(sceneDelegate, id, TfToken("shader_path"));
         if (shaderPathValue.IsEmpty()) {
-            shaderPathValue = sceneDelegate->GetLightParamValue(
-                id, TfToken("inputs:shader_path"));
+            shaderPathValue = _GetLightParam(
+                sceneDelegate, id, TfToken("inputs:shader_path"));
         }
         this->has_valid_shader = false;
         if (shaderPathValue.IsHolding<std::string>()) {
@@ -957,11 +976,12 @@ void Hd_RUZINO_Dome_Light::Sync(
         // so non-Hosek domes just leave hosekStateIndex = 0 and dirW = default.
         if (this->has_valid_shader) {
             auto readFloat = [&](const char* name, float def) -> float {
-                VtValue v =
-                    sceneDelegate->GetLightParamValue(id, TfToken(name));
+                VtValue v = _GetLightParam(sceneDelegate, id, TfToken(name));
                 if (v.IsEmpty())
-                    v = sceneDelegate->GetLightParamValue(
-                        id, TfToken(std::string("inputs:") + name));
+                    v = _GetLightParam(
+                        sceneDelegate,
+                        id,
+                        TfToken(std::string("inputs:") + name));
                 if (v.IsHolding<float>())
                     return v.UncheckedGet<float>();
                 if (v.IsHolding<double>())
@@ -975,10 +995,10 @@ void Hd_RUZINO_Dome_Light::Sync(
             // Sun direction in dome-local space (+Y up). Default ~45 deg.
             GfVec3f sunDir(0.5f, 0.7f, 0.5f);
             VtValue sunV =
-                sceneDelegate->GetLightParamValue(id, TfToken("sunDirection"));
+                _GetLightParam(sceneDelegate, id, TfToken("sunDirection"));
             if (sunV.IsEmpty())
-                sunV = sceneDelegate->GetLightParamValue(
-                    id, TfToken("inputs:sunDirection"));
+                sunV = _GetLightParam(
+                    sceneDelegate, id, TfToken("inputs:sunDirection"));
             if (sunV.IsHolding<GfVec3f>())
                 sunDir = sunV.UncheckedGet<GfVec3f>();
             else if (sunV.IsHolding<GfVec3d>()) {
@@ -1031,7 +1051,7 @@ void Hd_RUZINO_Dome_Light::Sync(
         auto transform =
             this->Get(HdTokens->transform).GetWithDefault<GfMatrix4d>();
         VtValue domeOffset =
-            sceneDelegate->GetLightParamValue(id, HdLightTokens->domeOffset);
+            _GetLightParam(sceneDelegate, id, HdLightTokens->domeOffset);
         if (domeOffset.IsHolding<GfMatrix4d>()) {
             transform = domeOffset.UncheckedGet<GfMatrix4d>() * transform;
         }

@@ -59,9 +59,18 @@ class HD_RUZINO_API Hd_RUZINO_RendererPlugin final : public HdRendererPlugin {
         HdRenderDelegate* renderDelegate) override;
 
     /// Checks to see if the plugin is supported on the running system.
+    /// OpenUSD 26.08: the legacy HdRendererCreateArgs struct overload was
+    /// removed; IsSupported takes the HdRendererCreateArgsSchema.
     virtual bool IsSupported(
-        HdRendererCreateArgs const& rendererCreateArgs,
+        const HdRendererCreateArgsSchema& rendererCreateArgs,
         std::string* reasonWhyNot = nullptr) const override;
+
+    /// Hydra 2.0: arguments (HdSceneIndexCreateArgsSchema) the engine
+    /// forwards to the scene indices so they can be configured for this
+    /// renderer. The delegate renders single time samples only.
+    /// (Pre-26.08 this was GetSceneIndexInputArgs with
+    /// HdSceneIndexInputArgsSchema.)
+    virtual HdContainerDataSourceHandle GetSceneIndexCreateArgs() const override;
 
    private:
     // This class does not support copying.

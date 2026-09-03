@@ -5,6 +5,8 @@ target_include_directories(shaders_interface INTERFACE ${CMAKE_CURRENT_SOURCE_DI
 target_compile_definitions(shaders_interface INTERFACE NOMINMAX)
 
 # Skip hd_RUZINO (NVRHI backend) compilation in homework mode to avoid conflicts with GL backend
+# Hydra 2.0 participation: sceneIndexPlugin.{h,cpp} + simSceneIndex.{h,cpp}
+# are picked up by the GLOB_RECURSE below.
 if(NOT USTC_HOMEWORK_PLUGINS)
 
 RUZINO_ADD_LIB(

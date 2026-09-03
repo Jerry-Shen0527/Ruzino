@@ -11,6 +11,7 @@
 
 #include <mutex>
 
+#include "../../hydra2Ingest.h"
 #include "RHI/rhi.hpp"
 #include "RHI/shared_buffer_registry.hpp"
 #include "nvrhi/nvrhi.h"
@@ -41,12 +42,20 @@ bool WetbrushVolumeImpl::parsePrimvars(
     bool update_gpu_resources = false;
 
     // 3D grid metadata primvars (authored by render_wetbrush.py bake).
-    VtValue rx_v = sceneDelegate->Get(id, TfToken("gridResX"));
-    VtValue ry_v = sceneDelegate->Get(id, TfToken("gridResY"));
-    VtValue rz_v = sceneDelegate->Get(id, TfToken("gridResZ"));
-    VtValue cs_v = sceneDelegate->Get(id, TfToken("cellSize"));
-    VtValue gm_v = sceneDelegate->Get(id, TfToken("gridMin"));
-    VtValue paint_v = sceneDelegate->Get(id, TfToken("paintField"));
+    // Hydra 2.0 direct read with legacy fallback (shared helper).
+    auto readPrimvar = [&](const char* name) -> VtValue {
+        VtValue v;
+        if (!Ruzino_Hydra2::ReadPrimvar(sceneDelegate, id, TfToken(name), &v)) {
+            v = sceneDelegate->Get(id, TfToken(name));
+        }
+        return v;
+    };
+    VtValue rx_v = readPrimvar("gridResX");
+    VtValue ry_v = readPrimvar("gridResY");
+    VtValue rz_v = readPrimvar("gridResZ");
+    VtValue cs_v = readPrimvar("cellSize");
+    VtValue gm_v = readPrimvar("gridMin");
+    VtValue paint_v = readPrimvar("paintField");
 
     auto read_uint = [](const VtValue& v) -> uint32_t {
         if (v.IsHolding<int>())

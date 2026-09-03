@@ -557,7 +557,7 @@ def download_and_extract(url, extract_path, folder, targets, dry_run=False):
         print(f"Error extracting {archive_path}: {e}")
 
 
-openusd_version = "26.03"
+openusd_version = "26.08"
 
 
 def fix_slang_symlinks(dry_run=False):
@@ -1478,6 +1478,10 @@ def build_usd(install_prefix, usd_src_dir, build_type, python_executable, dry_ru
         f"-DPython3_ROOT_DIR={os.path.dirname(python_executable)}",
         "-DPython3_FIND_STRATEGY=LOCATION",
         "-DPython3_FIND_REGISTRY=NEVER",
+        # Keep the Python bindings under lib/python/pxr (the pre-26.08
+        # default layout) so downstream scripts and install_deps keep working
+        # (26.08 otherwise installs them to lib/site-packages/pxr).
+        "-DPXR_PYTHON_INSTALL_DIR=lib/python",
     ]
 
     if is_windows():

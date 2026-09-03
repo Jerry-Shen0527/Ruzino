@@ -1,6 +1,5 @@
 .cache/
-build/
-build_2/
+build*/
 bin/
 libs/
 .vscode
@@ -18,7 +17,6 @@ imgui.ini
 /source/Core/RHI/source/nvrtc_config.h
 SDK/
 Binaries/
-build/
 .vs/
 .vscode/
 out/
@@ -41,7 +39,6 @@ submissions/lisi_homework
 RuzinoInstall/
 report/
 report.md
-build-release/
 shader_cache/
 # Test output artifacts. All test output goes to Binaries/Release/test_output/
 # (covered by Binaries/ above). These rules are a defensive backstop in case a
@@ -55,4 +52,3 @@ source/tests/data/output/
 
 # Local agent scratch (session plans). .zcode/skills/ stays tracked.
 .zcode/plans/
-build-debug/

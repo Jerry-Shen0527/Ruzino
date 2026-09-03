@@ -25,6 +25,7 @@
 #include <spdlog/spdlog.h>
 
 #include "gpu_compute.h"
+#include "hydra2Ingest.h"
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/matrix4f.h"
 #include "pxr/base/gf/quaternion.h"
@@ -75,12 +76,19 @@ void Hd_RUZINO_Instancer::_SyncPrimvars(
 
     SdfPath const& id = GetId();
 
-    HdPrimvarDescriptorVector primvars =
-        delegate->GetPrimvarDescriptors(id, HdInterpolationInstance);
+    // Hydra 2.0 direct read (primvars container) with legacy fallback.
+    HdPrimvarDescriptorVector primvars;
+    if (!Ruzino_Hydra2::ReadPrimvarDescriptors(
+            delegate, id, HdInterpolationInstance, &primvars)) {
+        primvars = delegate->GetPrimvarDescriptors(id, HdInterpolationInstance);
+    }
 
     for (HdPrimvarDescriptor const& pv : primvars) {
         if (HdChangeTracker::IsPrimvarDirty(dirtyBits, id, pv.name)) {
-            VtValue value = delegate->Get(id, pv.name);
+            VtValue value;
+            if (!Ruzino_Hydra2::ReadPrimvar(delegate, id, pv.name, &value)) {
+                value = delegate->Get(id, pv.name);
+            }
             if (!value.IsEmpty()) {
                 if (_primvarMap.count(pv.name) > 0) {
                     delete _primvarMap[pv.name];
@@ -107,10 +115,23 @@ VtMatrix4fArray Hd_RUZINO_Instancer::ComputeInstanceTransforms(
     // }
     // If any transform isn't provided, it's assumed to be the identity.
 
-    GfMatrix4f instancerTransform =
-        GfMatrix4f(GetDelegate()->GetInstancerTransform(GetId()));
-    VtIntArray instanceIndices =
-        GetDelegate()->GetInstanceIndices(GetId(), prototypeId);
+    // Hydra 2.0 direct read with legacy fallback (the adapter maps
+    // GetInstancerTransform to the same xform schema as GetTransform).
+    GfMatrix4d instancerXform;
+    GfMatrix4f instancerTransform;
+    if (Ruzino_Hydra2::ReadTransform(GetDelegate(), GetId(), &instancerXform)) {
+        instancerTransform = GfMatrix4f(instancerXform);
+    }
+    else {
+        instancerTransform =
+            GfMatrix4f(GetDelegate()->GetInstancerTransform(GetId()));
+    }
+    VtIntArray instanceIndices;
+    if (!Ruzino_Hydra2::ReadInstanceIndices(
+            GetDelegate(), GetId(), prototypeId, &instanceIndices)) {
+        instanceIndices =
+            GetDelegate()->GetInstanceIndices(GetId(), prototypeId);
+    }
 
     VtMatrix4fArray transforms(instanceIndices.size());
     for (size_t i = 0; i < instanceIndices.size(); ++i) {
@@ -215,10 +236,21 @@ void Hd_RUZINO_Instancer::ComputeInstanceTransforms(
     // This function will be called to fill the instance buffers on the GPU
     // instead of doing it on the CPU
 
-    GfMatrix4f instancerTransform =
-        GfMatrix4f(GetDelegate()->GetInstancerTransform(GetId()));
-    VtIntArray instanceIndices =
-        GetDelegate()->GetInstanceIndices(GetId(), prototypeId);
+    GfMatrix4d instancerXform;
+    GfMatrix4f instancerTransform;
+    if (Ruzino_Hydra2::ReadTransform(GetDelegate(), GetId(), &instancerXform)) {
+        instancerTransform = GfMatrix4f(instancerXform);
+    }
+    else {
+        instancerTransform =
+            GfMatrix4f(GetDelegate()->GetInstancerTransform(GetId()));
+    }
+    VtIntArray instanceIndices;
+    if (!Ruzino_Hydra2::ReadInstanceIndices(
+            GetDelegate(), GetId(), prototypeId, &instanceIndices)) {
+        instanceIndices =
+            GetDelegate()->GetInstanceIndices(GetId(), prototypeId);
+    }
 
     spdlog::info(
         "GPU ComputeInstanceTransforms: prototype={}, instanceCount={}, "

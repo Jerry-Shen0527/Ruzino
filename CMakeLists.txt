@@ -39,7 +39,14 @@ find_package(Python 3.8
   REQUIRED COMPONENTS Interpreter Development.Module
   OPTIONAL_COMPONENTS Development.SABIModule)
 
-set(OUT_BINARY_DIR ${CMAKE_SOURCE_DIR}/Binaries/${CMAKE_BUILD_TYPE})
+# All runtime output (DLLs/PYDs/resources) lands in OUT_BINARY_DIR. It can be
+# overridden on the cmake command line (e.g. -DOUT_BINARY_DIR=Binaries/Release-2608)
+# so a side-by-side SDK build (SDK_FOLDER) gets its own isolated runtime tree
+# and never mixes ABI-incompatible DLLs into the default Binaries/<type>.
+if(NOT DEFINED OUT_BINARY_DIR)
+  set(OUT_BINARY_DIR ${CMAKE_SOURCE_DIR}/Binaries/${CMAKE_BUILD_TYPE})
+endif()
+get_filename_component(OUT_BINARY_DIR "${OUT_BINARY_DIR}" ABSOLUTE)
 
 # Set RPATH so built binaries find shared libs in their own directory (like Windows DLL search)
 set(CMAKE_BUILD_RPATH "$ORIGIN")
@@ -119,12 +126,17 @@ if(NOT MSVC)
 endif()
 
 
-if(${CMAKE_BUILD_TYPE} MATCHES "Debug")
-  set(SDK_FOLDER ${CMAKE_BUILD_TYPE})
-elseif(${CMAKE_BUILD_TYPE} MATCHES "RelWithDebInfo")
-  set(SDK_FOLDER "Release")
-else()
-  set(SDK_FOLDER "Release")
+# SDK_FOLDER selects the bundled SDK variant directory (SDK/OpenUSD/<folder>,
+# etc.). It can be overridden on the cmake command line (e.g.
+# -DSDK_FOLDER=26.08-Release) to build against a side-by-side SDK prefix.
+if(NOT DEFINED SDK_FOLDER)
+  if(${CMAKE_BUILD_TYPE} MATCHES "Debug")
+    set(SDK_FOLDER ${CMAKE_BUILD_TYPE})
+  elseif(${CMAKE_BUILD_TYPE} MATCHES "RelWithDebInfo")
+    set(SDK_FOLDER "Release")
+  else()
+    set(SDK_FOLDER "Release")
+  endif()
 endif()
 
 message("CMAKE_BUILD_TYPE is ${CMAKE_BUILD_TYPE}. Selecting SDK from ${SDK_FOLDER}")

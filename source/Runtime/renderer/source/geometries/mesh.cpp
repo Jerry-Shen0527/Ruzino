@@ -26,6 +26,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include "../hydra2Ingest.h"
 #include "../instancer.h"
 #include "../renderParam.h"
 #include "Scene/SceneTypes.slang"
@@ -130,6 +131,23 @@ void Hd_RUZINO_Mesh::_UpdatePrimvarSources(
     const SdfPath& id = GetId();
 
     HdPrimvarDescriptorVector primvars;
+    // Hydra 2.0 direct read (primvars container) with legacy fallback. The
+    // full list is read once per Sync; each descriptor carries its own
+    // interpolation, so no per-bucket re-reads are needed.
+    if (Ruzino_Hydra2::ReadPrimvarDescriptors(sceneDelegate, id, &primvars)) {
+        for (const HdPrimvarDescriptor& pv : primvars) {
+            if (HdChangeTracker::IsPrimvarDirty(dirtyBits, id, pv.name) &&
+                pv.name != HdTokens->points) {
+                VtValue pvValue;
+                if (!Ruzino_Hydra2::ReadPrimvar(
+                        sceneDelegate, id, pv.name, &pvValue)) {
+                    pvValue = GetPrimvar(sceneDelegate, pv.name);
+                }
+                _primvarSourceMap[pv.name] = { pvValue, pv.interpolation };
+            }
+        }
+        return;
+    }
     for (size_t i = 0; i < HdInterpolationCount; ++i) {
         auto interp = static_cast<HdInterpolation>(i);
         primvars = GetPrimvarDescriptors(sceneDelegate, interp);
@@ -385,8 +403,12 @@ void Hd_RUZINO_Mesh::updateTLAS(
 
     // Determine instance count
     if (!GetInstancerId().IsEmpty()) {
-        VtIntArray instanceIndices =
-            sceneDelegate->GetInstanceIndices(GetInstancerId(), GetId());
+        VtIntArray instanceIndices;
+        if (!Ruzino_Hydra2::ReadInstanceIndices(
+                sceneDelegate, GetInstancerId(), GetId(), &instanceIndices)) {
+            instanceIndices =
+                sceneDelegate->GetInstanceIndices(GetInstancerId(), GetId());
+        }
         instance_count = instanceIndices.size();
         spdlog::info(
             "Mesh {} has instancer {} with {} instances",
@@ -517,7 +539,12 @@ void Hd_RUZINO_Mesh::_SetMaterialId(
     HdSceneDelegate* delegate,
     Hd_RUZINO_Mesh* rprim)
 {
-    SdfPath const& newMaterialId = delegate->GetMaterialId(rprim->GetId());
+    // Hydra 2.0 direct read (material bindings schema) with legacy fallback.
+    SdfPath newMaterialId;
+    if (!Ruzino_Hydra2::ReadMaterialId(
+            delegate, rprim->GetId(), &newMaterialId)) {
+        newMaterialId = delegate->GetMaterialId(rprim->GetId());
+    }
     if (rprim->GetMaterialId() != newMaterialId) {
         rprim->SetMaterialId(newMaterialId);
     }
@@ -539,7 +566,14 @@ void Hd_RUZINO_Mesh::Sync(
     std::string path = id.GetText();
 
     if (HdChangeTracker::IsVisibilityDirty(*dirtyBits, id)) {
-        _sharedData.visible = sceneDelegate->GetVisible(id);
+        // Hydra 2.0 direct read (visibility schema) with legacy fallback.
+        bool visible;
+        if (Ruzino_Hydra2::ReadVisible(sceneDelegate, id, &visible)) {
+            _sharedData.visible = visible;
+        }
+        else {
+            _sharedData.visible = sceneDelegate->GetVisible(id);
+        }
     }
 
     if (*dirtyBits & HdChangeTracker::DirtyMaterialId) {
@@ -562,8 +596,22 @@ void Hd_RUZINO_Mesh::Sync(
         (*dirtyBits & HdChangeTracker::DirtyMaterialId);
 
     if (HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->points)) {
-        VtValue value = sceneDelegate->Get(id, HdTokens->points);
-        points = value.Get<VtVec3fArray>();
+        // Hydra 2.0 direct read (primvars container) with legacy fallback.
+        VtValue value;
+        if (!Ruzino_Hydra2::ReadPrimvar(
+                sceneDelegate, id, HdTokens->points, &value)) {
+            value = sceneDelegate->Get(id, HdTokens->points);
+        }
+        if (value.IsHolding<VtVec3fArray>()) {
+            points = value.UncheckedGet<VtVec3fArray>();
+        }
+        else if (!value.IsEmpty()) {
+            spdlog::warn(
+                "Mesh {}: points primvar holds {} (expected point3f[]), "
+                "keeping previous points",
+                id.GetText(),
+                value.GetTypeName());
+        }
 
         _normalsValid = false;
     }
@@ -578,7 +626,16 @@ void Hd_RUZINO_Mesh::Sync(
         }
 
         if (HdChangeTracker::IsTopologyDirty(*dirtyBits, id)) {
-            topology = GetMeshTopology(sceneDelegate);
+            // Hydra 2.0 direct read (mesh schema + geom subset children)
+            // with legacy fallback.
+            HdMeshTopology direct_topology;
+            if (Ruzino_Hydra2::ReadMeshTopology(
+                    sceneDelegate, id, &direct_topology)) {
+                topology = direct_topology;
+            }
+            else {
+                topology = GetMeshTopology(sceneDelegate);
+            }
 
             HdMeshUtil meshUtil(&topology, GetId());
             meshUtil.ComputeTriangleIndices(
@@ -759,7 +816,14 @@ void Hd_RUZINO_Mesh::Sync(
             HdChangeTracker::IsTransformDirty(*dirtyBits, id)) {
             // TODO: fill instance matrix buffe
             // r
-            transform = GfMatrix4f(sceneDelegate->GetTransform(id));
+            // Hydra 2.0 direct read (xform schema) with legacy fallback.
+            GfMatrix4d xform;
+            if (Ruzino_Hydra2::ReadTransform(sceneDelegate, id, &xform)) {
+                transform = GfMatrix4f(xform);
+            }
+            else {
+                transform = GfMatrix4f(sceneDelegate->GetTransform(id));
+            }
         }
 
         if (!_normalsValid) {

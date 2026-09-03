@@ -24,6 +24,8 @@
 #include "rendererPlugin.h"
 
 #include "pxr/imaging/hd/rendererPluginRegistry.h"
+#include "pxr/imaging/hd/retainedDataSource.h"
+#include "pxr/imaging/hd/sceneIndexCreateArgsSchema.h"
 #include "renderDelegate.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -53,12 +55,27 @@ void Hd_RUZINO_RendererPlugin::DeleteRenderDelegate(
 }
 
 bool Hd_RUZINO_RendererPlugin::IsSupported(
-    HdRendererCreateArgs const& /* rendererCreateArgs */,
+    const HdRendererCreateArgsSchema& /* rendererCreateArgs */,
     std::string* /* reasonWhyNot */) const
 {
     // Nothing more to check for now, we assume if the plugin loads correctly
     // it is supported.
     return true;
+}
+
+HdContainerDataSourceHandle
+Hd_RUZINO_RendererPlugin::GetSceneIndexCreateArgs() const
+{
+    // No motion blur in the delegate: scene indices can skip computing
+    // time samples entirely.
+    static HdContainerDataSourceHandle const result =
+        HdSceneIndexCreateArgsSchema::Builder()
+            .SetMotionBlurSupport(
+                HdRetainedTypedSampledDataSource<bool>::New(false))
+            .SetCameraMotionBlurSupport(
+                HdRetainedTypedSampledDataSource<bool>::New(false))
+            .Build();
+    return result;
 }
 
 PXR_NAMESPACE_CLOSE_SCOPE

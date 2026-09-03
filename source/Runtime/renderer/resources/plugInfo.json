@@ -9,6 +9,14 @@
             ],
             "displayName": "RUZINO Renderer",
             "priority": 1
+          },
+          "Hd_RUZINO_SceneIndexPlugin": {
+            "bases": [
+              "HdSceneIndexPlugin"
+            ],
+            "displayName": "RUZINO sim scene index",
+            "priority": 0,
+            "loadWithRenderer": "RUZINO Renderer"
           }
         }
       },

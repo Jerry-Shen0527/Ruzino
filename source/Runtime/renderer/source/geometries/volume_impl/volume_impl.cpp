@@ -5,6 +5,7 @@
 #include <mutex>
 #include <string>
 
+#include "../../hydra2Ingest.h"
 #include "cloud_volume_impl.h"
 #include "internal/memory/DeviceMemoryPool.hpp"  // execution_launch_mutex
 #include "nvrhi/nvrhi.h"
@@ -24,7 +25,11 @@ void VolumeImpl::resolve(
     const SdfPath& id,
     std::unique_ptr<VolumeImpl>& previous)
 {
-    VtValue vt_type = sceneDelegate->Get(id, TfToken("volumeType"));
+    VtValue vt_type;
+    if (!Ruzino_Hydra2::ReadPrimvar(
+            sceneDelegate, id, TfToken("volumeType"), &vt_type)) {
+        vt_type = sceneDelegate->Get(id, TfToken("volumeType"));
+    }
     bool want_cloud = false;
     bool want_unbiased = false;
     auto readToken = [&]() -> std::string {

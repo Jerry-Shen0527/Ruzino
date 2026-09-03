@@ -1,5 +1,6 @@
 #include "material.h"
 
+#include "../hydra2Ingest.h"
 #include <pxr/imaging/hd/material.h>
 #include <pxr/imaging/hd/materialNetwork2Interface.h>
 #include <pxr/imaging/hio/image.h>
@@ -24,8 +25,14 @@ HdMaterialNetwork2Interface Hd_RUZINO_Material::FetchNetInterface(
     HdMaterialNetwork2& hdNetwork,
     SdfPath& materialPath)
 {
-    VtValue material = sceneDelegate->GetMaterialResource(GetId());
-    HdMaterialNetworkMap networkMap = material.Get<HdMaterialNetworkMap>();
+    // Hydra 2.0 direct read (HdMaterialSchema -> HdMaterialNetworkMap,
+    // mirroring the adapter's translation) with legacy fallback.
+    HdMaterialNetworkMap networkMap;
+    if (!Ruzino_Hydra2::ReadMaterialResource(
+            sceneDelegate, GetId(), &networkMap)) {
+        VtValue material = sceneDelegate->GetMaterialResource(GetId());
+        networkMap = material.Get<HdMaterialNetworkMap>();
+    }
 
     bool isVolume;
     hdNetwork = HdConvertToHdMaterialNetwork2(networkMap, &isVolume);
