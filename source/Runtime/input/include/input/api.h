@@ -17,7 +17,7 @@
 #define INPUT_INLINE   __attribute__((always_inline)) inline
 #endif
 
-#if BUILD_INPUT_MODULE
+#if BUILD_RZ_INPUT_MODULE
 #define INPUT_API    INPUT_EXPORT
 #define INPUT_EXTERN extern
 #else

@@ -2,7 +2,7 @@
 RUZINO_ADD_LIB(
 	GUI
 	SHARED
-	PUBLIC_LIBS imgui RHI input
+	PUBLIC_LIBS imgui RHI rz_input
 	PRIVATE_LIBS spdlog::spdlog stb_image
 	COMPILE_DEFS
 	NOMINMAX

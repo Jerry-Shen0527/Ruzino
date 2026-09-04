@@ -4,7 +4,7 @@ RUZINO_ADD_LIB(
 	PUBLIC_LIBS
 		usd_ms
 		EnTT::EnTT
-		input
+		rz_input
 	PRIVATE_LIBS
 		spdlog::spdlog
 	COMPILE_DEFS

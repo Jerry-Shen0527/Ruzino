@@ -1,5 +1,5 @@
 RUZINO_ADD_LIB(
-	input
+	rz_input
 	SHARED
 	COMPILE_DEFS
 	NOMINMAX=1
