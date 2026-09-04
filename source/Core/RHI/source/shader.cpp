@@ -72,15 +72,16 @@ class CustomBlob : public ISlangBlob {
 };
 
 std::string ShaderFactory::shader_search_path = "";
-// During brush-sim debugging, force every shader to recompile each run so
-// edits always take effect (the disk-cache staleness check is currently
-// broken: shader_search_path is never set, so it can never locate the
-// source files to compare mtimes and serves stale binaries forever).
-// Flip this back to the #ifdef form once the staleness check is fixed.
+
+// The disk cache invalidates on the newest mtime across each factory's
+// shader source trees (see latest_shader_source_mtime), so an edited shader
+// always recompiles and takes effect, while unchanged sources load the
+// cached DXIL directly. Debug builds stay uncached so shader edits are
+// always picked up even if file timestamps mislead.
 #ifdef _DEBUG
 bool ShaderFactory::cache_enabled = false;
 #else
-bool ShaderFactory::cache_enabled = false;  // was: true
+bool ShaderFactory::cache_enabled = true;
 #endif
 
 ProgramDesc Program::get_desc() const
@@ -871,9 +872,9 @@ void ShaderFactory::SlangCompile(
     std::vector<std::string> searchPaths = { shader_search_path };
     searchPaths.push_back("./");
     // Note: previously also pushed shader_search_path + "/shaders/" to find
-    // shaders under a nested shaders/shaders/ subdir. That nesting was flattened
-    // (nodes/shaders/shaders/* -> nodes/shaders/*), so the root search path
-    // above now contains the files directly.
+    // shaders under a nested shaders/shaders/ subdir. That nesting was
+    // flattened (nodes/shaders/shaders/* -> nodes/shaders/*), so the root
+    // search path above now contains the files directly.
 
     for (auto& search_path : search_paths) {
         searchPaths.push_back(search_path);
@@ -1068,6 +1069,12 @@ ProgramHandle ShaderFactory::createProgram(const ProgramDesc& desc) const
         return ret;
     }
 
+    // Capture the newest source mtime BEFORE compiling. If a shader is
+    // edited while the compile runs, the stored value stays below the file's
+    // mtime, so the next load invalidates this entry and recompiles — the
+    // edited shader always wins.
+    const long long build_mtime = latest_shader_source_mtime();
+
     // Cache miss - compile the shader
     SlangCompile(
         modified_desc.paths,
@@ -1117,7 +1124,12 @@ ProgramHandle ShaderFactory::createProgram(const ProgramDesc& desc) const
 
     // Save to cache if compilation was successful
     if (ret->blob && ret->error_string.empty()) {
-        save_to_cache(modified_desc, ret->blob, ret->reflection_info, target);
+        save_to_cache(
+            modified_desc,
+            ret->blob,
+            ret->reflection_info,
+            target,
+            build_mtime);
     }
 
     return ret;
@@ -1150,6 +1162,50 @@ std::string ShaderFactory::get_cache_filename(
     }
 
     return ss.str() + extension;
+}
+
+// Walks one shader search directory and returns the newest mtime among
+// shader source files (.slang/.slangh/.hlsl/.glsl), folded into `latest`.
+static long long walk_shader_sources(const std::string& dir, long long latest)
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (dir.empty() || !fs::exists(dir)) {
+        return latest;
+    }
+    for (auto it = fs::recursive_directory_iterator(
+             dir, fs::directory_options::skip_permission_denied, ec);
+         it != fs::recursive_directory_iterator();
+         it.increment(ec)) {
+        if (ec) {
+            break;
+        }
+        if (!it->is_regular_file(ec) || ec) {
+            continue;
+        }
+        const std::string ext = it->path().extension().string();
+        if (ext != ".slang" && ext != ".slangh" && ext != ".hlsl" &&
+            ext != ".glsl") {
+            continue;
+        }
+        auto t = fs::last_write_time(it->path(), ec).time_since_epoch().count();
+        if (!ec && t > latest) {
+            latest = t;
+        }
+    }
+    return latest;
+}
+
+long long ShaderFactory::latest_shader_source_mtime() const
+{
+    // Mirror the compile-session search list (static search path + the
+    // factory's own dirs). The "./" cwd entry used by the compiler is
+    // deliberately not walked: it is the app dir, not a shader source tree.
+    long long latest = walk_shader_sources(shader_search_path, 0);
+    for (const auto& dir : search_paths) {
+        latest = walk_shader_sources(dir, latest);
+    }
+    return latest;
 }
 
 bool ShaderFactory::try_load_from_cache(
@@ -1261,10 +1317,11 @@ bool ShaderFactory::try_load_from_cache(
 
         // Read cached lastWriteTime for staleness detection
         long long cached_last_write_time = 0;
-        if (!meta_stream.read(
-                reinterpret_cast<char*>(&cached_last_write_time),
-                sizeof(cached_last_write_time))
-                     .good()) {
+        if (!meta_stream
+                 .read(
+                     reinterpret_cast<char*>(&cached_last_write_time),
+                     sizeof(cached_last_write_time))
+                 .good()) {
             // Old cache format without lastWriteTime — treat as stale
             meta_stream.close();
             return false;
@@ -1272,18 +1329,12 @@ bool ShaderFactory::try_load_from_cache(
 
         meta_stream.close();
 
-        // Check if any source file has been modified since cache was written
-        for (const auto& path : desc.paths) {
-            auto full_path =
-                std::filesystem::path(ShaderFactory::shader_search_path) / path;
-            if (std::filesystem::exists(full_path)) {
-                auto current_time = std::filesystem::last_write_time(full_path)
-                                        .time_since_epoch()
-                                        .count();
-                if (current_time != cached_last_write_time) {
-                    return false;
-                }
-            }
+        // Invalidate when ANY shader source file under this factory's search
+        // paths (entry files, imported modules, included headers alike) is
+        // newer than the cached build — an updated shader must always
+        // recompile and take effect. Never serve a stale binary.
+        if (latest_shader_source_mtime() > cached_last_write_time) {
+            return false;
         }
 
         // Create blob from buffer using our custom implementation
@@ -1300,7 +1351,8 @@ void ShaderFactory::save_to_cache(
     const ProgramDesc& desc,
     const Slang::ComPtr<ISlangBlob>& blob,
     const ShaderReflectionInfo& reflection_info,
-    SlangCompileTarget target) const
+    SlangCompileTarget target,
+    long long build_mtime) const
 {
     if (!cache_enabled || !blob) {
         return;
@@ -1387,10 +1439,13 @@ void ShaderFactory::save_to_cache(
                 reinterpret_cast<const char*>(&index), sizeof(index));
         }
 
-        // Write lastWriteTime for staleness detection
+        // build_mtime was captured BEFORE the compile ran (see createProgram):
+        // the newest shader source mtime over this factory's search paths.
+        // Capturing pre-compile means an edit racing with the compile leaves
+        // its mtime above build_mtime, invalidating this entry on the next
+        // load — the edited shader always wins.
         meta_stream.write(
-            reinterpret_cast<const char*>(&desc.lastWriteTime),
-            sizeof(desc.lastWriteTime));
+            reinterpret_cast<const char*>(&build_mtime), sizeof(build_mtime));
 
         meta_stream.close();
     }

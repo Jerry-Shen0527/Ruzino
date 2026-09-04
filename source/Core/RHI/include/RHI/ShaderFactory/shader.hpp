@@ -68,6 +68,13 @@ class RHI_API ShaderFactory {
 
     // Cache management
     static bool cache_enabled;
+
+    // Newest mtime across every shader source file (.slang/.slangh/.hlsl/
+    // .glsl) under this factory's search paths and the static search path.
+    // Mirrors the compile-session search list, so it covers not just the
+    // desc entry files but every imported/included module they pull in.
+    long long latest_shader_source_mtime() const;
+
     bool try_load_from_cache(
         const ProgramDesc& desc,
         Slang::ComPtr<ISlangBlob>& blob,
@@ -77,7 +84,8 @@ class RHI_API ShaderFactory {
         const ProgramDesc& desc,
         const Slang::ComPtr<ISlangBlob>& blob,
         const ShaderReflectionInfo& reflection_info,
-        SlangCompileTarget target) const;
+        SlangCompileTarget target,
+        long long build_mtime) const;
     std::string get_cache_filename(
         const ProgramDesc& desc,
         SlangCompileTarget target) const;
