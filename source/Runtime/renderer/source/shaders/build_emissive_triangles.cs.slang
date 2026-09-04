@@ -117,8 +117,10 @@ void main(uint3 dtid : SV_DispatchThreadID)
     if (area < 1e-8) return;  // degenerate triangle, skip
     float3 normal = n / lenN;
 
-    // Pack into PackedEmissiveTriangle.
-    PackedEmissiveTriangle packed;
+    // Pack into PackedEmissiveTriangle. Zero-initialized so the
+    // encodeTexCoord() call below is not a use of an uninitialized variable;
+    // every field is explicitly written before the struct is stored.
+    PackedEmissiveTriangle packed = {};
     packed.posAndTexCoords[0] = float4(w0, asfloat(packed.encodeTexCoord(float2(0, 0))));
     packed.posAndTexCoords[1] = float4(w1, asfloat(packed.encodeTexCoord(float2(0, 0))));
     packed.posAndTexCoords[2] = float4(w2, asfloat(packed.encodeTexCoord(float2(0, 0))));

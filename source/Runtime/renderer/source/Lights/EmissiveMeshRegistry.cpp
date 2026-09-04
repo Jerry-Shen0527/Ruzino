@@ -1,5 +1,4 @@
 #include "EmissiveMeshRegistry.h"
-#include "LightBVHBuilder.h"
 
 #include <spdlog/spdlog.h>
 
@@ -10,6 +9,7 @@
 #include "GPUContext/compute_context.hpp"
 #include "GPUContext/program_vars.hpp"
 #include "GPUContext/raytracing_context.hpp"
+#include "LightBVHBuilder.h"
 #include "RHI/rhi.hpp"
 #include "RHI/shaderCompiler.h"
 #include "gpu_compute.h"
@@ -24,10 +24,12 @@ auto& res_alloc()
     return GPUSceneAssember::get_instance().sa_resource_allocator;
 }
 
-float3 minF3(const float3& a, const float3& b) {
+float3 minF3(const float3& a, const float3& b)
+{
     return float3(std::min(a.x, b.x), std::min(a.y, b.y), std::min(a.z, b.z));
 }
-float3 maxF3(const float3& a, const float3& b) {
+float3 maxF3(const float3& a, const float3& b)
+{
     return float3(std::max(a.x, b.x), std::max(a.y, b.y), std::max(a.z, b.z));
 }
 
@@ -179,6 +181,19 @@ bool EmissiveMeshRegistry::build_gpu_buffers(
             program ? program->get_error_string() : "program is null");
         return false;
     }
+    // Return the program to the allocator's pool on exit (the same rent/
+    // return idiom the render nodes use). The pool re-hands out the compiled
+    // program on the next build, so repeated geometry edits don't re-run the
+    // slang compiler. Not returning it here meant every build was a pool miss
+    // and paid a full recompile.
+    struct ProgramReturner {
+        ResourceAllocator& allocator;
+        ProgramHandle& handle;
+        ~ProgramReturner()
+        {
+            allocator.destroy(handle);
+        }
+    } program_returner{ res_alloc(), program };
 
     ProgramVars vars(res_alloc(), program);
 
@@ -224,6 +239,10 @@ bool EmissiveMeshRegistry::build_gpu_buffers(
     cmd->close();
     device->executeCommandList(cmd);
     device->waitForIdle();
+    // Command list is only used for the two uploads above — return it to the
+    // allocator pool. Without this, every geometry edit leaked one
+    // CommandList (261 edits in a session = 261 leaked command lists).
+    res_alloc().destroy(cmd);
 
     // Bind resources.
     vars["g_Params"] = paramsBuffer;
@@ -258,6 +277,11 @@ bool EmissiveMeshRegistry::build_gpu_buffers(
     compute_ctx.dispatch({}, vars, triOffset, 64);
     compute_ctx.finish();
     device->waitForIdle();
+    // The GPU is done reading the upload buffers (waitForIdle above) — return
+    // them to the allocator pool. Without this, every geometry edit leaked
+    // two Buffers (work list + params), growing unboundedly across a session.
+    res_alloc().destroy(workListBuffer);
+    res_alloc().destroy(paramsBuffer);
 
     // --- Build LightBVH (CPU) ---
     // Read back the emissive triangle data from the GPU, compute per-triangle
@@ -277,10 +301,8 @@ bool EmissiveMeshRegistry::build_gpu_buffers(
         for (uint32_t i = 0; i < triOffset; i++) {
             EmissiveTriangle et = readbackTris[i].unpack();
 
-            float3 bmin = minF3(
-                minF3(et.posW[0], et.posW[1]), et.posW[2]);
-            float3 bmax = maxF3(
-                maxF3(et.posW[0], et.posW[1]), et.posW[2]);
+            float3 bmin = minF3(minF3(et.posW[0], et.posW[1]), et.posW[2]);
+            float3 bmax = maxF3(maxF3(et.posW[0], et.posW[1]), et.posW[2]);
             sortData[i].boundsMin = bmin;
             sortData[i].boundsMax = bmax;
             sortData[i].center = (bmin + bmax) * 0.5f;
@@ -299,15 +321,16 @@ bool EmissiveMeshRegistry::build_gpu_buffers(
         LightBVHBuildOptions bvhOpts;
         bvhOpts.maxTriangleCountPerLeaf = 4;  // split early for deeper BVH
         LightBVHBuilder builder;
-        if (builder.build(sortData, bvhOpts, bvhNodes, bvhTriIndices, bvhBitmasks)) {
+        if (builder.build(
+                sortData, bvhOpts, bvhNodes, bvhTriIndices, bvhBitmasks)) {
             auto build_t1 = std::chrono::high_resolution_clock::now();
 
             bvhNodePool.clear();
             bvhTriangleIndexPool.clear();
             bvhTriangleBitmaskPool.clear();
 
-            bvhNodeHandle = bvhNodePool.allocate(
-                static_cast<uint32_t>(bvhNodes.size()));
+            bvhNodeHandle =
+                bvhNodePool.allocate(static_cast<uint32_t>(bvhNodes.size()));
             bvhTriIdxHandle = bvhTriangleIndexPool.allocate(
                 static_cast<uint32_t>(bvhTriIndices.size()));
             bvhBitmaskHandle = bvhTriangleBitmaskPool.allocate(

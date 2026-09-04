@@ -390,5 +390,6 @@ uint64_t u2x32to64(uint2 v)
  */
 uint2 u64to2x32(uint64_t v)
 {
-    return uint2(v & 0xffffffff, v >> 32);
+    // Explicit narrowing: low/high 32-bit halves of v truncated to uint.
+    return uint2(uint(v & 0xffffffff), uint(v >> 32));
 }
