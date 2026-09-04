@@ -532,9 +532,19 @@ void RayGen()
             // the emissive triangle directly via the LightBVH) is the other.
             // To avoid double-counting, weight this contribution:
             //   w_bsdf = bsdf_pdf / (emis_pdf + bsdf_pdf),
-            // where bsdf_pdf = evalData.pdf (the pdf of THIS bounce's BSDF
-            // sample that produced the ray), and emis_pdf is the NEE pdf of the
-            // ray direction under the emissive BVH distribution. When emis_pdf
+            // where bsdf_pdf is the pdf of the ray that hit the emissive
+            // surface — payload.bsdfPdf, the previous bounce's sampled
+            // direction pdf (same quantity the analytic-light BSDF-hit path
+            // above uses). It must NOT be this hit's own next-sample pdf
+            // (evalData.pdf): that belongs to a different estimator/direction
+            // pair. Using it made the weight fluctuate with the emissive
+            // surface's own sampling — for a near-mirror floor bounce
+            // (bsdf_pdf ~1e3, w should be ~1) it substituted the emissive
+            // surface's O(0.1) pdf, so the reflected image picked up a
+            // per-triangle darkening that read as the mesh tessellation
+            // showing through the reflection.
+            // emis_pdf is the NEE pdf of the hit direction under the emissive
+            // BVH distribution. When emis_pdf
             // <= 0 the NEE estimator essentially never samples this direction
             // (e.g. zero-importance, or a primary camera ray with no BSDF
             // launcher), so the BSDF estimator takes full weight (w_bsdf = 1).
@@ -549,8 +559,9 @@ void RayGen()
                     payload.hitEmissiveTriIdx, rayDir, dist);
                 float misWeight = 1.0;
                 if (emisPdf > 0.0) {
-                    float denom = emisPdf + pdf;
-                    misWeight = denom > 0.0 ? pdf / denom : 0.0;
+                    float denom = emisPdf + payload.bsdfPdf;
+                    misWeight =
+                        denom > 0.0 ? payload.bsdfPdf / denom : 0.0;
                 }
                 Spectrum emissiveContrib = mul(
                     mul(current_throughput, evalData.emissionLe),
