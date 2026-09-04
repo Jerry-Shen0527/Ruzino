@@ -1,27 +1,3 @@
-// node_brush_wb_sim — the whole Wetbrush per-frame simulation as ONE node.
-//
-// Previously three chained nodes (brush_wb_deposit -> brush_wb_bristle ->
-// brush_wb_fluid). The split was a graph-authoring choice, not a paper one:
-// the paper's algorithm is a single per-step loop, and the three stages share
-// one WetbrushZoneState anyway — the node boundaries only forwarded the same
-// shared_ptr while locking the §5.1 exchange to frame granularity. This node
-// restores the single-loop structure; the phases run in the paper's order and
-// chain ONE WetbrushZoneState by reference (the merged execute reads the
-// optional sim_in feedback once — absent on the init frame, where PHASE 1's
-// allocation fills it, and later phases must see that allocation):
-//
-//   PHASE 1 (§4.1/§4.2, ex-brush_wb_deposit)     lazy alloc, active-window
-//       follow/scroll, dip, per-substep bristle dynamics -> psi/BC raster
-//   PHASE 2 (§5.1, ex-brush_wb_bristle)          ABSORB + EMIT (sample <-> FLIP
-//       particles liquid exchange)
-//   PHASE 3 (§4.3/§4.2/§5.2, ex-brush_wb_fluid)  particle cycle + swarm
-//       raster/merge, grid solve (diffuse/project/advect/damp-dry),
-//       Eq.15/Eq.16 transfers, pool compaction
-//
-// Sockets are the union of the three old nodes (defaults unchanged); the
-// "Stroke Sample" pass-through output and the never-consumed "Bristle
-// Samples" readback output are gone. brush_wb_commit stays a separate node —
-// it is the render-facing packer, not simulation.
 
 #include <algorithm>
 #include <cmath>
@@ -32,28 +8,53 @@
 
 #include "GCore/GOP.h"
 #include "GCore/geom_payload.hpp"
-#include "GPUContext/compute_context.hpp"  // CommandListDesc
+#include "GPUContext/compute_context.hpp"
 #include "RHI/ResourceManager/resource_allocator.hpp"
-#include "brush_sim_common.hpp"  // StrokeSample, WetbrushSimState, WetbrushZoneState, brush_* helpers
+#include "brush_sim_common.hpp"
 #include "geom_node_base.h"
 #include "spdlog/spdlog.h"
 
+// ============================================================================
+// brush_wb_sim — Wetbrush (Chen et al. 2015) 仿真主节点
+//
+// 论文: "Wetbrush: GPU-based 3D Painting Simulation at the Bristle Level",
+// ACM TOG 34(6), SIGGRAPH Asia 2015。带图转录稿见
+// docs/paper_wetbrush_chen2015/。本节点每帧执行一次, 对应论文 Figure 4
+// 的两大组件:
+//
+//   [动态仿真 §4]
+//   1. 笔毛仿真(§4.1, Eq.1-2): 非惯性笔刷系显式积分 + PBD 约束
+//   2. 样本重采样(§4.1): 三次 Hermite 样条 + Bishop 最小扭转局部系
+//   3. 样本栅格化为 ψ 密度场 + 速度场 → 网格流体的边界条件(§4.1 末)
+//   4. 液体粒子更新(§4.3, Eq.8-10): 固体摩擦 + 局部系/画布系两步粘附
+//   5. 粒子栅格化 + 并入联合速度场 u(§4.3 末段)
+//   6. 网格流体求解(§4.2): 隐式粘度 → 定点加速压力投影(Algorithm 1,
+//      Eq.3-5) → 半拉格朗日平流(Stam 1999) → 干燥固化(§4.2 dryness)
+//   7. FLIP/PIC 粒子速度修正(Eq.11, γ=0.8)
+//   [液体转移 §5]
+//   8. 笔毛↔粒子(§5.1, Eq.12-14): 容量 M_j / 吸收 / 发射
+//   9. 网格↔粒子(§5.2, Eq.15-16): D0 距离内两种表示互换
+//
+// 液体的三种表示(§3 / Figure 5): 笔毛样本载量 m_j / 液体粒子 / 网格密度
+// 场; 颜料颜色统一为 RYB 三通道(§3/§6), 随质量走完整个流水线。
+//
+// 与论文的已知偏离(诚实标注, 详见各处注释): 粒子 dt 硬编码 0.016;
+// ρ0/M_max 按 1u=1cm 重标定; 活动窗口 320²(论文 128²)。(Eq.14 粒子质量
+// 吸收与粒子 Eq.9 的完整惯性项已按论文补齐。)
+// ============================================================================
+
 NODE_DEF_OPEN_SCOPE
 
+// 节点参数 ↔ 论文: Resolution Z=32 与论文网格厚度一致; Viscosity=ν
+// (§4.2 隐式扩散, 单位 cm²/s); Drying Rate=干燥速率(§4.2 dryness 增量);
+// Oil Density=油密度(§3: 控制粘度表现与渲染透明度); Ink Color=RYB 颜料
+// 向量(§3/§6)。
 NODE_DECLARATION_FUNCTION(brush_wb_sim)
 {
-    // Per-frame pen-dynamics sample from the emitter (interior edge, fresh
-    // each frame): position + orientation + analytic derivatives when the
-    // source knows them (has_dynamics).
     b.add_input<Ruzino::StrokeSample>("Stroke Sample");
-    // The fed-back paint field. Optional: absent on the init frame (the
-    // PHASE-1 allocation fills it). Never call get_input on an unwired
-    // optional — the executor sets its input pointer to nullptr and
-    // get_input would deref it.
+
     b.add_input<Ruzino::WetbrushZoneState>("State").optional(true);
-    // Grid / canvas domain params. WORLD SCALE (doc §33): 1 unit = 1 cm —
-    // canvas 10×10 cm, brush head 1 cm wide (radius 0.5). Every length
-    // parameter below is cm.
+
     b.add_input<int>("Resolution").default_val(512).min(64).max(4096);
     b.add_input<int>("Resolution Z").default_val(32).min(4).max(128);
     b.add_input<float>("Paper Size").default_val(10.0f).min(0.1f).max(50.0f);
@@ -61,41 +62,22 @@ NODE_DECLARATION_FUNCTION(brush_wb_sim)
     b.add_input<float>("Canvas Center Y").default_val(0.0f);
     b.add_input<float>("Canvas Z").default_val(0.0f);
     b.add_input<float>("Canvas Height").default_val(0.0f).min(0.0f).max(20.0f);
-    // Brush / stroke params (PHASE 1 + 3; PHASE 2 reads Brush Radius only).
+
     b.add_input<float>("Brush Radius").default_val(0.5f).min(0.01f).max(5.0f);
     b.add_input<float>("Brush Pressure").default_val(1.0f).min(0.0f).max(4.0f);
     b.add_input<float>("Ink Amount").default_val(0.8f).min(0.0f).max(2.0f);
     b.add_input<float>("Oil Density").default_val(0.5f).min(0.0f).max(1.0f);
-    // RYB ink color. Optional because vec3 sockets can't carry a default_val
-    // through serialization; the exec falls back to red when unwired.
+
     b.add_input<glm::vec3>("Ink Color").optional(true);
-    // Fluid solve params (PHASE 3).
-    // Kinematic viscosity in cm²/s (water ≈ 0.01, glycerin ≈ 1, thick
-    // acrylic ≈ 2–20). The Jacobi coefficient consumes it world-absolutely
-    // (a = dt·ν/h²); see the solve loop. Default tints toward acrylic so the
-    // wake freezes within a frame at the 1u=1cm calibration.
+
     b.add_input<float>("Viscosity").default_val(2.0f).min(0.0f).max(50.0f);
     b.add_input<float>("Diffusion Rate")
         .default_val(0.0001f)
         .min(0.0f)
         .max(0.01f);
-    // Default 2.0/s: a deposit (wetness 1.0) reaches the dry-solid threshold
-    // (0.01) in ~0.5 s — the paper's §4.2 trail-freezing ("once the dryness
-    // reaches a threshold, we ignore its velocity and treat it as solid").
-    // The old 0.1/s left paint mobile for ~600 frames — a whole session — so
-    // wake+sag smeared the trail and BANKED it against the active-window's
-    // no-flux edges (the "mystery liquid at the window edge, far from the
-    // brush" artifact of 2026-08-31). Paper gives no rate; this is the style
-    // knob. Validated at 2-3/s (doc §32).
-    // Linear dryness rate (wetness/s). 12/s ≈ touch-dry (wetness 0.01) in
-    // 0.083 s ≈ one brush-width of travel at 2.5 cm/s: the §5.2 drain disc
-    // then only churns the wet head under the brush instead of the whole
-    // trail (doc §34). The paper gives no number ("increase the dryness ...
-    // by a small amount", §4.2).
+
     b.add_input<float>("Drying Rate").default_val(12.0f).min(0.0f).max(50.0f);
 
-    // Outgoing paint field (allocated/updated) for brush_wb_commit + the
-    // next-frame feedback.
     b.add_output<Ruzino::WetbrushZoneState>("State");
 }
 
@@ -104,13 +86,12 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
     using Ruzino::WetbrushSimState;
     using Ruzino::WetbrushZoneState;
 
-    // zs arrives from the optional sim_in feedback: absent on the init
-    // frame — the allocation below fills it, and all three phases chain
-    // that ONE state object.
+    // 上一帧状态经仿真区反馈环(simulation_out → simulation_in)回到这里;
+    // 对应论文中系统持续维护的画布/笔刷/粒子状态。
     WetbrushZoneState zs;
     if (params.has_input("State"))
         zs = params.get_input<Ruzino::WetbrushZoneState>("State");
-    auto& field = zs.state;  // shared_ptr<WetbrushSimState>
+    auto& field = zs.state;
 
     Ruzino::StrokeSample bp =
         params.get_input<Ruzino::StrokeSample>("Stroke Sample");
@@ -126,10 +107,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
     float brush_pressure = params.get_input<float>("Brush Pressure");
     float ink_amount = params.get_input<float>("Ink Amount");
     float oil_density_in = params.get_input<float>("Oil Density");
-    // Ink color: prefer the StrokeSample's trajectory color (enables
-    // multi-color strokes where each point carries its own RYB); fall back
-    // to the static "Ink Color" socket when the emitter didn't supply one
-    // (single-color).
+
     glm::vec3 ink_color = params.has_input("Ink Color")
                               ? params.get_input<glm::vec3>("Ink Color")
                               : glm::vec3(1.0f, 0.0f, 0.0f);
@@ -137,10 +115,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         ink_color = bp.color;
     }
 
-    // Pen state for downstream nodes (§5.1 absorb/emit gating + §5.2
-    // conversion gating): a pen-up brush is not painting — no sample
-    // uptake, no emission, and no grid↔particle conversion zone around it.
-    // Recorded every frame BEFORE any early return so it never goes stale.
     if (field) {
         field->pen_down = bp.active;
         field->dip_frame = bp.stroke_start;
@@ -149,14 +123,41 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
     auto& rc = get_resource_allocator();
     auto device = RHI::get_device();
     auto payload = params.get_global_payload<GeomPayload>();
+    // 帧长 dt(缺省 1/60s)。论文强调大时间步稳定性(30-110FPS); 本实现的
+    // 稳定性手段: 网格子步 + 隐式粘度 + 非惯性系位置式跟随(§4.1/§4.2)。
     float dt = payload.delta_time > 0.0f ? payload.delta_time : (1.0f / 60.0f);
 
-    // ======================================================================
-    // LAZY FIELD ALLOCATION (mirrors brush_paint_sim ~463-818)
-    // Done once, when the grid dimensions are first known / change.
-    // Allocates the FULL buffer set so velocity / bristle / particle
-    // persist across frames via the zone feedback.
-    // ======================================================================
+    // WB_REDIP_EVERY=<秒>（默认 0 = 关）：行笔途中周期性重触发论文自己的
+    // §5.1 dip（把全部样本重灌到 M'_j）—— 即真实画家"提笔回蘸再画"的工作
+    // 流。2026-09-03 供墨诊断：只有笔尖接触带（R_j≈0.05-0.18cm 内）的样本
+    // 会出墨，约占蘸墨量 46%；不回蘸，长笔画在该预算耗尽后必然断墨，按压/
+    // 降速/ε/颗粒大小四个杠杆均已 A/B 证伪。重灌是与（未仿真的）调色盘
+    // 交换质量，账本台阶属预期语义；不改任何论文方程。
+    static const float redip_every = [] {
+        const char* e = std::getenv("WB_REDIP_EVERY");
+        float v = e ? static_cast<float>(std::atof(e)) : 0.0f;
+        return v > 0.0f ? v : 0.0f;
+    }();
+    if (field) {
+        if (field->pen_down && redip_every > 0.0f) {
+            field->redip_clock += dt;
+            if (field->redip_clock >= redip_every) {
+                field->redip_clock -= redip_every;
+                field->dip_frame = true;
+            }
+        }
+        else if (!field->pen_down) {
+            field->redip_clock = 0.0f;
+        }
+    }
+
+    // 缓冲区分两组(下文称全局组 / 窗口组):
+    //   全局组(res²·rz): density / 颜色 RYB / wetness / oil_density ——
+    //     §4.2 的画布标量场, 全画布持久存在(窗口外的沉积与干燥不能丢);
+    //   窗口组(win²·rz): 速度 / 压力 / 散度 / 临时标量 / 笔毛栅格 / 粒子
+    //     栅格 —— §4.2 "把网格仿真限制在笔刷附近的小活动窗口"(论文
+    //     128×128×32; 这里 320², 相对笔刷半径的余量与论文一致)。
+    // 分辨率 / 画布几何变化时全部销毁重建并清零。
     bool need_alloc = !field || !field->center_initialized ||
                       field->grid_alloc_res != resolution ||
                       field->grid_alloc_res_z != resolution_z;
@@ -188,21 +189,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         field->bristles_initialized = false;
         field->particles_initialized = false;
 
-        // Global grid size: all 3D buffers are now global (res × res ×
-        // res_z), not window-sized. Paper §4.2: a large 3D grid is the
-        // persistent paint store; the window is only a dispatch range.
         int alloc_win_n3d = resolution * resolution * rz;
 
-        // Bristle/particle accumulation grids (Group B/C) are allocated at
-        // the active-window size, not the full global grid. Paper §5/§5.1:
-        // bristle samples and particles only exist within the brush-local
-        // compute window (WIN_ALLOC_XY × WIN_ALLOC_XY × res_z), so a
-        // full-grid alloc wastes (res/WIN)²× the memory for buffers that
-        // are cleared and rebuilt each sub-step anyway. At res=4096 this is
-        // the difference between 14 buffers × 1B cells (out of memory) and
-        // 14 × 1M cells. Shaders index these with window-local coords
-        // (global cell minus window_origin); see bristle_rasterize /
-        // particle_rasterize / bristle_merge / bristle_liquid_transfer.
         int win_alloc_n3d = WetbrushSimState::win_alloc_xy() *
                             WetbrushSimState::win_alloc_xy() * rz;
 
@@ -212,16 +200,11 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
                 h = nullptr;
             }
         };
-        // Helper: destroy a fixed set of buffers by reference. Using a
-        // variadic instead of a braced-init-list of addresses, because
-        // MSVC's initializer_list deduction chokes on RefCountPtr<IBuffer>*
-        // element types (its implicit conversion to IBuffer* makes the list
-        // element type ambiguous, surfacing as C2440 "IBuffer** ->
-        // BufferHandle*").
+
         auto destroy_buffers = [&](auto&... bufs) {
             (safe_destroy(bufs), ...);
         };
-        // Release every buffer (full set — a grid change invalidates all).
+
         destroy_buffers(
             field->density,
             field->density_tmp,
@@ -267,31 +250,18 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         auto make_buf = [&](const char* name) {
             return Ruzino::brush_create_field_buffer(rc, alloc_win_n3d, name);
         };
-        // Window-sized factory for Group B/C (bristle/particle accumulation
-        // grids). See win_alloc_n3d comment above.
+
         auto make_win_buf = [&](const char* name) {
             return Ruzino::brush_create_field_buffer(rc, win_alloc_n3d, name);
         };
 
-        // Canvas state (persistent paint store) — GLOBAL-sized. Paper §4.2:
-        // "a large 3D grid stores all cells". These are the only fields
-        // that genuinely need global extent.
         field->density = make_buf("wb_density");
         field->color_r = make_buf("wb_color_r");
         field->color_y = make_buf("wb_color_y");
         field->color_b = make_buf("wb_color_b");
         field->wetness = make_buf("wb_wetness");
         field->oil_density = make_buf("wb_oil_density");
-        // height_field is NOT allocated: its only writer was the legacy
-        // brush_deposit.slang path (never dispatched in the wb pipeline)
-        // and no reader exists. Keeping it global-sized cost a full grid
-        // buffer. TRANSIENT SOLVE FIELDS — window-sized (paper §4.2: "we
-        // can restrict grid-based simulation to a small active window
-        // around the brush", 128×128×32). Velocity/pressure/divergence live
-        // only in the window; the scalar tmps are window scratch for
-        // advection and the §5.2 Eq.15 subtraction (host copies between the
-        // two index spaces via field_copy_window). 18 global buffers → ~4MB
-        // each: saves ~4.8GB at res 1024.
+
         field->density_tmp = make_win_buf("wb_density_tmp");
         field->color_r_tmp = make_win_buf("wb_color_r_tmp");
         field->color_y_tmp = make_win_buf("wb_color_y_tmp");
@@ -307,7 +277,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         field->pressure_a = make_win_buf("wb_pressure_a");
         field->pressure_b = make_win_buf("wb_pressure_b");
         field->divergence_buf = make_win_buf("wb_divergence");
-        // Group B (bristle accumulation grids) — window-sized.
+
         field->bristle_density = make_win_buf("wb_bristle_density");
         field->bristle_vel_x = make_win_buf("wb_bristle_vel_x");
         field->bristle_vel_y = make_win_buf("wb_bristle_vel_y");
@@ -315,7 +285,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         field->bristle_color_r = make_win_buf("wb_bristle_color_r");
         field->bristle_color_y = make_win_buf("wb_bristle_color_y");
         field->bristle_color_b = make_win_buf("wb_bristle_color_b");
-        // Group C (particle rasterize grids) — window-sized.
+
         field->ptcl_density = make_win_buf("wb_ptcl_density");
         field->ptcl_vel_x = make_win_buf("wb_ptcl_vel_x");
         field->ptcl_vel_y = make_win_buf("wb_ptcl_vel_y");
@@ -327,12 +297,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         field->vel_y_old = make_win_buf("wb_vel_y_old");
         field->vel_z_old = make_win_buf("wb_vel_z_old");
 
-        // Zero the 4 pack-relevant particle raster grids at allocation: GPU
-        // heap allocations are NOT zero-initialized, and pack_float4.slang
-        // composites these into the render field from the very first cook —
-        // before the fluid node's per-frame clear+raster has ever run (and
-        // on frames before the brush first deposits). Garbage there would
-        // render as a noise cloud on frame 1.
         if (!field->field_clear_program)
             field->field_clear_program =
                 Ruzino::brush_compile_shader(rc, "field_clear.slang");
@@ -351,13 +315,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
                 nullptr,
                 win_alloc_n3d);
         }
-        // Float4 packed paint field (density,r,g,b) — global grid sized,
-        // for the shared GPU buffer registry (zero-copy sim→render). Needs
-        // CanHaveRawViews because the render rprim binds it as a
-        // RawBuffer_SRV (ByteAddressBuffer); brush_create_typed_buffer only
-        // sets TypedViews, which produces a view-mismatch (shader reads
-        // zeroes). Built inline rather than via the factory to keep the
-        // factory's flag set unchanged for the many other callers.
+
         field->packed_paint = rc.create(
             nvrhi::BufferDesc{}
                 .setByteSize(
@@ -370,9 +328,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
                 .setCanHaveRawViews(true)
                 .setDebugName("wb_packed_paint"));
 
-        // Zero-init everything. Variadic write (same MSVC init-list reason
-        // as destroy_buffers above). Two groups: full-grid (alloc_win_n3d)
-        // and window-sized (win_alloc_n3d) for Group B/C.
         std::vector<float> zeros3d(alloc_win_n3d, 0.0f);
         std::vector<float> zeros_win(win_alloc_n3d, 0.0f);
         auto cmd = rc.create(CommandListDesc{});
@@ -387,8 +342,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
                  bufs, zeros_win.data(), win_alloc_n3d * sizeof(float)),
              ...);
         };
-        // Canvas state is global-sized; every transient solve field is
-        // window-sized (see the allocation comments above).
+
         write_3d(
             field->density,
             field->color_r,
@@ -444,6 +398,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
             height);
     }
 
+    // 本帧活动窗口尺寸(分配上限与网格分辨率取小)与格距 cell_sz;
+    // Nb/M/S = 笔毛数 / 每毛顶点数 / 每毛样本数。
     const int WIN_XY =
         std::min(WetbrushSimState::win_alloc_xy(), field->grid_res);
     const int WIN_Z = field->grid_res_z;
@@ -451,13 +407,17 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
     const float cell_sz =
         field->grid_paper / static_cast<float>(field->grid_res);
 
-    // ======================================================================
-    // LAZY BRISTLE / PARTICLE BUFFER ALLOCATION (brush_paint_sim ~630-812)
-    // ======================================================================
     const int Nb = WetbrushSimState::NUM_BRISTLES;
     const int M = WetbrushSimState::VERTS_PER_BRISTLE;
     const int S = WetbrushSimState::SAMPLES_PER_BRISTLE;
 
+    // ---- 笔毛/样本缓冲(§4.1 / §5.1) ----
+    // Nb=600 根笔毛 × M=10 顶点(§7: "each bristle contains 10 vertices"),
+    // 每毛重采样 S=128 个样本(与论文同值)。样本槽位:
+    //   pos/vel/frame —— §4.1 局部系(t/n/b 三轴 + 角速度, 最小扭转);
+    //   color —— 供给颜料(RYB+量, 由 bristle_input_color 缓冲刷新);
+    //   liquid —— §5.1 样本载量 {m_j, c_j}, 蘸笔帧置为满载;
+    //   supply —— 旧供给槽, 已不参与仿真(仅保留缓冲)。
     if (!field->bristles_initialized) {
         auto safe_destroy = [&](nvrhi::BufferHandle& h) {
             if (h) {
@@ -524,15 +484,10 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
             field->sample_vel,
             field->sample_color,
             field->sample_liquid_b);
-        // sample_liquid allocation stays DRY (m_j = 0). The dip (saturated
-        // m_j = WB_M_MAX + ink pigment) is written at every stroke_start by
-        // the SUB-STEP LOOP below — allocation can precede the first stroke
-        // point, and re-dips must pick up the current stroke's ink color.
-        // The pigment c_j is seeded to the ink color so color_mix has a
-        // base.
+
         std::vector<float> liquid_init(Nb * S * 4, 0.0f);
         for (int i = 0; i < Nb * S; ++i) {
-            liquid_init[i * 4 + 0] = 0.0f;  // m_j = 0 (dry)
+            liquid_init[i * 4 + 0] = 0.0f;
             liquid_init[i * 4 + 1] = ink_color.r;
             liquid_init[i * 4 + 2] = ink_color.g;
             liquid_init[i * 4 + 3] = ink_color.b;
@@ -559,11 +514,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         field->bristles_initialized = true;
     }
 
-    // Refresh the bristle ink color EVERY active frame (not just on alloc):
-    // the StrokeSample's color can change mid-simulation (multi-color
-    // strokes), so the init-block write above (which only runs once) would
-    // leave a stale color. This write is cheap (4 floats) and runs only
-    // when the pen is down.
+    // 落笔期间把当前墨色/墨量刷进供给缓冲(支持边画边换色)。
     if (field->bristles_initialized && bp.active) {
         float input_color[4] = {
             ink_color.r, ink_color.g, ink_color.b, ink_amount
@@ -578,6 +529,10 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         rc.destroy(color_cmd);
     }
 
+    // ---- 液体粒子池(§4.3) ----
+    // 论文以 20 万~100 万粒子承载亚像素细节(§4.3), 大笔刷可达 2M(§7);
+    // 本实现池上限 2^20。粒子由 §5.1 emit / §5.2 g2p 生成、§5.2 p2g 消亡,
+    // 池与 ptcl_counter 动态增删; *_b 为 ping-pong 交换缓冲。
     if (!field->particles_initialized) {
         int max_ptcl = WetbrushSimState::MAX_PARTICLES;
         auto safe_destroy = [&](nvrhi::BufferHandle& h) {
@@ -658,10 +613,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         field->particles_initialized = true;
     }
 
-    // ======================================================================
-    // LAZY SHADER COMPILATION (brush_paint_sim ~818-884). Persists in
-    // field.
-    // ======================================================================
+    // 惰性编译本帧所需计算 shader(句柄缓存于 field, 只编译一次)。
     auto ensure_prog = [&](ProgramHandle& slot, const char* fn) {
         if (!slot)
             slot = Ruzino::brush_compile_shader(rc, fn);
@@ -676,31 +628,15 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
     ensure_prog(field->bristle_raster_program, "bristle_rasterize.slang");
     ensure_prog(field->bristle_merge_program, "bristle_merge.slang");
 
-    // Init frame: no simulation yet — forward the (allocated) field.
-    // Pen-UP frames do NOT return here anymore: the brush still exists in
-    // the air, so the bristle chains must keep following it (paper §4.1
-    // dynamics are contact-independent). The pen-up relax path lives at the
-    // sub-step loop below; skipping the brush entirely left bristle_data
-    // zero-initialized during hover/descend/lift and the debug render
-    // showed a single dot at the world origin.
     if (!payload.is_simulating) {
-        // The ex-phase gates each returned true and the merged execute then
-        // still wrote the output — replicate that: the commit node and the
-        // zone feedback need the State output on the init frame too.
         params.set_output("State", zs);
         return true;
     }
 
-    // ======================================================================
-    // BRUSH POSE — prefer the sample's analytic dynamics, fall back to host
-    // finite-differencing (brush_paint_sim ~938-998).
-    // StrokeSample (the pen-dynamics contract) carries vel / angular_vel /
-    // orientation when the trajectory source knows them analytically
-    // (has_dynamics): use them directly and difference only ONCE for
-    // accel / omega_dot (first-order on exact derivatives). Position-only
-    // sources (real captured input) keep the legacy path: difference THIS
-    // sample against the field's prev_* (one sample/frame).
-    // ======================================================================
+    // ---- 笔刷运动学(§4.1: "User directly controls brush motion") ----
+    // 位姿来自 StrokeSample(采集的 pos/quat + 解析 vel/omega); 无动力学
+    // 输入时用相邻帧位置差分逼近速度/角加速度。单帧位移可以任意大 ——
+    // 由下方笔画子步 + 窗口跟随共同覆盖。
     glm::vec3 brush_pos_3d = bp.pos;
     brush_pos_3d.x -= field->grid_center.x;
     brush_pos_3d.y -= field->grid_center.y;
@@ -709,19 +645,10 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
     glm::vec3 brush_accel_3d(0.0f);
     glm::vec3 brush_angular_vel(0.0f);
     glm::vec3 brush_angular_accel(0.0f);
-    // Heading angle (XY). LEGACY: no shader consumes brush_rotation — the
-    // pen's orientation now travels as the brush_R* matrix rows (below).
-    // Kept only so the CB field stays populated; do not build on it.
+
     float brush_rotation = 0.0f;
 
     if (bp.stroke_start) {
-        // Fresh pen-down. With analytic dynamics the pen is ALREADY moving
-        // at pen-down: adopt the sample's derivatives this very frame — the
-        // substep-loop tail stamps prev_brush_vel from brush_vel_3d, so
-        // this also seeds the next frame's accel difference correctly (a
-        // from-rest assumption would manufacture a vel/dt acceleration
-        // spike on frame 2). Position-only sources keep "no inherited
-        // motion" (unknown).
         field->has_prev_brush_pos = false;
         if (bp.has_dynamics) {
             brush_vel_3d = bp.vel;
@@ -732,9 +659,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
     }
     else if (field->has_prev_brush_pos) {
         if (bp.has_dynamics) {
-            // Analytic path: trust the sample's derivatives. accel /
-            // omega_dot stay differenced (one subtraction on exact values —
-            // no double amplification of position quantization noise).
             brush_vel_3d = bp.vel;
             if (dt > 1e-6f)
                 brush_accel_3d = (bp.vel - field->prev_brush_vel) / dt;
@@ -747,22 +671,12 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
                                  : 0.0f;
         }
         else {
-            // Legacy finite-difference path (captured input without
-            // derivatives). new_vel is the frame displacement; divide by dt
-            // to get TRUE velocity (units/s). The bristle shader uses
-            // brush_vel as a velocity (v_B = vel - brush_vel, vel = v_B +
-            // brush_vel) and the paper's Eq.2 Coriolis term is 2ω×v_B —
-            // feeding a per-frame displacement here made v_B 60× too small,
-            // so the bristles barely felt the brush's motion. With velocity
-            // units, brush_accel_3d below is a real acceleration (units/s²)
-            // and the rectilinear term a_B in Eq.2 is correct.
             glm::vec3 new_vel = (brush_pos_3d - field->prev_brush_pos) / dt;
             if (dt > 1e-6f)
                 brush_accel_3d = (new_vel - field->prev_brush_vel) / dt;
             brush_vel_3d = new_vel;
             brush_rotation = atan2(brush_vel_3d.y, brush_vel_3d.x);
 
-            // Angular velocity about canvas normal (Z), wrapped [-pi, pi].
             float prev_rot =
                 atan2(field->prev_brush_vel.y, field->prev_brush_vel.x);
             float dtheta = brush_rotation - prev_rot;
@@ -776,18 +690,13 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         }
     }
 
-    // Pen orientation → rotation-matrix rows for BristleConstants::brush_R*
-    // (columns of mat3_cast = world images of the local axes; the shader
-    // combines rot(v) = v.x*R0 + v.y*R1 + v.z*R2, see bristle_simulate).
     glm::quat brush_orientation = bp.orientation;
     glm::mat3 brush_rot_m = glm::mat3_cast(brush_orientation);
 
-    // [wb-pose] gate-A diagnostic (see docs §24): the pose that the whole
-    // downstream chain actually receives, per frame.
+    // 诊断探针(WB_DEBUG_DUMP_PTCL): 打印每帧笔刷位姿, 非论文内容。
     if (std::getenv("WB_DEBUG_DUMP_PTCL")) {
         static int pose_frame = 0;
-        // Tilt = angle between the pen axis (local -Z in world, i.e.
-        // -mat3_cast(q)·e_z) and the world-down direction: cos = R_col2.z.
+
         float tilt_deg = glm::degrees(
             acosf(std::min(1.0f, std::max(-1.0f, brush_rot_m[2].z))));
         spdlog::info(
@@ -805,16 +714,11 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
             bp.has_dynamics ? 1 : 0);
     }
 
-    // ======================================================================
-    // position_window — center the active window's dispatch range on a
-    // brush XY. Paper §4.2: "We update the window location at the beginning
-    // of each time step." Canvas cells are global/persistent and untouched
-    // by the move; the PERSISTENT window-sized fields (velocity family +
-    // the pressure warm-start) must be SCROLLED: their window-local layout
-    // is relative to the origin, so the overlap region is re-based and the
-    // cells left behind the window are discarded (no liquid motion outside
-    // it).
-    // ======================================================================
+    // ---- 活动窗口跟随(§4.2) ----
+    // "We update the window location at the beginning of each time step."
+    // 窗口中心跟随笔刷足印、夹取在画布内; 仅当整数原点变化时才把速度/
+    // 压力场滚动(window_scroll.slang)进新窗口系 —— 标量场是全局的,
+    // 无需滚动。每个笔画子步都调用, 保证足印始终落在窗口内。
     auto position_window = [&](float bx, float by) {
         int old_ox = field->win_origin_x;
         int old_oy = field->win_origin_y;
@@ -834,11 +738,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         field->win_origin_set = true;
 
         if (first || (new_wox == old_ox && new_woy == old_oy))
-            return;  // no move (or no prior window to scroll from)
+            return;
 
-        // Scroll the persistent window fields: vel_x/y/z + pressure_a.
-        // window_scroll writes the re-based contents into a scratch buffer
-        // (same size), then we swap handles so the field keeps the data.
         if (!field->window_scroll_program)
             field->window_scroll_program =
                 Ruzino::brush_compile_shader(rc, "window_scroll.slang");
@@ -869,10 +770,17 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         rc.destroy(scroll_cb);
     };
 
-    // ======================================================================
-    // deposit_at — the full Wetbrush §4.1 bristle deposit pipeline at one
-    // sub-step brush pose (brush_paint_sim ~1115-1373).
-    // ======================================================================
+    // ---- §4.1 一次求值的完整序列(参数为子步插值后的位姿) ----
+    //  1) bristle_simulate: Eq.1 顶点变换入笔刷系; Eq.2 显式积分四项惯性
+    //     加速度(平动/离心/Euler/科氏), β_B=0.05 ∈ 论文 [0,0.1] —— β_B
+    //     越小越接近"位置式钉在笔刷上"; a_i 只含重力 + 网格液拖拽(结构/
+    //     剪切内力不走 Eq.2, 由 PBD 约束承担, 见 shader 头注)。
+    //  2) 密度约束(§4.1 末段, PBF 式最小密度约束): mode0 算 ρ 与 Lagrange
+    //     乘子 λ, mode1 施加位置修正, 共 3 轮 —— 复现笔毛受压簇拥效应。
+    //  3) bristle_resample: 三次 Hermite 样条上取 S 个样本 + 最小扭转局部
+    //     系(Bishop 1975 / Bergou 2008; §4.1 "Bristle samples and frames")。
+    //  4) 清空笔毛栅格并(可选)栅格化: 样本写入 ψ 密度 / 速度 / 颜色场,
+    //     作为网格流体的边界条件(§4.1 末句); 抬笔悬空时 deposit=false。
     auto deposit_at = [&](const glm::vec3& sub_pos,
                           const glm::vec3& sub_vel,
                           const glm::vec3& sub_accel,
@@ -928,9 +836,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         bc.sweep_steps = 1;
         bc._sweep_pad0 = 0.0f;
         bc._sweep_pad1 = 0.0f;
-        // Pen orientation rows (StrokeSample.orientation → mat3 columns).
-        // Identity = upright brush; bristle_simulate builds the footprint
-        // disk and the bristle growth axis from these.
+
         bc.brush_R0 = glm::vec4(brush_rot_m[0], 0.0f);
         bc.brush_R1 = glm::vec4(brush_rot_m[1], 0.0f);
         bc.brush_R2 = glm::vec4(brush_rot_m[2], 0.0f);
@@ -939,9 +845,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         Ruzino::brush_upload_cb(
             rc, device, &bc, sizeof(bc), "wb_bristle_cb", bristle_cb);
 
-        // Step 1: Bristle spring dynamics. Pass the grid velocity field so
-        // bristles feel the grid-liquid drag (paper §4.1 Eq.2: a_i includes
-        // "drag force due to the grid-based liquid flow").
         Ruzino::brush_dispatch(
             rc,
             field->bristle_sim_program,
@@ -952,8 +855,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
             bristle_cb,
             Nb);
 
-        // Step 2: Density constraint (PBF), 3 iterations, each mode 0
-        // then 1.
         int total_verts = Nb * M;
         for (int dc_iter = 0; dc_iter < 3; dc_iter++) {
             for (int mode : { 0, 1 }) {
@@ -976,8 +877,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
             }
         }
 
-        // Step 3: Resample bristle chains -> samples (with user paint
-        // color)
         Ruzino::brush_dispatch(
             rc,
             field->bristle_resample_program,
@@ -990,7 +889,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
             bristle_cb,
             Nb);
 
-        // Step 4: Clear bristle accumulation grids
         auto clear_bristle_grid = [&](auto& buf) {
             Ruzino::brush_dispatch(
                 rc,
@@ -1008,16 +906,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         clear_bristle_grid(field->bristle_color_y);
         clear_bristle_grid(field->bristle_color_b);
 
-        // Step 5: Rasterize samples -> accumulation grids. SKIPPED on
-        // pen-up relax steps (deposit=false): a hovering brush must not
-        // stamp ψ or velocity BCs — the Step-4 clear then leaves "no brush
-        // in the fluid", which is exactly what the projection should see.
-        // Paper §4.2: dried cells are solid in PRESSURE PROJECTION (fluid
-        // divergence/Jacobi/gradient), not here. The rasterize shader
-        // splats each sample at its actual position; the fluid solve
-        // deflects new paint around/above dried cells. (Earlier "deposit
-        // climbs above solid" SRVs removed — that hack broke strokes at
-        // higher grid res.)
         if (deposit) {
             Ruzino::brush_dispatch(
                 rc,
@@ -1036,38 +924,13 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
                 Nb * S);
         }
 
-        // Step 6 (bristle -> main-grid merge) is intentionally OMITTED.
-        //
-        // Paper §5 (line 218): "brush bristles are not in direct contact
-        // with grid-based liquid." The bristle density/color/velocity
-        // rasterized above are NOT paint mass to inject into the grid — per
-        // paper §4.1 (line 118) and §4.2 (line 124) they serve only as (a)
-        // the sample capacity field ψ for §5.1 Eq.12 (read by
-        // bristle_liquid_transfer as bristle_psi), and (b) boundary
-        // conditions for pressure projection (§4.2, applied in
-        // fluid_divergence/jacobi/gradient).
-        //
-        // Paint enters the grid by exactly one path: bristle sample liquid
-        // overload (m_j > (1+ε)M_j, §5.1) → emit particles → particle
-        // rasterize → bristle_merge (the fluid-node dispatch that merges
-        // ptcl_* into the main grid, a paper-faithful §5.2 transfer).
-        //
-        // The previous Step 6 dispatched bristle_merge here to add
-        // bristle_density/color/vel/wetness/oil straight into the main grid
-        // every sub-step. That was a non-conservative direct injection
-        // (density[gidx] += bd, mass created each frame) and the root cause
-        // of unbounded paint growth ("white bloat"). It also duplicated the
-        // particle path, so paint was injected twice. bristle_merge.slang
-        // itself is retained — the fluid node still uses it for the
-        // particle rasterize → grid transfer.
-
         rc.destroy(bristle_cb);
     };
 
-    // ======================================================================
-    // SUB-STEP LOOP (brush_paint_sim ~1383-1478). Subdivide the frame
-    // displacement into <= one brush-diameter steps; deposit at each.
-    // ======================================================================
+    // ---- 笔画子步 ----
+    // 论文允许单帧笔刷位移任意大; 若整帧只求值一次, 足印会在画布上"瞬移"
+    // 并撕裂窗口覆盖。按位移 ≤ max(笔刷直径, 一格) 切成 n_sub 段(上限
+    // 128), 每子步在段中点插值位置重跑窗口跟随 + §4.1 序列, dt_sub=dt/n_sub。
     {
         int n_sub = 1;
         if (field->has_prev_brush_pos) {
@@ -1088,8 +951,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
                     field->has_prev_brush_pos
                         ? glm::mix(field->prev_brush_pos, brush_pos_3d, t)
                         : brush_pos_3d;
-                // Vel/omega are instantaneous rates (NOT divided by n_sub);
-                // only the integration time dt_sub shrinks per sub-step.
+
                 glm::vec3 sub_vel = brush_vel_3d;
                 glm::vec3 sub_accel = brush_accel_3d;
                 float sub_rot = brush_rotation;
@@ -1106,17 +968,10 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
                     sub_omega,
                     sub_omega_dot,
                     dt_sub,
-                    /*deposit=*/true);
+                    true);
             }
         }
         else {
-            // Pen UP — relax step. Paper §4.1 simulates the bristle
-            // dynamics independent of canvas contact, so the chains keep
-            // following the hovering pen (descend/lift phases included).
-            // ONE step at the frame dt, no substeps (nothing is being
-            // deposited), and deposit=false: no ψ/BC raster (the Step-4
-            // clear zeroes the bristle fields — the fluid sees no brush
-            // while hovering).
             position_window(brush_pos_3d.x, brush_pos_3d.y);
             deposit_at(
                 brush_pos_3d,
@@ -1126,70 +981,70 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
                 brush_angular_vel,
                 brush_angular_accel,
                 dt,
-                /*deposit=*/false);
+                false);
         }
 
-        // Record this frame's brush center + velocity for the next frame.
         field->prev_brush_pos = brush_pos_3d;
         field->has_prev_brush_pos = true;
         field->prev_brush_vel = brush_vel_3d;
         field->prev_angular_vel = brush_angular_vel;
     }
 
-    // ======================================================================
-    // PHASE 2 — §5.1 bristle <-> particle liquid exchange (ex-node
-    // brush_wb_bristle): ABSORB (grid paint -> sample, Eq.12/13 capacity)
-    // then EMIT (over-capacity sample -> FLIP particles).
-    //
-    // The ex-node's guards (!field / !is_simulating /
-    // !particles_initialized) are invariants here: phase 1 allocated the
-    // field and initialized the particle buffers, and the !is_simulating
-    // exit above has already returned. All locals (field, rc, device,
-    // WIN_*, Nb, S, brush_radius) carry over from phase 1.
-    // ======================================================================
     const int max_ptcl = WetbrushSimState::MAX_PARTICLES;
 
-    // ======================================================================
-    // §5.1 Bristle-particle liquid transfer (brush_paint_sim ~1531-1612).
-    // ABSORB (paint supply -> sample using Eq.12/13 capacity) then EMIT
-    // (sample -> particles). Ping-pong on sample_liquid.
-    //
-    // PEN-UP GATING: a pen-up brush is not painting — skip both passes. The
-    // ungated version kept absorbing the dip supply and emitting at the
-    // (stalled) sample positions while the fluid node skipped particle
-    // maintenance on pen-up frames, so the pool filled with particles that
-    // could never deposit (+emit_budget/frame, wrapping MAX_PARTICLES on a
-    // long pen-up tail).
-    // ======================================================================
+    // ---- 笔毛↔粒子液体转移(§5.1, 落笔时; 抬笔帧整段跳过 —— 残余
+    // swarm 落布不被吸回, 见 particle_to_grid 的 pen-up 分支) ----
+    // 常数取 Table 1: μ=0.5(Eq.12 拥挤折扣), ε=0.1(发射迟滞), ρ0=12.3
+    // (论文 1.0e3 kg/m³ 按 1u=1cm 重标定), M_max=0.30。两次 dispatch:
+    //   transfer(PASS 0 吸收): 蘸笔帧把载量置为 M'_j(Eq.12 按当前拥挤
+    //     度打折的容量); 非蘸笔帧执行 Eq.14 粒子质量吸收 —— 未饱和
+    //     样本(m_j < M_j)认领半径 R_j 内的一个粒子: 质量并入 m_j、
+    //     颜料按 Eq.14 混入 c_j、粒子消亡(原子认领防双花)。这是论文
+    //     "笔从画布拾回颜料"的通路(§5.2 g2p 转出的粒子被毛尖吸走,
+    //     随笔带走); 饱和样本只做色彩渗染、不取质量(§5.1: 饱和仍可
+    //     拾色)。每样本每步至多处理一个接触(与发射侧对偶节流)。
+    //   emit(PASS 1 发射): m_j > (1+ε)·M_j 时按 Fig.10 下半球模式发射
+    //     新粒子(继承样本速度/颜料), 每样本每步限 max_emit_per_step=1
+    //     (§5.1: "set a limit on the maximum number of particles that
+    //     can be absorbed or emitted by a sample per time step"),
+    //     另有全局出生预算 WB_EMIT_BUDGET 兜底。
     if (field->pen_down) {
         Ruzino::BristleLiquidConstants blc = {};
         blc.num_bristles = Nb;
         blc.samples_per_bristle = S;
         blc.mu = 0.5f;
-        // M_max bounds the emission radius R_j = cbrt(3*M_max/(4π*ρ₀)). R_j
-        // must stay well inside D1 so newborns ride the adhesion bulb; with
-        // ρ₀=6.0, M_max=0.15 → R_j≈0.18 cm ≈ 0.36×brush_radius (paper ratio
-        // ~0.35). M_max and ρ₀ move TOGETHER (M_max = dip size — how long a
-        // stroke one dip paints; ρ₀ keeps R_j constant): the pair (0.03, 2e4)
-        // drained a dip in ~15 frames at the old 1u=27.5cm scale; (0.15, 1e5)
-        // carried 5× the paint at the same R_j. In the current 1u=1cm scale the
-        // pair is (0.15, 6.0) — same R_j ≈ 0.18 cm. Larger M_max without
-        // raising ρ₀ scatters emitted particles past the brush (wide diffuse
-        // blob instead of a stroke). Also the dip load (m_j = M_max at
-        // stroke_start) — shared constant.
+
         blc.M_max = WetbrushSimState::WB_M_MAX;
         blc.M_min = 0.005f;
         blc.rho_0 = 12.3f;
-        blc.eps_emit = 0.1f;
-        // §5.1 emission smoothing: "To further smoothen the liquid transfer
-        // process, we also set a limit on the maximum number of particles that
-        // can be absorbed or emitted by a sample per time step." 10/step let a
-        // saturated dip dump HALF the ink charge in the first ~5 frames at the
-        // touchdown point (174K particles / 5762 mass airborne at frame 5), and
-        // the stroke then ran dry. 1/step paces the same drawable mass
-        // (M_max − (1+ε)M_j ≈ 0.1/sample) over ~50 frames — a full stroke —
-        // at paper particle density (§7: 210K–2M).
-        blc.max_emit_per_step = 1;
+        // ε 出墨滞回带 —— 论文 Table 1 值 0.1。2026-09-03 A/B 实测（账本
+        // probe _wb_inkvalve_*）证伪了"0.002 过冲跨不过滞回带"假设：
+        // ε=0.01 vs 0.1 落布 47% vs 46%、尾段增长 1,484 vs 1,444，无实质
+        // 差异 —— 样本平台的真正机制是 m_j = M_j 完美停滞（无表面 → 无压
+        // 缩 → 容量不降 → 按设计不出墨），根本不在滞回带里。默认保持论文
+        // 原文值；WB_EMIT_EPS=<v> 仅作 A/B 用。
+        blc.eps_emit = [] {
+            const char* e = std::getenv("WB_EMIT_EPS");
+            float v = e ? static_cast<float>(std::atof(e)) : 0.1f;
+            return v > 0.0f ? v : 0.1f;
+        }();
+
+        // Emission throttle sweep knobs (paper §5.1 sets "a limit on the
+        // maximum number of particles ... per time step" without a value):
+        // WB_EMIT_PER_STEP   — per-sample births/step (paper cap; default 1)
+        // WB_EMIT_MASS_SCALE — multiplier on per-birth mass
+        //                      max(M_j*0.05, 0.002) (default 1)
+        static const int emit_per_step = [] {
+            const char* env = std::getenv("WB_EMIT_PER_STEP");
+            return env ? std::max(std::atoi(env), 1) : 1;
+        }();
+        blc.max_emit_per_step = emit_per_step;
+        static const float emit_mass_scale = [] {
+            const char* env = std::getenv("WB_EMIT_MASS_SCALE");
+            float v = env ? static_cast<float>(std::atof(env)) : 1.0f;
+            return v > 0.0f ? v : 1.0f;
+        }();
+        blc.emit_mass_scale = emit_mass_scale;
         blc.grid_res = field->grid_res;
         blc.grid_res_z = WIN_Z;
         blc.height_extent = field->grid_height;
@@ -1200,25 +1055,13 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         blc.grid_center_y = field->grid_center.y;
         blc.D0 = brush_radius * 3.0f;
         blc.max_particles = max_ptcl;
-        // Global per-step particle-creation cap. PAPER-FAITHFUL DEFAULT = OFF
-        // (0): the paper bounds emission only per SAMPLE ("a limit on the
-        // maximum number of particles that can be absorbed or emitted by a
-        // sample per time step") and its typical run holds 210K–2M particles.
-        // With the dip model (mass = the finite stroke_start saturation), the
-        // total emitted mass is bounded by the dip itself — no per-frame
-        // minting to throttle. The env var stays as a pool-overflow escape
-        // hatch for extreme test configurations.
+
         static const int emit_budget = [] {
             const char* env = std::getenv("WB_EMIT_BUDGET");
             return env ? std::max(std::atoi(env), 0) : 0;
         }();
         blc.emit_budget = emit_budget;
-        // Per-frame entropy for the EMIT budget's probabilistic pre-gate (see
-        // bristle_liquid_transfer.slang) — the moving brush position
-        // decorrelates the gate draw across frames. The deposit node (which
-        // runs before this one in the zone chain) stores THIS frame's
-        // grid-local position in prev_brush_pos at its end, so it is current
-        // here.
+
         blc.brush_pos_x = field->prev_brush_pos.x;
         blc.brush_pos_y = field->prev_brush_pos.y;
         blc.brush_pos_z = field->prev_brush_pos.z;
@@ -1227,8 +1070,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         blc.window_origin_z = 0;
         blc.window_size_x = WIN_XY;
         blc.window_size_z = WIN_Z;
-        // Dip request from the deposit node (stroke_start): the ABSORB pass
-        // initializes m_j = M'_j(ψ) in-shader this frame.
+
         blc.dip_frame = field->dip_frame ? 1 : 0;
         field->dip_frame = false;
 
@@ -1236,7 +1078,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         Ruzino::brush_upload_cb(
             rc, device, &blc, sizeof(blc), "wb_liquid_cb", liquid_cb);
 
-        // Lazily compile the liquid shaders (they live in the field).
         if (!field->bri_liquid_transfer_program)
             field->bri_liquid_transfer_program = Ruzino::brush_compile_shader(
                 rc, "bristle_liquid_transfer.slang");
@@ -1244,8 +1085,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
             field->bri_liquid_emit_program =
                 Ruzino::brush_compile_shader(rc, "bristle_liquid_emit.slang");
 
-        // Pass 0: ABSORB (color bleeding; sample_liquid SRV -> sample_liquid_b
-        // UAV)
         Ruzino::brush_dispatch(
             rc,
             field->bri_liquid_transfer_program,
@@ -1256,25 +1095,18 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
               { "grid_density", field->density },
               { "grid_color_r", field->color_r },
               { "grid_color_y", field->color_y },
-              { "grid_color_b", field->color_b } },
-            { { "sample_liquid_out", field->sample_liquid_b } },
+              { "grid_color_b", field->color_b },
+              // Eq.14 吸收: 读上一帧压实后的粒子池([0, counter) 紧凑存活),
+              // 经 pt_alive 的原子认领杀掉被吸收粒子(仅 PASS 0 声明这些绑定)
+              { "ptcl_pos", field->ptcl_pos },
+              { "ptcl_color", field->ptcl_color },
+              { "ptcl_counter_srv", field->ptcl_counter } },
+            { { "sample_liquid_out", field->sample_liquid_b },
+              { "pt_alive", field->ptcl_alive } },
             liquid_cb,
             Nb * S);
         std::swap(field->sample_liquid, field->sample_liquid_b);
 
-        // Pass 1: EMIT (sample -> particles, hemisphere pattern).
-        //
-        // Do NOT reset the counter here. Paper §4.3: "Our system needs 200K to
-        // 1M particles" that survive across frames. The counter is owned by the
-        // fluid node's compact step, which resets it to 0 and rewrites only the
-        // alive particles into [0, count). EMIT appends past that count via
-        // InterlockedAdd. The previous reset here zeroed the counter every
-        // frame, destroying the survivors the compact step had preserved and
-        // breaking particle persistence — new particles overwrote slot 0+ and
-        // the §5.1-emitted paint never accumulated.
-        //
-        // The EMIT budget counter IS reset here: it bounds births per step, so
-        // it must start from zero every frame.
         Ruzino::brush_reset_counter(rc, device, field->emit_budget);
         Ruzino::brush_dispatch(
             rc,
@@ -1302,33 +1134,14 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         rc.destroy(liquid_cb);
     }
 
-    // ======================================================================
-    // PHASE 3 — particle cycle + grid fluid solve + §5.2 transfers (ex-node
-    // brush_wb_fluid): particle update + swarm raster + momentum merge,
-    // substepped grid solve, Eq.16 deposit / Eq.15 drain, pool compaction.
-    //
-    // Pen-up frames still run this phase (damp/dry + particle maintenance)
-    // exactly like the monolith's pen-up handling — paint keeps settling.
-    // The ex-node's guards (!field / !is_simulating) are invariants here;
-    // the fluid-solve sockets below are the only inputs phase 1 didn't
-    // read.
-    // ======================================================================
     float viscosity = params.get_input<float>("Viscosity");
     float diffusion = params.get_input<float>("Diffusion Rate");
     float drying_rate = params.get_input<float>("Drying Rate");
 
     const int window_total = win_n3d;
-    // Full-grid cell count for global drying (§4.2: "increase the dryness
-    // of EVERY grid cell"). Drying must be global so paint that the active
-    // window has moved past still dries — otherwise previously painted
-    // strokes never harden and can't act as solid cells that deflect later
-    // strokes.
+
     const int global_n3d = field->grid_res * field->grid_res * WIN_Z;
 
-    // [wb-xfer] stage probes (WB_LEDGER_PROBE=1): full-global density sum
-    // at four pipeline stations, to localize which stage destroys mass.
-    // Full 268MB readbacks — tail frames only (plus one mid-stroke
-    // reference).
     static int xfer_frame = 0;
     const bool ledger_probe = [] {
         const char* e = std::getenv("WB_LEDGER_PROBE");
@@ -1374,39 +1187,19 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         }
         spdlog::info("[wb-xfer] f={} {} sum={:.1f} neg={}", xf, tag, sum, negs);
     };
-    probe_grid_sum("A_in");
+    probe_grid_sum("A_in");  // 质量账本探针(WB_LEDGER_PROBE), 非论文内容
 
-    // Brush pose (grid-local) — brush_pos_3d carries over from phase 1
-    // (same bp.pos minus grid_center). The ex-fluid node never computed
-    // pose derivatives and fed ZERO accel / omega_dot to the particle CBs;
-    // keep that validated behavior (phase 1's real accel would change the
-    // particle-update dynamics — its own A/B, not this refactor).
-    brush_accel_3d = glm::vec3(0.0f);
-    brush_angular_accel = glm::vec3(0.0f);
+    // 笔刷平动/角加速度按论文原样下传: 粒子 Eq.9 的牵连平动项 a_B 与
+    // Euler 角加速度项经 β_L=0.1 衰减后进入局部系积分(此前这里强制清零
+    // 属旧行为遗留, 已按论文复位; 若再现加速度尖峰伪影, 先查输入数据)。
 
-    // Grid↔particle conversion + adhesion ranges (paper §5.2 Table 1).
-    // WORLD SCALE 1 unit = 1 cm (doc §33), so the paper's SI values apply
-    // VERBATIM: D0 = 1 cm, D1 = 0.3 cm — and our brush (radius 0.5 cm ≈ the
-    // paper's ~0.55 cm brush) makes the paper's own absolute numbers the
-    // right calibration, replacing the earlier brush-relative inference (D0
-    // = 1.8 R, D1 = 0.55 R). Note the ride time grows (~D0 shell width /
-    // relative speed): the paper's head-to-trail mass ratio converges over
-    // LONG strokes, which a short test cannot show.
-    // R_j consistency: the §5.1 emission radius R_j = cbrt(3·M_max/(4π·ρ₀))
-    // with M_max = WB_M_MAX and ρ₀ = 6.0 (below, phase 2) gives
-    // R_j ≈ 0.18 cm = 0.36 R < D1 = 0.3 cm, so newborn particles still ride
-    // the brush through Eq.10's adhesion blend max(1 − d_B/D1, 0) ≈ 0.4–1
-    // inside the emission shell.
+    // Table 1 参数(1u=1cm): D0=1cm 网格↔粒子转换半径(§5.2 / Figure 5),
+    // D1=0.3cm 笔毛粘附力程(Eq.10)。
     const float D0 = 1.0f;
     const float D1 = 0.3f;
-    // §5.2 "moves slowly": the paper gives no number. Real units now — a
-    // trail's liquid behind the brush settles below ~2 cm/s.
-    // WB_DEPOSIT_SLOW=<v>: override the threshold (cm/s). v<=0 disables the
-    // slow gate entirely (threshold → huge): a particle deposits the moment
-    // it leaves the bristles' D0 ball, closing the 1-2 frame raster→canvas
-    // handoff gap behind the wet head (see the window-edge flicker
-    // diagnosis). Physics knob — the paper's literal gate IS "moves slowly",
-    // so 0 is a deliberate departure from the literal reading.
+
+    // §5.2 Eq.16 的 "moves slowly" 门(论文未给数值): 慢于 ~2cm/s 才把
+    // 质量还给网格; WB_DEPOSIT_SLOW 可覆盖, 0 = 关门(无条件沉积)。
     const float slow_deposit_speed = [] {
         const char* env = std::getenv("WB_DEPOSIT_SLOW");
         if (!env)
@@ -1415,12 +1208,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         return v > 0.0f ? v : 1.0e30f;
     }();
 
-    // Gravity (world units/s²): 1 unit = 1 cm → g = 981 cm/s² = 981 u/s².
-    // Applied to particles (§4.3 a_k "including the gravity and the
-    // friction") and to fluid cells (§4.2 standard Eulerian external force
-    // — the grid liquid previously had NO force and hovered where
-    // deposited). Direction-adjustable for experiments via
-    // WB_GRAVITY_X/Y/Z.
+    // 重力(默认 -981 cm/s², 1u=1cm 标定): 供粒子 Eq.9 的外部加速度 a_k
+    // 与网格体力(damp_dry)使用。
     const glm::vec3 gravity = [] {
         auto envf = [](const char* k, float d) {
             const char* v = std::getenv(k);
@@ -1432,17 +1221,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
             envf("WB_GRAVITY_Z", -981.0f));
     }();
 
-    // Lazily compile the fluid + particle shaders (ensure_prog from the
-    // phase-1 preamble).
     ensure_prog(field->advect_program, "fluid_advect.slang");
-    // Scalar advection scheme. PAPER-FAITHFUL DEFAULT = semi-Lagrangian
-    // (§4.2: "we advect all of the fields using the semi-Lagrangian method")
-    // — the same shader as velocity. The conservative upwind flux-form
-    // variant (f4ba3b43 mass-ledger fix, validated at −0.03% over a
-    // 135-frame stroke) stays selectable via WB_SCALAR_ADVECT=upwind:
-    // semi-Lagrangian interpolation of the EXTENSIVE canvas fields is not
-    // mass-conserving, so the escape hatch exists for ledger hunts and
-    // extreme configurations.
+
     static const char* scalar_advect_shader = [] {
         const char* env = std::getenv("WB_SCALAR_ADVECT");
         return env && std::strcmp(env, "upwind") == 0
@@ -1465,17 +1245,28 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
     ensure_prog(field->grid_to_ptcl_program, "grid_to_particle.slang");
     ensure_prog(field->field_copy_window_program, "field_copy_window.slang");
 
-    // ======================================================================
-    // PARTICLE EMIT + UPDATE (brush_paint_sim ~1614-1833)
-    // Only when there is active deposit this frame. The monolith gates this
-    // on new_count > 0; in streaming each active frame is "new".
-    // ======================================================================
+    // ---- 粒子液体更新 + 联合速度场(§4.3, 落笔时) ----
+    // 常数: δ=friction_delta=5/D0=1/0.2cm(Table 1 摩擦力程), γ=flip_gamma
+    // =0.8(Eq.11 混合系数), D1=0.3cm(Eq.10 粘附力程)。
+    // [偏离] 粒子 dt 硬编码 0.016s(60fps 帧长), 不随真实帧时长缩放。
+    // 流程 = §4.3:
+    //   ① particle_update — Eq.8 固体摩擦(1-δ·d_k)² + Eq.9 最近笔毛样本
+    //     局部系积分(β_L=0.1 ∈ 论文 [0,0.2], 四项惯性加速度) + Eq.10 按
+    //     max(1-d_B/D1, 0) 与画布系显式积分结果混合 —— 两步法以位置方式
+    //     实现粘附(Figure 8b), 避开刚性粘附力的显式积分不稳定;
+    //   ② 清空后 particle_rasterize — 粒子栅格化为密度/速度/颜色场
+    //     (§4.3 末段 "we rasterize them into density and velocity fields");
+    //   ③ bristle_merge — 粒子动量并入网格速度, 得联合速度场 u, 下方
+    //     粘度/压力投影即在联合场上进行(§4.3: "we perform them on the
+    //     joint velocity field"), 实现粒子↔网格液体的双向耦合。合并只改
+    //     速度: 质量入网格仅经 §5.2 的 particle_to_grid(否则供给→发射→
+    //     栅格化的回路每帧凭空造质量)。
     if (field->particles_initialized && bp.active) {
         Ruzino::ParticleConstants pc = {};
         pc.max_particles = max_ptcl;
         pc.dt = 0.016f;
         pc.D0 = D0;
-        pc.pen_down = 1;  // this whole section is gated on bp.active
+        pc.pen_down = 1;
         pc.friction_delta = 5.0f / D0;
         pc.flip_gamma = 0.8f;
         pc.grid_res = field->grid_res;
@@ -1496,11 +1287,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         pc.brush_pos_z = brush_pos_3d.z;
         pc.brush_radius = brush_radius;
         pc.D1 = D1;
-        // Brush linear velocity for the Eq.9/10 two-step (the closest
-        // sample's frame translates with the brush). prev_brush_vel is
-        // updated by the deposit node at the END of each frame, so here it
-        // holds the LAST frame's velocity — correct as v_frame for the
-        // frame-constant strokes the tests drive.
+
         pc.brush_vel_x = field->prev_brush_vel.x;
         pc.brush_vel_y = field->prev_brush_vel.y;
         pc.brush_vel_z = field->prev_brush_vel.z;
@@ -1520,23 +1307,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         Ruzino::brush_upload_cb(
             rc, device, &pc, sizeof(pc), "wb_ptcl_cb", ptcl_cb);
 
-        // Paint-particle emission is handled ENTIRELY by the bristle node's
-        // §5.1 EMIT pass (bristle_liquid_emit.slang): bristle sample liquid
-        // overloads (m_j > (1+ε)M_j) and releases particles carrying its
-        // pigment c_j and the excess mass. That is the paper's only paint
-        // -> particle path (§5.1).
-        //
-        // The previous emit-mode-0 / emit-mode-1 dispatches here
-        // (particle_emit.slang) are DISABLED. They were decoupled from the
-        // §5.1 capacity model: mode 0 fired once per bristle sample every
-        // frame based on the global ink_amount (not m_j/M_j overload), and
-        // mode 1 minted zero-pigment particles from grid density. Together
-        // they flooded the pool and bypassed the sample-liquid
-        // conservation, so paint mass grew without bound.
-        // particle_emit.slang is kept on disk (not dispatched) for
-        // reference.
-
-        // Update particles (ping-pong)
         Ruzino::brush_dispatch(
             rc,
             field->ptcl_update_program,
@@ -1558,8 +1328,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         std::swap(field->ptcl_vel, field->ptcl_vel_b);
         std::swap(field->ptcl_alive, field->ptcl_alive_b);
 
-        // Clear particle accum grids (variadic — MSVC init-list chokes on
-        // RefCountPtr<IBuffer>* element types, see deposit.cpp).
         auto clear_grid = [&](auto& buf) {
             Ruzino::brush_dispatch(
                 rc,
@@ -1577,7 +1345,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         clear_grid(field->ptcl_rast_y);
         clear_grid(field->ptcl_rast_b);
 
-        // Rasterize particles
         Ruzino::brush_dispatch(
             rc,
             field->ptcl_raster_program,
@@ -1595,7 +1362,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
             ptcl_cb,
             max_ptcl);
 
-        // Merge particle grids into main grids
         Ruzino::SimConstants mc2 = {};
         mc2.res = field->grid_res;
         mc2.cell_size = cell_sz;
@@ -1608,9 +1374,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         mc2.window_size_x = WIN_XY;
         mc2.window_size_y = WIN_XY;
         mc2.window_size_z = WIN_Z;
-        // Swarm→grid momentum coupling scale (bristle_merge relaxation
-        // gate; see the quadratic-momentum note there). WB_VEL_INJECT tunes
-        // it.
+
         static const float vel_inject_scale = [] {
             const char* env = std::getenv("WB_VEL_INJECT");
             return env ? std::max(std::atof(env), 0.0) : 1.0;
@@ -1620,10 +1384,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         Ruzino::brush_upload_cb(
             rc, device, &mc2, sizeof(mc2), "wb_ptcl_merge_cb", merge_cb);
 
-        // WB_DISABLE_MERGE=1: diagnostic bisect — skip the swarm→grid
-        // momentum merge entirely (velocity family keeps whatever the fluid
-        // solve alone produces). Used to attribute the press-phase grid
-        // velocity buildup (blob-test explosion hunt). NOT a physics knob.
         static const bool disable_merge = [] {
             const char* env = std::getenv("WB_DISABLE_MERGE");
             return env && std::atoi(env) == 1;
@@ -1645,20 +1405,9 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         rc.destroy(merge_cb);
         rc.destroy(ptcl_cb);
     }
+    // 抬笔(不做粒子更新): 清空粒子/笔毛栅格累加器, 避免陈旧足印在压力
+    // 投影中被当作固体边界。
     else if (field->particles_initialized) {
-        // Brush up / no deposit this frame: the raster grids still hold the
-        // last active frame's swarm splat. pack_float4 composites them into
-        // the render field, so a stale raster would ghost paint that the
-        // maintenance pass is simultaneously depositing into the canvas —
-        // double-visible mass. Clear the 4 pack-relevant raster grids (the
-        // vel rasters have no reader outside the merge above).
-        //
-        // ALSO clear the BRISTLE raster (density + velocities): the bristle
-        // node skips pen-up frames, so its rasterized boundary otherwise
-        // persists as GHOST NO-FLUX WALLS at the brush's last position —
-        // the pressure projection kept diverging around walls that no
-        // longer exist, one suspected driver of the blob test's pen-up
-        // velocity churn and mass advection.
         nvrhi::BufferHandle* rast_bufs[] = {
             std::addressof(field->ptcl_density),
             std::addressof(field->ptcl_rast_r),
@@ -1680,14 +1429,10 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         }
     }
 
-    // ======================================================================
-    // FLUID SOLVE (brush_paint_sim ~1971-2468). One or more substeps based
-    // on the frame dt (capped at 16). Each substep: velocity diffuse ->
-    // project
-    // -> advect velocity -> re-project -> advect scalars -> diffuse scalars
-    // -> damp/dry -> FLIP velocity update.
-    // ======================================================================
-    float sim_dt = std::min(dt, 0.05f);  // dt from the top-of-frame preamble
+    // ---- 网格流体求解(§4.2, 活动窗口内) ----
+    // sim_dt 上限 0.05s; 子步长 ≤ 2 格(CFL 式), 至多 16 子步 —— 粘度
+    // 扩散与半拉格朗日平流在大步长下的稳定性手段之一。
+    float sim_dt = std::min(dt, 0.05f);
     int wox = field->win_origin_x;
     int woy = field->win_origin_y;
 
@@ -1698,18 +1443,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         substeps = std::min(substeps, 16);
         float sub_dt = sim_dt / static_cast<float>(substeps);
 
-        // Velocity decay control (fluid_damp_dry applies it once per
-        // substep, so convert: damp_sub = frame_damp^(1/substeps)).
-        // PAPER-FAITHFUL DEFAULT = OFF (1.0): the paper eliminates trailing
-        // velocity via (a) strong §4.2 viscosity diffusion — the implicit
-        // Jacobi at a = dt·visc·N² ≈ 500 homogenizes the window velocity
-        // each substep, diluting localized momentum to ~the window mean,
-        // and (b) the dryness threshold zeroing velocity, plus the bounded
-        // §4.3 particle-velocity merge. This global multiplier was a
-        // temporary stand-in from the era when the merge accumulated
-        // momentum quadratically (see bristle_merge.slang); it stays
-        // env-tunable
-        // (<1.0) as an escape hatch for stroke-speed extremes.
         static const float vel_damp_frame = [] {
             const char* env = std::getenv("WB_VEL_DAMP");
             float v = env ? std::atof(env) : 1.0f;
@@ -1720,12 +1453,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
                 ? std::pow(vel_damp_frame, 1.0f / static_cast<float>(substeps))
                 : 1.0f;
 
-        // DIAGNOSTIC (WB_STAGE_DUMP=1): per-stage |vel| maxima for the f12
-        // eruption hunt. The velocity field cannot grow new maxima through
-        // convex stages (diffuse = neighbor average, semi-Lagrangian advect
-        // = convex sample), so the first stage whose max jumps is the
-        // injector. Reads back the WINDOW-SIZED vel buffers + div/pressure
-        // after each project. Substep 0 only. NOT a physics knob.
         static const bool stage_dump = [] {
             const char* env = std::getenv("WB_STAGE_DUMP");
             return env && std::atoi(env) == 1;
@@ -1759,9 +1486,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
                 mx = std::max(mx, std::fabs(v));
             return mx;
         };
-        // Same readback but also reports the argmax window-local
-        // coordinates (lx, ly, lz) of the |max| cell — needed to tell WHICH
-        // face of WHICH cell a projection-stage spike lives at.
+
         auto buf_absmax_loc = [&](const nvrhi::BufferHandle& buf,
                                   int& lx,
                                   int& ly,
@@ -1857,6 +1582,19 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
                 buf_absmax(field->pressure_a));
         };
 
+        // 每子步顺序(§4.2 标准欧拉求解, 作用在 §4.3 的联合速度场上):
+        //  1) vel→vel_old 备份(Eq.11 里的旧场 u(p_k));
+        //  2) 粘度: 每分量 3 次隐式 Jacobi, α=dt·ν/h²;
+        //  3) 压力投影 #1(Algorithm 1, 见 project);
+        //  4) 速度半拉格朗日平流(Stam 1999, 窗口局部系);
+        //  5) 压力投影 #2(平流后再投一次; 论文 Algorithm 1 每步一次,
+        //     此处属加强, 抵制平流引入的散度);
+        //  6) 标量场平流: density/颜色 RYB/wetness/oil_density(全局场,
+        //     默认半拉格朗日; WB_SCALAR_ADVERT=upwind 为守恒迎风逃生口);
+        //  7) 干燥/固化: 全局 wetness 衰减(§4.2 "increase the dryness of
+        //     every grid cell") + 窗口速度阻尼/重力体力/干化单元清零
+        //     (§4.2 "we ignore its velocity ... as a solid cell");
+        //  8) FLIP/PIC 粒子速度修正(Eq.11)。
         for (int s = 0; s < substeps; s++) {
             Ruzino::SimConstants fluid_cb = {};
             fluid_cb.res = field->grid_res;
@@ -1876,21 +1614,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
             fluid_cb.window_size_x = WIN_XY;
             fluid_cb.window_size_y = WIN_XY;
             fluid_cb.window_size_z = WIN_Z;
-            // Brush-interior boundary for pressure projection (paper §4.2):
-            // bristle-occupied cells act as no-flux walls. The gate is
-            // small so only cells genuinely under bristles block the flow;
-            // empty cells and thin paint do not. bristle_density is the
-            // §4.1 rasterized field (window-sized), bound into
-            // divergence/jacobi/ gradient. See those shaders' is_brush_g.
-            //
-            // Diagnostic bisect switches for the blob-test f12 eruption
-            // hunt (NOT physics knobs): WB_NO_PROJECT=1 skips both pressure
-            // projections; WB_NO_BRUSH_WALL=1 disables the §4.2 bristle
-            // no-flux/moving-wall BC (gate huge → is_brush_g always false).
-            // The gate MUST be decided BEFORE cb_buf is uploaded below —
-            // the divergence/gradient dispatches inside project() reuse
-            // cb_buf, so patching fluid_cb afterwards silently did nothing
-            // and the WB_NO_BRUSH_WALL bisect was invalid.
+
             static const bool no_project = [] {
                 const char* env = std::getenv("WB_NO_PROJECT");
                 return env && std::atoi(env) == 1;
@@ -1899,12 +1623,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
                 const char* env = std::getenv("WB_NO_BRUSH_WALL");
                 if (env && std::atoi(env) == 1)
                     return 1e9f;
-                // Tunable via WB_WALL_GATE (default 0.01: only cells
-                // genuinely under bristles count as brush interior). A
-                // 0.001 gate ("any splat") was tested for the blob lift
-                // trail and made no difference — the trail cells carry no
-                // bristle splat at all (sample mass is depleted by lift
-                // time).
+
                 const char* gate_env = std::getenv("WB_WALL_GATE");
                 return gate_env ? static_cast<float>(
                                       std::max(std::atof(gate_env), 0.0))
@@ -1912,8 +1631,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
             }();
             fluid_cb.brush_boundary_gate = wall_gate;
             fluid_cb.velocity_damp = vel_damp_sub;
-            fluid_cb.copy_mode =
-                0;  // window→window (both buffers window-sized)
+            fluid_cb.copy_mode = 0;
             fluid_cb.advect_field_window_local = 0;
             fluid_cb.gravity_x = gravity.x;
             fluid_cb.gravity_y = gravity.y;
@@ -1923,16 +1641,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
             Ruzino::brush_upload_cb(
                 rc, device, &fluid_cb, sizeof(fluid_cb), "wb_fluid_cb", cb_buf);
 
-            // Snapshot velocity for FLIP (Eq.11 needs pre-projection vel).
-            // The active window is a NON-CONTIGUOUS block inside the global
-            // buffer (each row of WIN_XY cells is separated by res−WIN_XY
-            // stride cells), so a plain copyBuffer(src, dst, win_n3d) would
-            // copy the CORNER block at offset 0 — wrong once the window
-            // moves off the corner. The previous code did exactly that, so
-            // FLIP read stale corner velocities at particle positions
-            // (vel_old was only ever valid at the grid corner).
-            // field_copy_window maps each window cell to its global index
-            // and copies that exact cell.
             Ruzino::brush_dispatch(
                 rc,
                 field->field_copy_window_program,
@@ -1954,25 +1662,16 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
                 { { "dst_field", field->vel_z_old } },
                 cb_buf,
                 win_n3d);
-            // brush_dispatch submits internally; ensure the snapshot lands
-            // before the solve dispatches read vel_*_old.
+
             device->waitForIdle();
             if (s == 0)
                 vel_stage("pre_diffuse");
 
-            // Velocity diffuse (Jacobi, mode 0)
             fluid_cb.jacobi_mode = 0;
-            // Stam implicit-diffusion number a = dt·ν/h² with h the CELL
-            // SIZE in world units (h = paper_size/res). The transcription's
-            // dt·ν·N² silently assumed a unit-size domain (h = 1/N) and
-            // held only while paper_size was 1. The 1u=1cm rescale
-            // (paper_size=10) overstated ν by paper² = 100×: a ≈ 5.5e3 made
-            // each sweep an almost-exact window mean, dragging the wake at
-            // brush speed — deposits flickered (Eq.15 drained the trail
-            // into particles that inherited the homogenized velocity and
-            // never satisfied the slow-deposit gate) and the per-frame
-            // window scroll left sawtooth scales. Viscosity is now a
-            // kinematic viscosity in cm²/s.
+
+            // 隐式粘度扩散: (I - dt·ν∇²) v_new = v_old 的 Jacobi 迭代,
+            // α=dt·ν/h²(ν 单位 cm²/s); 每分量 3 次, 欠收敛的近似粘性
+            // (fluid_jacobi mode 0, Neumann 边界)。
             fluid_cb.jacobi_alpha = sub_dt * viscosity / (cell_sz * cell_sz);
             {
                 nvrhi::BufferHandle jcb;
@@ -1983,17 +1682,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
                     sizeof(fluid_cb),
                     "wb_jacobi_cb",
                     jcb);
-                // NOTE: do NOT use &field->vel_x here. RefCountPtr
-                // overloads operator&() to return IBuffer**
-                // (resource.h:307), so the unary-& yields a pointer to the
-                // ptr_ MEMBER, not to the RefCountPtr object — a downstream
-                // std::swap then swaps raw IBuffer* values, bypassing
-                // refcount accounting and corrupting the handles. This was
-                // the cause of field->vel_x becoming NULL mid-solve (crash
-                // in requireBufferState). std::addressof bypasses the
-                // overloaded operator& and returns the true BufferHandle*,
-                // so *addr is a correct BufferHandle& alias that swaps
-                // through the RefCountPtr move operators.
+
                 nvrhi::BufferHandle* vel_pairs[3][2] = {
                     { std::addressof(field->vel_x),
                       std::addressof(field->vel_x_tmp) },
@@ -2005,14 +1694,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
                 for (auto& pp : vel_pairs) {
                     nvrhi::BufferHandle& in = *pp[0];
                     nvrhi::BufferHandle& out = *pp[1];
-                    // Paper-style solver iteration (§4.2/Algorithm 1 uses
-                    // three fixed-point iterations): several Jacobi sweeps
-                    // per substep actually resolve the implicit high-
-                    // viscosity diffusion. ONE sweep left local spikes
-                    // (moving-wall injections, venturi through the brush
-                    // gap) alive at ~10x brush speed, which advected the
-                    // trail into torn bands; 3 sweeps spread the momentum
-                    // over the √α≈22-cell diffusion radius at a lower peak.
+
                     for (int vs = 0; vs < 3; vs++) {
                         Ruzino::brush_dispatch(
                             rc,
@@ -2022,10 +1704,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
                               { "wetness", field->wetness },
                               { "density", field->density },
                               { "bristle_density", field->bristle_density },
-                              // Mode 0 (diffuse) never reads the swarm
-                              // raster, but the shader DECLARES the slot —
-                              // an unbound declared slot fails binding-set
-                              // creation and the whole dispatch is skipped.
+
                               { "ptcl_density", field->ptcl_density } },
                             { { "field_out", out } },
                             jcb,
@@ -2038,7 +1717,14 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
             if (s == 0)
                 vel_stage("post_diffuse");
 
-            // Project (fixed-point, 3 iterations, 2 Jacobi each)
+            // 定点加速压力投影(Algorithm 1): L=3 轮, 每轮 = 散度 D=∇·u →
+            // 2 次 Jacobi(Eq.3 的 y-更新) → u -= ∇P; 共 6 次 Jacobi, α=1
+            // 免调参(§4.2: "three fixed-point iterations, or six Jacobi
+            // iterations")。Eq.5 的误差递推与 Chebyshev 半迭代法同构,
+            // 复数特征值使前几轮收敛最快(§4.2 / Figure 6)。边界条件
+            // (fluid_jacobi/divergence/gradient): 干化颜料与笔毛足印 =
+            // 固体(Neumann 镜面, §4.2 "treat it as a solid cell"), 空气
+            // = 自由面(Dirichlet p=0), 笔毛速度场作墙面速度。
             auto project = [&]() {
                 for (int fp = 0; fp < 3; fp++) {
                     Ruzino::brush_dispatch(
@@ -2103,10 +1789,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
                 }
             };
 
-            // Diagnostic bisect switches (definitions live with the CB
-            // upload above, where they actually take effect): WB_NO_PROJECT
-            // skips both pressure projections; WB_NO_BRUSH_WALL sets the
-            // projection wall gate to 1e9 via the uploaded CB.
             if (!no_project)
                 project();
             if (s == 0) {
@@ -2114,9 +1796,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
                 solve_stage("after_project1");
             }
 
-            // Advect velocity. See diffuse note above: std::addressof is
-            // required because RefCountPtr::operator&() returns IBuffer**.
-            // field_in is the window-local velocity itself → the flag CB.
             fluid_cb.advect_field_window_local = 1;
             nvrhi::BufferHandle advect_vel_cb;
             Ruzino::brush_upload_cb(
@@ -2153,7 +1832,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
             if (s == 0)
                 vel_stage("post_advect");
 
-            // Re-project
             if (!no_project)
                 project();
             if (s == 0) {
@@ -2161,18 +1839,12 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
                 solve_stage("after_project2");
             }
 
-            // Advect scalars (density, color, wetness, oil_density). These
-            // are GLOBAL canvas fields: read globally (flag 0, the main
-            // cb_buf), advected into the WINDOW-SIZED tmp, then copied back
-            // over the window region (field_copy_window mode 2). No buffer
-            // swap — the tmp and the field have different sizes.
+            // 标量场平流(§4.2: "we advect all of the fields using the
+            // semi-Lagrangian method"): 画布标量是全局场, 回溯在全局坐标,
+            // 结果写窗口 tmp 后整窗拷回(copy_mode=2)。上方的速度平流则
+            // 全程在窗口局部系内进行。
             fluid_cb.copy_mode = 2;
-            // field_in is the GLOBAL canvas field: the semi-Lagrangian
-            // shader reads it globally only under flag 0, and the velocity
-            // section above left advect_field_window_local at 1
-            // (window-local). Reset it here. The upwind shader (the
-            // WB_SCALAR_ADVECT=upwind escape hatch) ignores the flag — it
-            // reads field_in globally by construction.
+
             fluid_cb.advect_field_window_local = 0;
             nvrhi::BufferHandle advect_scalar_cb;
             Ruzino::brush_upload_cb(
@@ -2182,15 +1854,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
                 sizeof(fluid_cb),
                 "wb_adv_scalar_cb",
                 advect_scalar_cb);
-            // Paper §4.2: "we advect all of the fields using the
-            // semi-Lagrangian method" — the scalars ride the same scheme as
-            // the velocity (shader chosen at the ensure_prog above; default
-            // semi-Lagrangian, WB_SCALAR_ADVECT=upwind restores the
-            // conservative flux-form). Window-tmp out + window→global copy
-            // back, same plumbing as the velocity family. Known trade-off,
-            // kept deliberately: value-based semi-Lagrangian interpolation
-            // does not conserve an extensive field — see the ledger notes in
-            // fluid_advect_upwind.slang's header.
+
             auto advect_scalar = [&](nvrhi::BufferHandle& f,
                                      nvrhi::BufferHandle& tmp) {
                 Ruzino::brush_dispatch(
@@ -2219,26 +1883,12 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
             advect_scalar(field->oil_density, field->oil_density_tmp);
             rc.destroy(advect_scalar_cb);
 
-            // NOTE: no scalar diffusion step here. Paper §4.2/§5.1 line 209
-            // applies viscosity to the VELOCITY field only (done in
-            // fluid_damp_dry.slang as per-cell drag), NOT to density/color/
-            // wetness scalars. A previous Jacobi-mode-0 diffusion of the
-            // scalars (alpha = dt*diffusion*N² ≈ 26 at res 512) was eroding
-            // stroke edges below the render threshold every frame, which
-            // looked like the finished stroke contracting/shrinking over
-            // time. Removing it matches the paper and eliminates the
-            // shrink.
-
-            // Damp + dry. Dispatched over the FULL grid (not just the
-            // active window) so that paint left behind by a moving brush
-            // still dries (§4.2: "increase the dryness of every grid
-            // cell"). Velocity damp on empty cells is a no-op (their
-            // velocity is already zero). Damp + dry, split along the buffer
-            // residency (see fluid_damp_dry.slang): a GLOBAL wetness-only
-            // pass so paint left behind by a moving brush still dries
-            // (§4.2: "increase the dryness of every grid cell"), and a
-            // WINDOW velocity pass (the velocity family only exists inside
-            // the window).
+            // 干燥/固化两连发(§4.2): mode0 全局 —— wetness 按 drying_rate
+            // 衰减(即 dryness 增加; §4.2 对"每个网格单元"执行, 与窗口无
+            // 关); mode1 窗口 —— 速度阻尼(WB_VEL_DAMP, 默认关) + 流体单元
+            // 重力体力(经投影转为沿画布的摊铺) + 干化颜料单元速度清零
+            // ("once the dryness ... reaches a threshold, we ignore its
+            // velocity")。注意空单元 ≠ 干化单元(见 fluid_damp_dry.slang)。
             fluid_cb.damp_mode = 0;
             nvrhi::BufferHandle damp_global_cb;
             Ruzino::brush_upload_cb(
@@ -2278,12 +1928,17 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
                 window_total);
             rc.destroy(damp_window_cb);
 
-            // FLIP/PIC velocity update for particles
+            // FLIP/PIC 粒子速度修正(Eq.11):
+            //   v_k = γ·ū(p_k) + (1-γ)·(v_k + ū(p_k) - u(p_k))
+            // 分别采样子步求解前(vel_*_old)与求解后(vel_*)的网格速度;
+            // γ=0.8 偏向 PIC(平滑稳定, Table 1)。论文: 网格速度场保留到
+            // 下一帧, 兼作笔毛拖拽(§4.1)与粒子/网格边界的追踪依据(免
+            // 额外速度外推)。
             if (field->particles_initialized) {
                 Ruzino::ParticleConstants pc = {};
                 pc.max_particles = max_ptcl;
                 pc.dt = sub_dt;
-                pc.D0 = D0;  // match particle/maintenance D0
+                pc.D0 = D0;
                 pc.flip_gamma = 0.8f;
                 pc.grid_res = field->grid_res;
                 pc.grid_res_z = WIN_Z;
@@ -2330,17 +1985,22 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         }
     }
 
-    // ======================================================================
-    // POST-FLUID particle maintenance (brush_paint_sim ~2470-2566)
-    // ======================================================================
+    // ---- 网格↔粒子液体转移(§5.2, 每帧一次) ----
+    // ① particle_to_grid(Eq.16): 离全部笔毛样本超过 D0 且行进缓慢的粒子,
+    //    按归一化 W 核把质量/RYB 颜色 scatter 回全局密度场后消亡 ——
+    //    颜料"落布"即此步; 落点 wetness 置满(新沉积为湿, 由干燥步风干)。
+    // ② grid_to_particle(Eq.15): 窗口内密度>0、未干透(§4.2 干透的颜料
+    //    是固体, 不得被重新液化)、位于笔毛 D0 邻域的单元, 分层采样 27
+    //    个候选转成粒子, 并按 W 核从密度/颜色场扣除对应质量 —— host 先
+    //    把全局场拷进窗口 tmp 作种子(copy_mode=1), shader 原子减, 再整窗
+    //    拷回(copy_mode=2), 保证 Eq.15 读-改-写与网格↔粒子往返严格守恒。
+    // ③ particle_compact: 压实粒子池(剔除消亡粒子, 复位计数器)。
     if (field->particles_initialized) {
         Ruzino::ParticleConstants pc = {};
         pc.max_particles = max_ptcl;
         pc.dt = 0.016f;
-        pc.D0 = D0;  // match particle-section D0
-        // D1 (adhesion range, Eq.10) — grid_to_particle drains within D0
-        // per paper §5.2; D1 is carried for reference but unused by the
-        // drain.
+        pc.D0 = D0;
+
         pc.D1 = D1;
         pc.grid_res = field->grid_res;
         pc.grid_res_z = WIN_Z;
@@ -2362,22 +2022,14 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         pc.brush_vel_x = field->prev_brush_vel.x;
         pc.brush_vel_y = field->prev_brush_vel.y;
         pc.brush_vel_z = field->prev_brush_vel.z;
-        // num_bristles / samples_per_bristle: REQUIRED by
-        // particle_to_grid's d_{B,k} nearest-sample query (§5.2). Without
-        // these, num_samples = 0, the scan finds no bristle, d_B defaults
-        // to sqrt(1e30)≈3e15, and EVERY particle reads as "far from
-        // bristles" → instant deposit, regardless of D0. This was the
-        // hidden reason widening D0/D1 had no effect: the d_B was always
-        // astronomically larger than any D0.
+
         pc.num_bristles = Nb;
         pc.samples_per_bristle = S;
         pc.slow_deposit_speed = slow_deposit_speed;
         pc.gravity_x = gravity.x;
         pc.gravity_y = gravity.y;
         pc.gravity_z = gravity.z;
-        // Pen state for the §5.2 conversions below: pen-up deposits the
-        // carried swarm (d_{B,k} vs stalled samples means nothing) and
-        // suspends grid→particle conversion.
+
         pc.pen_down = bp.active ? 1 : 0;
 
         nvrhi::BufferHandle maint_cb;
@@ -2386,9 +2038,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
 
         probe_grid_sum("B_solve");
 
-        // Particle to grid (deposit distant slow particles, §5.2 Eq.16).
-        // Binds sample_pos so the shader can compute d_{B,k} (distance to
-        // the nearest bristle sample) instead of the brush-center distance.
         Ruzino::brush_dispatch(
             rc,
             field->ptcl_to_grid_program,
@@ -2408,17 +2057,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         std::swap(field->ptcl_alive, field->ptcl_alive_b);
         probe_grid_sum("C_p2g");
 
-        // Grid to particle (emit near brush, Eq.15 density subtraction).
-        // No counter reset: append past the survivors (compact left them at
-        // [0, counter), so InterlockedAdd writes into freed dead slots).
-        //
-        // Paper §5.2: "c can be any cell near new particles and it does not
-        // have to emit any particle." Each emitted particle subtracts its
-        // mass (weighted by W) from its 3×3×3 neighborhood, NOT just its
-        // emitting cell. The *_out tmps are WINDOW-SIZED: seed them from
-        // the global canvas fields over the window (field_copy_window mode
-        // 1), let the shader subtract, then copy the results back (mode 2).
-        // No buffer swap — the tmp and the field have different sizes.
         {
             Ruzino::SimConstants seed_cb = {};
             seed_cb.res = field->grid_res;
@@ -2429,7 +2067,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
             seed_cb.window_size_x = WIN_XY;
             seed_cb.window_size_y = WIN_XY;
             seed_cb.window_size_z = WIN_Z;
-            seed_cb.copy_mode = 1;  // global → window
+            seed_cb.copy_mode = 1;
             nvrhi::BufferHandle g2p_copy_cb;
             Ruzino::brush_upload_cb(
                 rc,
@@ -2464,8 +2102,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
               { "vel_x", field->vel_x },
               { "vel_y", field->vel_y },
               { "vel_z", field->vel_z },
-              // §4.2 dryness gate: the drain must not resurrect dried-solid
-              // paint (doc §34 trail-flicker fix).
+
               { "wetness", field->wetness } },
             { { "ptcl_counter", field->ptcl_counter },
               { "ptcl_pos", field->ptcl_pos },
@@ -2478,7 +2115,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
               { "color_b_out", field->color_b_tmp } },
             maint_cb,
             win_n3d);
-        // Copy the subtracted window regions back into the global fields.
+
         {
             Ruzino::SimConstants writeback_cb = {};
             writeback_cb.res = field->grid_res;
@@ -2489,7 +2126,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
             writeback_cb.window_size_x = WIN_XY;
             writeback_cb.window_size_y = WIN_XY;
             writeback_cb.window_size_z = WIN_Z;
-            writeback_cb.copy_mode = 2;  // window → global
+            writeback_cb.copy_mode = 2;
             nvrhi::BufferHandle g2p_wb_cb;
             Ruzino::brush_upload_cb(
                 rc,
@@ -2516,12 +2153,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         }
         probe_grid_sum("D_g2p");
 
-        // Particle compaction. Zero the OUTPUT alive buffer first: compact
-        // only writes packed survivors' flags, so slots above the live
-        // count must be cleared by us or they keep the ping-pong buffer's
-        // stale alive=1 flags (deposited particles resurrected at their
-        // pre-deposit positions every frame, re-depositing their mass — see
-        // particle_compact.slang).
         Ruzino::brush_dispatch(
             rc,
             field->field_clear_program,
@@ -2552,6 +2183,7 @@ NODE_EXECUTION_FUNCTION(brush_wb_sim)
         rc.destroy(maint_cb);
     }
 
+    // 状态写回输出, 由仿真区在帧末搬入 simulation_in 供下一帧使用(反馈环)。
     params.set_output("State", zs);
     return true;
 }

@@ -1,13 +1,23 @@
 // Bristle-Particle Liquid Transfer — Wetbrush Section 5.1
-// Models per-sample liquid capacity M_j, absorption, emission, and color bleeding.
+// Models per-sample liquid capacity M_j, ABSORPTION (Eq.14), emission, and
+// color bleeding.
 //
 // Two passes:
-//   Pass 0 (ABSORB): color bleeding only — a (saturated) sample in contact
-//     with grid paint picks up its hue (§5.1 "we still allow the color
-//     mixing process to happen"). Mass does NOT flow here: the dip
-//     initialization (m_j = M_max at stroke_start, deposit node) is the only
-//     mass source, per the paper's initial-state treatment of a dipped
-//     brush. (The paper's Eq.14 particle absorption is not implemented.)
+//   Pass 0 (ABSORB):
+//     - DIP frame (stroke_start): load initialized to M'_j (Eq.12 with the
+//       current crowding), pigment = supply color.
+//     - Eq.14 particle absorption: an UNSATURATED sample (m_j < M_j)
+//       claims one liquid particle within radius R_j — the particle's mass
+//       joins m_j, its pigment mixes into c_j (Color_Mix weighted by the
+//       PRE-add masses), and the particle is removed (atomic claim-kill so
+//       two samples can never spend the same particle). This is the paper's
+//       brush-pickup path: paint that the §5.2 Eq.15 drain converted into
+//       particles near the bristles flows back INTO the brush here and
+//       travels with the stroke.
+//     - Saturated samples do color bleeding only (§5.1: "we still allow
+//       the color mixing process to happen") — from grid paint and from a
+//       contact particle, no mass, no kill. One contact processed per
+//       sample per step, mirroring the paper's per-step transfer cap.
 //
 //   Pass 1 (EMIT): Bristle samples → particles.
 //     - If m_j > (1+ε) M_j: emit excess as particles in hemisphere pattern
@@ -58,6 +68,18 @@ RWStructuredBuffer<uint> ptcl_alive_out : register(u5);
 
 #ifndef PASS
 #define PASS 0
+#endif
+
+// --- PASS 0 only: Eq.14 particle absorption (paper §5.1) ---
+// Reads the particle pool (last compacted state: alive particles are densely
+// packed in [0, ptcl_counter)) and claims absorbed particles through an
+// atomic kill on pt_alive (RW view: read + InterlockedExchange). Guarded by
+// PASS so the EMIT (PASS 1) binding set stays unchanged.
+#if PASS == 0
+StructuredBuffer<float4> ptcl_pos : register(t9);
+StructuredBuffer<float4> ptcl_color : register(t10);  // RYB pigment + mass(.w)
+ByteAddressBuffer ptcl_counter_srv : register(t11);
+RWStructuredBuffer<uint> pt_alive : register(u6);
 #endif
 
 // Per-particle emission mass floor (EMIT). Small particles at paper density:
@@ -257,8 +279,8 @@ void main(uint3 tid : SV_DispatchThreadID)
 
 #if PASS == 0
     // ================================================================
-    // ABSORB — paper §5.1: MASS enters the samples only through the dip
-    // initialization (stroke_start) and only through EMIT afterwards.
+    // ABSORB — paper §5.1: capacity (Eq.12/13), dip initialization,
+    // Eq.14 particle absorption, color bleeding.
     // ================================================================
 
     // DIP (stroke_start frame): "dipped full" means saturated to the
@@ -275,6 +297,54 @@ void main(uint3 tid : SV_DispatchThreadID)
         dipped.pigment = s_color.rgb;  // ink color (resampled input color)
         sample_liquid_out[idx] = dipped;
         return;
+    }
+
+    // ---- Eq.14 ABSORPTION (paper §5.1 "Absorption", Fig.10 left) ----
+    // One contact processed per sample per step (the paper caps transfers
+    // per sample per step; emission is capped the same way):
+    //   - unsaturated (m_j < M_j): claim ONE particle within radius R_j —
+    //     mass joins m_j, pigment mixes into c_j with the PRE-add masses
+    //     (Eq.14), particle is killed. The kill is an InterlockedExchange
+    //     claim: exactly one sample thread wins a contested particle, so
+    //     its mass moves exactly once (particle → sample, no double-spend;
+    //     the later p2g pass skips dead particles, so it cannot also land
+    //     on the grid).
+    //   - saturated (m_j >= M_j): color bleeding only (§5.1: "we still
+    //     allow the color mixing process to happen") — mix the contact
+    //     particle's hue into c_j, keep mass and particle alive.
+    // A freshly-emitted swarm is NOT re-swallowed: right after EMIT the
+    // sample sits at m_j ≈ (1+ε)·M_j >= M_j (saturated), and only when the
+    // capacity later rises (canvas contact ends / crowding relaxes, Eq.13)
+    // does pickup engage. Particle positions are the last compacted pool
+    // state (one frame stale vs the samples) — a contact-process inexact-
+    // ity, not a conservation leak. Pen-up frames never reach this pass
+    // (host gates §5.1 on pen_down), so the settling pen-up swarm stays on
+    // the canvas.
+    {
+        float R_j =
+            pow(3.0 * M_prime / (4.0 * 3.14159265 * cb.rho_0), 1.0 / 3.0);
+        float r2 = R_j * R_j;
+        uint n_scan =
+            min(ptcl_counter_srv.Load(0), (uint)cb.max_particles);
+        for (uint k = 0; k < n_scan; k++) {
+            if (pt_alive[k] == 0u) continue;
+            float3 d = s_pos - ptcl_pos[k].xyz;
+            if (dot(d, d) > r2) continue;  // outside the capacity sphere
+            float4 pk = ptcl_color[k];     // RYB pigment + mass in .w
+            float m_k = pk.w;
+            if (m_j < M_j) {
+                uint claimed;
+                InterlockedExchange(pt_alive[k], 0u, claimed);
+                if (claimed == 0u) continue;  // lost the race → next k
+                c_j = (m_k + m_j > 1e-9)
+                          ? color_mix(pk.xyz, c_j, m_k, m_j)
+                          : pk.xyz;
+                m_j += m_k;
+            } else if (m_k > 1e-9) {
+                c_j = color_mix(pk.xyz, c_j, m_k, m_j);
+            }
+            break;  // one contact per sample per step
+        }
     }
 
     // Real paint near the sample in the grid (density-weighted RYB). Color
@@ -315,8 +385,11 @@ void main(uint3 tid : SV_DispatchThreadID)
     // Excess mass to emit. Paper §5.1 emission smoothing: one SMALL particle
     // per sample per step (max_emit_per_step=1, per_particle ≈ 0.002) paces a
     // saturated dip over a whole stroke instead of dumping it at touchdown.
+    // cb.emit_mass_scale (WB_EMIT_MASS_SCALE) is the sweep knob for that
+    // pacing: higher = fatter droplets / faster drain, same paper mechanism.
     float excess = m_j - emit_threshold_high;
-    float per_particle = max(M_j * 0.05, PER_PARTICLE_FLOOR);
+    float per_particle =
+        max(M_j * 0.05, PER_PARTICLE_FLOOR) * cb.emit_mass_scale;
     int num_emit = int(ceil(excess / per_particle));
     num_emit = min(num_emit, cb.max_emit_per_step);
 

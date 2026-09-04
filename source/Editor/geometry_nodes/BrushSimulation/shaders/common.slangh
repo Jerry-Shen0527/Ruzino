@@ -517,6 +517,11 @@ struct BristleLiquidConstants {
     // with the current crowding) — "dipped full" means full to the capacity
     // the bristle geometry actually allows, not the uncrowded M_max.
     int dip_frame;
+    // Emitted-particle mass multiplier (host env WB_EMIT_MASS_SCALE, default
+    // 1): per_particle = max(M_j*0.05, 0.002) * scale. Scalar appended at the
+    // scalar tail — the past CB misalignment bug was a float4 appended after
+    // scalars (host 4B vs slang 16B alignment); scalar offsets match.
+    float emit_mass_scale;
 };
 
 #endif

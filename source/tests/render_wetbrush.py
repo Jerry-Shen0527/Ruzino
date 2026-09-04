@@ -127,6 +127,14 @@ def build_sim_graph(sim_usd: Path):
         (pen, "Speed"):
             float(os.environ.get("WB_PEN_SPEED", "2.5")),
         (pen, "Hover Z"): 0.2,
+        # Press depth: 0 = tips graze the canvas (§34-era fixture). Negative =
+        # pressed INTO the paper — bristles splay, the shaft samples enter the
+        # Eq.13 R_j contact band, releasing more of the dip into play (the
+        # 2026-09-03 ink-supply diagnosis: only samples within ~R_j of a
+        # surface ever emit; a 5 cm stroke from a graze-press dries after
+        # ~1.5 cm because the body ink never activates).
+        (pen, "Press Z"):
+            float(os.environ.get("WB_PEN_PRESS_Z", "0.0")),
         # Shape: "line" (legacy wavy stroke) | "circle" | "square" |
         # "figure8". Closed shapes are arc-length normalized (Length =
         # perimeter, Cycles = loops); every shape eases in/out so the pen

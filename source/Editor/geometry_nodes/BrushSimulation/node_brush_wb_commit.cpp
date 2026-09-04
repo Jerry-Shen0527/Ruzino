@@ -114,6 +114,77 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
     const int max_ptcl = WetbrushSimState::MAX_PARTICLES;
 
     // ======================================================================
+    // Census: read back the alive-particle state (count / pos / color / alive
+    // flag). Runs BEFORE the pack block below — the render-window placement
+    // needs the particle cloud's mass centroid on the host. The waitForIdle
+    // here also drains the sim's dispatches, which is what makes this and all
+    // later readbacks valid.
+    // ======================================================================
+    int ptcl_count = 0;
+    float ptcl_mass = 0.0f;
+    std::vector<float> ptcl_positions;
+    std::vector<float> ptcl_colors;
+    std::vector<uint32_t> ptcl_alive_flags;
+    if (field->particles_initialized && field->ptcl_counter) {
+        uint32_t cnt = 0;
+        auto rb = rc.create(
+            nvrhi::BufferDesc{}
+                .setByteSize(sizeof(uint32_t))
+                .setCpuAccess(nvrhi::CpuAccessMode::Read)
+                .setDebugName("wb_ptcl_counter_rb"));
+        auto cmd = rc.create(CommandListDesc{});
+        cmd->open();
+        cmd->copyBuffer(rb, 0, field->ptcl_counter, 0, sizeof(uint32_t));
+        cmd->close();
+        device->executeCommandList(cmd);
+        device->waitForIdle();
+        void* mapped = device->mapBuffer(rb, nvrhi::CpuAccessMode::Read);
+        memcpy(&cnt, mapped, sizeof(uint32_t));
+        device->unmapBuffer(rb);
+        rc.destroy(rb);
+        rc.destroy(cmd);
+        ptcl_count = static_cast<int>(cnt);
+
+        if (ptcl_count > 0) {
+            int n = std::min(ptcl_count, max_ptcl);
+            constexpr int STRIDE = 4;
+            ptcl_positions.resize(n * STRIDE);
+            ptcl_colors.resize(n * STRIDE);
+            ptcl_alive_flags.resize(n);
+            auto read_structured =
+                [&](nvrhi::BufferHandle buf, int elem_bytes, void* dst) {
+                    auto rb2 = rc.create(
+                        nvrhi::BufferDesc{}
+                            .setByteSize(static_cast<size_t>(n) * elem_bytes)
+                            .setCpuAccess(nvrhi::CpuAccessMode::Read)
+                            .setDebugName("wb_ptcl_rb"));
+                    auto cmd2 = rc.create(CommandListDesc{});
+                    cmd2->open();
+                    cmd2->copyBuffer(
+                        rb2, 0, buf, 0, static_cast<size_t>(n) * elem_bytes);
+                    cmd2->close();
+                    device->executeCommandList(cmd2);
+                    device->waitForIdle();
+                    void* mapped2 =
+                        device->mapBuffer(rb2, nvrhi::CpuAccessMode::Read);
+                    memcpy(dst, mapped2, static_cast<size_t>(n) * elem_bytes);
+                    device->unmapBuffer(rb2);
+                    rc.destroy(rb2);
+                    rc.destroy(cmd2);
+                };
+            read_structured(
+                field->ptcl_pos, sizeof(float) * STRIDE, ptcl_positions.data());
+            read_structured(
+                field->ptcl_color, sizeof(float) * STRIDE, ptcl_colors.data());
+            read_structured(
+                field->ptcl_alive, sizeof(uint32_t), ptcl_alive_flags.data());
+            for (int i = 0; i < n; ++i)
+                if (ptcl_alive_flags[i] != 0)
+                    ptcl_mass += ptcl_colors[i * STRIDE + 3];
+        }
+    }
+
+    // ======================================================================
     // PACK + REGISTER: pack density/color into a Float4 buffer and register it
     // in the shared GPU buffer registry. The render rprim looks this up by key
     // to consume the paint field with zero copy (no CPU readback / USD primvar
@@ -130,9 +201,59 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
         pack_cb.res_z = field->grid_res_z;
         // Window mapping for the swarm-raster composite (pack_float4.slang):
         // window cells add the live particle mass, everything else is pure
-        // canvas grid. Origin follows the sim's current window.
-        pack_cb.window_origin_x = field->win_origin_x;
-        pack_cb.window_origin_y = field->win_origin_y;
+        // canvas grid. RENDER WINDOW FOLLOWS THE PARTICLES, not the §4.2
+        // solve window: pack only composites the swarm raster inside its
+        // window, so a brush-centered render window hard-cut black edges
+        // wherever riding paint straddled the boundary — the tilted-stroke
+        // wet head trails ~1.5cm behind the root at speed, and its
+        // out-of-window half rendered black for one cook, then "reappeared"
+        // when the window moved (pk cook-50 artifact: straight cut edges
+        // exactly at win_origin / win_origin+320). Paper §6 renders liquid
+        // particles screen-space — visible regardless of the solve window;
+        // the composite equivalent is to point the render raster at the
+        // particle cloud itself. Mass-weighted centroid ± half window,
+        // clamped to the grid: full coverage whenever the cloud's bbox fits
+        // the window allocation (320² cells), the densest part otherwise.
+        // The SIM window (vel/pressure solve, §4.2) keeps following the
+        // brush; these buffers are render scratch at this point in the
+        // frame (the sim's joint-field raster was already consumed).
+        const int WSX_WIN =
+            std::min(WetbrushSimState::win_alloc_xy(), field->grid_res);
+        int render_ox = field->win_origin_x;
+        int render_oy = field->win_origin_y;
+        {
+            const int n = static_cast<int>(ptcl_positions.size()) / 4;
+            double wsum = 0.0, wx = 0.0, wy = 0.0;
+            for (int i = 0; i < n; ++i) {
+                if (ptcl_alive_flags.empty() || ptcl_alive_flags[i] == 0)
+                    continue;
+                const float w = ptcl_colors[i * 4 + 3];
+                wx += w * ptcl_positions[i * 4 + 0];
+                wy += w * ptcl_positions[i * 4 + 1];
+                wsum += w;
+            }
+            if (wsum > 0.0) {
+                const double half_p = field->grid_paper * 0.5;
+                const double ccx =
+                    (wx / wsum - field->grid_center.x + half_p) / cell_sz;
+                const double ccy =
+                    (wy / wsum - field->grid_center.y + half_p) / cell_sz;
+                render_ox = std::max(
+                    0,
+                    std::min(
+                        static_cast<int>(ccx) - WSX_WIN / 2,
+                        field->grid_res - WSX_WIN));
+                render_oy = std::max(
+                    0,
+                    std::min(
+                        static_cast<int>(ccy) - WSX_WIN / 2,
+                        field->grid_res - WSX_WIN));
+            }
+        }
+        field->render_win_origin_x = render_ox;
+        field->render_win_origin_y = render_oy;
+        pack_cb.window_origin_x = render_ox;
+        pack_cb.window_origin_y = render_oy;
         pack_cb.window_origin_z = 0;
         pack_cb.window_size_x =
             std::min(WetbrushSimState::win_alloc_xy(), field->grid_res);
@@ -190,8 +311,8 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
             pc.grid_center_z = field->grid_center_z;
             pc.cell_size = cell_sz;
             pc.paper_size = field->grid_paper;
-            pc.window_origin_x = field->win_origin_x;
-            pc.window_origin_y = field->win_origin_y;
+            pc.window_origin_x = render_ox;
+            pc.window_origin_y = render_oy;
             pc.window_origin_z = 0;
             pc.window_size_x = WSX;
             pc.window_size_z = field->grid_res_z;
@@ -354,70 +475,6 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
         auto ptcl_d_cpu = readback(field->ptcl_density, win_n3d_diag);
         for (int i = 0; i < win_n3d_diag; ++i)
             ptcl_d_sum += ptcl_d_cpu[i];
-    }
-
-    int ptcl_count = 0;
-    float ptcl_mass = 0.0f;
-    std::vector<float> ptcl_positions;
-    std::vector<float> ptcl_colors;
-    std::vector<uint32_t> ptcl_alive_flags;
-    if (field->particles_initialized && field->ptcl_counter) {
-        uint32_t cnt = 0;
-        auto rb = rc.create(
-            nvrhi::BufferDesc{}
-                .setByteSize(sizeof(uint32_t))
-                .setCpuAccess(nvrhi::CpuAccessMode::Read)
-                .setDebugName("wb_ptcl_counter_rb"));
-        auto cmd = rc.create(CommandListDesc{});
-        cmd->open();
-        cmd->copyBuffer(rb, 0, field->ptcl_counter, 0, sizeof(uint32_t));
-        cmd->close();
-        device->executeCommandList(cmd);
-        device->waitForIdle();
-        void* mapped = device->mapBuffer(rb, nvrhi::CpuAccessMode::Read);
-        memcpy(&cnt, mapped, sizeof(uint32_t));
-        device->unmapBuffer(rb);
-        rc.destroy(rb);
-        rc.destroy(cmd);
-        ptcl_count = static_cast<int>(cnt);
-
-        if (ptcl_count > 0) {
-            int n = std::min(ptcl_count, max_ptcl);
-            constexpr int STRIDE = 4;
-            ptcl_positions.resize(n * STRIDE);
-            ptcl_colors.resize(n * STRIDE);
-            ptcl_alive_flags.resize(n);
-            auto read_structured =
-                [&](nvrhi::BufferHandle buf, int elem_bytes, void* dst) {
-                    auto rb2 = rc.create(
-                        nvrhi::BufferDesc{}
-                            .setByteSize(static_cast<size_t>(n) * elem_bytes)
-                            .setCpuAccess(nvrhi::CpuAccessMode::Read)
-                            .setDebugName("wb_ptcl_rb"));
-                    auto cmd2 = rc.create(CommandListDesc{});
-                    cmd2->open();
-                    cmd2->copyBuffer(
-                        rb2, 0, buf, 0, static_cast<size_t>(n) * elem_bytes);
-                    cmd2->close();
-                    device->executeCommandList(cmd2);
-                    device->waitForIdle();
-                    void* mapped2 =
-                        device->mapBuffer(rb2, nvrhi::CpuAccessMode::Read);
-                    memcpy(dst, mapped2, static_cast<size_t>(n) * elem_bytes);
-                    device->unmapBuffer(rb2);
-                    rc.destroy(rb2);
-                    rc.destroy(cmd2);
-                };
-            read_structured(
-                field->ptcl_pos, sizeof(float) * STRIDE, ptcl_positions.data());
-            read_structured(
-                field->ptcl_color, sizeof(float) * STRIDE, ptcl_colors.data());
-            read_structured(
-                field->ptcl_alive, sizeof(uint32_t), ptcl_alive_flags.data());
-            for (int i = 0; i < n; ++i)
-                if (ptcl_alive_flags[i] != 0)
-                    ptcl_mass += ptcl_colors[i * STRIDE + 3];
-        }
     }
 
     // ======================================================================
@@ -769,12 +826,14 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
             }
             spdlog::info(
                 "[wb-raster-sum] cook={} sum={:.3f} max={:.4f} "
-                "win_origin=({},{})",
+                "win_origin=({},{}) render_origin=({},{})",
                 px_frame - 1,
                 sum,
                 mx,
                 field->win_origin_x,
-                field->win_origin_y);
+                field->win_origin_y,
+                field->render_win_origin_x,
+                field->render_win_origin_y);
         }
     }
 

@@ -398,6 +398,11 @@ struct BristleLiquidConstants {
     // initializes m_j = M'_j(ψ) (Eq.12 with the CURRENT crowding), instead of
     // the host pre-writing m_j = M_max. See bristle_liquid_transfer.slang.
     int dip_frame;
+    // Emitted-particle mass multiplier (host env WB_EMIT_MASS_SCALE, default
+    // 1): per_particle = max(M_j*0.05, 0.002) * scale. Scalar appended at the
+    // scalar tail — the past CB misalignment bug was a float4 appended after
+    // scalars (host 4B vs slang 16B alignment); scalar offsets match.
+    float emit_mass_scale;
 };
 
 struct ConstraintModeCB {
@@ -543,11 +548,15 @@ struct WetbrushSimState {
 
     // --- FLIP/PIC particle buffers ---
     // 262144 saturated in ~4 frames at the 73k/frame emission rate (60fps
-    // stroke); the paper allows up to 1M particles (§4.3 "200K to 1M").
-    // Memory: 6 float4 buffers (pos/vel/color + ping-pong) + 2 uint buffers ≈
-    // 1M × (6×16 + 2×4) B ≈ 104 MB — acceptable. The pool is only fully used
-    // while particles outpace deposition; compact keeps it tight.
-    static constexpr int MAX_PARTICLES = 1048576;
+    // stroke); the paper allows up to 2M particles (§4.3 "200K to 1M",
+    // §7 "as many as 2M particles" for a large brush). 1M pinned at the cap
+    // mid-stroke (emit floods the pool after the dip; deposits lag), which
+    // throttled delivery and kept the per-particle passes at peak — 2M is
+    // the paper's own ceiling. Memory: 6 float4 buffers (pos/vel/color +
+    // ping-pong) + 2 uint buffers ≈ 2M × (6×16 + 2×4) B ≈ 208 MB.
+    // The pool is only fully used while particles outpace deposition;
+    // compact keeps it tight.
+    static constexpr int MAX_PARTICLES = 2097152;
 
     // --- Cross-frame brush state (written by deposit every frame) ---
     // Pen-down flag from the current StrokeSample. Gates §5.1 absorb/emit in
@@ -561,6 +570,10 @@ struct WetbrushSimState {
     // bristle node's §5.1 ABSORB pass consumes it by initializing
     // m_j = M'_j(ψ) inside the shader, then clears it).
     bool dip_frame = false;
+
+    // WB_REDIP_EVERY 行笔计时器：pen_down 期间累计 dt，跨过周期即重触发
+    // dip_frame（真实画家的"提笔回蘸"；见 node_brush_wb_sim.cpp 供墨注释）。
+    float redip_clock = 0.0f;
 
     nvrhi::BufferHandle ptcl_pos;
     nvrhi::BufferHandle ptcl_vel;
@@ -685,6 +698,14 @@ struct WetbrushSimState {
     int win_origin_y = 0;
     int win_origin_z = 0;
     bool win_origin_set = false;
+    // RENDER window (commit node only): the swarm-raster composite window
+    // follows the alive-particle cloud, NOT the §4.2 solve window above.
+    // pack_float4 only composites the raster inside its window, so a
+    // brush-centered render window hard-cut black edges wherever riding
+    // paint straddled the boundary (the tilted-stroke wet head trails
+    // ~1.5 cm behind the root at speed). Diagnostics print both origins.
+    int render_win_origin_x = 0;
+    int render_win_origin_y = 0;
 
     // --- Per-frame brush kinematics (finite-differenced frame-to-frame) ---
     int deposited_count = 0;
