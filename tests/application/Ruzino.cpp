@@ -9,6 +9,7 @@
 #include <rzconsole/spdlog_console_sink.h>
 #include <spdlog/spdlog.h>
 
+#include <cstdlib>
 #include <any>
 #include <filesystem>
 #include <rzpython/interpreter.hpp>
@@ -394,6 +395,21 @@ int main(int argc, char* argv[])
 #else
     spdlog::set_level(spdlog::level::info);
 #endif
+    // RZ_LOG_LEVEL overrides the build-default verbosity so a Release build
+    // can show debug/trace detail: RZ_LOG_LEVEL=trace|debug|info|warn|error
+    if (const char* lvl = std::getenv("RZ_LOG_LEVEL")) {
+        const std::string v = lvl;
+        if (v == "trace")
+            spdlog::set_level(spdlog::level::trace);
+        else if (v == "debug")
+            spdlog::set_level(spdlog::level::debug);
+        else if (v == "info")
+            spdlog::set_level(spdlog::level::info);
+        else if (v == "warn")
+            spdlog::set_level(spdlog::level::warn);
+        else if (v == "error")
+            spdlog::set_level(spdlog::level::err);
+    }
     spdlog::set_pattern("%^[%T] %n: %v%$");
     auto window = std::make_unique<Window>();
 
