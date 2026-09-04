@@ -9,6 +9,7 @@
 #include <blueprints/imgui_node_editor_internal.h>
 #include <imgui_stdlib.h>
 
+#include <nodes/core/io/json.hpp>
 #include <nodes/core/node_link.hpp>
 
 #include "GUI/window.h"
@@ -779,10 +780,10 @@ void MaterialXNodeTreeWidget::initialize()
                              size_t size,
                              ax::NodeEditor::SaveReasonFlags reason,
                              void* userPointer) -> bool {
-        if (static_cast<bool>(
-                reason & (NodeEditor::SaveReasonFlags::Navigation))) {
-            return true;
-        }
+        // No Navigation early-out: pan/zoom is exactly what must persist, and
+        // skipping those flushes is why reopen showed a stale view. The editor
+        // only saves when no gesture is in progress, so this is one small
+        // serialize+write per navigation gesture, not per frame.
         auto ptr = static_cast<MaterialXNodeTreeWidget*>(userPointer);
         auto storage = ptr->storage_.get();
 
@@ -801,7 +802,23 @@ void MaterialXNodeTreeWidget::initialize()
         auto storage = ptr->storage_.get();
 
         std::string data = storage->load();
-
+        if (data.empty()) {
+            return data;
+        }
+        // The stored blob is the node-tree JSON with the editor settings
+        // inlined. Drop view.visible_rect before handing the string to the
+        // editor: with it present, EditorContext::LoadSettings re-fits the
+        // view to whatever canvas size exists on the first frame after
+        // restart (often degenerate while the dock layout is still settling),
+        // clamping the zoom to an extreme. Restoring view.scroll/zoom
+        // verbatim reopens the view exactly as it was at close.
+        nlohmann::json merged = nlohmann::json::parse(data, nullptr, false);
+        if (!merged.is_discarded() && merged.is_object() &&
+            merged.contains("view") && merged["view"].is_object() &&
+            merged["view"].contains("visible_rect")) {
+            merged["view"].erase("visible_rect");
+            data = merged.dump();
+        }
         return data;
     };
 
@@ -810,7 +827,20 @@ void MaterialXNodeTreeWidget::initialize()
 
 std::string MaterialXNodeTreeWidget::GetWindowUniqueName()
 {
-    return "MaterialXNodeTreeWidget##" + material_path_;
+    // ImGui renders only the part before "##" and uses the full string as the
+    // window ID, so the material name must go BEFORE the separator — putting
+    // it after (the old layout) made every editor display the identical
+    // "MaterialXNodeTreeWidget" title. The prim path after ## still keeps the
+    // ID unique per material (register_widget dedup, imgui.ini persistence).
+    std::string display =
+        material_path_.substr(material_path_.find_last_of('/') + 1);
+    if (display.empty()) {
+        display = mtlx_path_.getBaseName();
+    }
+    if (display.empty()) {
+        display = "MaterialX";
+    }
+    return "MaterialX Editor: " + display + "##" + material_path_;
 }
 
 void MaterialXNodeTreeWidget::create_new_node(ImVec2 openPopupPosition)
