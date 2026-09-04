@@ -108,7 +108,16 @@ UsdviewEngine::UsdviewEngine(Stage* stage) : stage_(stage)
     }
     auto plugins = renderer_->GetRendererPlugins();
 
-    ChooseRenderer(plugins, engine_status.renderer_id);
+    // Default to the hd_RUZINO renderer when available; fall back to the
+    // first plugin (Storm) otherwise.
+    unsigned default_renderer = 0;
+    for (unsigned i = 0; i < plugins.size(); ++i) {
+        if (plugins[i].GetString() == "Hd_RUZINO_RendererPlugin") {
+            default_renderer = i;
+            break;
+        }
+    }
+    ChooseRenderer(plugins, default_renderer);
 
     // Set selection highlight color to bright orange
     renderer_->SetSelectionColor(pxr::GfVec4f(1.0f, 0.7f, 0.0f, 1.0f));
@@ -1056,8 +1065,11 @@ void UsdviewEngine::finish_render()
         renderer_->GetRendererSetting(pxr::TfToken("VulkanColorAov"));
 
     if (hacked_handle.IsHolding<const void*>()) {
-        auto rendered = *reinterpret_cast<const nvrhi::TextureHandle*>(
-            hacked_handle.Get<const void*>());
+        // The plugin returns the ITexture* itself (single pointer), matching
+        // get_output_texture's convention — NOT a pointer to a TextureHandle.
+        auto rendered =
+            const_cast<nvrhi::ITexture*>(static_cast<const nvrhi::ITexture*>(
+                hacked_handle.Get<const void*>()));
         if (rendered) {
             if (!command_list_) {
                 command_list_ = RHI::get_device()->createCommandList();
