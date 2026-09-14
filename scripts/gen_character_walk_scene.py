@@ -365,37 +365,41 @@ def build_lights(stage):
         math.cos(elev) * math.sin(azim),
         math.sin(elev))
 
-    # DistantLight: renderer takes row 2 of the transform as the light
-    # travel direction (= away from the sun), matching the cloud scenes.
-    sun = UsdLux.DistantLight.Define(stage, "/Sun")
+    # HosekWilkieSky rig: the sky prim carries the atmosphere; its child
+    # DistantLight is the sun. The renderer treats them as fully independent
+    # lights — the child's direction is synced HERE (authoring time) via
+    # stage_py.sync_sun_light, and the editor re-syncs it on sky edits, so
+    # the saved stage is self-consistent for any render delegate.
+    #
+    # The sky evaluates in the dome's LOCAL frame (+Y up); this Z-up stage
+    # authors a -90 deg X rotation to point the dome zenith at world +Z.
+    # sunDirection is dome-local: the world toward-sun vector mapped through
+    # the same transform. All attribute fallbacks (shader_path/turbidity/
+    # albedo) come from the RuzinoSky codeless schema; intensity 2.0 keeps
+    # the accepted daylight feel without the noon wash-out (LPM clips 0%).
+    sky = stage.DefinePrim("/Sky", "HosekWilkieSky")
+    dome = UsdLux.DomeLight(sky)
+    dome_xf = Gf.Matrix4d().SetRotate(Gf.Rotation(Gf.Vec3d(1, 0, 0), -90))
+    UsdGeom.Xformable(sky).AddTransformOp().Set(dome_xf)
+    sun_local = dome_xf.TransformDir(Gf.Vec3d(toward_sun[0], toward_sun[1], toward_sun[2]))
+    dome.CreateIntensityAttr().Set(2.0)
+    sky.CreateAttribute(
+        "inputs:turbidity", Sdf.ValueTypeNames.Float).Set(3.0)
+    sky.CreateAttribute(
+        "inputs:groundAlbedo", Sdf.ValueTypeNames.Float).Set(0.3)
+    sky.CreateAttribute(
+        "inputs:sunDirection", Sdf.ValueTypeNames.Float3).Set(
+        Gf.Vec3f(sun_local[0], sun_local[1], sun_local[2]))
+
+    sun = UsdLux.DistantLight.Define(stage, "/Sky/Sun")
     sun.CreateIntensityAttr().Set(5.0)
     sun.CreateAngleAttr().Set(0.53)
-    sun_xf = Gf.Matrix4d().SetIdentity()
-    sun_xf.SetRow(2, Gf.Vec4d(-toward_sun[0], -toward_sun[1], -toward_sun[2], 0.0))
-    UsdGeom.Xformable(sun).AddTransformOp().Set(sun_xf)
 
-    # DomeLight / Hosek sky. NOTE: the renderer currently ignores the dome
-    # prim's transform and evaluates the sky in a fixed Y-up frame (the
-    # identity convention of the cloud scenes; see
-    # eval_dome_light_hosek_wilkie.slang). This stage is Z-up, so the
-    # `sunDirection` attribute is authored in that baked Y-up frame —
-    # (x, z, y) of the world-space sun direction — and no dome rotation is
-    # authored (it would be silently dropped).
-    dome = UsdLux.DomeLight.Define(stage, "/Sky")
-    # Intensity compensates the fixed Y-up dome convention: in this Z-up
-    # stage the dome's zenith points horizontally, so the ground only
-    # receives grazing sky light and needs a stronger dome to read daylight.
-    dome.CreateIntensityAttr().Set(3.5)
-    dome.GetPrim().CreateAttribute(
-        "inputs:shader_path", Sdf.ValueTypeNames.String).Set(
-        "callables/eval_dome_light_hosek_wilkie.slang")
-    dome.GetPrim().CreateAttribute(
-        "inputs:turbidity", Sdf.ValueTypeNames.Float).Set(3.0)
-    dome.GetPrim().CreateAttribute(
-        "inputs:groundAlbedo", Sdf.ValueTypeNames.Float).Set(0.3)
-    dome.GetPrim().CreateAttribute(
-        "inputs:sunDirection", Sdf.ValueTypeNames.Float3).Set(
-        Gf.Vec3f(toward_sun[0], toward_sun[2], toward_sun[1]))
+    # Sync the child light's direction from the sky (single xformOp on the
+    # root layer so the generated file is self-contained; the math mirrors
+    # stage/hosek_sky.cpp).
+    import stage_py
+    stage_py.sync_sun_light(stage, "/Sky", stage.GetRootLayer())
 
 
 def build_camera(stage):

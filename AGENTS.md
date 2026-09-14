@@ -106,29 +106,26 @@ python scripts/format_and_commit_manager.py
 5. **Match build type** — build the same type (Release/Debug) the test runner expects.
 6. **Installation deps** — run `install_deps.py` after `cmake --install` to copy SDK runtime libraries.
 7. **Recursive commits** — use `format_and_commit_manager.py`; it skips the nvrhi submodule.
+8. **Prefer new nodes over architecture changes** — when implementing a
+   feature in the node system, first try a NEW node (kept generic and
+   reusable) instead of modifying existing nodes or the framework; extend
+   existing nodes only when a new node genuinely cannot do the job.
+   Socket asymmetry: adding extra OUTPUT sockets / output data is fine (a
+   node may emit more than before), but adding INPUT sockets changes what
+   callers must provide — think twice, prefer optional inputs with sane
+   defaults. Remember a new node `.cpp` needs a CMake `add_nodes` update
+   (re-configure) plus registration in the owning plugin's JSON.
 
 ## Simulation (headless node-graph sim)
 
-Per-frame accumulation across ticks is driven by the **simulation-zone feedback loop**, not by per-node logic. Full mechanism in `docs/simulation_mechanism.md`. Key facts:
-
-- `simulation_out`'s storage is auto-moved into its paired `simulation_in` after each cook (`node_exec_eager.cpp`), so frame N's geometry feeds frame N+1. A fixed-increment node (e.g. `transform_geom` Translate X=0.1) inside the zone therefore accumulates automatically.
-- **Python**: build a zone with `RuzinoGraph.createSimulationZone()` — bare `createNode` leaves `paired_node` null and the loop silently does not accumulate.
-- **Three gates** a headless `Stage.tick()` loop must open, or the graph never cooks:
-  1. `stage_py.tick(dt)` / `set_render_time(t)` bindings exist (source/Runtime/stage/python/stage.cpp).
-  2. The prim carries `Animatable=true` (`animation.cpp::is_animatable`); set it from Python after `apply_to_stage`.
-  3. `render_time` must stay `>=` accumulated sim time each tick, or `should_simulate()` short-circuits `execute()` after frame 1.
-- Reference end-to-end test: `source/tests/test_sim_gridbox.py` (Python-built zone → 60 ticks → asserts accumulated translate ≈ 6.0). Run it like other tests but from `Binaries/Release` so node-plugin DLLs (e.g. `GPU_sph.dll`) resolve.
+Per-frame accumulation across ticks is driven by the **simulation-zone feedback loop**, not by per-node logic; Python-built zones must use `RuzinoGraph.createSimulationZone()` (bare `createNode` leaves `paired_node` null and silently stops accumulating). Full mechanism, `Node::storage` channels, and the three gates a headless `Stage.tick()` loop must open: `docs/simulation_mechanism.md`.
 
 ## Character walking demo (gameplay layer)
 
-Third-person walking BOT demo — full write-up in `docs/character_walk_demo.md`. Quick facts:
-
-- **Run**: `python scripts/gen_character_walk_scene.py` then `Binaries/Release/Ruzino.exe Binaries/Release/demo_scenes/character_walk.usda` (WASD + Shift run; switch viewport renderer to `Hd_RUZINO_RendererPlugin` for sky/shadows).
-- **Modules**: `source/Runtime/input` (process-wide `InputState`; window publishes raw GLFW events, gameplay consumes) and `source/Runtime/character` (USD-joint-tree skeleton discovery, procedural gait, kinematic `CharacterControllerSystem` called from `Stage::tick` — NOT gated by `should_simulate`).
-- **Character prim**: mark with custom attr `character:controller = true` (+ `character:moveSpeed/runMultiplier/strideLength`); joints are plain Xform prims named `Hips/Spine/.../L_Foot`, meshes parented under joints.
-- **Transform authoring**: single matrix `xformOp:transform` (rotate then translate, Gf row-vector convention) into the session (modifier) layer — multi-op CommonAPI stacks and plain translate ops mis-render in some paths.
-- **Headless**: `stage_py.Stage.set_move_input(x, y)` injects the move axis; `Stage(path)` resumes from the `_modifiers.usda` sidecar (delete it to reset the walk). Test: `source/tests/test_character_walk.py`.
-- **Known offline-renderer bugs** the Z-up scene exposed (interactive path unaffected, see doc): dome transforms ignored (Y-up baked sky frame), prim transforms ignored by the offline HydraRenderer, extent culling on stale bounds, frustum-dependent empty renders.
+Third-person walking BOT demo (`source/Runtime/input` + `source/Runtime/character`,
+`character:controller` prim marker, called from `Stage::tick`) — run commands,
+architecture, headless driving, and the offline-renderer limitations it
+exposed are all in `docs/character_walk_demo.md`.
 
 ## Troubleshooting
 
@@ -193,35 +190,12 @@ exception record + faulting-thread stack + loaded modules, then quits. Look for
   as the root cause. The Release build skips `_ASSERT` (`NDEBUG`), so a real
   logic bug may surface only as a downstream access violation in Release.
 
-### CRITICAL: `RefCountPtr::operator&()` silently corrupts `&handle`
+### CRITICAL: never write `&someRefCountPtr`
 
-nvrhi's `RefCountPtr<T>` (`external/nvrhi/include/nvrhi/common/resource.h:307`)
-overloads unary `operator&()` to return `T**` (a pointer to the inner `ptr_`
-member), **not** `RefCountPtr*`. This is a recurring source of access-violation
-crashes. Two confirmed instances in this codebase:
-
-1. **Renderer readback** (`renderDelegate.cpp`): `return VtValue(&it->second)`
-   where `it->second` was a `TextureHandle` — the `&` returned `ITexture**`
-   pointing at the `ptr_` member; the caller read a different address and got
-   NULL. Fix: return the pointer directly (`VtValue(reinterpret_cast<const
-   void*>(tex_ptr))`).
-2. **Wetbrush fluid solve** (`node_brush_wb_fluid.cpp`): the velocity
-   diffuse/advect loops used `std::make_pair(&field->vel_x,
-   &field->vel_x_tmp)` then `std::swap(*pair.first, *pair.second)`. Because
-   `&field->vel_x` yields `IBuffer**` (the `ptr_` member address, not the
-   `RefCountPtr*`), the swap exchanged raw `IBuffer*` values, bypassing
-   refcount accounting and nulling `field->vel_x/y/z` mid-solve — the next
-   `copyBuffer` crashed in `nvrhi::requireBufferState` (`mov rax,[rax]`,
-   `rax=0`). Fix: take the true object address with `std::addressof(...)`.
-
-**Rule:** never write `&someRefCountPtr`. If you need a `RefCountPtr*` (e.g. to
-swap two handles), use `std::addressof(handle)` — it bypasses the overloaded
-`operator&()` and returns the real object address, so `*addr` is a correct
-`RefCountPtr&` alias and `std::swap` goes through the move operators (proper
-AddRef/Release). Grep the codebase for `make_pair(&` and `&field->`/`&it->`
-patterns whenever a `RefCountPtr` (any `nvrhi::*Handle`) is involved.
-
-This class of bug is invisible to the type system: `operator&()` returns a
-valid pointer of a *plausible* type, so the code compiles and the corruption
-shows up only as a later NULL-deref crash far from the cause — exactly when you
-need the cdb workflow above.
+nvrhi's `RefCountPtr<T>` overloads unary `operator&()` to return `T**` (the
+inner `ptr_` member address), not `RefCountPtr*` — it compiles fine and
+corrupts silently; two confirmed access-violation cases are dissected in
+`docs/nvrhi_refcountptr_pitfall.md`. Rule: take addresses with
+`std::addressof(handle)` so swaps go through the proper move operators, and
+grep `make_pair(&` / `&field->` / `&it->` whenever an `nvrhi::*Handle` is
+involved.

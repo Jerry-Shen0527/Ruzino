@@ -287,7 +287,29 @@ set_storage → serialize() → storage_info
 
 ---
 
-## 6. 相关文件
+## 6. headless 驱动：`Stage.tick()` 循环的三道门
+
+用 Python 裸跑 `Stage.tick(dt)` 循环（无窗口）驱动仿真时，有三道门必须全部
+打开，否则图要么根本不 cook，要么只 cook 第一帧就停：
+
+1. **绑定存在**：`stage_py.tick(dt)` / `set_render_time(t)` 绑定可用
+   （`source/Runtime/stage/python/stage.cpp`）。
+2. **prim 标了 `Animatable=true`**：`WithDynamicLogicPrim::is_animatable`
+   只认这个 custom bool 属性（`animation.cpp:396`，属性名硬编码
+   `"Animatable"`），没有它整棵 prim 不进动画路径。Python 侧在
+   `apply_to_stage` 之后自己补上。
+3. **`render_time` 不得落后于累计仿真时间**：每帧 tick 都要保持
+   `render_time >=` 已累计的 sim time，否则 `should_simulate()` 短路，
+   `execute()` 第一帧之后就不再执行（`animation.cpp:160`、`animation.cpp:276`）。
+
+参考端到端测试：`source/tests/test_sim_gridbox.py` —— Python 建仿真区
+（`createSimulationZone()`）→ 60 次 tick → 断言累计位移 ≈ 6.0。跑法同其他
+测试，但要在 `Binaries/Release` 下运行，节点插件 DLL（如 `GPU_sph.dll`）
+才能解析到。
+
+---
+
+## 7. 相关文件
 
 | 文件 | 内容 |
 |------|------|

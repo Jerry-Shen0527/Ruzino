@@ -101,8 +101,8 @@ wall clock. Two behaviors worth knowing:
 
 * `Stage(path)` reloads the `<stem>_modifiers.usda` sidecar into the session
   layer, and the controller *resumes* from the last authored root transform —
-  reopening a stage continues where you left off. Tests generate fresh scenes
-  per test for this reason.
+  reopening a stage continues where you left off. Delete the sidecar to reset
+  the walk. Tests generate fresh scenes per test for this reason.
 * Spec-level readback uses fully-qualified property paths
   (`layer.GetPropertyAtPath("/Character.xformOp:transform")`); the colon in
   namespaced attribute names does not parse as a standalone SdfPath.
@@ -133,8 +133,9 @@ the interactive viewport (UsdImagingGLEngine) is unaffected:
    (a second HydraRenderer in one process also returns the first render's
    stale accumulation — the script renders each frame in a subprocess).
 4. **Multi-op CommonAPI xform stacks mis-evaluate** (translate+rotateXYZ
-   renders unlit/black); single matrix ops work everywhere. The controller
-   and scene generator author matrix ops for this reason.
+   renders unlit/black), and plain translate ops mis-render in some paths;
+   single matrix ops work everywhere. The controller and scene generator
+   author matrix ops for this reason.
 
 ## Notes / limitations
 
