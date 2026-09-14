@@ -1,0 +1,36 @@
+// Shared definitions for the virtual-pipes hydraulic erosion solver
+// (Mei, Decaudin & Hu 2007). Consumed by the terrain_erode_hydraulic /
+// terrain_erode_thermal geometry nodes.
+//
+// Grid is 2D: res × res vertices, idx = y * res + x. Height axis is world Y;
+// v (vel_v) is the grid-row direction (+y = +world Z).
+//
+// All scalar constants — no float4 fields, so host and slang layouts agree
+// regardless of packing rules (see the Wetbrush CB misalignment lesson).
+
+#ifndef TERRAIN_COMMON
+#define TERRAIN_COMMON
+
+struct TerrainConstants {
+    int res;       // vertices per side
+    float dt;      // solver time step
+    float inv_cell;   // 1 / cell_size (world units per cell)
+    float max_delta;  // per-step erosion clamp (0.1 * cell_size)
+
+    float rain_rate;  // water depth added per second
+    float evaporation;  // fraction of water lost per second
+    float sediment_capacity;  // Kc
+    float erosion_rate;       // Ks (dissolving)
+
+    float deposition_rate;  // Kd
+    float pipe_area;        // virtual pipe cross-section (Kq * cell^2)
+    float gravity;
+    float talus;  // thermal: tan(angle_deg) * cell_size
+
+    float strength;  // thermal slide rate
+    int pad0;
+    int pad1;
+    int pad2;
+};
+
+#endif

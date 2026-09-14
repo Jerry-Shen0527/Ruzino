@@ -1,0 +1,137 @@
+// terrain_ada_common.slangh -- shared constants + slot/index math for the
+// adaptive heightfield tile mesher. MIRRORS TerrainGen/AdaMesh.hpp and the
+// host's AdaConstantsCB (scalar-only struct: no vec4 fields, so the host/
+// slang layout trap cannot apply). If you change slot layout here, change
+// AdaMesh.hpp and mesh_tangent.. no -- terrain_ada_stitch_test pins the
+// CPU side; keep both in lockstep.
+
+#ifndef TERRAIN_ADA_COMMON_INCLUDED
+#define TERRAIN_ADA_COMMON_INCLUDED
+
+struct AdaConstants
+{
+    int res;              // field vertices per side (res x res)
+    int tile_cells;       // C: cells per tile side
+    int tiles;            // T = res / C
+    int max_level;        // finest subdivision level (stride C >> level)
+
+    float detail_threshold;  // err at level 0; level = log2(err / thr)
+    float slope_weight;      // slope (rise/run) -> err weight
+    float world_half;        // world_size / 2 (grid centered on origin)
+    float cell_size;         // world_size / (res - 1)
+
+    float inv_relief;     // 1 / (h_max - h_min) for the relief error term
+    int max_slots;        // worst-case vertex slots per tile (host computed)
+    float sag_tolerance;  // curvature pass: max sag of a coarse quad (height
+                          // units, world scale); 0 disables the term
+    int pad2;
+};
+
+// ---- slot layout (mirror of AdaMesh.hpp) --------------------------------
+
+int ada_interior_dim(int C, int s)
+{
+    return C / s + 1;
+}
+
+int ada_side_mid_count(int C, int s)
+{
+    return C / s;
+}
+
+int ada_tile_vertex_count(int C, int s, int stitchN, int stitchE, int stitchS, int stitchW)
+{
+    int n = ada_interior_dim(C, s) * ada_interior_dim(C, s);
+    int m = ada_side_mid_count(C, s);
+    if (stitchS != 0) n += m;
+    if (stitchN != 0) n += m;
+    if (stitchW != 0) n += m;
+    if (stitchE != 0) n += m;
+    return n;
+}
+
+int ada_tile_index_count(int C, int s, int stitchN, int stitchE, int stitchS, int stitchW)
+{
+    const int cells = (C / s) * (C / s);
+    const int segs = C / s;
+    const int sides = stitchN + stitchE + stitchS + stitchW;
+    return (2 * cells + sides * segs) * 3;
+}
+
+int ada_interior_slot(int C, int s, int i, int j)
+{
+    return j * ada_interior_dim(C, s) + i;
+}
+
+// Side-mid slot bases after the interior block. Order S, N, W, E; -1 when
+// that side is not stitched. NOTE: `out` is REQUIRED on the array param --
+// slang passes `in` arrays by value, so without it the caller's base[] stays
+// uninitialized and every stitched mid index becomes garbage (observed as
+// duplicate/degenerate triangles growing with subdivision depth).
+void ada_side_mid_base(
+    int C,
+    int s,
+    int stitchN,
+    int stitchE,
+    int stitchS,
+    int stitchW,
+    out int base[4])
+{
+    const int d = ada_interior_dim(C, s);
+    const int m = ada_side_mid_count(C, s);
+    int cur = d * d;
+    const int flags[4] = { stitchS, stitchN, stitchW, stitchE };
+    for (int k = 0; k < 4; ++k) {
+        base[k] = (flags[k] != 0) ? cur : -1;
+        if (flags[k] != 0) cur += m;
+    }
+}
+
+// Local cell coords of an active slot; returns false for inactive.
+bool ada_slot_coords(int C, int s, int stitchN, int stitchE, int stitchS, int stitchW, int slot, out int lx, out int ly)
+{
+    const int d = ada_interior_dim(C, s);
+    if (slot < d * d) {
+        lx = (slot % d) * s;
+        ly = (slot / d) * s;
+        return true;
+    }
+    const int m = ada_side_mid_count(C, s);
+    int base[4];
+    ada_side_mid_base(C, s, stitchN, stitchE, stitchS, stitchW, base);
+    if (stitchS != 0 && slot >= base[0] && slot < base[0] + m) {
+        lx = (slot - base[0]) * s + s / 2;
+        ly = 0;
+        return true;
+    }
+    if (stitchN != 0 && slot >= base[1] && slot < base[1] + m) {
+        lx = (slot - base[1]) * s + s / 2;
+        ly = C;
+        return true;
+    }
+    if (stitchW != 0 && slot >= base[2] && slot < base[2] + m) {
+        lx = 0;
+        ly = (slot - base[2]) * s + s / 2;
+        return true;
+    }
+    if (stitchE != 0 && slot >= base[3] && slot < base[3] + m) {
+        lx = C;
+        ly = (slot - base[3]) * s + s / 2;
+        return true;
+    }
+    return false;
+}
+
+int ada_mid_id(const int base[4], int side, int seg)
+{
+    return base[side] + seg;
+}
+
+// Tile level lookup with out-of-range -> -1 (used for stitch flags).
+int ada_level_at(StructuredBuffer<float> lvl, int T, int x, int y)
+{
+    if (x < 0 || x >= T || y < 0 || y >= T) return -1;
+    return int(lvl[uint(y) * uint(T) + uint(x)] + 0.5f);
+}
+
+#endif

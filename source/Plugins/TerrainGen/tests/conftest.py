@@ -16,6 +16,15 @@ project_root = os.path.abspath(os.path.join(tests_dir, "..", "..", "..", ".."))
 os.environ['PXR_USD_WINDOWS_DLL_PATH'] = binary_dir
 print(f"Set PXR_USD_WINDOWS_DLL_PATH={binary_dir}")
 
+# Node plugins (e.g. node_terrain_erode_hydraulic.dll) are loaded by the C++
+# LoadLibrary inside load_configuration. The Python 3.8+ process no longer
+# searches the os.chdir cwd for DLLs, so the binaries dir must be both on
+# PATH and registered via add_dll_directory (mirrors
+# source/Editor/geometry_nodes/tests/conftest.py).
+if platform.system() == 'Windows':
+    os.add_dll_directory(binary_dir)
+os.environ["PATH"] = binary_dir + os.pathsep + os.environ.get("PATH", "")
+
 # Add to Python path
 sys.path.insert(0, binary_dir)
 

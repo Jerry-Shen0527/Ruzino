@@ -5,6 +5,8 @@
 #include <glm/gtc/noise.hpp>
 #include <random>
 
+#include "TerrainGen/NoiseCore.h"
+
 namespace TerrainGen {
 
 TerrainGenerator::TerrainGenerator()
@@ -582,43 +584,30 @@ void TerrainGenerator::apply_post_processing(
 }
 
 // Noise functions
+//
+// The legacy bodies sampled glm::perlin at (p + seed * 0.1f): every octave
+// and layer lived in ONE continuous noise field offset by a tenth of a unit,
+// so octaves were strongly correlated and "new seed" was a uniform
+// translation. All of them now go through NoiseCore's integer-hash lattice,
+// which decorrelates distinct seeds properly (the seed+i octave pattern of
+// fbm() below becomes seed+i through an avalanche hash).
+
 float TerrainGenerator::perlin_noise(float x, float y, int seed) const
 {
-    return glm::perlin(glm::vec2(x + seed * 0.1f, y + seed * 0.1f));
+    return NoiseCore::noise2(
+        x, y, NoiseCore::hash_u32(static_cast<uint32_t>(seed)));
 }
 
 float TerrainGenerator::simplex_noise(float x, float y, int seed) const
 {
-    return glm::simplex(glm::vec2(x + seed * 0.1f, y + seed * 0.1f));
+    return NoiseCore::noise2(
+        x, y, NoiseCore::hash_u32(static_cast<uint32_t>(seed) ^ 0x5bf03635u));
 }
 
 float TerrainGenerator::worley_noise(float x, float y, int seed) const
 {
-    // Simple Worley/Voronoi noise implementation
-    glm::vec2 p(x + seed * 0.1f, y + seed * 0.1f);
-    glm::vec2 i = glm::floor(p);
-    glm::vec2 f = p - i;  // Fractional part
-
-    float min_dist = 10.0f;
-
-    for (int dy = -1; dy <= 1; ++dy) {
-        for (int dx = -1; dx <= 1; ++dx) {
-            glm::vec2 neighbor =
-                glm::vec2(static_cast<float>(dx), static_cast<float>(dy));
-            glm::vec2 neighbor_i = i + neighbor;
-            float dot_result = glm::dot(neighbor_i, glm::vec2(127.1f, 311.7f));
-            float sin_result = glm::sin(dot_result) * 43758.5453f;
-            glm::vec2 point = glm::vec2(
-                sin_result - glm::floor(sin_result),
-                glm::sin(dot_result + 1.0f) * 43758.5453f -
-                    glm::floor(glm::sin(dot_result + 1.0f) * 43758.5453f));
-
-            float dist = glm::length(neighbor + point - f);
-            min_dist = glm::min(min_dist, dist);
-        }
-    }
-
-    return min_dist * 2.0f - 1.0f;  // Normalize to [-1, 1]
+    return NoiseCore::worley_f1(
+        x, y, NoiseCore::hash_u32(static_cast<uint32_t>(seed) ^ 0x68bc21ebu));
 }
 
 float TerrainGenerator::ridged_noise(float x, float y, int seed) const
