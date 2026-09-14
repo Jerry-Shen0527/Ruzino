@@ -32,11 +32,26 @@ from ruzino_graph import RuzinoGraph
 
 OUT_DIR = BIN / "test_output"
 OUT_DIR.mkdir(exist_ok=True)
+LEAF_ATLAS = os.environ.get(
+    "TREEGEN_LEAF_ATLAS",
+    str((ROOT / "source" / "Plugins" / "TreeGen" / "assets" /
+         "leaf_atlas.png").resolve()))
+# Species tile index in the 2x2 atlas: 0 ovate-serrate, 1 lanceolate,
+# 2 palmate(maple), 3 obovate
+TREEGEN_SPECIES = int(os.environ.get("TREEGEN_SPECIES", "0"))
+# Leaf shrink + densify: baseline 0.28/14 produced leaves ~7.5% of tree
+# height (real broadleaf: 1.5-3%). 0.12/28 lands ~3% with double density.
+TREEGEN_LEAF_SIZE = float(os.environ.get("TREEGEN_LEAF_SIZE", "0.15"))
+TREEGEN_LPI = int(os.environ.get("TREEGEN_LPI", "40"))
+
+
 tree_usd = OUT_DIR / f"treegen_{TAG}.usdc"
 
 g = RuzinoGraph("TreeGenRender")
 g.loadConfiguration(str(BIN / "geometry_nodes.json"))
 g.loadConfiguration(str(BIN / "Plugins" / "TreeGen_geometry_nodes.json"))
+
+NODE_MATERIAL = os.environ.get("TREEGEN_NODE_MATERIAL") == "1"
 
 tree_gen = g.createNode("tree_generate", name="tree")
 to_mesh = g.createNode("tree_to_mesh", name="mesh_converter")
@@ -44,16 +59,47 @@ write_branches = g.createNode("write_usd", name="writer_branches")
 write_leaves = g.createNode("write_usd", name="writer_leaves")
 
 g.addEdge(tree_gen, "Tree Branches", to_mesh, "Tree Branches")
-g.addEdge(tree_gen, "Leaves", to_mesh, "Leaves")
-g.addEdge(to_mesh, "Branch Mesh", write_branches, "Geometry")
+
+if NODE_MATERIAL:
+    # Pure node-graph material flow: the atlas travels as an in-graph
+    # texture object (storage deferred to write time), the bark is a flat
+    # color material. No script-side material authoring.
+    leaf_tex = g.createNode("load_texture_2d", name="leaf_atlas_texture")
+    leaf_create = g.createNode("create_material", name="leaf_material")
+    leaf_apply = g.createNode("set_material", name="apply_leaf_material")
+    bark_create = g.createNode("create_material", name="bark_material")
+    bark_apply = g.createNode("set_material", name="apply_bark_material")
+    g.addEdge(leaf_tex, "Texture", leaf_create, "Texture")
+    g.addEdge(leaf_create, "Material", leaf_apply, "Material")
+    g.addEdge(tree_gen, "Leaves", leaf_apply, "Geometry")
+    g.addEdge(leaf_apply, "Geometry", to_mesh, "Leaves")
+    g.addEdge(to_mesh, "Branch Mesh", bark_apply, "Geometry")
+    g.addEdge(bark_create, "Material", bark_apply, "Material")
+    g.addEdge(bark_apply, "Geometry", write_branches, "Geometry")
+else:
+    g.addEdge(tree_gen, "Leaves", to_mesh, "Leaves")
+    g.addEdge(to_mesh, "Branch Mesh", write_branches, "Geometry")
 g.addEdge(to_mesh, "Leaf Mesh", write_leaves, "Geometry")
 
 inputs = {
     (tree_gen, "Growth Years"): 8,
     (tree_gen, "Generate Leaves"): True,
+    (tree_gen, "Leaf Size"): TREEGEN_LEAF_SIZE,
+    (tree_gen, "Leaves Per Internode"): TREEGEN_LPI,
     (write_branches, "Sub Path"): "branches",
     (write_leaves, "Sub Path"): "leaves",
 }
+if NODE_MATERIAL:
+    # Pure node-graph materials: leaf atlas as an in-graph texture object
+    # (materialized to disk at write time), bark as a flat PBR color.
+    inputs[(leaf_tex, "Path")] = LEAF_ATLAS
+    inputs[(leaf_create, "Alpha Cutout")] = True
+    inputs[(leaf_create, "Opacity Threshold")] = 0.5
+    inputs[(leaf_create, "Roughness")] = 0.55
+    inputs[(leaf_create, "Wrap Mode")] = "clamp"
+    inputs[(bark_create, "Base Color")] = (0.42, 0.30, 0.20)
+    inputs[(bark_create, "Roughness")] = 0.8
+    inputs[(bark_create, "Wrap Mode")] = "clamp"
 stage = stage_py.Stage(str(tree_usd))
 geom_payload = stage_py.create_payload_from_stage(stage, "/treegen")
 g.setGlobalParams(geom_payload)
@@ -85,7 +131,7 @@ if not src_branches:
     sys.exit("/treegen/branches not found in composed stage")
 
 
-def bake(stage, src_mesh, prim_path, color, roughness):
+def bake(stage, src_mesh, prim_path, color, roughness, leaf_cards=False):
     pts = src_mesh.GetPointsAttr().Get()
     fvc = src_mesh.GetFaceVertexCountsAttr().Get()
     fvi = src_mesh.GetFaceVertexIndicesAttr().Get()
@@ -101,6 +147,9 @@ def bake(stage, src_mesh, prim_path, color, roughness):
     if src_nrm:
         mesh.CreateNormalsAttr().Set(src_nrm)
         mesh.SetNormalsInterpolation(src_mesh.GetNormalsInterpolation())
+    if leaf_cards:
+        _leaf_uv_material(stage, prim_path, mesh, fvi)
+        return np.array(pts, dtype=np.float32)
     mat = UsdShade.Material.Define(stage, prim_path + "_mat")
     shader = UsdShade.Shader.Define(stage, prim_path + "_mat/Shader")
     shader.CreateIdAttr("UsdPreviewSurface")
@@ -116,15 +165,102 @@ def bake(stage, src_mesh, prim_path, color, roughness):
     return pts_np
 
 
-scene = OUT_DIR / f"treegen_{TAG}_scene.usdc"
-if scene.exists():
-    scene.unlink()
-rstage = Usd.Stage.CreateNew(str(scene))
+def _leaf_uv_material(stage, prim_path, mesh, fvi):
+    """Face-varying UVs into the leaf atlas + textured alpha-cutout material.
 
-bp = bake(rstage, src_branches, "/Tree/Branches", (0.42, 0.30, 0.20), 0.8) \
-    if os.environ.get("TREEGEN_PART", "all") not in ("leaves",) else None
-lp = bake(rstage, src_leaves, "/Tree/Leaves", (0.22, 0.55, 0.16), 0.6) \
-    if os.environ.get("TREEGEN_PART", "all") not in ("branches",) else None
+    Leaf quads are 4 verts (tip, right, base, left) x 4 tri faces; pick the
+    species tile per leaf so one atlas serves species/variation studies.
+    """
+    n_faces_per_leaf = 4
+    n_leaves = len(fvi) // (n_faces_per_leaf * 3)
+    rng = np.random.default_rng(42)
+    tiles = rng.integers(0, 4, n_leaves)  # per-leaf tile pick (uniform mix)
+    tiles[:] = TREEGEN_SPECIES  # single-species tree for now
+
+    st = np.zeros((len(fvi), 2), dtype=np.float32)
+    corner_uv = np.array([
+        [0.5, 1.0],  # tip
+        [1.0, 0.5],  # right
+        [0.5, 0.0],  # base
+        [0.0, 0.5],  # left
+    ], dtype=np.float32)
+    for leaf in range(n_leaves):
+        t = int(tiles[leaf])
+        tx, ty = t % 2, 1 - t // 2  # tiles 0,1 = bottom UV row
+        u0, v0 = tx * 0.5 + 0.005, ty * 0.5 + 0.005
+        uv = np.stack([u0 + corner_uv[:, 0] * 0.49,
+                       v0 + corner_uv[:, 1] * 0.49], axis=1)
+        base = leaf * n_faces_per_leaf * 3
+        for f in range(n_faces_per_leaf):
+            for c in range(3):
+                vi = fvi[base + f * 3 + c]
+                st[base + f * 3 + c] = uv[vi % 4]
+    pv = UsdGeom.PrimvarsAPI(mesh.GetPrim()).CreatePrimvar(
+        "st", Sdf.ValueTypeNames.TexCoord2fArray, UsdGeom.Tokens.faceVarying)
+    pv.Set([Gf.Vec2f(float(p[0]), float(p[1])) for p in st])
+
+    mat = UsdShade.Material.Define(stage, prim_path + "_mat")
+    surf = UsdShade.Shader.Define(stage, prim_path + "_mat/PreviewSurface")
+    surf.CreateIdAttr("UsdPreviewSurface")
+    surf.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.55)
+    surf.CreateInput("opacityMode", Sdf.ValueTypeNames.String).Set("mask")
+    surf.CreateInput("opacityThreshold", Sdf.ValueTypeNames.Float).Set(0.5)
+    uvr = UsdShade.Shader.Define(stage, prim_path + "_mat/UVReader")
+    uvr.CreateIdAttr("UsdPrimvarReader_float2")
+    uvr.CreateInput("varname", Sdf.ValueTypeNames.String).Set("st")
+    uv_out = uvr.CreateOutput("result", Sdf.ValueTypeNames.Float2)
+
+    def add_tex(name):
+        tex = UsdShade.Shader.Define(stage, f"{prim_path}_mat/{name}")
+        tex.CreateIdAttr("UsdUVTexture")
+        tex.CreateInput("file", Sdf.ValueTypeNames.Asset).Set(
+            Path(LEAF_ATLAS).as_posix())
+        st_in = tex.CreateInput("st", Sdf.ValueTypeNames.Float2)
+        st_in.ConnectToSource(uv_out)
+        return tex
+
+    tex_diff = add_tex("TexDiffuse")
+    surf.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f). \
+        ConnectToSource(tex_diff.CreateOutput("rgb",
+                                              Sdf.ValueTypeNames.Color3f))
+    tex_op = add_tex("TexOpacity")
+    surf.CreateInput("opacity", Sdf.ValueTypeNames.Float).ConnectToSource(
+        tex_op.CreateOutput("a", Sdf.ValueTypeNames.Float))
+
+    mat.CreateSurfaceOutput().ConnectToSource(
+        UsdShade.ConnectableAPI(surf), "surface")
+    UsdShade.MaterialBindingAPI.Apply(mesh.GetPrim()).Bind(mat)
+    print(f"[treegen] {prim_path}: textured leaf cards "
+          f"({n_leaves} leaves, species tile {TREEGEN_SPECIES})")
+
+
+if NODE_MATERIAL:
+    # Passthrough: render the composed stage as written by the C++ nodes.
+    # Leaves keep their UVMap + bound material; only dressing (ground,
+    # lights, camera below) is added to the composed root layer.
+    scene = composed
+    rstage = _check
+
+    def _passthrough_points(path):
+        m = UsdGeom.Mesh.Get(rstage, path)
+        return np.array(m.GetPointsAttr().Get(), dtype=np.float32)
+
+    bp = _passthrough_points("/treegen/branches") \
+        if os.environ.get("TREEGEN_PART", "all") not in ("leaves",) else None
+    lp = _passthrough_points("/treegen/leaves") \
+        if os.environ.get("TREEGEN_PART", "all") not in ("branches",) else None
+    print("[treegen] NODE_MATERIAL passthrough: rendering C++-authored stage")
+else:
+    scene = OUT_DIR / f"treegen_{TAG}_scene.usdc"
+    if scene.exists():
+        scene.unlink()
+    rstage = Usd.Stage.CreateNew(str(scene))
+
+    bp = bake(rstage, src_branches, "/Tree/Branches", (0.42, 0.30, 0.20), 0.8) \
+        if os.environ.get("TREEGEN_PART", "all") not in ("leaves",) else None
+    lp = bake(rstage, src_leaves, "/Tree/Leaves", (0.22, 0.55, 0.16), 0.6,
+              leaf_cards=True) \
+        if os.environ.get("TREEGEN_PART", "all") not in ("branches",) else None
 
 # Ground plane so the tree reads against something
 all_pts_list = [p for p in (bp, lp) if p is not None]
@@ -201,6 +337,21 @@ fill.CreateIntensityAttr().Set(2.5)
 UsdGeom.Xformable(fill).AddTransformOp().Set(fill_xf)
 rstage.GetRootLayer().Save()
 
+if NODE_MATERIAL:
+    # HydraRenderer's scene assembler reads the scene file directly and does
+    # not traverse sublayer references, so hand it a flattened copy of the
+    # composed stage (all prims resolved into one layer). The node-written
+    # prims are `over`s there (modifier-layer non-destructive semantics);
+    # the assembler only draws concrete defs, so flip the specifier.
+    scene = OUT_DIR / f"treegen_{TAG}_nodescene.usda"
+    if scene.exists():
+        scene.unlink()
+    rstage.Export(str(scene))
+    text = scene.read_text()
+    text = text.replace('over "treegen"', 'def "treegen"')
+    scene.write_text(text)
+    print(f"[treegen] flattened C++-authored stage -> {scene}")
+
 # ---- 3. Render in-process (path tracer) ----
 import hd_RUZINO_py as renderer
 import nodes_core_py as core
@@ -275,6 +426,15 @@ def render_view(out_name, eye_dir, target_up_frac, dist_scale=1.0):
     ops = xform.GetOrderedXformOps()
     ops[0].Set(look_at(eye, target))
     rstage.GetRootLayer().Save()
+    if NODE_MATERIAL:
+        # Re-flatten per view so the renderer picks up this view's camera
+        # (its assembler reads the scene file, not the live stage).
+        if scene.exists():
+            scene.unlink()
+        rstage.Export(str(scene))
+        text = scene.read_text()
+        text = text.replace('over "treegen"', 'def "treegen"')
+        scene.write_text(text)
     hydra = make_renderer()
     for _ in range(SPP):
         hydra.render(0.0)

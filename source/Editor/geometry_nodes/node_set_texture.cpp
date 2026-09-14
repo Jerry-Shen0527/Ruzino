@@ -64,9 +64,10 @@ NODE_EXECUTION_FUNCTION(set_texture)
     if (!material) {
         material = std::make_shared<MaterialComponent>(&geometry);
     }
-    material->textures.clear();
+    material->material_object.textures.clear();
+    material->material_object.textured = true;
 
-    material->textures.push_back(texture);
+    material->material_object.textures.push_back(texture);
     geometry.attach_component(material);
 
     params.set_output("Geometry", std::move(geometry));

@@ -1,15 +1,19 @@
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <functional>
 #include <glm/gtx/rotate_vector.hpp>
+#include <random>
 #include <unordered_map>
 
 #include "GCore/Components/CurveComponent.h"
+#include "GCore/Components/MaterialComponent.h"
 #include "GCore/Components/MeshComponent.h"
 #include "TreeGen/TreeGrowth.h"
 #include "TreeGen/TreeParameters.h"
 #include "TreeGen/TreeStructure.h"
 #include "geom_node_base.h"
+#include "spdlog/spdlog.h"
 
 using namespace TreeGen;
 
@@ -67,7 +71,7 @@ NODE_DECLARATION_FUNCTION(tree_generate)
     b.add_input<bool>("Generate Leaves").default_val(true);
     b.add_input<bool>("Terminal Leaves Only").default_val(true);
     b.add_input<int>("Leaf Terminal Levels").min(1).max(10).default_val(3);
-    b.add_input<int>("Leaves Per Internode").min(0).max(30).default_val(14);
+    b.add_input<int>("Leaves Per Internode").min(0).max(64).default_val(14);
     b.add_input<float>("Leaf Size").min(0.01f).max(1.0f).default_val(0.28f);
     b.add_input<float>("Leaf Aspect Ratio")
         .min(0.5f)
@@ -82,6 +86,12 @@ NODE_DECLARATION_FUNCTION(tree_generate)
         .max(1.0f)
         .default_val(0.5f);
     b.add_input<float>("Leaf Curvature").min(0.0f).max(1.0f).default_val(0.2f);
+    // Optional leaf-card material: when set, the Leaves output carries a
+    // MaterialComponent binding this RGBA atlas with alpha cutout enabled.
+    // Leave empty and chain a set_material node instead for custom control.
+    b.add_input<std::string>("Leaf Atlas").optional(true).default_val("");
+    // Species tile in the 2x2 atlas; -1 mixes all four per leaf.
+    b.add_input<int>("Leaf Species").min(-1).max(3).default_val(-1);
 
     // Output
     b.add_output<Geometry>("Tree Branches");
@@ -135,6 +145,8 @@ NODE_EXECUTION_FUNCTION(tree_generate)
     tree_params.leaf_phototropism =
         params.get_input<float>("Leaf Phototropism");
     tree_params.leaf_curvature = params.get_input<float>("Leaf Curvature");
+    const std::string leaf_atlas = params.get_input<std::string>("Leaf Atlas");
+    const int leaf_species = params.get_input<int>("Leaf Species");
 
     // Create tree growth system
     TreeGrowth growth(tree_params);
@@ -159,13 +171,16 @@ NODE_EXECUTION_FUNCTION(tree_generate)
                     terminals++;
                     if (branch->leaves.empty()) {
                         if (bare_terminals < 5) {
-                            fprintf(stderr,
-                                    "[treegen]   bare terminal lvl=%d "
-                                    "len=%.2f age=%d pos=(%.2f,%.2f,%.2f)\n",
-                                    branch->level, branch->length,
-                                    branch->age, branch->end_position.x,
-                                    branch->end_position.y,
-                                    branch->end_position.z);
+                            fprintf(
+                                stderr,
+                                "[treegen]   bare terminal lvl=%d "
+                                "len=%.2f age=%d pos=(%.2f,%.2f,%.2f)\n",
+                                branch->level,
+                                branch->length,
+                                branch->age,
+                                branch->end_position.x,
+                                branch->end_position.y,
+                                branch->end_position.z);
                         }
                         bare_terminals++;
                     }
@@ -175,14 +190,20 @@ NODE_EXECUTION_FUNCTION(tree_generate)
                     walk(child);
             };
         walk(tree.root);
-        fprintf(stderr, "[treegen] age=%d branches=%zu terminals=%d "
-                        "bare=%d leaves=%zu height=%.2f levels=%zu\n",
-                tree.current_age, tree.all_branches.size(), terminals,
-                bare_terminals, tree.all_leaves.size(), max_height,
-                level_count.size());
+        fprintf(
+            stderr,
+            "[treegen] age=%d branches=%zu terminals=%d "
+            "bare=%d leaves=%zu height=%.2f levels=%zu\n",
+            tree.current_age,
+            tree.all_branches.size(),
+            terminals,
+            bare_terminals,
+            tree.all_leaves.size(),
+            max_height,
+            level_count.size());
         for (auto& [level, count] : level_count) {
-            fprintf(stderr, "[treegen]   level %d: %d branches\n", level,
-                    count);
+            fprintf(
+                stderr, "[treegen]   level %d: %d branches\n", level, count);
         }
     }
 
@@ -204,17 +225,16 @@ NODE_EXECUTION_FUNCTION(tree_generate)
         if (!branch)
             return;
 
-        bool chain_start =
-            (branch->parent == nullptr) ||
-            (branch->parent->children.size() >= 2);
+        bool chain_start = (branch->parent == nullptr) ||
+                           (branch->parent->children.size() >= 2);
 
         if (chain_start) {
             std::vector<glm::vec3> pts;
             std::vector<float> ws;
 
             pts.push_back(branch->start_position);
-            ws.push_back(branch->parent ? branch->parent->radius
-                                        : branch->radius);
+            ws.push_back(
+                branch->parent ? branch->parent->radius : branch->radius);
 
             std::shared_ptr<TreeBranch> cur = branch;
             while (cur && cur->children.size() == 1) {
@@ -359,6 +379,70 @@ NODE_EXECUTION_FUNCTION(tree_generate)
     leaf_mesh->set_face_vertex_counts(leaf_face_counts);
     leaf_mesh->set_face_vertex_indices(leaf_face_indices);
     leaf_mesh->set_normals(leaf_normals);
+
+    // Face-varying atlas UVs for textured leaf cards. Each leaf quad is 4
+    // verts (tip/right/base/left) x 4 tri faces (front pair, back pair);
+    // corners map to (0.5,1)/(1,0.5)/(0.5,0)/(0,0.5) inside the leaf's
+    // 2x2 species tile. Every 4 consecutive faces belong to one leaf.
+    static const glm::vec2 corner_uv[4] = {
+        { 0.5f, 1.0f },  // tip
+        { 1.0f, 0.5f },  // right
+        { 0.5f, 0.0f },  // base
+        { 0.0f, 0.5f },  // left
+    };
+    constexpr int faces_per_leaf = 4;
+    constexpr float uv_inset = 0.005f, uv_span = 0.49f;
+    const int leaf_count =
+        static_cast<int>(leaf_face_counts.size()) / faces_per_leaf;
+    std::vector<glm::vec2> leaf_uvs(leaf_face_indices.size());
+    std::mt19937 tile_rng(42u);
+    std::uniform_int_distribution<int> tile_pick(0, 3);
+    for (int li = 0; li < leaf_count; ++li) {
+        int tile = tile_pick(tile_rng);
+        if (leaf_species >= 0) {
+            tile = glm::clamp(leaf_species, 0, 3);
+        }
+        const float u0 = static_cast<float>(tile % 2) * 0.5f + uv_inset;
+        const float v0 = static_cast<float>(1 - tile / 2) * 0.5f + uv_inset;
+        const int face_base = li * faces_per_leaf;
+        for (int f = 0; f < faces_per_leaf; ++f) {
+            for (int c = 0; c < 3; ++c) {
+                const int corner =
+                    leaf_face_indices[face_base * 3 + f * 3 + c] % 4;
+                leaf_uvs[face_base * 3 + f * 3 + c] = glm::vec2(
+                    u0 + corner_uv[corner].x * uv_span,
+                    v0 + corner_uv[corner].y * uv_span);
+            }
+        }
+    }
+    leaf_mesh->set_texcoords_array(leaf_uvs);
+
+    // Optional: attach a cutout material so the Leaves output renders as
+    // textured alpha leaf cards without any extra nodes. Empty input = no
+    // material (chain a set_material node for manual control instead).
+    if (!leaf_atlas.empty()) {
+        if (std::filesystem::exists(leaf_atlas)) {
+            auto material = leaf_geom.get_component<MaterialComponent>();
+            if (!material) {
+                material = std::make_shared<MaterialComponent>(&leaf_geom);
+            }
+            auto& material_object = material->material_object;
+            material_object.textures.clear();
+            material_object.textures.push_back(leaf_atlas);
+            material_object.textured = true;
+            material_object.alpha_cutout = true;
+            material_object.opacity_threshold = 0.5f;
+            material_object.roughness = 0.55f;
+            material_object.wrap_mode = "clamp";
+            leaf_geom.attach_component(material);
+        }
+        else {
+            spdlog::warn(
+                "[tree_generate] Leaf Atlas not found, skipping material: "
+                "{}",
+                leaf_atlas);
+        }
+    }
 
     params.set_output("Leaves", leaf_geom);
 
