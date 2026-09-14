@@ -176,12 +176,15 @@ void ClosureCompoundNodeSlang::emitOpacityFetchFunctionDefinition(
     // the opacity value itself is emitted directly below, no string surgery.
     shadergen.emitLine("$BindlessDataLoading", stage, false);
 
-    // Find the "opacity" input by name and emit it directly. emitInput will
-    // recursively emit any upstream nodes the opacity input depends on (e.g. a
-    // texture sample feeding opacity), so no separate emitFunctionCalls pass
-    // is needed here. This replaces the old hack that string-parsed the
-    // opacity expression out of fetch_shader_data (with a hardcoded magic
-    // parameter index of 38).
+    // Find the "opacity" input by name. When it is driven by a texture, the
+    // upstream sampling calls exist only inside fetch_shader_data — walking
+    // the shader graph again here is unsafe (nodes are already released by
+    // the time this function body is emitted) — so sample the texture that
+    // $BindlessDataLoading bound as <nodename>_file directly. vertexInfo.texC
+    // is the same UV the texture's st input resolves to (UsdPrimvarReader
+    // "st"). This replaces the old hack that string-parsed the opacity
+    // expression out of fetch_shader_data (with a hardcoded magic parameter
+    // index of 38).
     //
     // standard_surface.opacity is color3 → take its luminance.
     // UsdPreviewSurface.opacity is float   → use as-is.
@@ -189,6 +192,44 @@ void ClosureCompoundNodeSlang::emitOpacityFetchFunctionDefinition(
     for (const auto& input : node.getInputs()) {
         if (input->getName() == "opacity") {
             TypeDesc type = input->getType();
+            const ShaderOutput* conn = input->getConnection();
+            const ShaderNode* upstream = conn ? conn->getNode() : nullptr;
+            const bool textureDriven =
+                upstream && upstream->hasClassification(
+                                ShaderNode::Classification::TEXTURE);
+            if (upstream && textureDriven) {
+                const std::string texVar = upstream->getName() + "_file";
+                if (type == Type::COLOR3) {
+                    shadergen.emitLine(
+                        "    float3 opacity_color3 = " + texVar +
+                            ".SampleLevel(samplers[1], vertexInfo.texC, "
+                            "0).rgb;",
+                        stage,
+                        false);
+                    shadergen.emitLine(
+                        "    float opacity_value = dot(opacity_color3, "
+                        "float3(0.212671, 0.715160, 0.072169));",
+                        stage,
+                        false);
+                    shadergen.emitLine(
+                        "    opacityColor = opacity_color3;", stage, false);
+                }
+                else {
+                    shadergen.emitLine(
+                        "    float opacity_value = " + texVar +
+                            ".SampleLevel(samplers[1], vertexInfo.texC, "
+                            "0).a;",
+                        stage,
+                        false);
+                    shadergen.emitLine(
+                        "    opacityColor = float3(opacity_value, "
+                        "opacity_value, opacity_value);",
+                        stage,
+                        false);
+                }
+                opacityEmitted = true;
+                break;
+            }
             if (type == Type::COLOR3) {
                 // Emit the color3 expression, then convert to luminance for
                 // the scalar survival probability. Keep the original color3

@@ -367,6 +367,17 @@ static void _AddInput(
         if (mxNextNodeDef) {
             mx::OutputPtr mxConnOutput =
                 mxNextNodeDef->getOutput(conn.upstreamOutputName.GetString());
+            if (!mxConnOutput) {
+                // E.g. UsdUVTexture connected via its legacy 'rgba' output,
+                // which the default (2.3) nodedef no longer declares.
+                TF_WARN(
+                    "Node '%s' has no output named '%s'; skipping input "
+                    "'%s'.",
+                    hdNextType.GetText(),
+                    conn.upstreamOutputName.GetText(),
+                    inputName.GetText());
+                return;
+            }
             // Add input with the connected Ouptut type and set the output name
             *mxInput = mxCurrNode->addInput(inputName, mxConnOutput->getType());
             (*mxInput)->setConnectedOutput(mxConnOutput);
@@ -396,6 +407,16 @@ static void _AddNodeGraphOutput(
         if (mxNextNodeDef) {
             mx::OutputPtr mxConnOutput =
                 mxNextNodeDef->getOutput(conn.upstreamOutputName.GetString());
+            if (!mxConnOutput) {
+                // Same legacy-output-name case as _AddInput above.
+                TF_WARN(
+                    "Node '%s' has no output named '%s'; skipping node "
+                    "graph output '%s'.",
+                    hdNextType.GetText(),
+                    conn.upstreamOutputName.GetText(),
+                    outputName.c_str());
+                return;
+            }
             // Add output with the connected Ouptut type and set the output name
             *mxOutput =
                 mxNodeGraph->addOutput(outputName, mxConnOutput->getType());
@@ -500,7 +521,9 @@ static void _GatherUpstreamNodes(
                     mxNextNode,
                     &mxInput);
             }
-            mxInput->setConnectedNode(mxNextNode);
+            if (mxInput) {
+                mxInput->setConnectedNode(mxNextNode);
+            }
         }
     }
 
@@ -661,7 +684,9 @@ static void _CreateMtlxNodeGraphFromTerminalNodeConnections(
                 mxNodeGraph,
                 mxUpstreamNode,
                 &mxOutput);
-            mxOutput->setConnectedNode(mxUpstreamNode);
+            if (mxOutput) {
+                mxOutput->setConnectedNode(mxUpstreamNode);
+            }
 
             // Connect NodeGraph Output to the ShaderNode
             mx::InputPtr mxInput;
@@ -673,7 +698,9 @@ static void _CreateMtlxNodeGraphFromTerminalNodeConnections(
                 mxShaderNode,
                 mxUpstreamNode,
                 &mxInput);
-            mxInput->setConnectedOutput(mxOutput);
+            if (mxInput) {
+                mxInput->setConnectedOutput(mxOutput);
+            }
         }
     }
 }
