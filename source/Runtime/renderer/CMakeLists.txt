@@ -56,4 +56,15 @@ add_nodes(
 add_subdirectory(nodes/lpm)
 target_link_libraries(node_lpm PUBLIC ffx_lpm)
 
+# CPU-only gtest for the shared tangent computation (tangents.hpp, the
+# header mesh.cpp calls into). Header-only math + Gf types; no RHI.
+if(TARGET gtest)
+	add_executable(mesh_tangent_test tests/mesh_tangent_test.cpp)
+	target_link_libraries(mesh_tangent_test PRIVATE usd_ms gtest gtest_main)
+	target_include_directories(mesh_tangent_test PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}/source
+	)
+	set_target_properties(mesh_tangent_test PROPERTIES ${OUTPUT_DIR} FOLDER tests)
+endif()
+
 endif() # NOT USTC_HOMEWORK_PLUGINS

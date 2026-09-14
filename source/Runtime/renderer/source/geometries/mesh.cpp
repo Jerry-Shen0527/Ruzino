@@ -30,6 +30,7 @@
 #include "../instancer.h"
 #include "../renderParam.h"
 #include "Scene/SceneTypes.slang"
+#include "geometries/tangents.hpp"
 #include "material/material.h"
 #include "nvrhi/utils.h"
 #include "pxr/base/gf/vec2f.h"
@@ -1040,185 +1041,37 @@ void Hd_RUZINO_Mesh::Sync(
                             n0 = n1 = n2 = faceNormal;
                         }
 
-                        GfVec3f deltaPos1 = v1 - v0;
-                        GfVec3f deltaPos2 = v2 - v0;
-                        GfVec2f deltaUV1 = uv1 - uv0;
-                        GfVec2f deltaUV2 = uv2 - uv0;
-
-                        float det = deltaUV1[0] * deltaUV2[1] -
-                                    deltaUV1[1] * deltaUV2[0];
-
-                        GfVec3f tangent, bitangent;
-                        if (std::abs(det) > 1e-10f) {
-                            float r = 1.0f / det;
-                            tangent = (deltaPos1 * deltaUV2[1] -
-                                       deltaPos2 * deltaUV1[1]) *
-                                      r;
-                            bitangent = (deltaPos2 * deltaUV1[0] -
-                                         deltaPos1 * deltaUV2[0]) *
-                                        r;
-                        }
-                        else {
-                            // Degenerate UV triangle - use arbitrary tangent
-                            tangent = GfVec3f(1.0f, 0.0f, 0.0f);
-                            bitangent = GfVec3f(0.0f, 1.0f, 0.0f);
-                        }
+                        const ruzino_render::tangents::TangentFrame frame =
+                            ruzino_render::tangents::
+                                compute_triangle_tangent_frame(
+                                    v0, v1, v2, uv0, uv1, uv2);
 
                         // Process each triangle vertex independently
                         for (int vtxIdx = 0; vtxIdx < 3; vtxIdx++) {
                             GfVec3f n = (vtxIdx == 0)   ? n0
                                         : (vtxIdx == 1) ? n1
                                                         : n2;
-                            n.Normalize();
-
-                            // Gram-Schmidt orthogonalize
-                            GfVec3f t = tangent - n * GfDot(n, tangent);
-                            float tLen = t.GetLength();
-
-                            if (tLen > 1e-6f) {
-                                t = t / tLen;
-                            }
-                            else {
-                                // Tangent parallel to normal - create
-                                // perpendicular
-                                if (std::abs(n[0]) < 0.9f) {
-                                    t = GfVec3f(1.0f, 0.0f, 0.0f);
-                                }
-                                else {
-                                    t = GfVec3f(0.0f, 1.0f, 0.0f);
-                                }
-                                t = t - n * GfDot(n, t);
-                                t.Normalize();
-                            }
-
-                            // Calculate handedness
-                            GfVec3f calculatedBitangent = GfCross(n, t);
-                            float handedness =
-                                GfDot(calculatedBitangent, bitangent) >= 0.0f
-                                    ? 1.0f
-                                    : -1.0f;
 
                             tangents[triIdx * 3 + vtxIdx] =
-                                GfVec4f(t[0], t[1], t[2], handedness);
+                                ruzino_render::tangents::orthogonalize_tangent(
+                                    n, frame.tangent, frame.bitangent);
                         }
                     }
                 }
                 else {
-                    // Vertex interpolation: accumulate per vertex
-                    tangents.resize(points.size());
-                    std::vector<GfVec3f> bitangents(points.size());
-
-                    for (size_t i = 0; i < tangents.size(); i++) {
-                        tangents[i] = GfVec4f(0.0f, 0.0f, 0.0f, 0.0f);
-                        bitangents[i] = GfVec3f(0.0f, 0.0f, 0.0f);
-                    }
-
-                    for (size_t triIdx = 0; triIdx < triangulatedIndices.size();
-                         triIdx++) {
-                        uint32_t i0 = triangulatedIndices[triIdx][0];
-                        uint32_t i1 = triangulatedIndices[triIdx][1];
-                        uint32_t i2 = triangulatedIndices[triIdx][2];
-
-                        if (texcoords.size() <= std::max({ i0, i1, i2 }))
-                            continue;
-
-                        GfVec3f v0 = points[i0];
-                        GfVec3f v1 = points[i1];
-                        GfVec3f v2 = points[i2];
-                        GfVec2f uv0 = texcoords[i0];
-                        GfVec2f uv1 = texcoords[i1];
-                        GfVec2f uv2 = texcoords[i2];
-
-                        GfVec3f deltaPos1 = v1 - v0;
-                        GfVec3f deltaPos2 = v2 - v0;
-                        GfVec2f deltaUV1 = uv1 - uv0;
-                        GfVec2f deltaUV2 = uv2 - uv0;
-
-                        float det = deltaUV1[0] * deltaUV2[1] -
-                                    deltaUV1[1] * deltaUV2[0];
-                        if (std::abs(det) < 1e-10f)
-                            continue;
-
-                        float r = 1.0f / det;
-                        GfVec3f tangent = (deltaPos1 * deltaUV2[1] -
-                                           deltaPos2 * deltaUV1[1]) *
-                                          r;
-                        GfVec3f bitangent = (deltaPos2 * deltaUV1[0] -
-                                             deltaPos1 * deltaUV2[0]) *
-                                            r;
-
-                        // Weight by triangle area
-                        GfVec3f edge1 = v1 - v0;
-                        GfVec3f edge2 = v2 - v0;
-                        float area = GfCross(edge1, edge2).GetLength() * 0.5f;
-
-                        tangents[i0] += GfVec4f(
-                            tangent[0] * area,
-                            tangent[1] * area,
-                            tangent[2] * area,
-                            0.0f);
-                        tangents[i1] += GfVec4f(
-                            tangent[0] * area,
-                            tangent[1] * area,
-                            tangent[2] * area,
-                            0.0f);
-                        tangents[i2] += GfVec4f(
-                            tangent[0] * area,
-                            tangent[1] * area,
-                            tangent[2] * area,
-                            0.0f);
-
-                        bitangents[i0] += bitangent * area;
-                        bitangents[i1] += bitangent * area;
-                        bitangents[i2] += bitangent * area;
-                    }
-
-                    // Normalize and orthogonalize
-                    for (size_t i = 0; i < tangents.size(); i++) {
-                        GfVec3f n = normals[i];
-                        n.Normalize();
-
-                        GfVec3f t = GfVec3f(
-                            tangents[i][0], tangents[i][1], tangents[i][2]);
-                        GfVec3f b = bitangents[i];
-
-                        float tLen = t.GetLength();
-                        if (tLen > 1e-6f) {
-                            t = t / tLen;
-                            t = t - n * GfDot(n, t);
-                            float orthLen = t.GetLength();
-                            if (orthLen > 1e-6f) {
-                                t = t / orthLen;
-                            }
-                            else {
-                                if (std::abs(n[0]) < 0.9f) {
-                                    t = GfVec3f(1.0f, 0.0f, 0.0f);
-                                }
-                                else {
-                                    t = GfVec3f(0.0f, 1.0f, 0.0f);
-                                }
-                                t = t - n * GfDot(n, t);
-                                t.Normalize();
-                            }
-
-                            GfVec3f calculatedBitangent = GfCross(n, t);
-                            float handedness =
-                                GfDot(calculatedBitangent, b) >= 0.0f ? 1.0f
-                                                                      : -1.0f;
-                            tangents[i] = GfVec4f(t[0], t[1], t[2], handedness);
-                        }
-                        else {
-                            if (std::abs(n[0]) < 0.9f) {
-                                t = GfVec3f(1.0f, 0.0f, 0.0f);
-                            }
-                            else {
-                                t = GfVec3f(0.0f, 1.0f, 0.0f);
-                            }
-                            t = t - n * GfDot(n, t);
-                            t.Normalize();
-                            tangents[i] = GfVec4f(t[0], t[1], t[2], 1.0f);
-                        }
-                    }
+                    // Vertex interpolation: accumulate per vertex. Shared
+                    // implementation with mesh_tangent_test (see
+                    // tangents.hpp); it gathers per-vertex normals with the
+                    // SAME corner indexing as the triangles -- indexing a
+                    // FaceVarying normals[] with a VERTEX id reads an
+                    // arbitrary triangle's corner normal and the tangent
+                    // orthogonalization becomes garbage (the
+                    // all-normal-maps-dark bug, 2026-09-07).
+                    const std::vector<GfVec4f> vertex_tangents =
+                        ruzino_render::tangents::compute_vertex_tangents(
+                            points, triangulatedIndices, normals, texcoords);
+                    tangents.assign(
+                        vertex_tangents.begin(), vertex_tangents.end());
                 }
             }
         }
