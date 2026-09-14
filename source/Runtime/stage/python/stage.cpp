@@ -45,6 +45,7 @@
 
 #include "GCore/geom_payload.hpp"
 #include "nodes/core/api.hpp"
+#include "stage/hosek_sky.h"
 #include "stage/stage.hpp"
 
 // Need animation.h for Stage implementation details
@@ -541,4 +542,57 @@ NB_MODULE(stage_py, m)
         nb::arg("system"),
         nb::arg("payload"),
         "Set GeomPayload as global parameters on a NodeSystem");
+
+    // --- HosekWilkieSky sun rig (one-way sky -> child light linkage) ---
+    m.def(
+        "sync_sun_light",
+        [](nb::handle py_stage,
+           const std::string& sky_path,
+           nb::handle py_layer) {
+            pxr::UsdStageRefPtr stage =
+                extract_stage_from_boost_python(py_stage.ptr());
+            pxr::SdfLayerHandle layer;
+            if (!py_layer.is_none()) {
+                bp::object layer_obj(
+                    bp::handle<>(bp::borrowed(py_layer.ptr())));
+                bp::extract<pxr::SdfLayerHandle> extractor(layer_obj);
+                if (!extractor.check()) {
+                    throw std::runtime_error(
+                        "layer must be a pxr.Sdf.Layer or None");
+                }
+                layer = extractor();
+            }
+            std::string err;
+            if (!Ruzino::sync_sun_light(
+                    stage, pxr::SdfPath(sky_path), &err, layer)) {
+                throw std::runtime_error(err);
+            }
+        },
+        nb::arg("stage"),
+        nb::arg("sky_path"),
+        nb::arg("layer") = nb::none(),
+        "Point the first DistantLight child of a HosekWilkieSky prim along "
+        "the sky's world-space sun direction. layer=None authors into the "
+        "session (modifier) layer; pass a pxr.Sdf.Layer (e.g. the root "
+        "layer of a generated stage) to author there instead. Valid rig "
+        "without a sun child is a no-op success.");
+
+    m.def(
+        "world_sun_direction",
+        [](nb::handle py_stage, const std::string& sky_path) {
+            pxr::UsdStageRefPtr stage =
+                extract_stage_from_boost_python(py_stage.ptr());
+            pxr::GfVec3f dir;
+            std::string err;
+            if (!Ruzino::world_sun_direction(
+                    stage, pxr::SdfPath(sky_path), dir, &err)) {
+                throw std::runtime_error(err);
+            }
+            return nb::make_tuple(dir[0], dir[1], dir[2]);
+        },
+        nb::arg("stage"),
+        nb::arg("sky_path"),
+        "World-space TOWARD-sun direction of a HosekWilkieSky prim "
+        "(dome-local inputs:sunDirection mapped through its world "
+        "transform).");
 }

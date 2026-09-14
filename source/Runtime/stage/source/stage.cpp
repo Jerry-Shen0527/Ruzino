@@ -15,6 +15,7 @@
 #include <pxr/usd/usdShade/material.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <functional>
 #include <sstream>
@@ -23,6 +24,7 @@
 #include "MaterialXFormat/File.h"
 #include "MaterialXFormat/Util.h"
 #include "stage/animation.h"
+#include "stage/hosek_sky.h"
 #include "stage_listener/stage_listener.h"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
@@ -118,6 +120,20 @@ Stage::~Stage()
 
 void Stage::tick(float ellapsed_time)
 {
+    // HosekWilkieSky sun-rig: apply pending syncs. The sync is deferred out
+    // of the UsdNotice dispatch (see hosek_sky_maybe_emit) because mutating
+    // the stage inside its own change notification aborts USD; at frame
+    // rate the one-tick delay is imperceptible.
+    if (!pending_sun_syncs_.empty()) {
+        for (const pxr::SdfPath& sky_path : pending_sun_syncs_) {
+            std::string err;
+            if (!sync_sun_light(stage, sky_path, &err)) {
+                spdlog::warn("[hosek_sky] sun sync failed: {}", err);
+            }
+        }
+        pending_sun_syncs_.clear();
+    }
+
     // Update animation system
     if (animation_system_) {
         animation_system_->update(registry_, ellapsed_time);
@@ -817,7 +833,8 @@ void Stage::initialize_ecs_systems()
 
     // Gameplay: input snapshot + character controllers
     input_state_ = std::make_shared<input::InputState>();
-    character_system_ = std::make_unique<character::CharacterControllerSystem>();
+    character_system_ =
+        std::make_unique<character::CharacterControllerSystem>();
 
     // Initialize StageListener - fully depends on USD notice mechanism
     if (stage) {
@@ -827,10 +844,52 @@ void Stage::initialize_ecs_systems()
         stage_listener_->SetPrimRemovedCallback(
             [this](const pxr::SdfPath& path) { on_prim_removed(path); });
         stage_listener_->SetPrimChangedCallback(
-            [this](const pxr::SdfPath& path) { on_prim_changed(path); });
+            [this](const pxr::SdfPath& path) {
+                on_prim_changed(path);
+                hosek_sky_maybe_emit(path);
+            });
         // Don't call CapturePrimSnapshot - fully depend on USD notice mechanism
         // This way a newly created empty stage won't have any pre-existing
         // entities
+    }
+
+    // HosekWilkieSky sun-rig linkage: notice -> bus -> deferred sync. The
+    // subscriber only QUEUES the sky here — mutating the stage inside its
+    // own UsdNotice dispatch aborts USD, so Stage::tick applies the sync.
+    // The subscription is installed once per Stage instance (initialize
+    // runs on every OpenStage); events_ is a plain member, so without the
+    // guard a reopen would stack duplicate subscribers.
+    if (!sun_link_subscribed_) {
+        events_.subscribe_any(
+            HOSEK_SKY_SUN_EDITED, [this](const std::any& payload) {
+                auto sky_path = std::any_cast<pxr::SdfPath>(&payload);
+                if (!sky_path) {
+                    return;
+                }
+                if (std::find(
+                        pending_sun_syncs_.begin(),
+                        pending_sun_syncs_.end(),
+                        *sky_path) == pending_sun_syncs_.end()) {
+                    pending_sun_syncs_.push_back(*sky_path);
+                }
+            });
+        sun_link_subscribed_ = true;
+    }
+}
+
+// HosekWilkieSky edits ride the same ObjectsChanged notices as everything
+// else; broadcast them on the stage bus for the sun-rig linkage (and any
+// other sky-aware UI). Only the SKY prim is broadcast — the linkage writes
+// the CHILD DistantLight, whose notices are filtered out here, so the sync
+// cannot feed back into itself.
+void Stage::hosek_sky_maybe_emit(const pxr::SdfPath& path)
+{
+    if (!stage) {
+        return;
+    }
+    pxr::UsdPrim prim = stage->GetPrimAtPath(path.GetPrimPath());
+    if (prim && prim.GetTypeName() == pxr::TfToken("HosekWilkieSky")) {
+        events_.emit_any(HOSEK_SKY_SUN_EDITED, std::any(path.GetPrimPath()));
     }
 }
 

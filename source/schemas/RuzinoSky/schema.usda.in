@@ -1,0 +1,61 @@
+#usda 1.0
+(
+    # subLayers point at the OpenUSD SDK SOURCE tree. usdGenSchema requires
+    # the parent schema layers to carry their /GLOBAL codegen metadata, which
+    # the *shipped* generatedSchema.usda files intentionally do not (the
+    # GLOBAL prim is stripped from codegen output). Do not point these at
+    # SDK/OpenUSD/<config>/lib/usd/... — regeneration will fail with
+    # "Could not find the defining layer" / "GLOBAL prim not found".
+    subLayers = [
+        @RUZINO_USD_SOURCE_SCHEMA@,
+        @RUZINO_USDLUX_SOURCE_SCHEMA@
+    ]
+)
+
+over "GLOBAL" (
+    customData = {
+        string libraryName = "RuzinoSky"
+        string libraryPath = "./"
+        string libraryPrefix = "Ruzino"
+        # Codeless schema: emits only plugInfo.json + generatedSchema.usda.
+        # No C++/Python API class is generated; clients use the generic
+        # prim API. Upgrade path: drop this flag and add the generated
+        # sources to a target — the on-disk prim data does not change.
+        bool skipCodeGeneration = true
+    }
+)
+{
+}
+
+# Hosek-Wilkie analytic sky, packaged as a standalone prim (this engine's
+# UsdLuxDomeLight-derived type; unknown to other applications without this
+# plugInfo, which is intended).
+#
+# The sky rig pairs with a child UsdLuxDistantLight whose direction the
+# editor keeps in sync with inputs:sunDirection (see stage/hosek_sky.cpp).
+# The renderer treats both as fully independent lights and never rewrites
+# authored directions.
+#
+# inputs:shader_path is declared here with the Hosek callable as fallback so
+# the renderer's existing shader_path mechanism activates the Hosek sky with
+# zero renderer-side type handling.
+class HosekWilkieSky "HosekWilkieSky" (inherits = </DomeLight>)
+{
+    # Dome-LOCAL direction toward the sun (+Y up in the dome's frame).
+    float3 inputs:sunDirection = (0.5, 0.7, 0.5) (
+        doc = "Dome-local direction toward the sun (+Y up)."
+    )
+
+    float inputs:turbidity = 3.0 (
+        doc = "Hosek-Wilkie atmospheric turbidity."
+    )
+
+    float inputs:groundAlbedo = 0.3 (
+        doc = "Hosek-Wilkie ground albedo."
+    )
+
+    string inputs:shader_path = "callables/eval_dome_light_hosek_wilkie.slang" (
+        doc = """Sky evaluation callable consumed by the hd_RUZINO dome
+light. The schema fallback activates the Hosek-Wilkie sky automatically."""
+    )
+}

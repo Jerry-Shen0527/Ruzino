@@ -221,6 +221,7 @@ endif()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/source/Editor)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/source/Runtime)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/source/Plugins)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/source/schemas/RuzinoSky)
 
 add_subdirectory(tests)
 

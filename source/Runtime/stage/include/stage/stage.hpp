@@ -1,12 +1,13 @@
 #pragma once
 #include <pxr/usd/sdf/path.h>
 #include <pxr/usd/usd/stage.h>
-#include <vector>
 #include <pxr/usd/usdLux/sphereLight.h>
 
-#include "character/character_controller.h"
-#include "input/input_state.h"
+#include <vector>
 
+#include "character/character_controller.h"
+#include "events/event_bus.h"
+#include "input/input_state.h"
 #include "pxr/usd/usdGeom/cube.h"
 #include "pxr/usd/usdGeom/cylinder.h"
 #include "pxr/usd/usdGeom/mesh.h"
@@ -167,6 +168,14 @@ class STAGE_API Stage {
         return stage_listener_.get();
     }
 
+    // Stage-scoped broadcast bus (module-independent events/event_bus.h).
+    // The HosekWilkieSky sun-rig linkage publishes/ subcribes here; GUI
+    // code can hook the same bus without touching the window's bus.
+    EventBus& events()
+    {
+        return events_;
+    }
+
     // ========================================================================
     // Gameplay (character controllers)
     // ========================================================================
@@ -238,6 +247,14 @@ class STAGE_API Stage {
     // Stage listener
     std::unique_ptr<class StageListener> stage_listener_;
 
+    // Stage-scoped event bus + one-time subscription guard for the
+    // HosekWilkieSky sun-rig linkage (rebuilt listeners must not stack
+    // duplicate subscribers across OpenStage calls). Sky edits queue into
+    // pending_sun_syncs_ during notice dispatch; Stage::tick applies them.
+    EventBus events_;
+    bool sun_link_subscribed_ = false;
+    std::vector<pxr::SdfPath> pending_sun_syncs_;
+
     // Persistent modifier layer (sidecar file)
     pxr::SdfLayerHandle modifier_layer_;
 
@@ -252,6 +269,9 @@ class STAGE_API Stage {
     void on_prim_added(const pxr::UsdPrim& prim);
     void on_prim_removed(const pxr::SdfPath& path);
     void on_prim_changed(const pxr::SdfPath& path);
+
+    // Broadcast HosekWilkieSky edits on events_ (sun-rig linkage trigger)
+    void hosek_sky_maybe_emit(const pxr::SdfPath& path);
 
     // Initialize ECS and StageListener
     void initialize_ecs_systems();

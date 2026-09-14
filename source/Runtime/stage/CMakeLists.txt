@@ -7,6 +7,7 @@ RUZINO_ADD_LIB(
 		glm::glm
 		geometry
 		character
+		ruzino_events
 	PYTHON_WRAP_DIR python
 	PRIVATE_LIBS
 		spdlog::spdlog
