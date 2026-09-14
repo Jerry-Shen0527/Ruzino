@@ -907,7 +907,7 @@ void UsdFileViewer::EditValue()
                                 std::filesystem::path shaderDir =
                                     SlangShaderCompiler::get_shader_dir(
                                         ShaderDirType::Renderer) /
-                                    "shaders/callables";
+                                    "callables";
 
                                 if (std::filesystem::exists(shaderDir)) {
                                     try {
@@ -962,7 +962,7 @@ void UsdFileViewer::EditValue()
                                                       isMaterialShader))) {
                                                     // Store relative path
                                                     shaderFiles.push_back(
-                                                        "shaders/callables/" +
+                                                        "callables/" +
                                                         filename);
                                                 }
                                             }
@@ -1365,7 +1365,8 @@ void UsdFileViewer::show_right_click_menu()
             }
             if (ImGui::MenuItem("Edit")) {
                 // Broadcast an editor-creation request on the event bus so
-                // any subscriber can open the editor (see GUI/viewport_events.h).
+                // any subscriber can open the editor (see
+                // GUI/viewport_events.h).
                 if (window) {
                     window->events().emit_any(
                         ViewportEvents::EDITOR_CREATION, std::any(selected));
