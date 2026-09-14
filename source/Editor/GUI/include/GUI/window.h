@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "GUI/api.h"
+#include "events/event_bus.h"
 #include "input/input_state.h"
 #include "widget.h"
 struct GLFWwindow;
@@ -15,27 +16,10 @@ RUZINO_NAMESPACE_OPEN_SCOPE
 
 class DockingImguiRenderer;
 
-// Simple event system for widget communication
-class GUI_API WindowEventSystem {
-   public:
-    using EventCallback = std::function<void(const std::string& event_data)>;
-    using EventCallbackAny = std::function<void(const std::any& event_data)>;
-
-    void subscribe(const std::string& event_name, EventCallback callback);
-    void subscribe_any(
-        const std::string& event_name,
-        EventCallbackAny callback);
-
-    void emit(
-        const std::string& event_name,
-        const std::string& event_data = "");
-    void emit_any(const std::string& event_name, const std::any& event_data);
-
-   private:
-    std::unordered_map<std::string, std::vector<EventCallback>> subscribers_;
-    std::unordered_map<std::string, std::vector<EventCallbackAny>>
-        subscribers_any_;
-};
+// The window's event bus. The implementation moved to the module-independent
+// events/event_bus.h so Stage and headless tools can own their own buses;
+// this alias keeps every existing emit/subscribe call site unchanged.
+using WindowEventSystem = EventBus;
 
 // Represents a window in a GUI application, providing basic functionalities
 // such as initialization and rendering.

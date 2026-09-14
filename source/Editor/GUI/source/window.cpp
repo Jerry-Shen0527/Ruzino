@@ -16,45 +16,6 @@
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 
-// WindowEventSystem implementation
-void WindowEventSystem::subscribe(
-    const std::string& event_name,
-    EventCallback callback)
-{
-    subscribers_[event_name].push_back(callback);
-}
-
-void WindowEventSystem::subscribe_any(
-    const std::string& event_name,
-    EventCallbackAny callback)
-{
-    subscribers_any_[event_name].push_back(callback);
-}
-
-void WindowEventSystem::emit(
-    const std::string& event_name,
-    const std::string& event_data)
-{
-    auto it = subscribers_.find(event_name);
-    if (it != subscribers_.end()) {
-        for (auto& callback : it->second) {
-            callback(event_data);
-        }
-    }
-}
-
-void WindowEventSystem::emit_any(
-    const std::string& event_name,
-    const std::any& event_data)
-{
-    auto it = subscribers_any_.find(event_name);
-    if (it != subscribers_any_.end()) {
-        for (auto& callback : it->second) {
-            callback(event_data);
-        }
-    }
-}
-
 class DockingImguiRenderer final : public ImGui_Renderer {
     friend class Window;
 
