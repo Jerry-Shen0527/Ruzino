@@ -1026,8 +1026,20 @@ void Hd_RUZINO_Dome_Light::Sync(
                     ruzino::hosek_cook(turbidity, albedo, elevation);
 
                 if (!hosek_state_handle) {
-                    hosek_state_handle = render_param->InstanceCollection
-                                             ->hosek_state_pool.allocate(1);
+                    // Reserve row 0 as the zeroed dummy the shaders treat as
+                    // "no Hosek sky" (hosekStateIndex = 0) BEFORE the first
+                    // real cook takes it. Lazy: scenes without a Hosek dome
+                    // never allocate; render nodes that bind
+                    // hosekStateBuffer reserve the dummy themselves.
+                    auto& collection = render_param->InstanceCollection;
+                    if (!collection->hosek_dummy_row) {
+                        ruzino::HosekSkyState zero{};
+                        collection->hosek_dummy_row =
+                            collection->hosek_state_pool.allocate(1);
+                        collection->hosek_dummy_row->write_data(&zero);
+                    }
+                    hosek_state_handle =
+                        collection->hosek_state_pool.allocate(1);
                 }
                 hosek_state_handle->write_data(&state);
                 hosek_state_index = hosek_state_handle->index();
