@@ -1,15 +1,20 @@
 #ifdef GEOM_USD_EXTENSION
 
+#include <pxr/usd/sdf/attributeSpec.h>
 #include <pxr/usd/sdf/layer.h>
+#include <pxr/usd/sdf/primSpec.h>
+#include <pxr/usd/sdf/relationshipSpec.h>
 #include <pxr/usd/usdGeom/basisCurves.h>
 #include <pxr/usd/usdGeom/mesh.h>
+#include <pxr/usd/usdGeom/pointInstancer.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
 
 #include <string>
 
-#include "GCore/Components/MeshComponent.h"
 #include "GCore/Components/CurveComponent.h"
+#include "GCore/Components/InstancerComponent.h"
+#include "GCore/Components/MeshComponent.h"
 #include "GCore/Components/PointsComponent.h"
 #include "GCore/geom_payload.hpp"
 #include "GCore/usd_extension.h"
@@ -28,6 +33,103 @@ bool legal(const std::string& string)
         return true;
     }
     return false;
+}
+
+// PointInstancer over-spec into an arbitrary modifier layer (Sdf-spec
+// authoring, the write_geometry_as_over_spec style). Attributes carry
+// DEFAULTS only — no time samples — so default-time reads (pxr Get(),
+// Hydra ingest) resolve them. Mirrors the direct-write instancer layout in
+// write_geometry_to_usd: instancer at `instancer_path`, prototype mesh
+// expected at `proto_path`.
+static bool write_instancer_over_spec(
+    Geometry& geometry,
+    pxr::SdfLayerHandle modifier_layer,
+    const pxr::SdfPath& instancer_path,
+    const pxr::SdfPath& proto_path)
+{
+    auto inst = geometry.get_const_component<InstancerComponent>();
+    if (!inst) {
+        return false;
+    }
+    if (!pxr::SdfJustCreatePrimInLayer(modifier_layer, instancer_path)) {
+        spdlog::error(
+            "[write_usd] instancer: failed to create prim at {}",
+            instancer_path.GetString());
+        return false;
+    }
+    auto prim_spec = modifier_layer->GetPrimAtPath(instancer_path);
+    if (!prim_spec) {
+        return false;
+    }
+    prim_spec->SetSpecifier(pxr::SdfSpecifierOver);
+    prim_spec->SetTypeName(pxr::TfToken("PointInstancer"));
+
+    const auto set_attr = [&prim_spec](
+                              const pxr::TfToken& name,
+                              const pxr::SdfValueTypeName& type,
+                              const pxr::VtValue& value) {
+        auto attr_spec = pxr::SdfAttributeSpec::New(
+            prim_spec, name, type, pxr::SdfVariabilityVarying);
+        return attr_spec && attr_spec->SetDefaultValue(value);
+    };
+
+    const auto& pos = inst->get_positions();
+    const size_t n = pos.size();
+    pxr::VtVec3fArray positions(n);
+    for (size_t i = 0; i < n; ++i)
+        positions[i] = pxr::GfVec3f(pos[i].x, pos[i].y, pos[i].z);
+    if (!set_attr(
+            pxr::TfToken("positions"),
+            pxr::SdfValueTypeNames->Point3fArray,
+            pxr::VtValue(positions))) {
+        return false;
+    }
+    // Single prototype: every instance points at index 0.
+    pxr::VtIntArray proto_indices(n, 0);
+    if (!set_attr(
+            pxr::TfToken("protoIndices"),
+            pxr::SdfValueTypeNames->IntArray,
+            pxr::VtValue(proto_indices))) {
+        return false;
+    }
+
+    if (inst->has_rotations_enabled()) {
+        const auto& ori = inst->get_orientations();
+        if (!ori.empty()) {
+            pxr::VtQuathArray orientations(n);
+            for (size_t i = 0; i < n && i < ori.size(); ++i)
+                orientations[i] =
+                    pxr::GfQuath(ori[i].w, ori[i].x, ori[i].y, ori[i].z);
+            set_attr(
+                pxr::TfToken("orientations"),
+                pxr::SdfValueTypeNames->QuathArray,
+                pxr::VtValue(orientations));
+        }
+    }
+    const auto& scl = inst->get_scales();
+    if (!scl.empty()) {
+        pxr::VtVec3fArray scales(n);
+        for (size_t i = 0; i < n && i < scl.size(); ++i)
+            scales[i] = pxr::GfVec3f(scl[i].x, scl[i].y, scl[i].z);
+        set_attr(
+            pxr::TfToken("scales"),
+            pxr::SdfValueTypeNames->Float3Array,
+            pxr::VtValue(scales));
+    }
+
+    auto rel =
+        pxr::SdfRelationshipSpec::New(prim_spec, pxr::TfToken("prototypes"));
+    if (!rel) {
+        return false;
+    }
+    rel->GetTargetPathList().Add(proto_path);
+
+    spdlog::info(
+        "[write_usd] instancer: {} instances of {} at {}",
+        n,
+        proto_path.GetString(),
+        instancer_path.GetString());
+    return true;
 }
 
 static pxr::SdfLayerHandle get_or_create_modifier_layer(
@@ -75,7 +177,8 @@ NODE_EXECUTION_FUNCTION(write_usd)
     auto pts_c = geometry.get_component<PointsComponent>();
     spdlog::info(
         "[write_usd] input geometry: mesh={}, curve={}, points={}",
-        (bool)mesh_c, (bool)curve,
+        (bool)mesh_c,
+        (bool)curve,
         curve ? curve->get_vertices().size() : 0);
 
     pxr::UsdTimeCode time = global_payload.current_time;
@@ -115,8 +218,7 @@ NODE_EXECUTION_FUNCTION(write_usd)
             write_success =
                 write_geometry_to_usd(geometry, stage, sdf_path, time);
             spdlog::info(
-                "[write_usd] write_geometry_to_usd result: {}",
-                write_success);
+                "[write_usd] write_geometry_to_usd result: {}", write_success);
         }
         else {
             pxr::SdfPath output_path =
@@ -128,21 +230,36 @@ NODE_EXECUTION_FUNCTION(write_usd)
                 "[MODIFIER] Writing to modifier layer, output_path='{}'",
                 output_path.GetString());
 
-        write_success = write_geometry_as_over_spec(
-            geometry, stage, output_path, time, modifier_layer);
+            // Instanced meshes render through a PointInstancer: park the
+            // mesh at <path>/Prototype and author the instancer at <path>
+            // (same layout as write_geometry_to_usd's direct-write branch).
+            const bool instanced =
+                geometry.get_component<InstancerComponent>() != nullptr;
+            const pxr::SdfPath mesh_path =
+                instanced ? output_path.AppendPath(pxr::SdfPath("Prototype"))
+                          : output_path;
 
-        spdlog::info(
-            "[write_usd] write_geometry_as_over_spec result: {}, path={}",
-            write_success,
-            output_path.GetString());
+            write_success = write_geometry_as_over_spec(
+                geometry, stage, mesh_path, time, modifier_layer);
 
-        // Set Animatable attribute on root layer (not modifier layer)
-        pxr::UsdPrim prim = stage->GetPrimAtPath(sdf_path);
-        if (prim) {
-            prim.CreateAttribute(
-                    pxr::TfToken("Animatable"), pxr::SdfValueTypeNames->Bool)
-                .Set(global_payload.has_simulation);
-        }
+            spdlog::info(
+                "[write_usd] write_geometry_as_over_spec result: {}, path={}",
+                write_success,
+                mesh_path.GetString());
+
+            if (write_success && instanced) {
+                write_success = write_instancer_over_spec(
+                    geometry, modifier_layer, output_path, mesh_path);
+            }
+
+            // Set Animatable attribute on root layer (not modifier layer)
+            pxr::UsdPrim prim = stage->GetPrimAtPath(sdf_path);
+            if (prim) {
+                prim.CreateAttribute(
+                        pxr::TfToken("Animatable"),
+                        pxr::SdfValueTypeNames->Bool)
+                    .Set(global_payload.has_simulation);
+            }
         }
     }
     else {

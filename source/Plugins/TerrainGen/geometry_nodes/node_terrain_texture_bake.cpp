@@ -258,6 +258,62 @@ NODE_EXECUTION_FUNCTION(terrain_texture_bake)
                h01 * (1 - fx) * fy + h11 * fx * fy;
     };
 
+    // Region-scale biome classification, shared by the texture texels and
+    // the per-vertex "biome" scatter quantity — ONE truth for where things
+    // grow, so the two consumers cannot drift apart. sed_w is split into
+    // biome_sed_w because the texel loop computes wear only after the
+    // normal encode.
+    struct BiomeRegion {
+        float region_t;   // coarse height normalized to [0, 1]
+        float slope_deg;  // coarse (low-passed) slope in degrees
+        float dither;     // snow-line dither noise
+        float snow_w;
+        float rock_w;
+        float patch;  // meadow patch noise (also modulates grass tint)
+        float grass_w;
+    };
+    const auto biome_region = [&](float u, float v) {
+        BiomeRegion b;
+        const float region_h = sample_coarse(u, v);
+        b.region_t = std::clamp((region_h - h_min) / relief, 0.0f, 1.0f);
+        const float rh_x1 = sample_coarse(u + coarse_du, v);
+        const float rh_x0 = sample_coarse(u - coarse_du, v);
+        const float rh_y1 = sample_coarse(u, v + coarse_du);
+        const float rh_y0 = sample_coarse(u, v - coarse_du);
+        const float rgx = (rh_x1 - rh_x0) / (2.0f * coarse_du * hf.world_size);
+        const float rgy = (rh_y1 - rh_y0) / (2.0f * coarse_du * hf.world_size);
+        b.slope_deg = std::atan(std::sqrt(rgx * rgx + rgy * rgy)) * 57.29578f;
+
+        b.dither =
+            NoiseCore::fbm(u * 48.0f, v * 48.0f, 0x51ed, 3, 1.0f, 0.5f, 2.2f);
+        const float snow_line_local = snow_line + 0.16f * (b.dither - 0.5f);
+        b.snow_w =
+            smoothstep(snow_line_local, snow_line_local + 0.06f, b.region_t) *
+            (1.0f - smoothstep(30.0f, 55.0f, b.slope_deg));
+
+        b.rock_w = smoothstep(rock_lo, rock_hi, b.slope_deg);
+
+        // Grass: fbm meadow patches, favored in lowlands, that still climb
+        // moderate rock (alpine turf on scree slopes). Low-octave patch
+        // noise: meadows must be LARGE; the 4-octave version scattered
+        // 1-texel grass speckle.
+        b.patch =
+            NoiseCore::fbm(u * 10.0f, v * 10.0f, 0x2f9d, 2, 1.0f, 0.5f, 2.0f);
+        const float altitude_grass =
+            1.0f - smoothstep(grass_line, grass_line + 0.35f, b.region_t);
+        b.grass_w = std::clamp(
+            b.patch * 0.65f + altitude_grass * 0.55f - 0.15f, 0.0f, 1.0f);
+        b.grass_w *= (1.0f - 0.55f * b.rock_w) * (1.0f - b.snow_w);
+        return b;
+    };
+    // Sediment: sandy deposits along the STRONGEST eroded channels only
+    // (the wear field is near-uniform after long runs -- an unthresholded
+    // wash painted 2/3 of the map).
+    const auto biome_sed_w = [&](float wear_n, float snow_w, float grass_w) {
+        return smoothstep(0.55f, 0.95f, std::pow(wear_n, 1.5f)) *
+               sediment_strength * (1.0f - snow_w) * (1.0f - grass_w * 0.6f);
+    };
+
     // Dominant-biome pixel counters (diagnostics for parameter tuning).
     std::atomic<int> rock_px{ 0 }, grass_px{ 0 }, snow_px{ 0 }, sed_px{ 0 },
         gentle_px{ 0 };
@@ -330,31 +386,11 @@ NODE_EXECUTION_FUNCTION(terrain_texture_bake)
                     (nb_mean - h) / std::max(relief, 1e-6f) * 6.0f, 0.0f, 1.0f);
 
                 // Region (low-passed) fields drive biome REGIONS; fine
-                // slope/height only modulate within them. Snow is needed
-                // before the normal encode: a smooth snowfield must not
-                // shade with gully detail (renders as crumpled foil).
-                const float region_h = sample_coarse(u, v);
-                const float region_t =
-                    std::clamp((region_h - h_min) / relief, 0.0f, 1.0f);
-                const float rh_x1 = sample_coarse(u + coarse_du, v);
-                const float rh_x0 = sample_coarse(u - coarse_du, v);
-                const float rh_y1 = sample_coarse(u, v + coarse_du);
-                const float rh_y0 = sample_coarse(u, v - coarse_du);
-                const float rgx =
-                    (rh_x1 - rh_x0) / (2.0f * coarse_du * hf.world_size);
-                const float rgy =
-                    (rh_y1 - rh_y0) / (2.0f * coarse_du * hf.world_size);
-                const float region_slope_deg =
-                    std::atan(std::sqrt(rgx * rgx + rgy * rgy)) * 57.29578f;
-
-                const float dither = NoiseCore::fbm(
-                    u * 48.0f, v * 48.0f, 0x51ed, 3, 1.0f, 0.5f, 2.2f);
-                const float snow_line_local =
-                    snow_line + 0.16f * (dither - 0.5f);
-                const float snow_w =
-                    smoothstep(
-                        snow_line_local, snow_line_local + 0.06f, region_t) *
-                    (1.0f - smoothstep(30.0f, 55.0f, region_slope_deg));
+                // slope/height only modulate within them (classification
+                // shared with the per-vertex biome quantity below). Snow is
+                // needed before the normal encode: a smooth snowfield must
+                // not shade with gully detail (renders as crumpled foil).
+                const BiomeRegion bio = biome_region(u, v);
 
                 // Detail octaves: procedural micro-relief gradient at the
                 // texture's scale, finite-differenced one texel apart.
@@ -410,7 +446,7 @@ NODE_EXECUTION_FUNCTION(terrain_texture_bake)
                 // all-black spike of 2026-09-07). Strength is damped under
                 // snow: snow smooths and buries the fine gully relief.
                 const float ns_local =
-                    normal_strength * (1.0f - 0.75f * snow_w);
+                    normal_strength * (1.0f - 0.75f * bio.snow_w);
                 const float n_x =
                     std::clamp(-gx_w * ns_local - dgx, -2.5f, 2.5f);
                 const float n_y =
@@ -445,34 +481,13 @@ NODE_EXECUTION_FUNCTION(terrain_texture_bake)
                               sample_field(hf.water) / water_ref, 0.0f, 1.0f)
                         : 0.0f;
 
-                // Biome weights (region fields + snow_w computed above).
+                // Biome weights (region fields via bio; fine slope + tint
+                // stay local to the color blend).
                 const float slope_deg =
                     std::atan(std::sqrt(gx_w * gx_w + gy_w * gy_w)) * 57.29578f;
                 const float tint = NoiseCore::fbm(
                     u * 5.5f, v * 5.5f, 0x9e37, 4, 1.0f, 0.5f, 2.0f);
-                // Low-octave patch noise: meadows must be LARGE; the 4-octave
-                // version scattered 1-texel grass speckle.
-                const float patch = NoiseCore::fbm(
-                    u * 10.0f, v * 10.0f, 0x2f9d, 2, 1.0f, 0.5f, 2.0f);
-
-                const float rock_w =
-                    smoothstep(rock_lo, rock_hi, region_slope_deg);
-
-                // Grass: fbm meadow patches, favored in lowlands, that
-                // still climb moderate rock (alpine turf on scree slopes).
-                const float altitude_grass =
-                    1.0f - smoothstep(grass_line, grass_line + 0.35f, region_t);
-                float grass_w = std::clamp(
-                    patch * 0.65f + altitude_grass * 0.55f - 0.15f, 0.0f, 1.0f);
-                grass_w *= (1.0f - 0.55f * rock_w) * (1.0f - snow_w);
-
-                // Sediment: sandy deposits along the STRONGEST eroded
-                // channels only (the wear field is near-uniform after long
-                // runs -- an unthresholded wash painted 2/3 of the map).
-                const float sed_w =
-                    smoothstep(0.55f, 0.95f, std::pow(wear, 1.5f)) *
-                    sediment_strength * (1.0f - snow_w) *
-                    (1.0f - grass_w * 0.6f);
+                const float sed_w = biome_sed_w(wear, bio.snow_w, bio.grass_w);
 
                 float color[3];
                 for (int c = 0; c < 3; ++c) {
@@ -481,8 +496,8 @@ NODE_EXECUTION_FUNCTION(terrain_texture_bake)
                     // slopes lean warm tan (weathered soil).
                     const float fresh = smoothstep(
                         rock_slope_deg, rock_slope_deg + 25.0f, slope_deg);
-                    const float band =
-                        std::sin((region_t * 18.0f + 4.0f * tint) * 3.14159f);
+                    const float band = std::sin(
+                        (bio.region_t * 18.0f + 4.0f * tint) * 3.14159f);
                     const float mix_grey =
                         std::clamp(0.5f * tint + fresh, 0.0f, 1.0f);
                     float rock = rock_tan[c] * (1.0f - mix_grey) +
@@ -490,31 +505,31 @@ NODE_EXECUTION_FUNCTION(terrain_texture_bake)
                     rock *= 1.0f + 0.16f * band;
 
                     // Grass: lush base, dry upslope, fbm value variation.
-                    float g = grass_lush[c] * (1.0f - region_t * 0.5f) +
-                              grass_dry[c] * region_t * 0.5f;
-                    g *= 0.9f + 0.25f * patch;
+                    float g = grass_lush[c] * (1.0f - bio.region_t * 0.5f) +
+                              grass_dry[c] * bio.region_t * 0.5f;
+                    g *= 0.9f + 0.25f * bio.patch;
 
-                    float out = rock * (1.0f - grass_w) + g * grass_w;
+                    float out = rock * (1.0f - bio.grass_w) + g * bio.grass_w;
                     out = out * (1.0f - sed_w) + sediment_col[c] * sed_w;
                     // Wetness darkens only STRONG channel water (residual
                     // film after drainage would otherwise dim the whole
                     // map).
                     out *= 1.0f - 0.28f * smoothstep(0.45f, 1.0f, wet) *
-                                      (1.0f - rock_w) * (1.0f - snow_w);
+                                      (1.0f - bio.rock_w) * (1.0f - bio.snow_w);
                     // Valley AO.
                     out *= 1.0f - 0.20f * occ;
-                    out = out * (1.0f - snow_w) + snow_col[c] * snow_w;
+                    out = out * (1.0f - bio.snow_w) + snow_col[c] * bio.snow_w;
                     // Fine dither breaks banding.
-                    out *= 1.0f + 0.05f * dither;
+                    out *= 1.0f + 0.05f * bio.dither;
                     color[c] = std::clamp(out, 0.0f, 1.0f);
                 }
 
                 // Dominant-biome tally for parameter tuning.
-                if (snow_w > 0.5f)
+                if (bio.snow_w > 0.5f)
                     snow_px.fetch_add(1);
-                else if (rock_w > 0.5f)
+                else if (bio.rock_w > 0.5f)
                     rock_px.fetch_add(1);
-                else if (grass_w > 0.4f)
+                else if (bio.grass_w > 0.4f)
                     grass_px.fetch_add(1);
                 if (sed_w > 0.25f)
                     sed_px.fetch_add(1);
@@ -571,6 +586,71 @@ NODE_EXECUTION_FUNCTION(terrain_texture_bake)
         pct(snow_px.load()),
         pct(sed_px.load()),
         pct(gentle_px.load()));
+
+    // Per-vertex dominant-biome id on the passthrough mesh (dense inputs
+    // only — an adaptive mesh's vertices are not the hf grid). Uses the
+    // SAME biome_region/biome_sed_w classifier as the texture texels, so a
+    // downstream scatter filters on ONE truth with the texture: "biome"
+    // 0=snow, 1=rock/bare, 2=grass (tree-suitable), 3=sediment channel
+    // (see terrain_carry.hpp).
+    {
+        auto mesh = input.get_component<MeshComponent>();
+        if (mesh && mesh->get_vertices().size() ==
+                        static_cast<size_t>(res) * static_cast<size_t>(res)) {
+            std::vector<float> biome(static_cast<size_t>(res) * res, 1.0f);
+            int snow_v = 0, rock_v = 0, grass_v = 0, sed_v = 0;
+            for (int y = 0; y < res; ++y) {
+                const float v =
+                    static_cast<float>(y) / static_cast<float>(res - 1);
+                for (int x = 0; x < res; ++x) {
+                    const float u =
+                        static_cast<float>(x) / static_cast<float>(res - 1);
+
+                    const size_t idx =
+                        static_cast<size_t>(y) * static_cast<size_t>(res) + x;
+                    const float wear_n =
+                        hf.has_wear
+                            ? std::clamp(hf.wear[idx] / wear_ref, 0.0f, 1.0f)
+                            : 0.0f;
+                    const BiomeRegion bio = biome_region(u, v);
+                    const float sed_w =
+                        biome_sed_w(wear_n, bio.snow_w, bio.grass_w);
+
+                    // Dominant id: sediment channels win first (they cut
+                    // through meadows), then the surface biomes. Grass
+                    // admits at a lower weight than the others (tuned so
+                    // meadows keep enough scatterable area).
+                    float id = 1.0f;  // bare / unclassified rock ground
+                    if (sed_w > 0.5f) {
+                        id = 3.0f;
+                        ++sed_v;
+                    }
+                    else if (bio.snow_w > 0.5f) {
+                        id = 0.0f;
+                        ++snow_v;
+                    }
+                    else if (bio.rock_w > 0.5f) {
+                        id = 1.0f;
+                        ++rock_v;
+                    }
+                    else if (bio.grass_w > 0.4f) {
+                        id = 2.0f;
+                        ++grass_v;
+                    }
+                    biome[idx] = id;
+                }
+            }
+            mesh->add_vertex_scalar_quantity(terrain_carry::Q_BIOME, biome);
+            const float vtotal = static_cast<float>(res) * res;
+            spdlog::info(
+                "[terrain] biome vertices: snow {:.1f}% rock {:.1f}% grass "
+                "{:.1f}% sediment {:.1f}%",
+                100.0f * snow_v / vtotal,
+                100.0f * rock_v / vtotal,
+                100.0f * grass_v / vtotal,
+                100.0f * sed_v / vtotal);
+        }
+    }
 
     std::filesystem::path parent =
         std::filesystem::path(out_path).parent_path();

@@ -12,6 +12,19 @@ NODE_DECLARATION_FUNCTION(instance_on_points)
 
     b.add_input<Geometry>("Geometry");
     b.add_input<Geometry>("Points");
+    // The prototype axis that gets rotated onto each point normal. False
+    // keeps the historical Z-up assumption; true suits Y-up content (trees,
+    // terrain, most of this codebase) so instances stand upright instead
+    // of tipping flat.
+    b.add_input<bool>("Y-up").default_val(false);
+    // Points carry a per-point scale in their width (e.g. from
+    // terrain_scatter_points); when enabled it becomes the per-instance
+    // scale times the multiplier. Off by default: no scaling, as before.
+    b.add_input<bool>("Use Width as Scale").default_val(false);
+    b.add_input<float>("Scale Multiplier")
+        .min(0.01)
+        .max(100.0)
+        .default_val(1.0);
     b.add_output<Geometry>("Geometry");
 }
 
@@ -22,6 +35,10 @@ NODE_EXECUTION_FUNCTION(instance_on_points)
     points.apply_transform();
     auto geometry = params.get_input<Geometry>("Geometry");
     geometry.apply_transform();
+
+    const bool y_up = params.get_input<bool>("Y-up");
+    const bool use_width_scale = params.get_input<bool>("Use Width as Scale");
+    const float scale_multiplier = params.get_input<float>("Scale Multiplier");
 
     auto instancer = std::make_shared<InstancerComponent>(&geometry);
     geometry.attach_component(instancer);
@@ -35,22 +52,36 @@ NODE_EXECUTION_FUNCTION(instance_on_points)
 
     auto points_vertices = points_component->get_vertices();
     auto points_normals = points_component->get_normals();
+    auto points_width = points_component->get_width();
 
     // Check if we have normals to orient instances
     bool has_normals = !points_normals.empty() &&
                        points_normals.size() == points_vertices.size();
+    bool has_scales =
+        use_width_scale && points_width.size() == points_vertices.size();
 
-    instancer->set_has_rotations_enabled(has_normals);
+    // Scales only travel to USD when rotations are enabled, so enable for
+    // scaled instances even without normals (orientation stays identity).
+    instancer->set_has_rotations_enabled(has_normals || has_scales);
+
+    // Default up direction follows the Y-up flag (Z-axis otherwise)
+    glm::vec3 default_up(0.0f, 0.0f, 1.0f);
+    if (y_up) {
+        default_up = glm::vec3(0.0f, 1.0f, 0.0f);
+    }
 
     // Batch prepare all instances
     size_t num_points = points_vertices.size();
     std::vector<glm::vec3> positions;
     std::vector<glm::quat> orientations;
-    std::vector<glm::vec3> scales;  // Keep empty, no scaling needed
+    std::vector<glm::vec3> scales;
 
     positions.reserve(num_points);
     if (has_normals) {
         orientations.reserve(num_points);
+    }
+    if (has_scales) {
+        scales.reserve(num_points);
     }
 
     for (size_t i = 0; i < num_points; ++i) {
@@ -61,9 +92,6 @@ NODE_EXECUTION_FUNCTION(instance_on_points)
         if (has_normals) {
             const auto& normal = points_normals[i];
             glm::vec3 normalized_normal = glm::normalize(normal);
-
-            // Default up direction (Z-axis)
-            glm::vec3 default_up(0.0f, 0.0f, 1.0f);
 
             // Calculate rotation from default up to normal
             float dot = glm::dot(default_up, normalized_normal);
@@ -86,6 +114,11 @@ NODE_EXECUTION_FUNCTION(instance_on_points)
                 orientation = glm::angleAxis(angle, axis);
             }
             orientations.push_back(orientation);
+        }
+
+        if (has_scales) {
+            const float s = points_width[i] * scale_multiplier;
+            scales.emplace_back(s);
         }
     }
 

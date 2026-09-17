@@ -29,6 +29,11 @@ namespace terrain_carry {
     inline constexpr const char* Q_SEDIMENT = "sediment";
     inline constexpr const char* Q_WEAR = "wear";
 
+    // Dominant-biome id per vertex, attached by terrain_texture_bake to its
+    // passthrough output. 0=snow, 1=rock/bare, 2=grass (tree-suitable),
+    // 3=sediment channel. Scatter consumers filter on it via Mask Field.
+    inline constexpr const char* Q_BIOME = "biome";
+
     // Rebuild a Heightfield from a grid mesh produced by mesh_from_heightfield.
     // The resolution is inferred from the vertex count (res x res) and
     // validated against the quad topology; returns false (with `err`) for
