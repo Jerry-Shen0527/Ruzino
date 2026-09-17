@@ -9,9 +9,14 @@
 #include <rzconsole/spdlog_console_sink.h>
 #include <spdlog/spdlog.h>
 
-#include <cstdlib>
 #include <any>
+#include <atomic>
+#include <chrono>
+#include <cstdlib>
+#include <deque>
 #include <filesystem>
+#include <future>
+#include <mutex>
 #include <rzpython/interpreter.hpp>
 #include <rzpython/rzpython.hpp>
 #include <rzpython/tcp_server.hpp>
@@ -166,8 +171,7 @@ static void create_geometry_editor(
     auto pick_buf = std::make_shared<std::shared_ptr<PickEvent>>();
 
     window->events().subscribe_any(
-        ViewportEvents::BRUSH_STATE,
-        [brush_buf](const std::any& data) {
+        ViewportEvents::BRUSH_STATE, [brush_buf](const std::any& data) {
             try {
                 *brush_buf = std::any_cast<ViewportBrushState>(data);
             }
@@ -175,8 +179,7 @@ static void create_geometry_editor(
             }
         });
     window->events().subscribe_any(
-        ViewportEvents::PICK_EVENT,
-        [pick_buf](const std::any& data) {
+        ViewportEvents::PICK_EVENT, [pick_buf](const std::any& data) {
             try {
                 *pick_buf = std::any_cast<std::shared_ptr<PickEvent>>(data);
             }
@@ -188,75 +191,72 @@ static void create_geometry_editor(
         std::move(create_node_imgui_widget(desc));
     node_widget->set_editor_info(json_path.GetString(), "geom");
 
-    node_widget->SetCallBack(
-        [stage, json_path, system, brush_buf, pick_buf](Window*, IWidget*) {
-            GeomPayload geom_global_params;
+    node_widget->SetCallBack([stage, json_path, system, brush_buf, pick_buf](
+                                 Window*, IWidget*) {
+        GeomPayload geom_global_params;
 #ifdef GEOM_USD_EXTENSION
-            geom_global_params.stage = stage->get_usd_stage();
-            geom_global_params.prim_path = json_path;
+        geom_global_params.stage = stage->get_usd_stage();
+        geom_global_params.prim_path = json_path;
 
-            geom_global_params.is_modifier_mode = true;
-            geom_global_params.current_modifier_index = 0;
-            geom_global_params.modifier_layer = stage->get_modifier_layer();
-            geom_global_params.modifier_input_path = json_path;
-            geom_global_params.modifier_output_path = json_path;
+        geom_global_params.is_modifier_mode = true;
+        geom_global_params.current_modifier_index = 0;
+        geom_global_params.modifier_layer = stage->get_modifier_layer();
+        geom_global_params.modifier_input_path = json_path;
+        geom_global_params.modifier_output_path = json_path;
 
-            static std::map<pxr::SdfPath, std::string> last_node_graph_map;
+        static std::map<pxr::SdfPath, std::string> last_node_graph_map;
 
-            std::string current_node_graph =
-                stage->load_string_from_usd(json_path);
+        std::string current_node_graph = stage->load_string_from_usd(json_path);
 
-            auto it = last_node_graph_map.find(json_path);
-            bool is_initial_load = (it == last_node_graph_map.end());
-            bool node_graph_changed =
-                !is_initial_load && (it->second != current_node_graph);
+        auto it = last_node_graph_map.find(json_path);
+        bool is_initial_load = (it == last_node_graph_map.end());
+        bool node_graph_changed =
+            !is_initial_load && (it->second != current_node_graph);
 
-            if (node_graph_changed) {
-                auto modifier_layer = stage->get_modifier_layer();
-                if (modifier_layer) {
-                    auto prim_spec =
-                        modifier_layer->GetPrimAtPath(json_path);
-                    if (prim_spec) {
-                        std::vector<pxr::SdfPropertySpecHandle> props_to_remove;
-                        for (auto pit = prim_spec->GetProperties().begin();
-                             pit != prim_spec->GetProperties().end();
-                             ++pit) {
-                            if (*pit) {
-                                props_to_remove.push_back(*pit);
-                            }
+        if (node_graph_changed) {
+            auto modifier_layer = stage->get_modifier_layer();
+            if (modifier_layer) {
+                auto prim_spec = modifier_layer->GetPrimAtPath(json_path);
+                if (prim_spec) {
+                    std::vector<pxr::SdfPropertySpecHandle> props_to_remove;
+                    for (auto pit = prim_spec->GetProperties().begin();
+                         pit != prim_spec->GetProperties().end();
+                         ++pit) {
+                        if (*pit) {
+                            props_to_remove.push_back(*pit);
                         }
-                        for (auto& prop : props_to_remove) {
-                            prim_spec->RemoveProperty(prop);
-                        }
-                        prim_spec->SetTypeName(pxr::TfToken());
                     }
+                    for (auto& prop : props_to_remove) {
+                        prim_spec->RemoveProperty(prop);
+                    }
+                    prim_spec->SetTypeName(pxr::TfToken());
                 }
-                last_node_graph_map[json_path] = current_node_graph;
             }
+            last_node_graph_map[json_path] = current_node_graph;
+        }
 
 #endif
 
-            geom_global_params.has_simulation = false;
+        geom_global_params.has_simulation = false;
 
-            // Pull the latest viewport-input snapshots into the payload, then
-            // consume them (clear the per-frame flags) so this editor only
-            // reacts to each event once.
-            geom_global_params.brush_point = brush_buf->point;
-            geom_global_params.brush_time = brush_buf->time;
-            geom_global_params.brush_active = brush_buf->active;
-            geom_global_params.brush_new_point = brush_buf->new_point;
-            geom_global_params.pick = *pick_buf;
+        // Pull the latest viewport-input snapshots into the payload, then
+        // consume them (clear the per-frame flags) so this editor only
+        // reacts to each event once.
+        geom_global_params.brush_point = brush_buf->point;
+        geom_global_params.brush_time = brush_buf->time;
+        geom_global_params.brush_active = brush_buf->active;
+        geom_global_params.brush_new_point = brush_buf->new_point;
+        geom_global_params.pick = *pick_buf;
 
-            brush_buf->new_point = false;
-            pick_buf->reset();
+        brush_buf->new_point = false;
+        pick_buf->reset();
 
-            system->set_global_params(geom_global_params);
+        system->set_global_params(geom_global_params);
 
-            if (geom_global_params.pick ||
-                geom_global_params.brush_new_point) {
-                system->execute();
-            }
-        });
+        if (geom_global_params.pick || geom_global_params.brush_new_point) {
+            system->execute();
+        }
+    });
 
     window->register_widget(std::move(node_widget));
 }
@@ -269,8 +269,7 @@ static void create_material_editor(
     spdlog::info("Material editor requested for: {}", material_path_str);
 
     pxr::SdfPath material_path(material_path_str);
-    auto material_prim =
-        stage->get_usd_stage()->GetPrimAtPath(material_path);
+    auto material_prim = stage->get_usd_stage()->GetPrimAtPath(material_path);
 
     if (!material_prim) {
         spdlog::error("Material prim not found: {}", material_path_str);
@@ -300,19 +299,15 @@ static void create_material_editor(
     std::shared_ptr<MaterialXNodeSystem> mtlx_system;
 
     if (has_mtlx_file && has_reference) {
-        spdlog::info(
-            "Loading existing MaterialX file: {}", mtlx_path.string());
+        spdlog::info("Loading existing MaterialX file: {}", mtlx_path.string());
         try {
             mx::DocumentPtr existing_doc = mx::createDocument();
-            mx::readFromXmlFile(
-                existing_doc, mx::FilePath(mtlx_path.string()));
+            mx::readFromXmlFile(existing_doc, mx::FilePath(mtlx_path.string()));
 
-            mtlx_system =
-                MaterialXNodeSystem::create_with_default_material(
-                    material_name, existing_doc);
+            mtlx_system = MaterialXNodeSystem::create_with_default_material(
+                material_name, existing_doc);
 
-            spdlog::info(
-                "Successfully loaded existing MaterialX document");
+            spdlog::info("Successfully loaded existing MaterialX document");
         }
         catch (const std::exception& e) {
             spdlog::error(
@@ -323,14 +318,13 @@ static void create_material_editor(
     }
 
     if (!has_mtlx_file || !has_reference) {
-        spdlog::info(
-            "Creating new MaterialX file at: {}", mtlx_path.string());
+        spdlog::info("Creating new MaterialX file at: {}", mtlx_path.string());
 
-        mtlx_system = MaterialXNodeSystem::create_with_default_material(
-            material_name);
+        mtlx_system =
+            MaterialXNodeSystem::create_with_default_material(material_name);
 
-        auto* mtlx_tree_temp = static_cast<MaterialXNodeTree*>(
-            mtlx_system->get_node_tree());
+        auto* mtlx_tree_temp =
+            static_cast<MaterialXNodeTree*>(mtlx_system->get_node_tree());
         mtlx_tree_temp->saveDocument(mx::FilePath(mtlx_path.string()));
 
         std::string mtlx_relative_path = "./" + mtlx_filename;
@@ -339,8 +333,9 @@ static void create_material_editor(
 
         auto references = material_prim.GetReferences();
         references.ClearReferences();
-        references.AddReference(pxr::SdfReference(
-            mtlx_relative_path, pxr::SdfPath(mtlx_material_path_str)));
+        references.AddReference(
+            pxr::SdfReference(
+                mtlx_relative_path, pxr::SdfPath(mtlx_material_path_str)));
 
         spdlog::info(
             "Added MaterialX reference: {} -> {}",
@@ -387,6 +382,36 @@ class PythonConsoleWidgetFactory : public IWidgetFactory {
         return std::move(console);
     }
 };
+
+// --- Remote-script main-thread marshaling ----------------------------------
+// Stage and pxr USD objects are not thread-safe; the Python TCP server used
+// to run remote scripts inline on its asio thread, racing the main thread's
+// Hydra syncs. Remote scripts are now posted onto the main render loop and
+// drained in the before-frame callback; the TCP thread only waits for the
+// result, so the request/response protocol is unchanged.
+namespace {
+std::mutex g_main_task_mutex;
+std::deque<std::function<void()>> g_main_tasks;
+std::atomic<bool> g_main_loop_alive{ false };
+
+void post_to_main_thread(std::function<void()> task)
+{
+    std::lock_guard<std::mutex> lock(g_main_task_mutex);
+    g_main_tasks.push_back(std::move(task));
+}
+
+void drain_main_thread_tasks()
+{
+    std::deque<std::function<void()>> tasks;
+    {
+        std::lock_guard<std::mutex> lock(g_main_task_mutex);
+        tasks.swap(g_main_tasks);
+    }
+    for (auto& task : tasks) {
+        task();
+    }
+}
+}  // namespace
 
 int main(int argc, char* argv[])
 {
@@ -499,16 +524,56 @@ int main(int argc, char* argv[])
     python::reference("window", window.get());
     python::reference("stage", stage.get());
 
-    // Start Python TCP server on port 5555
+    // Start Python TCP server on port 5555. Remote scripts execute on the
+    // MAIN thread via the marshal queue above. The callback runs with the
+    // session's Python GIL held, so it drops the GIL while waiting — the
+    // main thread could never acquire it otherwise and both would deadlock.
     auto tcp_server = python::create_python_tcp_server(5555);
+    g_main_loop_alive = true;
+    window->register_function_before_frame(
+        [](Window*) { drain_main_thread_tasks(); });
     tcp_server->set_execute_callback(
         [](const std::string& code) -> std::string {
-            auto [success, error] = python::execute_with_error(code);
-            python::flush_python_output();
-            if (success) {
-                return "OK\n";
+            auto done = std::make_shared<std::promise<std::string>>();
+            auto result = done->get_future();
+            post_to_main_thread([code, done]() {
+                std::string response;
+                PyGILState_STATE gstate = PyGILState_Ensure();
+                try {
+                    auto [success, error] = python::execute_with_error(code);
+                    python::flush_python_output();
+                    response = success ? "OK\n" : "ERROR: " + error + "\n";
+                }
+                catch (const std::exception& e) {
+                    response = "ERROR: " + std::string(e.what()) + "\n";
+                }
+                PyGILState_Release(gstate);
+                // The waiter may already have given up (app shutting down);
+                // a promise with an abandoned future takes the value
+                // harmlessly.
+                try {
+                    done->set_value(std::move(response));
+                }
+                catch (...) {
+                }
+            });
+
+            // Release the session GIL while the main thread runs the task.
+            PyThreadState* session_ts = PyEval_SaveThread();
+            std::string response;
+            while (true) {
+                if (result.wait_for(std::chrono::milliseconds(100)) ==
+                    std::future_status::ready) {
+                    response = result.get();
+                    break;
+                }
+                if (!g_main_loop_alive.load()) {
+                    response = "ERROR: main thread unavailable\n";
+                    break;
+                }
             }
-            return std::string("ERROR: ") + error + "\n";
+            PyEval_RestoreThread(session_ts);
+            return response;
         });
     tcp_server->start();
 
@@ -524,21 +589,20 @@ int main(int argc, char* argv[])
             config);
     });
 
-    window->register_menu_action(
-        "file_save", [&stage, &window]() {
-            stage->Save();
+    window->register_menu_action("file_save", [&stage, &window]() {
+        stage->Save();
 
-            // Persist open editors alongside the scene
-            std::vector<std::string> entries;
-            for (auto* w : window->get_widgets()) {
-                auto path = w->get_associated_prim_path();
-                auto type = w->get_editor_type();
-                if (!path.empty() && !type.empty()) {
-                    entries.push_back(type + ":" + path);
-                }
+        // Persist open editors alongside the scene
+        std::vector<std::string> entries;
+        for (auto* w : window->get_widgets()) {
+            auto path = w->get_associated_prim_path();
+            auto type = w->get_editor_type();
+            if (!path.empty() && !type.empty()) {
+                entries.push_back(type + ":" + path);
             }
-            stage->save_open_editors(entries);
-        });
+        }
+        stage->save_open_editors(entries);
+    });
 
     window->register_menu_action("file_save_as", [&stage, &window]() {
         auto instance = IGFD::FileDialog::Instance();
@@ -826,21 +890,25 @@ int main(int argc, char* argv[])
             }
 
             if (type == "geom") {
-                create_geometry_editor(
-                    stage.get(), window.get(), sdf_path);
+                create_geometry_editor(stage.get(), window.get(), sdf_path);
             }
             else if (type == "materialx") {
-                create_material_editor(
-                    stage.get(), window.get(), path);
+                create_material_editor(stage.get(), window.get(), path);
             }
         }
         if (!editors.empty()) {
-            spdlog::info("Restored {} editor(s) from previous session",
-                         editors.size());
+            spdlog::info(
+                "Restored {} editor(s) from previous session", editors.size());
         }
     }
 
     window->run();
+
+    // Main loop is gone: run anything still queued (so a waiting TCP thread
+    // is not joined while blocked on a task that will never run), then let
+    // in-flight waiters bail out.
+    g_main_loop_alive = false;
+    drain_main_thread_tasks();
 
     // Save open editors before shutdown
     {
