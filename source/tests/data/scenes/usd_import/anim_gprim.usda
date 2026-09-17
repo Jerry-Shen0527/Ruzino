@@ -1,0 +1,51 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+# Regression: time-sampled gprim parameter (sphere radius 0.6 -> 1.5).
+# 2026-09-17: the tessellation used to re-run only on topology-dirty, so a
+# radius change (delivered as generic primvar dirtiness) left the mesh
+# stale — the two frames rendered identically. mesh.cpp now re-tessellates
+# gprims on primvar dirtiness too: frame 24's bigger sphere must occlude
+# the right-side sky that frame 0 leaves open.
+def Camera "Camera"
+{
+    float2 clippingRange = (0.1, 100.0)
+    float focalLength = 50.0
+    float horizontalAperture = 36.0
+    float verticalAperture = 36.0
+    matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (0, 0, 5.0, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+def DomeLight "Sky"
+{
+    float inputs:intensity = 1.0
+}
+
+def Material "BlueMat"
+{
+    token outputs:surface.connect = </BlueMat/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0.08, 0.15, 0.75)
+        float inputs:metallic = 0
+        float inputs:roughness = 0.6
+        float inputs:opacity = 1
+        token outputs:surface
+    }
+}
+
+def Sphere "Ball" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    double radius.timeSamples = {
+        0: 0.6,
+        24: 1.5,
+    }
+    rel material:binding = </BlueMat>
+}

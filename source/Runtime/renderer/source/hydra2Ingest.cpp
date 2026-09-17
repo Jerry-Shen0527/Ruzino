@@ -25,6 +25,10 @@
 #undef interface
 #endif
 #include "pxr/base/tf/staticTokens.h"
+#include "pxr/imaging/hd/capsuleSchema.h"
+#include "pxr/imaging/hd/coneSchema.h"
+#include "pxr/imaging/hd/cubeSchema.h"
+#include "pxr/imaging/hd/cylinderSchema.h"
 #include "pxr/imaging/hd/dataSource.h"
 #include "pxr/imaging/hd/dataSourceLegacyPrim.h"
 #include "pxr/imaging/hd/geomSubset.h"
@@ -41,9 +45,11 @@
 #include "pxr/imaging/hd/meshSchema.h"
 #include "pxr/imaging/hd/primvarSchema.h"
 #include "pxr/imaging/hd/primvarsSchema.h"
+#include "pxr/imaging/hd/purposeSchema.h"
 #include "pxr/imaging/hd/renderDelegate.h"
 #include "pxr/imaging/hd/retainedDataSource.h"
 #include "pxr/imaging/hd/sceneIndex.h"
+#include "pxr/imaging/hd/sphereSchema.h"
 #include "pxr/imaging/hd/tokens.h"
 #include "pxr/imaging/hd/visibilitySchema.h"
 #include "pxr/imaging/hd/volumeFieldSchema.h"
@@ -885,6 +891,479 @@ bool ShouldScanForGeomSubsets(SdfPath const& parentPath)
     }
     std::lock_guard<std::mutex> lock(_GeomSubsetHintMutex());
     return _GeomSubsetParents().count(parentPath) > 0;
+}
+
+bool ReadPrimType(
+    HdSceneDelegate* sceneDelegate,
+    SdfPath const& id,
+    TfToken* outType)
+{
+    HdSceneIndexBaseRefPtr terminal = GetTerminalSceneIndex(sceneDelegate);
+    if (!terminal) {
+        return false;
+    }
+    HdSceneIndexPrim prim = terminal->GetPrim(id);
+    *outType = prim.primType;
+    return true;
+}
+
+bool IsGprimType(TfToken const& type)
+{
+    return type == HdPrimTypeTokens->sphere || type == HdPrimTypeTokens->cube ||
+           type == HdPrimTypeTokens->cylinder ||
+           type == HdPrimTypeTokens->cone || type == HdPrimTypeTokens->capsule;
+}
+
+bool IsPurposeShown(
+    HdSceneDelegate* sceneDelegate,
+    SdfPath const& id,
+    bool* outShown)
+{
+    *outShown = true;
+    HdSceneIndexBaseRefPtr terminal = GetTerminalSceneIndex(sceneDelegate);
+    if (!terminal) {
+        return false;
+    }
+    HdSceneIndexPrim prim = terminal->GetPrim(id);
+    if (!prim.dataSource) {
+        return false;
+    }
+    HdPurposeSchema const purposeSchema =
+        HdPurposeSchema::GetFromParent(prim.dataSource);
+    if (!purposeSchema.IsDefined()) {
+        return true;
+    }
+    HdTokenDataSourceHandle const purposeDs = purposeSchema.GetPurpose();
+    if (!purposeDs) {
+        return true;
+    }
+    TfToken const purpose = purposeDs->GetTypedValue(0.0f);
+    // Final-render semantics: default and render purpose are shown,
+    // proxy and guide stand-ins are hidden.
+    *outShown = purpose != HdRenderTagTokens->proxy &&
+                purpose != HdRenderTagTokens->guide;
+    return true;
+}
+
+namespace {
+
+    constexpr int kGprimSlices = 32;     // longitude resolution
+    constexpr int kGprimStacks = 24;     // latitude rings (sphere)
+    constexpr int kGprimHemiStacks = 8;  // hemisphere rings (capsule)
+    constexpr double kPi = 3.14159265358979323846;
+
+    float _RadiusParam(HdSceneIndexPrim const& prim, TfToken const& type)
+    {
+        HdDoubleDataSourceHandle ds;
+        if (type == HdPrimTypeTokens->sphere) {
+            ds = HdSphereSchema::GetFromParent(prim.dataSource).GetRadius();
+        }
+        else if (type == HdPrimTypeTokens->cylinder) {
+            ds = HdCylinderSchema::GetFromParent(prim.dataSource).GetRadius();
+        }
+        else if (type == HdPrimTypeTokens->cone) {
+            ds = HdConeSchema::GetFromParent(prim.dataSource).GetRadius();
+        }
+        else if (type == HdPrimTypeTokens->capsule) {
+            ds = HdCapsuleSchema::GetFromParent(prim.dataSource).GetRadius();
+        }
+        return ds ? float(ds->GetTypedValue(0.0f)) : 0.0f;
+    }
+
+    float _HeightParam(HdSceneIndexPrim const& prim, TfToken const& type)
+    {
+        HdDoubleDataSourceHandle ds;
+        if (type == HdPrimTypeTokens->cylinder) {
+            ds = HdCylinderSchema::GetFromParent(prim.dataSource).GetHeight();
+        }
+        else if (type == HdPrimTypeTokens->cone) {
+            ds = HdConeSchema::GetFromParent(prim.dataSource).GetHeight();
+        }
+        else if (type == HdPrimTypeTokens->capsule) {
+            ds = HdCapsuleSchema::GetFromParent(prim.dataSource).GetHeight();
+        }
+        return ds ? float(ds->GetTypedValue(0.0f)) : 0.0f;
+    }
+
+    // Cylinder/cone/capsule axis token ("X"/"Y"/"Z"). Absent when not
+    // authored — the UsdGeom schema fallback for these prims is "Z", so the
+    // caller must treat an empty token as Z, not Y.
+    TfToken _AxisParam(HdSceneIndexPrim const& prim, TfToken const& type)
+    {
+        HdTokenDataSourceHandle ds;
+        if (type == HdPrimTypeTokens->cylinder) {
+            ds = HdCylinderSchema::GetFromParent(prim.dataSource).GetAxis();
+        }
+        else if (type == HdPrimTypeTokens->cone) {
+            ds = HdConeSchema::GetFromParent(prim.dataSource).GetAxis();
+        }
+        else if (type == HdPrimTypeTokens->capsule) {
+            ds = HdCapsuleSchema::GetFromParent(prim.dataSource).GetAxis();
+        }
+        return ds ? ds->GetTypedValue(0.0f) : TfToken();
+    }
+
+    // UV-sphere rings (north pole -> south pole) with outward winding.
+    void _AppendSphereBands(
+        double radius,
+        int stacks,
+        float centerY,
+        VtVec3fArray* points,
+        VtIntArray* counts,
+        VtIntArray* indices)
+    {
+        int const north = int(points->size());
+        points->push_back(GfVec3f(0.0f, centerY + float(radius), 0.0f));
+        auto ringStart = [&](int ring) {
+            return north + 1 + (ring - 1) * kGprimSlices;
+        };
+        for (int i = 1; i < stacks; ++i) {
+            double const theta = kPi * i / stacks;
+            float const y = centerY + float(radius * cos(theta));
+            float const r = float(radius * sin(theta));
+            for (int j = 0; j < kGprimSlices; ++j) {
+                double const phi = 2.0 * kPi * j / kGprimSlices;
+                points->push_back(
+                    GfVec3f(float(r * cos(phi)), y, float(r * sin(phi))));
+            }
+        }
+        int const south = north + 1 + (stacks - 1) * kGprimSlices;
+        points->push_back(GfVec3f(0.0f, centerY - float(radius), 0.0f));
+
+        for (int j = 0; j < kGprimSlices; ++j) {
+            counts->push_back(3);
+            indices->push_back(north);
+            indices->push_back(ringStart(1) + (j + 1) % kGprimSlices);
+            indices->push_back(ringStart(1) + j);
+        }
+        for (int i = 1; i < stacks - 1; ++i) {
+            for (int j = 0; j < kGprimSlices; ++j) {
+                int const a = ringStart(i) + j;
+                int const b = ringStart(i) + (j + 1) % kGprimSlices;
+                int const c = ringStart(i + 1) + (j + 1) % kGprimSlices;
+                int const d = ringStart(i + 1) + j;
+                counts->push_back(4);
+                indices->insert(indices->end(), { a, b, c, d });
+            }
+        }
+        for (int j = 0; j < kGprimSlices; ++j) {
+            counts->push_back(3);
+            indices->push_back(south);
+            indices->push_back(ringStart(stacks - 1) + j);
+            indices->push_back(ringStart(stacks - 1) + (j + 1) % kGprimSlices);
+        }
+    }
+
+    // Hemisphere continuation of an EXISTING equator ring (kGprimSlices
+    // verts at centerY, radius): stacks segments from the equator to the
+    // pole, outward winding matching the sphere bands. Sharing the rim ring
+    // (instead of duplicating it) keeps smooth normals seamless at the
+    // tangent joint — the capsule's cylinder wall and hemisphere cap meet
+    // with identical horizontal normals there.
+    void _AppendHemisphereBands(
+        double radius,
+        int stacks,
+        float centerY,
+        bool up,
+        int ringStart,
+        VtVec3fArray* points,
+        VtIntArray* counts,
+        VtIntArray* indices)
+    {
+        float const sign = up ? 1.0f : -1.0f;
+        int const newBase = int(points->size());
+        for (int k = 1; k < stacks; ++k) {
+            double const theta = (kPi / 2.0) * k / stacks;
+            float const y = centerY + sign * float(radius * sin(theta));
+            float const r = float(radius * cos(theta));
+            for (int j = 0; j < kGprimSlices; ++j) {
+                double const phi = 2.0 * kPi * j / kGprimSlices;
+                points->push_back(
+                    GfVec3f(float(r * cos(phi)), y, float(r * sin(phi))));
+            }
+        }
+        int const pole = int(points->size());
+        points->push_back(GfVec3f(0.0f, centerY + sign * float(radius), 0.0f));
+
+        auto ring = [&](int k) {
+            return k == 0 ? ringStart : newBase + (k - 1) * kGprimSlices;
+        };
+        int const last = stacks - 1;
+        for (int k = 1; k < stacks; ++k) {
+            for (int j = 0; j < kGprimSlices; ++j) {
+                // Wind the pole-ward ring first (same order as the sphere
+                // body bands) so edge1 x edge2 points outward.
+                int const u0 = ring(k) + j;
+                int const u1 = ring(k) + (j + 1) % kGprimSlices;
+                int const l0 = ring(k - 1) + j;
+                int const l1 = ring(k - 1) + (j + 1) % kGprimSlices;
+                counts->push_back(4);
+                if (up) {
+                    indices->insert(indices->end(), { u0, u1, l1, l0 });
+                }
+                else {
+                    indices->insert(indices->end(), { l0, l1, u1, u0 });
+                }
+            }
+        }
+        for (int j = 0; j < kGprimSlices; ++j) {
+            counts->push_back(3);
+            if (up) {
+                indices->insert(
+                    indices->end(),
+                    { pole,
+                      ring(last) + (j + 1) % kGprimSlices,
+                      ring(last) + j });
+            }
+            else {
+                indices->insert(
+                    indices->end(),
+                    { pole,
+                      ring(last) + j,
+                      ring(last) + (j + 1) % kGprimSlices });
+            }
+        }
+    }
+
+    // One quad ring band between an existing lower ring and upper ring,
+    // outward winding (edge1 ~ +Y, edge2 ~ east).
+    void _AppendCylinderSide(
+        int lowerStart,
+        int upperStart,
+        VtIntArray* counts,
+        VtIntArray* indices)
+    {
+        for (int j = 0; j < kGprimSlices; ++j) {
+            int const b0 = lowerStart + j;
+            int const b1 = lowerStart + (j + 1) % kGprimSlices;
+            int const t0 = upperStart + j;
+            int const t1 = upperStart + (j + 1) % kGprimSlices;
+            counts->push_back(4);
+            indices->insert(indices->end(), { b0, t0, t1, b1 });
+        }
+    }
+
+    // Flat cap fan around an existing ring; +Up caps wind opposite to -Up.
+    void _AppendCap(
+        int centerIndex,
+        int ringStart,
+        bool up,
+        VtIntArray* counts,
+        VtIntArray* indices)
+    {
+        for (int j = 0; j < kGprimSlices; ++j) {
+            int const a = ringStart + j;
+            int const b = ringStart + (j + 1) % kGprimSlices;
+            counts->push_back(3);
+            if (up) {
+                indices->insert(indices->end(), { centerIndex, b, a });
+            }
+            else {
+                indices->insert(indices->end(), { centerIndex, a, b });
+            }
+        }
+    }
+
+    void _FinishMeshTopology(
+        VtIntArray const& counts,
+        VtIntArray const& indices,
+        HdMeshTopology* out)
+    {
+        *out = HdMeshTopology(
+            PxOsdOpenSubdivTokens->none,
+            PxOsdOpenSubdivTokens->rightHanded,
+            counts,
+            indices);
+    }
+
+}  // namespace
+
+bool ReadGprimMesh(
+    HdSceneDelegate* sceneDelegate,
+    SdfPath const& id,
+    HdMeshTopology* outTopology,
+    VtVec3fArray* outPoints)
+{
+    HdSceneIndexBaseRefPtr terminal = GetTerminalSceneIndex(sceneDelegate);
+    if (!terminal) {
+        return false;
+    }
+    HdSceneIndexPrim prim = terminal->GetPrim(id);
+    TfToken const& type = prim.primType;
+    if (!IsGprimType(type) || !prim.dataSource) {
+        return false;
+    }
+
+    VtIntArray counts;
+    VtIntArray indices;
+
+    if (type == HdPrimTypeTokens->sphere) {
+        float const radius = _RadiusParam(prim, type);
+        if (radius <= 0.0f) {
+            return false;
+        }
+        _AppendSphereBands(
+            radius, kGprimStacks, 0.0f, outPoints, &counts, &indices);
+    }
+    else if (type == HdPrimTypeTokens->cube) {
+        HdDoubleDataSourceHandle const sizeDs =
+            HdCubeSchema::GetFromParent(prim.dataSource).GetSize();
+        if (!sizeDs) {
+            return false;
+        }
+        float const h = float(sizeDs->GetTypedValue(0.0f)) * 0.5f;
+        // 24 unique verts (4 per face) so the smooth-normal fallback yields
+        // flat per-face normals.
+        GfVec3f const face_verts[6][4] = {
+            // +Z, -Z, +X, -X, +Y, -Y — each wound outward
+            { GfVec3f(-h, -h, h),
+              GfVec3f(h, -h, h),
+              GfVec3f(h, h, h),
+              GfVec3f(-h, h, h) },
+            { GfVec3f(h, -h, -h),
+              GfVec3f(-h, -h, -h),
+              GfVec3f(-h, h, -h),
+              GfVec3f(h, h, -h) },
+            { GfVec3f(h, -h, h),
+              GfVec3f(h, -h, -h),
+              GfVec3f(h, h, -h),
+              GfVec3f(h, h, h) },
+            { GfVec3f(-h, -h, -h),
+              GfVec3f(-h, -h, h),
+              GfVec3f(-h, h, h),
+              GfVec3f(-h, h, -h) },
+            { GfVec3f(-h, h, h),
+              GfVec3f(h, h, h),
+              GfVec3f(h, h, -h),
+              GfVec3f(-h, h, -h) },
+            { GfVec3f(-h, -h, -h),
+              GfVec3f(h, -h, -h),
+              GfVec3f(h, -h, h),
+              GfVec3f(-h, -h, h) },
+        };
+        for (auto const& face : face_verts) {
+            int const base = int(outPoints->size());
+            for (auto const& v : face) {
+                outPoints->push_back(v);
+            }
+            counts.push_back(4);
+            indices.insert(
+                indices.end(), { base, base + 1, base + 2, base + 3 });
+        }
+    }
+    else if (
+        type == HdPrimTypeTokens->cylinder || type == HdPrimTypeTokens->cone ||
+        type == HdPrimTypeTokens->capsule) {
+        float const radius = _RadiusParam(prim, type);
+        float const height = _HeightParam(prim, type);
+        if (radius <= 0.0f || height <= 0.0f) {
+            return false;
+        }
+        float const half = height * 0.5f;
+        // Everything below is generated along +Y; the axis rotation at the
+        // end of this branch maps it onto the authored axis.
+        size_t const firstNewPoint = outPoints->size();
+        if (type == HdPrimTypeTokens->capsule) {
+            // Cylinder band from -half..+half with hemispherical caps of the
+            // same radius centered at +-half. The caps reuse the band's rim
+            // rings — no interior flat caps, no buried sphere halves.
+            auto appendRing = [&](float y) {
+                int const start = int(outPoints->size());
+                for (int j = 0; j < kGprimSlices; ++j) {
+                    double const phi = 2.0 * kPi * j / kGprimSlices;
+                    outPoints->push_back(GfVec3f(
+                        float(radius * cos(phi)), y, float(radius * sin(phi))));
+                }
+                return start;
+            };
+            int const bottom = appendRing(-half);
+            int const top = appendRing(half);
+            _AppendCylinderSide(bottom, top, &counts, &indices);
+            _AppendHemisphereBands(
+                radius,
+                kGprimHemiStacks,
+                half,
+                true,
+                top,
+                outPoints,
+                &counts,
+                &indices);
+            _AppendHemisphereBands(
+                radius,
+                kGprimHemiStacks,
+                -half,
+                false,
+                bottom,
+                outPoints,
+                &counts,
+                &indices);
+        }
+        else {
+            // Side quads + flat caps; cone tapers to an apex at +half.
+            int const bottom = int(outPoints->size());
+            for (int j = 0; j < kGprimSlices; ++j) {
+                double const phi = 2.0 * kPi * j / kGprimSlices;
+                outPoints->push_back(GfVec3f(
+                    float(radius * cos(phi)), -half, float(radius * sin(phi))));
+            }
+            if (type == HdPrimTypeTokens->cylinder) {
+                int const top = int(outPoints->size());
+                for (int j = 0; j < kGprimSlices; ++j) {
+                    double const phi = 2.0 * kPi * j / kGprimSlices;
+                    outPoints->push_back(GfVec3f(
+                        float(radius * cos(phi)),
+                        half,
+                        float(radius * sin(phi))));
+                }
+                _AppendCylinderSide(bottom, top, &counts, &indices);
+                _AppendCap(
+                    int(outPoints->size()), bottom, false, &counts, &indices);
+                outPoints->push_back(GfVec3f(0.0f, -half, 0.0f));
+                _AppendCap(
+                    int(outPoints->size()), top, true, &counts, &indices);
+                outPoints->push_back(GfVec3f(0.0f, half, 0.0f));
+            }
+            else {  // cone
+                int const apex = bottom + kGprimSlices;
+                outPoints->push_back(GfVec3f(0.0f, half, 0.0f));
+                for (int j = 0; j < kGprimSlices; ++j) {
+                    counts.push_back(3);
+                    indices.push_back(apex);
+                    indices.push_back(bottom + (j + 1) % kGprimSlices);
+                    indices.push_back(bottom + j);
+                }
+                _AppendCap(
+                    int(outPoints->size()), bottom, false, &counts, &indices);
+                outPoints->push_back(GfVec3f(0.0f, -half, 0.0f));
+            }
+        }
+
+        // Map the +Y-generated geometry onto the authored axis. The UsdGeom
+        // fallback for cylinder/cone/capsule is "Z" (_AxisParam returns an
+        // empty token when unauthored). Rigid rotations keep the outward
+        // winding intact.
+        TfToken const axis = _AxisParam(prim, type);
+        if (axis == TfToken("X")) {
+            // +90 deg about Z: +Y -> +X.
+            for (size_t i = firstNewPoint; i < outPoints->size(); ++i) {
+                GfVec3f const p = (*outPoints)[i];
+                (*outPoints)[i] = GfVec3f(p[1], -p[0], p[2]);
+            }
+        }
+        else if (axis != TfToken("Y")) {
+            // "Z" (or the unauthored fallback): +90 deg about X: +Y -> +Z.
+            for (size_t i = firstNewPoint; i < outPoints->size(); ++i) {
+                GfVec3f const p = (*outPoints)[i];
+                (*outPoints)[i] = GfVec3f(p[0], -p[2], p[1]);
+            }
+        }
+    }
+    else {
+        return false;
+    }
+
+    _FinishMeshTopology(counts, indices, outTopology);
+    return true;
 }
 
 }  // namespace Ruzino_Hydra2

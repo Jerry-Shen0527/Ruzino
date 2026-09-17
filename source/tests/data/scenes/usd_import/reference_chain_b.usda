@@ -1,0 +1,25 @@
+#usda 1.0
+(
+    defaultPrim = "Chain"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "Chain" (
+    references = @./reference_chain_c.usda@
+)
+{
+    over Mesh "Ball"
+    {
+        matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (0.6, 0, 0, 1) )
+        uniform token[] xformOpOrder = ["xformOp:transform"]
+    }
+
+    over Material "ChainMat"
+    {
+        over Shader "Shader"
+        {
+            color3f inputs:diffuseColor = (0, 0.85, 0.85)
+        }
+    }
+}

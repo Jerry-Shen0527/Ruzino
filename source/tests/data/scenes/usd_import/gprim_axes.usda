@@ -1,0 +1,50 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+# Regression: UsdGeomCylinder with NO axis attribute. The UsdGeom schema
+# fallback is axis="Z", so from this camera (at +Z looking at the origin)
+# the correct silhouette is a SHORT disc (height runs toward the camera),
+# leaving the top quarter of the frame dome-bright. 2026-09-17: the
+# tessellation used to ignore `axis` entirely and build along +Y — a
+# wrongly-tall bar that darkens the top strip (and renders every
+# default-axis cylinder/cone/capsule rotated 90 degrees).
+def Camera "Camera"
+{
+    float2 clippingRange = (0.1, 100.0)
+    float focalLength = 50.0
+    float horizontalAperture = 36.0
+    float verticalAperture = 36.0
+    matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (0, 0, 5.0, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+def DomeLight "Sky"
+{
+    float inputs:intensity = 1.0
+}
+
+def Material "BlueMat"
+{
+    token outputs:surface.connect = </BlueMat/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0.08, 0.15, 0.75)
+        float inputs:metallic = 0
+        float inputs:roughness = 0.6
+        float inputs:opacity = 1
+        token outputs:surface
+    }
+}
+
+def Cylinder "Rod" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    double radius = 0.7
+    double height = 3.0
+    rel material:binding = </BlueMat>
+}

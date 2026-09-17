@@ -575,6 +575,14 @@ void Hd_RUZINO_Mesh::Sync(
         else {
             _sharedData.visible = sceneDelegate->GetVisible(id);
         }
+
+        // Final-render purpose semantics: proxy and guide stand-ins stay
+        // hidden even when the prim itself is visible.
+        bool purpose_shown = true;
+        if (Ruzino_Hydra2::IsPurposeShown(sceneDelegate, id, &purpose_shown) &&
+            !purpose_shown) {
+            _sharedData.visible = false;
+        }
     }
 
     if (*dirtyBits & HdChangeTracker::DirtyMaterialId) {
@@ -585,9 +593,23 @@ void Hd_RUZINO_Mesh::Sync(
         render_param->InstanceCollection->mark_materials_dirty();
     }
 
+    TfToken prim_type;
+    Ruzino_Hydra2::ReadPrimType(sceneDelegate, id, &prim_type);
+    bool const is_gprim = Ruzino_Hydra2::IsGprimType(prim_type);
+    // Gprim params (radius/height/axis) are not mesh topology and carry no
+    // points primvar: their changes arrive as generic primvar dirtiness
+    // (IsPrimvarDirty with the name "points" stays false), so re-tessellate
+    // on either bit. They must ALSO trigger the BLAS rebuild below or the
+    // GPU geometry stays stale after re-tessellation (anim_gprim finding,
+    // 2026-09-17: re-synced mesh, identical render).
+    bool const gprim_retessellate =
+        is_gprim &&
+        (HdChangeTracker::IsTopologyDirty(*dirtyBits, id) ||
+         HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->primvar));
+
     bool requires_rebuild_blas =
         HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->points) ||
-        HdChangeTracker::IsTopologyDirty(*dirtyBits, id);
+        HdChangeTracker::IsTopologyDirty(*dirtyBits, id) || gprim_retessellate;
 
     bool requires_rebuild_tlas =
         requires_rebuild_blas ||
@@ -617,6 +639,24 @@ void Hd_RUZINO_Mesh::Sync(
         _normalsValid = false;
     }
 
+    // Analytic gprims (sphere/cube/cylinder/cone/capsule) carry no points
+    // primvar; tessellation supplies points and topology together, so they
+    // are handled ahead of the primvar-driven path below.
+    if (gprim_retessellate) {
+        HdMeshTopology gprim_topology;
+        VtVec3fArray gprim_points;
+        if (Ruzino_Hydra2::ReadGprimMesh(
+                sceneDelegate, id, &gprim_topology, &gprim_points)) {
+            topology = gprim_topology;
+            points = gprim_points;
+            _normalsValid = false;
+
+            HdMeshUtil meshUtil(&topology, GetId());
+            meshUtil.ComputeTriangleIndices(
+                &triangulatedIndices, &trianglePrimitiveParams);
+        }
+    }
+
     if (!points.empty()) {
         if (HdChangeTracker::IsPrimvarDirty(
                 *dirtyBits, id, HdTokens->normals) ||
@@ -626,7 +666,8 @@ void Hd_RUZINO_Mesh::Sync(
             _UpdatePrimvarSources(sceneDelegate, *dirtyBits, renderParam);
         }
 
-        if (HdChangeTracker::IsTopologyDirty(*dirtyBits, id)) {
+        // Gprim topology was produced by the tessellation branch above.
+        if (!is_gprim && HdChangeTracker::IsTopologyDirty(*dirtyBits, id)) {
             // Hydra 2.0 direct read (mesh schema + geom subset children)
             // with legacy fallback.
             HdMeshTopology direct_topology;

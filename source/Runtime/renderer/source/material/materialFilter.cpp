@@ -609,9 +609,45 @@ void _FixOmittedConnections(
         }
 
         if (rough_node_def && !node_def) {
-            // Process each input on this node
+            // Process each input on this node. getInputs() returns a vector
+            // COPY (MaterialX), so removing inputs inside the loop cannot
+            // invalidate the iteration — keep it that way if this is ever
+            // switched to a reference.
             for (auto input : node->getInputs()) {
                 auto input_in_def = rough_node_def->getInput(input->getName());
+
+                if (!input_in_def) {
+                    // Strict getNodeDef requires an exact input match, so an
+                    // authored name absent from the def breaks shader
+                    // generation (e.g. legacy `roughness` vs
+                    // `specular_roughness` in standard_surface >= 1.38).
+                    // Map known legacy aliases, drop anything else — the
+                    // shader then uses the def's default for that input.
+                    static const std::unordered_map<std::string, std::string>
+                        legacy_aliases = {
+                            { "roughness", "specular_roughness" },
+                        };
+                    auto alias_it = legacy_aliases.find(input->getName());
+                    if (alias_it != legacy_aliases.end() &&
+                        !node->getInput(alias_it->second)) {
+                        auto def_input =
+                            rough_node_def->getInput(alias_it->second);
+                        if (def_input) {
+                            auto renamed = node->addInput(
+                                alias_it->second, def_input->getType());
+                            if (input->hasValue()) {
+                                renamed->setValueString(
+                                    input->getValueString());
+                            }
+                            auto upstream = input->getConnectedOutput();
+                            if (upstream) {
+                                renamed->setConnectedOutput(upstream);
+                            }
+                        }
+                    }
+                    node->removeInput(input->getName());
+                    continue;
+                }
 
                 if (input_in_def->getType() != input->getType()) {
                     spdlog::info("Fixing skipped link.");

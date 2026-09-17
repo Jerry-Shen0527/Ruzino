@@ -29,9 +29,16 @@ def Material "WhiteMat"
     }
 }
 
+# NOTE: the binding MUST declare MaterialBindingAPI — the Hydra 2.0
+# emulation only generates binding datasources for prims with the API
+# applied; a bare `material:binding` rel renders the default material
+# (this silently degraded the furnace to default-gray after the 2026-09-02
+# Hydra 2.0 migration, hidden while gprims were pruned entirely).
 def Xform "World"
 {
-    def Sphere "Sphere"
+    def Sphere "Sphere" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
     {
         rel material:binding = </WhiteMat>
         double radius = 1

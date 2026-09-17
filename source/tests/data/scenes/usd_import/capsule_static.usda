@@ -1,0 +1,51 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+# Regression: UsdGeomCapsule with axis="Y" (upright in this Y-up stage),
+# radius 0.6, height 1.8. 2026-09-17: the tessellation was rebuilt to use
+# true hemisphere caps sharing the cylinder rim rings (previously two FULL
+# spheres + interior flat caps — visually identical but ~2x the triangles);
+# this fixture pins the silhouette: the capsule must occlude the dome and
+# stay finite. Cylinder/cone/capsule axis handling is covered by
+# gprim_axes.usda.
+def Camera "Camera"
+{
+    float2 clippingRange = (0.1, 100.0)
+    float focalLength = 50.0
+    float horizontalAperture = 36.0
+    float verticalAperture = 36.0
+    matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (0, 0, 5.0, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+def DomeLight "Sky"
+{
+    float inputs:intensity = 1.0
+}
+
+def Material "BlueMat"
+{
+    token outputs:surface.connect = </BlueMat/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0.08, 0.15, 0.75)
+        float inputs:metallic = 0
+        float inputs:roughness = 0.6
+        float inputs:opacity = 1
+        token outputs:surface
+    }
+}
+
+def Capsule "Pill" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    uniform token axis = "Y"
+    double radius = 0.6
+    double height = 1.8
+    rel material:binding = </BlueMat>
+}

@@ -1,0 +1,12 @@
+#usda 1.0
+(
+    defaultPrim = "Mid"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "Mid" (
+    payload = @./payload_leaf2.usda@
+)
+{
+}

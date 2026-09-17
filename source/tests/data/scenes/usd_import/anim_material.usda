@@ -1,0 +1,56 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+# Time-sampled material parameter: quad diffuseColor red (t=0) -> blue
+# (t=24). Center-region channel dominance should flip. KNOWN GAP: material
+# network is read at time 0 -> renders expected IDENTICAL today.
+def Camera "Camera"
+{
+    float2 clippingRange = (0.1, 100.0)
+    float focalLength = 50.0
+    float horizontalAperture = 36.0
+    float verticalAperture = 36.0
+    matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (0, 0, 5.0, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+def RectLight "KeyLight"
+{
+    float inputs:intensity = 30.0
+    float inputs:width = 0.8
+    float inputs:height = 0.8
+    matrix4d xformOp:transform = ( (0.857,0,0,0), (0,0.857,-0.514,0), (0,0.514,0.857,0), (0, 1.5, 2.5, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+def Material "QuadMat"
+{
+    token outputs:surface.connect = </QuadMat/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.timeSamples = {
+            0: (0.85, 0.1, 0.1),
+            24: (0.1, 0.1, 0.85)
+        }
+        float inputs:metallic = 0
+        float inputs:roughness = 0.6
+        float inputs:opacity = 1
+        token outputs:surface
+    }
+}
+
+def Mesh "Quad" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    uniform token subdivisionScheme = "none"
+    int[] faceVertexCounts = [3, 3]
+    int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+    normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)]
+    point3f[] points = [(-0.7, -0.7, 0), (0.7, -0.7, 0), (0.7, 0.7, 0), (-0.7, 0.7, 0)]
+    rel material:binding = </QuadMat>
+}

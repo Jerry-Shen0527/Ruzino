@@ -1,0 +1,47 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+# Regression: UsdGeomSphere under a uniform DomeLight. Round-1 audit found
+# procedural gprims silently vanished (pruned by SUPPORTED_RPRIM_TYPES before
+# reaching the render index). Fixed 2026-09-16: the delegate now declares the
+# gprim types and Sync tessellates them via ReadGprimMesh — the blue sphere
+# must occlude the dome (center darker and blue vs the white corner).
+def Camera "Camera"
+{
+    float2 clippingRange = (0.1, 100.0)
+    float focalLength = 50.0
+    float horizontalAperture = 36.0
+    float verticalAperture = 36.0
+    matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (0, 0, 5.0, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+def DomeLight "Sky"
+{
+    float inputs:intensity = 1.0
+}
+
+def Material "BlueMat"
+{
+    token outputs:surface.connect = </BlueMat/Shader.outputs:surface>
+    def Shader "Shader"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0.08, 0.15, 0.75)
+        float inputs:metallic = 0
+        float inputs:roughness = 0.6
+        float inputs:opacity = 1
+        token outputs:surface
+    }
+}
+
+def Sphere "Ball" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    double radius = 1
+    rel material:binding = </BlueMat>
+}

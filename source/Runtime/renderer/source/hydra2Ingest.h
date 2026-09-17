@@ -122,6 +122,38 @@ bool ReadVisible(
     SdfPath const& id,
     bool* outVisible);
 
+// The prim's flattened prim type from the terminal scene index. Returns
+// false when there is no terminal scene index (type stays empty).
+bool ReadPrimType(
+    HdSceneDelegate* sceneDelegate,
+    SdfPath const& id,
+    TfToken* outType);
+
+// True for the analytic gprim types the ingest can tessellate into a mesh:
+// sphere / cube / cylinder / cone / capsule.
+bool IsGprimType(TfToken const& type);
+
+// Final-render purpose gate: *outShown is false when the prim's flattened
+// purpose is proxy or guide, true for default/render or when no purpose is
+// authored. Returns false when the data-source path cannot serve a purpose
+// (caller keeps its current visibility).
+bool IsPurposeShown(
+    HdSceneDelegate* sceneDelegate,
+    SdfPath const& id,
+    bool* outShown);
+
+// Tessellates analytic gprims (UsdGeomSphere/Cube/Cylinder/Cone/Capsule read
+// through their Hd schemas) into triangle-mesh topology + points so the mesh
+// rprim path can render them. Cylinder/cone/capsule honor the authored axis
+// token (UsdGeom fallback "Z"; geometry is built along +Y and rotated).
+// Normals are left to the mesh's smooth-normal fallback. Returns
+// false when the prim is not a gprim or lacks its size parameter.
+bool ReadGprimMesh(
+    HdSceneDelegate* sceneDelegate,
+    SdfPath const& id,
+    HdMeshTopology* outTopology,
+    VtVec3fArray* outPoints);
+
 // Mirrors HdSceneIndexAdapterSceneDelegate::GetInstanceIndices.
 bool ReadInstanceIndices(
     HdSceneDelegate* sceneDelegate,

@@ -67,6 +67,16 @@ const TfTokenVector Hd_RUZINO_RenderDelegate::SUPPORTED_RPRIM_TYPES = {
     HdPrimTypeTokens->mesh,
     HdPrimTypeTokens->volume,
     HdPrimTypeTokens->points,
+    // Analytic gprims are ingested through the mesh path (Sync tessellates
+    // via ReadGprimMesh; CreateRprim routes them to Hd_RUZINO_Mesh). The
+    // emulation prunes prims whose type is absent here before they ever
+    // reach the render index, so listing them in CreateRprim alone is not
+    // enough.
+    HdPrimTypeTokens->sphere,
+    HdPrimTypeTokens->cube,
+    HdPrimTypeTokens->cylinder,
+    HdPrimTypeTokens->cone,
+    HdPrimTypeTokens->capsule,
 };
 
 const TfTokenVector Hd_RUZINO_RenderDelegate::SUPPORTED_SPRIM_TYPES = {
@@ -342,6 +352,19 @@ HdRprim* Hd_RUZINO_RenderDelegate::CreateRprim(
         auto points = new Hd_RUZINO_Points(rprimId);
         spdlog::info("Created points: {}", rprimId.GetText());
         return points;
+    }
+    else if (
+        typeId == HdPrimTypeTokens->sphere ||
+        typeId == HdPrimTypeTokens->cube ||
+        typeId == HdPrimTypeTokens->cylinder ||
+        typeId == HdPrimTypeTokens->cone ||
+        typeId == HdPrimTypeTokens->capsule) {
+        // Analytic gprims render through the mesh path: Sync tessellates
+        // them into topology + points (hydra2Ingest ReadGprimMesh).
+        // Without this branch they would silently vanish.
+        auto mesh = new Hd_RUZINO_Mesh(rprimId);
+        meshes.push_back(mesh);
+        return mesh;
     }
     TF_CODING_ERROR(
         "Unknown Rprim type=%s id=%s", typeId.GetText(), rprimId.GetText());
