@@ -395,7 +395,9 @@ def run_interleaved(scene_path: Path, stage, sim_graph):
     import nodes_core_py as core
     from PIL import Image
 
-    WIDTH, HEIGHT, SPP = 1280, 960, 32
+    WIDTH = int(os.environ.get("WB_WIDTH", "1280"))
+    HEIGHT = int(os.environ.get("WB_HEIGHT", "960"))
+    SPP = int(os.environ.get("WB_SPP", "32"))
     OUTPUT_DIR.mkdir(exist_ok=True)
     for old in OUTPUT_DIR.glob("frame_*.png"):
         old.unlink()
