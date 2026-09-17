@@ -3,6 +3,13 @@
 This document describes the build and test workflow for the Ruzino Framework3D project.
 It is a quick reference for AI agents; see `INSTALL.md` for the full installation guide.
 
+## Multi-Agent Collaboration
+
+Multiple agents may edit this repo **concurrently**. Yield rules (no
+repo-wide unilateral ops; build/GPU/commit are exclusive; unexpected file
+changes are normal — stop and ask on conflict):
+`docs/multi_agent_collaboration.md`.
+
 ## Project Structure
 
 - `cmake/AddLibrary.cmake`: Thin wrapper (7 lines) that delegates to `source/Core/rznode/cmake/AddLibrary.cmake`
@@ -113,8 +120,15 @@ python scripts/format_and_commit_manager.py
    Socket asymmetry: adding extra OUTPUT sockets / output data is fine (a
    node may emit more than before), but adding INPUT sockets changes what
    callers must provide — think twice, prefer optional inputs with sane
-   defaults. Remember a new node `.cpp` needs a CMake `add_nodes` update
-   (re-configure) plus registration in the owning plugin's JSON.
+   defaults. Socket TYPES: reuse existing ones — Geometry with its
+   Mesh/Points/Curve/Instancer components, float/int/bool/string, Gf vecs —
+   and carry extra per-element data INSIDE a Geometry (named vertex scalar
+   quantities or component fields; the pattern is
+   `source/Plugins/TerrainGen/geometry_nodes/terrain_carry.hpp`) instead of
+   registering a new socket type. A new socket type is a framework change
+   and needs the same justification as any architecture change. Remember a
+   new node `.cpp` needs a CMake `add_nodes` update (re-configure) plus
+   registration in the owning plugin's JSON.
 
 ## Simulation (headless node-graph sim)
 
@@ -190,6 +204,18 @@ exception record + faulting-thread stack + loaded modules, then quits. Look for
   as the root cause. The Release build skips `_ASSERT` (`NDEBUG`), so a real
   logic bug may surface only as a downstream access violation in Release.
 
+### Flame-graph profiling (py-spy — no admin, works on Release)
+
+For "where does the time go" next to the crash workflow above:
+`py-spy record -o wb_flame.svg --format flamegraph -r 100 --native --idle -- <real-python> script.py`
+(pass the real `scoop/apps/python313/current/python.exe`, not the shim; use
+`--format raw` for per-module aggregation, cProfile for the Python-level
+phase split). Release DLLs have no PDBs — exported-symbol names in the flame
+graph are anchors, not truth; judge by system-DLL leaves and module totals.
+Full recipe + interpretation pitfalls (VS/ETW need admin; RelWithDebInfo for
+real symbols): `docs/profiling_py_spy.md`. Session artifacts:
+`Binaries/Release/test_output/wb_profile/`.
+
 ### CRITICAL: never write `&someRefCountPtr`
 
 nvrhi's `RefCountPtr<T>` overloads unary `operator&()` to return `T**` (the
@@ -199,3 +225,15 @@ corrupts silently; two confirmed access-violation cases are dissected in
 `std::addressof(handle)` so swaps go through the proper move operators, and
 grep `make_pair(&` / `&field->` / `&it->` whenever an `nvrhi::*Handle` is
 involved.
+
+### Environment: elevation & the `python313` interpreter
+
+- **Agent shells are non-admin.** Anything needing elevation (VS sampling
+  profiler / VSPerfCmd, `wpr`/xperf ETW tracing, driver installs) fails with
+  access errors — stop and ask the user to run it or grant elevation.
+- **Three pythons; tests need scoop's 3.13.** `python313` on PATH is a scoop
+  **shim wrapper**, and shims break tools that spawn/inspect the python
+  process (py-spy: "Failed to find python version"; do NOT hardlink over the
+  shim — the exe then can't find its site-packages). For those tools pass the
+  real interpreter: `C:/Users/Jerry/scoop/apps/python313/current/python.exe`.
+  The SDK python and system `python` (3.12) lack the test deps.
