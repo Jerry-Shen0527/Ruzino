@@ -2,6 +2,7 @@
 
 #include <pxr/base/gf/rotation.h>
 #include <pxr/pxr.h>
+#include <pxr/usd/usd/editContext.h>
 #include <pxr/usd/usd/payloads.h>
 #include <pxr/usd/usd/prim.h>
 #include <pxr/usd/usd/primRange.h>
@@ -521,7 +522,33 @@ void Stage::import_materialx(
     const std::string& path_string,
     const pxr::SdfPath& sdf_path)
 {
-    MaterialX::FilePath path(path_string);
+    try {
+        auto doc = pxr::UsdMtlxReadDocument(path_string);
+        if (!doc) {
+            spdlog::error("import_materialx: could not read {}", path_string);
+            return;
+        }
+        // Import into the ROOT layer — an import adds scene content, not an
+        // editing override (the session layer / modifier sidecar is for
+        // non-destructive edits, see docs/modifier_architecture.md).
+        pxr::UsdEditContext edit_ctx(stage, stage->GetRootLayer());
+        // externalPath is only used when the document defines looks; it then
+        // hosts a LookVariant set. Pointing it at the import root keeps the
+        // look machinery self-contained under the requested prim.
+        pxr::UsdMtlxRead(doc, stage, sdf_path, sdf_path);
+        spdlog::info(
+            "import_materialx: imported {} into {}",
+            path_string,
+            sdf_path.GetString());
+    }
+    catch (const std::exception& x) {
+        // MaterialX read/parse errors surface as mx::Exception (a
+        // std::exception subclass) from UsdMtlxReadDocument/readFromXmlFile.
+        spdlog::error(
+            "import_materialx: MaterialX read failed for {}: {}",
+            path_string,
+            x.what());
+    }
 }
 
 std::unique_ptr<Stage> create_global_stage(const std::string& usd_name)

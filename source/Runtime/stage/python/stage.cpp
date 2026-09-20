@@ -374,6 +374,21 @@ NB_MODULE(stage_py, m)
             &Stage::should_simulate,
             "Whether the stage still wants more ticks (render_time >= "
             "current_time).")
+        // ---- Asset import ----
+        // Translate a .mtlx file's materials into the stage as UsdShade
+        // prims under prim_path (root layer — imports are scene content, not
+        // modifier overrides). See Stage::import_materialx.
+        .def(
+            "import_materialx",
+            [](Stage& stage,
+               const std::string& path,
+               const std::string& prim_path) {
+                stage.import_materialx(path, pxr::SdfPath(prim_path));
+            },
+            nb::arg("path"),
+            nb::arg("prim_path") = "/MaterialX",
+            "Import a .mtlx file's materials as UsdShade prims under "
+            "prim_path.")
         // ---- Character control (headless / scripting) ----
         // Inject a movement axis into the stage input state, bypassing the
         // window: x = strafe (D+), y = forward (W+), normalized. Drives the
