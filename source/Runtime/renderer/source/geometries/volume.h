@@ -7,7 +7,7 @@
 // Sync time from the `volumeType` primvar:
 //
 //   volumeType == "cloud"  -> CloudVolumeImpl     (procedural path-traced
-//   cloud) absent / "wetbrush"    -> WetbrushVolumeImpl  (paint density slab)
+//   cloud) absent / "grid" / "wetbrush" (legacy) -> GridVolumeImpl (voxel grid)
 //
 // The shell never branches on volume type itself — it calls
 // impl_->hitGroupIndex() / fillVolumeDesc() / etc. Adding a new volume type

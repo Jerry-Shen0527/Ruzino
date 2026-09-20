@@ -38,7 +38,7 @@ class HD_RUZINO_API Hd_RUZINO_Points final : public HdPoints {
 
     // Debug zero-copy refresh, driven OUTSIDE Hydra's SyncAll by
     // Hd_RUZINO_Renderer::Render each frame (it polls the registry versions,
-    // like the wetbrush_paint_field poll). Self-dirtying from inside Sync
+    // like the grid_field/ registry poll). Self-dirtying from inside Sync
     // (MarkRprimDirty during SyncAll) corrupted the sync pass — uniform
     // single-pixel black speckle across the frame — so per-frame rebuilds
     // must not ride Hydra's dirty propagation.

@@ -286,9 +286,9 @@ def run_interleaved(scene_path: Path, stage, sim_graph):
 
     rng = tree.add_node("rng_texture"); rng.ui_name = "RNG"
     ray_gen = tree.add_node("node_render_ray_generation"); ray_gen.ui_name = "RayGen"
-    # wetbrush_render carries the debug sphere/capsule hit groups in addition
+    # path_tracing carries the debug sphere/capsule hit groups in addition
     # to triangles + volume.
-    path_trace = tree.add_node("wetbrush_render"); path_trace.ui_name = "WetbrushRender"
+    path_trace = tree.add_node("path_tracing"); path_trace.ui_name = "PathTracing"
     accumulate = tree.add_node("accumulate"); accumulate.ui_name = "Accumulate"
     rng_buffer = tree.add_node("rng_buffer"); rng_buffer.ui_name = "RNGBuffer"
     present = tree.add_node("present_color"); present.ui_name = "Present"

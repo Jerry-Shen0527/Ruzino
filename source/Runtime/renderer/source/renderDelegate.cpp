@@ -343,7 +343,7 @@ HdRprim* Hd_RUZINO_RenderDelegate::CreateRprim(
         // CreateRprim has no sceneDelegate, so it cannot read the `volumeType`
         // primvar here — the wetbrush/cloud split happens in Sync via
         // VolumeImpl::resolve(). Always construct this one class; Sync picks
-        // the concrete strategy (WetbrushVolumeImpl / CloudVolumeImpl / ...).
+        // the concrete strategy (GridVolumeImpl / CloudVolumeImpl / ...).
         auto volume = new Hd_RUZINO_Volume(rprimId);
         spdlog::info("Created Volume: {}", rprimId.GetText());
         return volume;

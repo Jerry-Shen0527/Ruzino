@@ -116,7 +116,7 @@ mean 0.647 → 0.347）。区分"几何存在性（presence）"和"表面折射�
 **完全不透明的硬阴影**，与 radiance 侧的软透射矛盾。半透明黄板（opacity=0.4）
 原本投的是和实心板一样的深阴影。
 
-**修复**：把 4 个 shadow hit shader（`path_tracing.slang` + `wetbrush_render.slang`
+**修复**：把 4 个 shadow hit shader（`path_tracing.slang` + 当时的 `wetbrush_render.slang`（该文件已于 2026-09-18 并入 `path_tracing.slang`）
 的 `ShadowHit` + `SphereShadowHit`）的 `if (opacity < 0.25)` 改成与主循环
 对称的概率测试 `if (random_float(payload.seed) >= opacity)`。opacity=0.4 的
 表面有 40% 概率挡住 shadow ray → 投射淡阴影。基础设施本就齐备（opacity
@@ -153,7 +153,7 @@ callable 把它 **luminance 降级成标量** 塞进 `material_params_index`，�
    默认 `(1,1,1)`。
 3. `material.cpp`：fallback `fetch_shader_opacity` + `$getOpacity` wrapper
    更新。
-4. `path_tracing.cpp` + `wetbrush_render.cpp`：custom shader 的
+4. `path_tracing.cpp`（+ 当时的 wetbrush_render.cpp，已删）：custom shader 的
    `fetch_<name>_opacity` wrapper 设 `opacityColor = (1,1,1)`。
 5. `path_tracing.slang` 主循环：直通分支从 `throughput 不变` 改成
    `throughput *= (1 - opacityColor) / (1 - surviveProb)`（无偏）。
@@ -279,7 +279,7 @@ HD renderer plugin (`Hd_RUZINO_RendererPlugin`) 和全局 `GPUSceneAssember`
 ### TODO-5：巨型节点拆分（低优先级，纯重构）
 
 `node_lpm.cpp`(742行)、`path_tracing.cpp`(605行)、
-`material_brdf_analyzer.cpp`(546行)、`wetbrush_render.cpp`(540行) 较长，
+`material_brdf_analyzer.cpp`(546行) 较长（原 `wetbrush_render.cpp` 540 行已于 2026-09-18 删除），
 可评估拆成子节点 + 内部 helper。不影响正确性。
 
 ## 官方 MaterialX 1.39.5 评估结论（不升级）

@@ -101,6 +101,16 @@ NODE_EXECUTION_FUNCTION(path_tracing)
     bool size_changed = (storage.old_size != size);
     storage.old_size = size;
 
+    // Geometry content changed (e.g. a grid-volume rprim picked up a new sim
+    // frame via the zero-copy registry, or any mesh/points edit). The path
+    // tracer must restart accumulation from scratch, otherwise the accumulate
+    // node keeps averaging new samples on top of the previous frame's buffer
+    // and animated content drifts in brightness over time. Material/light/
+    // size changes already reset elsewhere; geometry changes did not.
+    if (geom_dirty) {
+        g.reset_accumulation = true;
+    }
+
 #ifdef _DEBUG
     if (storage.path_tracing_program &&
         storage.path_tracing_program->get_desc().check_shader_updated()) {
@@ -190,9 +200,12 @@ NODE_EXECUTION_FUNCTION(path_tracing)
         // inside path_tracing.slang (same TU, so they see file-level
         // RayPayload). cloud_unbiased.slang is the delta/ratio-tracking module
         // for the unbiased cloud pipeline (UnbiasedCloud* hit groups, slots
-        // 8/9).
+        // 8/9). volume_intersection.slang holds the importable voxel-grid
+        // sampler + slab test for the Volume* hit groups (slots 4/5); its
+        // entry points also live in path_tracing.slang.
         program_desc.add_path("cloud_intersection.slang");
         program_desc.add_path("cloud_unbiased.slang");
+        program_desc.add_path("volume_intersection.slang");
         program_desc.shaderType = nvrhi::ShaderType::AllRayTracing;
 #if 0
 
@@ -563,9 +576,7 @@ void fetch_)" + material.second->GetMaterialName() +
         // Volumetric cloud hit groups (slots 6/7). A Cloud volume rprim sets
         // instanceContributionToHitGroupIndex=6, so radiance rays route to slot
         // 6 (CloudClosestHit + CloudIntersection) and shadow rays to slot 7
-        // (CloudShadowHit + CloudIntersection). These coexist with wetbrush's
-        // 4/5 slots; the plain path_tracing node only announces 6/7 (wetbrush
-        // is rendered by the wetbrush_render node variant).
+        // (CloudShadowHit + CloudIntersection).
         context.announce_hitgroup(
             "CloudClosestHit", "", "CloudIntersection", 6);
         context.announce_hitgroup("CloudShadowHit", "", "CloudIntersection", 7);
@@ -576,6 +587,24 @@ void fetch_)" + material.second->GetMaterialName() +
             "UnbiasedCloudClosestHit", "", "CloudIntersection", 8);
         context.announce_hitgroup(
             "UnbiasedCloudShadowHit", "", "CloudIntersection", 9);
+        // Generic voxel grid volume hit groups (slots 4/5). A GridVolume
+        // (VolumeKind::GridVolume, the paint density+color slab) sets
+        // instanceContributionToHitGroupIndex=4: radiance rays route to slot 4
+        // (VolumeClosestHit + VolumeIntersection), shadow rays to slot 5
+        // (VolumeShadowHit + VolumeIntersection). Entry points live in
+        // path_tracing.slang; helpers in volume_intersection.slang.
+        context.announce_hitgroup(
+            "VolumeClosestHit", "", "VolumeIntersection", 4);
+        context.announce_hitgroup(
+            "VolumeShadowHit", "", "VolumeIntersection", 5);
+        // Capsule hit groups (slots 10/11) — debug bristles. Routed to points
+        // instances in registry segments mode (instanceContribution 10, see
+        // Hd_RUZINO_Points::updateTLAS). Slots 10/11 keep clear of the volume
+        // (4/5) and cloud (6/7, 8/9) families.
+        context.announce_hitgroup(
+            "CapsuleClosestHit", "", "CapsuleIntersection", 10);
+        context.announce_hitgroup(
+            "CapsuleShadowHit", "", "CapsuleIntersection", 11);
         context.announce_miss("Miss", 0);  // Primary ray miss shader at index 0
         context.announce_miss(
             "ShadowMiss", 1);  // Shadow ray miss shader at index 1

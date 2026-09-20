@@ -11,11 +11,12 @@ SharedGPUBufferRegistry& SharedGPUBufferRegistry::get()
     return instance;
 }
 
-void SharedGPUBufferRegistry::register_buffer(const std::string& key,
-                                              nvrhi::BufferHandle buf,
-                                              size_t bytes,
-                                              const void* metadata,
-                                              size_t metadata_bytes)
+void SharedGPUBufferRegistry::register_buffer(
+    const std::string& key,
+    nvrhi::BufferHandle buf,
+    size_t bytes,
+    const void* metadata,
+    size_t metadata_bytes)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     Entry e;
@@ -30,27 +31,32 @@ void SharedGPUBufferRegistry::register_buffer(const std::string& key,
     if (it != map_.end()) {
         e.version = it->second.version + 1;
         it->second = std::move(e);
-    } else {
+    }
+    else {
         e.version = 1;
         map_[key] = std::move(e);
     }
 }
 
-bool SharedGPUBufferRegistry::lookup(const std::string& key,
-                                     nvrhi::BufferHandle& out_buf,
-                                     size_t& out_bytes,
-                                     uint64_t& out_version,
-                                     const void** out_metadata,
-                                     size_t* out_metadata_bytes)
+bool SharedGPUBufferRegistry::lookup(
+    const std::string& key,
+    nvrhi::BufferHandle& out_buf,
+    size_t& out_bytes,
+    uint64_t& out_version,
+    const void** out_metadata,
+    size_t* out_metadata_bytes)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = map_.find(key);
-    if (it == map_.end()) return false;
+    if (it == map_.end())
+        return false;
     out_buf = it->second.buffer;
     out_bytes = it->second.byteSize;
     out_version = it->second.version;
-    if (out_metadata) *out_metadata = it->second.metadata.data();
-    if (out_metadata_bytes) *out_metadata_bytes = it->second.metadata.size();
+    if (out_metadata)
+        *out_metadata = it->second.metadata.data();
+    if (out_metadata_bytes)
+        *out_metadata_bytes = it->second.metadata.size();
     return true;
 }
 
@@ -58,6 +64,20 @@ void SharedGPUBufferRegistry::unregister(const std::string& key)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     map_.erase(key);
+}
+
+std::vector<std::pair<std::string, uint64_t>>
+SharedGPUBufferRegistry::list_versions(const std::string& prefix)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<std::pair<std::string, uint64_t>> out;
+    out.reserve(map_.size());
+    for (const auto& [key, entry] : map_) {
+        if (prefix.empty() || key.compare(0, prefix.size(), prefix) == 0) {
+            out.emplace_back(key, entry.version);
+        }
+    }
+    return out;
 }
 
 RUZINO_NAMESPACE_CLOSE_SCOPE

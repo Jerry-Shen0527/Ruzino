@@ -14,13 +14,15 @@ Architecture (interleaved per-frame animation):
   Stage 2: interleave { stage.tick(dt) -> hydra.render(t) x SPP -> save PNG }
            for NUM_FRAMES. Each tick, the commit node packs density+color into a
            Float4 GPU buffer and registers it in SharedGPUBufferRegistry under
-           "wetbrush_paint_field"; the Hd_RUZINO_WetbrushVolume rprim's Sync()
+           "grid_field/paint" (a generic GridFieldDesc contract); the
+           Hd_RUZINO_Volume rprim's GridVolumeImpl Sync()
            detects the version bump and rebinds the SAME buffer (zero copy).
            No data crosses back to the CPU.
 
-The volume is rendered by the custom Hd_RUZINO_WetbrushVolume rprim, raymarched
-by the VolumeClosestHit shader (paper Section 6: first-cross + penetration blend
-+ Lambertian + 64-ray ambient occlusion).
+The volume is rendered by the Hd_RUZINO_Volume rprim (GridVolumeImpl),
+raymarched by the VolumeClosestHit shader (paper Section 6: first-cross +
+penetration blend + 64-ray ambient occlusion) in the standard path_tracing
+node.
 
 Run from Binaries/Release (so node-plugin DLLs resolve):
 
@@ -246,7 +248,8 @@ def build_marker_scene(scene_path: Path):
     grid_height = SIM_PAPER * SIM_RES_Z / SIM_RES
     canvas_z = 0.0
 
-    # UsdVolVolume -> Hydra token "volume" -> Hd_RUZINO_WetbrushVolume.
+    # UsdVolVolume -> Hydra token "volume" -> Hd_RUZINO_Volume
+    # (GridVolumeImpl, volumeType absent = grid default).
     # The metadata primvars describe the SAME grid the sim packs. The rprim's
     # Sync() reads them, then create_gpu_resources() Phase 1 overrides the
     # buffer source with the registry buffer (and re-asserts the same grid
@@ -411,9 +414,9 @@ def run_interleaved(scene_path: Path, stage, sim_graph):
 
     rng = tree.add_node("rng_texture"); rng.ui_name = "RNG"
     ray_gen = tree.add_node("node_render_ray_generation"); ray_gen.ui_name = "RayGen"
-    # wetbrush_render = path_tracing + 2 procedural volume hit groups, so the
-    # Hd_RUZINO_WetbrushVolume density slab is hit.
-    path_trace = tree.add_node("wetbrush_render"); path_trace.ui_name = "WetbrushRender"
+    # path_tracing carries the volume (and sphere/capsule debug) hit groups,
+    # so the grid-volume density slab is hit alongside ordinary geometry.
+    path_trace = tree.add_node("path_tracing"); path_trace.ui_name = "PathTracing"
     accumulate = tree.add_node("accumulate"); accumulate.ui_name = "Accumulate"
     rng_buffer = tree.add_node("rng_buffer"); rng_buffer.ui_name = "RNGBuffer"
     present = tree.add_node("present_color"); present.ui_name = "Present"
@@ -450,7 +453,7 @@ def run_interleaved(scene_path: Path, stage, sim_graph):
         stage.tick(DT)
         stage.finish_tick()
         # Belt-and-suspenders: the auto path (renderer.cpp polls the registry
-        # version → DirtyGeometry → wetbrush_render geom_dirty → reset) should
+        # version → DirtyGeometry → path_tracing geom_dirty → reset) should
         # already trigger a clean reset for this fresh sim frame. This explicit
         # host request is the escape hatch in case that auto path ever lags.
         hydra.reset_accumulation()

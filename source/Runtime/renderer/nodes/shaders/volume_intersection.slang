@@ -1,12 +1,13 @@
-// Volume rendering helpers for the Wetbrush density slab.
+// Volume rendering helpers for the generic voxel (density,rgb) grid
+// (VolumeKind::GridVolume; canonical producer = a sim node packing through
+// SharedGPUBufferRegistry with a RHI/grid_field_desc.hpp descriptor).
 //
 // This file is a pure IMPORTABLE MODULE (no [shader] entry points, no
 // references to RayPayload/ShadowPayload which live inside path_tracing.slang
 // as file-level declarations and so cannot be imported). The 3 hit-group
-// entry points (VolumeIntersection / VolumeClosestHit / VolumeShadowHit) are
-// injected as raw source code by the wetbrush_render node, compiled into the
-// same translation unit as path_tracing.slang so they can see RayPayload /
-// ShadowPayload / the global buffers.
+// entry points (VolumeIntersection / VolumeClosestHit / VolumeShadowHit) live
+// directly in path_tracing.slang (same TU as RayPayload / ShadowPayload / the
+// global buffers).
 //
 // What lives here: the VolumeHitAttributes struct, the slab ray-test, and the
 // per-cell (density,r,g,b) field sampler, all of which only need the bindless
@@ -46,7 +47,7 @@ float4 fetchVoxel(VolumeDesc vd, int ix, int iy, int iz)
 // stairsteps on the paint surface (top-edge roughness ~65px at res 512).
 float4 samplePaintField(VolumeDesc vd, float3 p)
 {
-    float3 rel = (p - vd.gridMin) / vd.cellSize - 0.5;
+    float3 rel = (p - vd.gridMin) / vd.cellSize - 0.5;  // per-axis cell size
     int x0 = int(floor(rel.x));
     int y0 = int(floor(rel.y));
     int z0 = int(floor(rel.z));
@@ -74,17 +75,17 @@ float sampleDensity(VolumeDesc vd, float3 p)
 
 // Paint surface normal from the density gradient (paper §6). The gradient
 // points toward increasing density; the outward-facing surface normal is its
-// negation. Central differences over 2 cells: paper's grid is pixel-level so
-// a 1-cell stencil is sub-pixel and smooth, but at our coarser res (512) a
-// 1-cell stencil rides cell-level density noise and makes the Lambertian
-// shading (0.4+0.6*facing) flicker across the stroke. A 2-cell stencil
-// averages over the noise. Paper does not specify the stencil radius.
+// negation. Central differences over 2 cells per axis: paper's grid is
+// pixel-level so a 1-cell stencil is sub-pixel and smooth, but at our coarser
+// res (512) a 1-cell stencil rides cell-level density noise and makes the
+// Lambertian shading (0.4+0.6*facing) flicker across the stroke. A 2-cell
+// stencil averages over the noise. Paper does not specify the stencil radius.
 float3 surfaceNormal(VolumeDesc vd, float3 p)
 {
-    float h = vd.cellSize * 2.0;
-    float dx = sampleDensity(vd, p + float3(h, 0, 0)) - sampleDensity(vd, p - float3(h, 0, 0));
-    float dy = sampleDensity(vd, p + float3(0, h, 0)) - sampleDensity(vd, p - float3(0, h, 0));
-    float dz = sampleDensity(vd, p + float3(0, 0, h)) - sampleDensity(vd, p - float3(0, 0, h));
+    float3 h = vd.cellSize * 2.0;  // per-axis stencil radius
+    float dx = sampleDensity(vd, p + float3(h.x, 0, 0)) - sampleDensity(vd, p - float3(h.x, 0, 0));
+    float dy = sampleDensity(vd, p + float3(0, h.y, 0)) - sampleDensity(vd, p - float3(0, h.y, 0));
+    float dz = sampleDensity(vd, p + float3(0, 0, h.z)) - sampleDensity(vd, p - float3(0, 0, h.z));
     float3 g = float3(dx, dy, dz);
     float len = length(g);
     if (len < 1e-8)

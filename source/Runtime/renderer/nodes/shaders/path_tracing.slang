@@ -16,6 +16,7 @@ import pt_constants;
 import pt_sample_lights;
 import cloud_intersection;  // procedural cloud density + light-march helpers
 import cloud_unbiased;      // delta/ratio tracking for the unbiased cloud pipeline (slots 8/9)
+import volume_intersection;  // generic voxel (density,rgb) grid sampler + slab test (slots 4/5)
 
 RWStructuredBuffer<uint> random_seeds;
 RWTexture2D<float4> output;
@@ -70,8 +71,9 @@ struct RayPayload {
     //   volumeTEnd         — ray param at the segment exit (to continue past)
     // The RayGen loop adds volumeColor, attenuates throughput by
     // volumeTransmittance, and continues the ray from volumeTEnd so terrain /
-    // sky behind the cloud shows through (attenuated). Mirrors wetbrush_render's
-    // isVolume/volumeColor, extended with transmittance for true clouds.
+    // sky behind the cloud shows through (attenuated). The same channels also
+    // serve the grid-volume paint slab (hit groups 4/5), which sets
+    // transmittance=0 (absorbing surface).
     bool isVolume;
     float3 volumeColor;
     float volumeTransmittance;
@@ -685,6 +687,25 @@ void ClosestHit(
         instance_id, prim_id, ptConstants.emissiveTriangleCount);
 }
 
+// Debug-draw shading (sim debug point clouds: particles / voxels / bristles
+// previews, see BrushSimulation debug_pack_*.slang): simple ambient +
+// Lambertian against the distant lights. Pure visualization — no material
+// system, no shadows. Result is written to payload.volumeColor and rides the
+// volume emission-composite path in RayGen (payload.isVolume = true).
+float3 debugShade(float3 albedo, float3 n)
+{
+    float3 result = albedo * 0.3;  // ambient floor
+    for (uint li = 0; li < ptConstants.lightCount; ++li) {
+        LightData light = lightBuffer[li];
+        if (light.type == uint(LightType::Distant)) {
+            float3 L = -light.dirW;  // direction to the light (NEE convention)
+            float ndotl = max(0.0, dot(n, L));
+            result += albedo * light.intensity * ndotl * 0.3;
+        }
+    }
+    return result;
+}
+
 [shader("closesthit")]
 void SphereClosestHit(
     inout RayPayload payload,
@@ -738,6 +759,18 @@ void SphereClosestHit(
         vertex.normalW = -normal;
         vertex.faceNormalW = -normal;
         eta_flipped = 1;
+    }
+
+    // Debug point clouds (MeshFlags::HasPerPointColor): the buffer carries a
+    // per-point RGB block at texCrdOffset (see points.cpp / debug_pack_*.slang).
+    // Shade directly with it — no material round-trip.
+    if ((mesh_desc.flags & (uint)MeshFlags::HasPerPointColor) != 0) {
+        float3 debugColor = asfloat(
+            t_BindlessBuffers[mesh_desc.bindlessIndex].Load3(
+                mesh_desc.texCrdOffset + position_offset));
+        payload.isVolume = true;  // emission composite path in RayGen
+        payload.volumeColor = debugShade(debugColor, vertex.normalW);
+        return;
     }
 
     // Get material ID from instance
@@ -936,6 +969,20 @@ void SphereShadowHit(
     // For shadow rays hitting spheres, check opacity similar to triangle shadow
     // hit
     payload.isVisible = true;
+
+    // Debug point clouds (MeshFlags::HasPerPointColor — sim particles /
+    // voxels) are shadow-TRANSPARENT: tens of thousands of point spheres each
+    // casting a hard shadow speckle the paper with black dots and drown out
+    // the actual geometry. They visualize state, not occlusion.
+    {
+        uint instance_id_dbg = InstanceID();
+        uint mesh_id_dbg =
+            instanceDescBuffer[instance_id_dbg].geometryID;
+        if ((meshDescBuffer[mesh_id_dbg].flags &
+             (uint)MeshFlags::HasPerPointColor) != 0) {
+            return;  // keep isVisible = true
+        }
+    }
 
     // Limit recursion depth
     const uint MAX_SHADOW_OPACITY = 4;
@@ -1389,4 +1436,412 @@ void UnbiasedCloudShadowHit(inout ShadowPayload payload, in CloudHitAttributes a
     }
     payload.transmittance = T;
     payload.seed = seed;
+}
+
+// ---------------------------------------------------------------------------
+// Generic voxel grid volume hit groups (SBT slots 4/5).
+//
+// A GridVolume (VolumeKind::GridVolume, historically "Wetbrush") is a
+// UsdVol.Volume whose per-voxel Float4 (density, r, g, b) field arrives either
+// zero-copy through SharedGPUBufferRegistry (a sim node packing its fields
+// under a "grid_field/" key, see RHI/grid_field_desc.hpp) or via USD primvars
+// (the bake fallback). It rides the standard path_tracing node: any scene
+// with a grid volume renders it for free.
+//
+//   VolumeIntersection  (slot 4, procedural) — reports only segments that
+//                                        cross a paint cell above threshold.
+//   VolumeClosestHit    (slot 4)         — paper §6 first-cross + penetration
+//                                        pigment blend + AO; absorbing surface.
+//   VolumeShadowHit     (slot 5)         — first-cross test blocks shadow rays.
+//
+// The paint surface is treated as ABSORBING: volumeTransmittance = 0 makes the
+// RayGen isVolume branch add volumeColor and break (the existing "< 1e-3"
+// early-out), unlike clouds which continue past the slab.
+// ---------------------------------------------------------------------------
+
+// Paper §6 "Liquid rendering" ambient occlusion: "by shooting 64 rays around
+// the intersection point and collecting the maximum density values these rays
+// can reach within a short distance." Sample the density field directly (no
+// BVH) along N short rays distributed over the upper hemisphere around the
+// surface normal; rays that walk through dense paint contribute occlusion.
+// Returns an occlusion factor in [0,1] where 1 = fully occluded (darkens the
+// paint in crevices/dense regions) and 0 = fully exposed (bright).
+float paintAmbientOcclusion(VolumeDesc vd, float3 p, float3 n, uint seed)
+{
+    // Paper §6: "shooting 64 rays around the intersection point".
+    const uint N = 64;
+    const float aoRadius = min(vd.cellSize.x, min(vd.cellSize.y, vd.cellSize.z)) * 10.0;  // "short distance" ~= a few cells
+    const int aoSteps = 6;             // samples per AO ray within aoRadius
+    const float aoStepLen = aoRadius / float(aoSteps);
+
+    // Build an orthonormal basis around n.
+    float3 up = abs(n.z) < 0.99 ? float3(0, 0, 1) : float3(1, 0, 0);
+    float3 t = normalize(cross(up, n));
+    float3 b = cross(n, t);
+
+    float occlusion = 0.0;
+    for (uint i = 0; i < N; ++i) {
+        // Fibonacci spiral on the hemisphere: gives a quasi-uniform spread.
+        float phi = sqrt(float(i) + 0.5) * 2.39996323;  // golden angle
+        float cosTheta = 1.0 - (float(i) + 0.5) / float(N);
+        float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+        float3 localDir = float3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
+        float3 rayDir = localDir.x * t + localDir.y * b + localDir.z * n;
+
+        // March the short ray; accumulate the max density it reaches (paper:
+        // "maximum density values these rays can reach").
+        float maxDensity = 0.0;
+        for (int s = 1; s <= aoSteps; ++s) {
+            float3 sp = p + rayDir * aoStepLen * float(s);
+            float d = samplePaintField(vd, sp).x;
+            maxDensity = max(maxDensity, d);
+        }
+        // Occlusion contribution: a ray walking through dense paint darkens.
+        occlusion += min(maxDensity, 1.0);
+    }
+    return occlusion / float(N);
+}
+
+[shader("intersection")]
+void VolumeIntersection()
+{
+    uint instance_id = InstanceID();
+    uint vol_id = instanceDescBuffer[instance_id].geometryID;
+    VolumeDesc vd = volumeDescBuffer[vol_id];
+    float tEnter, tExit;
+    if (!intersectSlab(vd, tEnter, tExit))
+        return;
+
+    // Paper §6 first-cross, evaluated in the intersection stage: only report
+    // a hit if the ray segment actually crosses a paint cell (density above
+    // the surface threshold). Empty volume segments must NOT report —
+    // otherwise they swallow the ray (one TraceRay = one result) and the
+    // paint reads as drawn on the dome background instead of on the paper
+    // plane behind the volume. Marching the segment here mirrors what
+    // VolumeClosestHit's Phase 1 does; the cost is bounded by the slab
+    // depth (5 cells for the test scene).
+    float3 origin = WorldRayOrigin();
+    float3 dir = WorldRayDirection();
+    float step = min(vd.cellSize.x, min(vd.cellSize.y, vd.cellSize.z)) * 0.25;  // 1/4 cell, paper §6 cadence
+    float segLen = tExit - tEnter;
+    int maxSteps = 256;
+    int steps = min(maxSteps, int(ceil(segLen / step)));
+    float actualStep = segLen / float(max(1, steps));
+    for (int i = 0; i < steps; ++i) {
+        float t = tEnter + (float(i) + 0.5) * actualStep;
+        float3 p = origin + t * dir;
+        float d = sampleDensity(vd, p);
+        if (d > kDensitySurface) {
+            VolumeHitAttributes attr;
+            attr.tEnter = tEnter;
+            attr.tExit = tExit;
+            ReportHit(tEnter, 0u, attr);
+            return;
+        }
+    }
+    // No paint along this segment: do not report. Ray continues to the next
+    // hit (e.g. the paper plane behind the volume).
+}
+
+[shader("closesthit")]
+void VolumeClosestHit(inout RayPayload payload, in VolumeHitAttributes attr)
+{
+    // Paper §6 "Liquid rendering", first-cross + penetration blend:
+    //   "we sample the density value every one quarter of the density grid
+    //    size ... [find] the first sample along the ray that exceeds the
+    //    surface threshold ... To produce transparency effects, we use the oil
+    //    density to calculate a penetration distance and we allow more pigment
+    //    samples to be collected along the ray into the surface within that
+    //    distance. We blend all of the pigment samples together to determine
+    //    the final color of the ray."
+    //
+    // This is NOT a Beer-Lambert extinction integral (that was the previous
+    // implementation, which produced near-zero radiance for thin paint layers:
+    // density 0.1 × 3 Z-cells accumulates <0.003 extinction → invisible).
+    // Instead: march at 1/4-cell steps until the FIRST cell whose density
+    // exceeds the surface threshold; that is the "first cross". From there,
+    // continue marching a penetration depth proportional to the oil density,
+    // averaging the pigment color of every cell touched. The blended pigment
+    // IS the radiance (RayGen composites volume hits as pure emission), and
+    // paper §6 AO darkens crevices — that is the paper's complete shading
+    // model: pigment × (1 − AO).
+    payload.hit = true;
+    payload.isVolume = true;
+    payload.volumeColor = float3(0.0);
+    payload.volumeScatter = false;
+    uint instance_id = InstanceID();
+    uint vol_id = instanceDescBuffer[instance_id].geometryID;
+    VolumeDesc vd = volumeDescBuffer[vol_id];
+    float3 origin = WorldRayOrigin();
+    float3 dir = WorldRayDirection();
+    float cell_sz = min(vd.cellSize.x, min(vd.cellSize.y, vd.cellSize.z));
+    // Paper: sample "every one quarter of the density grid size".
+    float step = cell_sz * 0.25;
+    float segLen = attr.tExit - attr.tEnter;
+    int maxSteps = 256;
+    int steps = min(maxSteps, int(ceil(segLen / step)));
+    float actualStep = segLen / float(max(1, steps));
+
+    // Phase 1: first-cross. March until the first cell with density above the
+    // surface threshold. Record its world position; that is the surface point.
+    float tCross = -1.0;
+    float densityAtCross = 0.0;
+    for (int i = 0; i < steps; ++i) {
+        float t = attr.tEnter + (float(i) + 0.5) * actualStep;
+        float3 p = origin + t * dir;
+        float d = sampleDensity(vd, p);
+        if (d > kDensitySurface) {
+            tCross = t;
+            densityAtCross = d;
+            break;
+        }
+    }
+    // Defensive: VolumeIntersection now only reports when the segment crosses
+    // a paint cell, so tCross should always be found. Keep the guard so a
+    // future regression in the intersection shader can never re-introduce the
+    // "opaque black box" bug.
+    if (tCross < 0.0) {
+        payload.hit = false;
+        payload.isVolume = false;
+        return;
+    }
+
+    // Phase 2: penetration blend. Continue from the first-cross point for a
+    // depth proportional to the oil density (denser paint = deeper collect),
+    // averaging the pigment color of every cell touched. Paper: "we allow more
+    // pigment samples to be collected along the ray into the surface within
+    // [the penetration] distance."
+    float penDepth = max(cell_sz, densityAtCross * cell_sz * 4.0);
+    float tPenEnd = min(tCross + penDepth, attr.tExit);
+    float3 colorSum = float3(0.0);
+    float weightSum = 0.0;
+    for (int j = 0; j < steps; ++j) {
+        float t = tCross + (float(j) + 0.5) * actualStep;
+        if (t > tPenEnd)
+            break;
+        float3 p = origin + t * dir;
+        float4 cell = samplePaintField(vd, p);
+        float d = cell.x;
+        if (d <= 0.0)
+            continue;
+        // Weight each sample by its density: denser pigment dominates the blend.
+        float w = d;
+        colorSum += w * float3(cell.y, cell.z, cell.w);
+        weightSum += w;
+    }
+    float3 paintColor = (weightSum > 0.0) ? colorSum / weightSum : float3(0.0);
+
+    // Surface normal from the density gradient at the first-cross point.
+    // Paper §6 uses the normal to orient the AO hemisphere (and it is what
+    // the density field's shape gives us for free) — the paper's shading
+    // model is pigment × AO darkening only; it has NO Lambertian term and
+    // NO specular. The previous 0.4+0.6·facing shade and wet-gloss Blinn-
+    // Phong were post-paper additions that darkened/matte-flattened the
+    // paint; removed per the paper-fidelity directive (§15's "偏暗" RGB
+    // 116,59,59 was largely the shade × (1-ao) product).
+    float3 surfP = origin + tCross * dir;
+    float3 nrm = surfaceNormal(vd, surfP);
+
+    // Paper §6 ambient occlusion at the surface point: 64-ray hemisphere
+    // sampling darkens crevices and dense pigment pockets.
+    float ao = paintAmbientOcclusion(vd, surfP, nrm, payload.seed);
+
+    payload.volumeColor = paintColor * (1.0 - ao);
+    // Absorbing surface: zero transmittance makes the RayGen isVolume branch
+    // terminate the path after compositing volumeColor.
+    payload.volumeTransmittance = 0.0;
+    payload.volumeTEnd = attr.tExit;
+}
+
+[shader("closesthit")]
+void VolumeShadowHit(inout ShadowPayload payload, in VolumeHitAttributes attr)
+{
+    // Paper §6 shadow handling for the paint surface: a shadow ray that first
+    // crosses a cell above the surface threshold is blocked (the paint surface
+    // occludes the light). This mirrors VolumeClosestHit's first-cross test
+    // rather than a Beer-Lambert integral, which never reaches sufficient
+    // extinction to block light for thin paint layers.
+    uint instance_id = InstanceID();
+    uint vol_id = instanceDescBuffer[instance_id].geometryID;
+    VolumeDesc vd = volumeDescBuffer[vol_id];
+    float3 origin = WorldRayOrigin();
+    float3 dir = WorldRayDirection();
+    float cell_sz = min(vd.cellSize.x, min(vd.cellSize.y, vd.cellSize.z));
+    float step = cell_sz * 0.25;  // 1/4 cell, same cadence as the closest hit
+    float segLen = attr.tExit - attr.tEnter;
+    int maxSteps = 256;
+    int steps = min(maxSteps, int(ceil(segLen / step)));
+    float actualStep = segLen / float(max(1, steps));
+    for (int i = 0; i < steps; ++i) {
+        float t = attr.tEnter + (float(i) + 0.5) * actualStep;
+        float3 p = origin + t * dir;
+        float d = sampleDensity(vd, p);
+        if (d > kDensitySurface) {
+            payload.isVisible = false;
+            return;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Capsule segments (debug bristles, SBT slots 10/11). Each prim is the
+// capsule around segment [A, B] with a per-prim radius: endpoint A at
+// mesh_desc.vbOffset, endpoint B at mesh_desc.normalOffset, radius at
+// mesh_desc.ibOffset, color at mesh_desc.texCrdOffset
+// (MeshFlags::IsCapsuleSegments | HasPerPointColor). See points.cpp registry
+// mode (instanceContribution 10) and debug_pack_bristles.slang.
+// ---------------------------------------------------------------------------
+
+// Nearest positive ray/sphere intersection, or -1.
+float capsuleCapT(
+    float3 ro,
+    float3 rd,
+    float3 ce,
+    float r)
+{
+    float3 oc = ro - ce;
+    float b = dot(oc, rd);
+    float c = dot(oc, oc) - r * r;
+    float h = b * b - c;
+    if (h < 0.0)
+        return -1.0;
+    float t = -b - sqrt(h);
+    if (t < 0.0)
+        t = -b + sqrt(h);
+    return t;
+}
+
+bool capsuleIntersect(
+    float3 ro,
+    float3 rd,
+    float3 pa,
+    float3 pb,
+    float r,
+    out float tOut)
+{
+    tOut = -1.0;
+    float3 ba = pb - pa;
+    float3 oa = ro - pa;
+    float baba = dot(ba, ba);
+    float bard = dot(ba, rd);
+    float baoa = dot(ba, oa);
+    float rdoa = dot(rd, oa);
+    float oaoa = dot(oa, oa);
+    float a = baba - bard * bard;
+    float b = baba * rdoa - baoa * bard;
+    float c = baba * oaoa - baoa * baoa - r * r * baba;
+    float h = b * b - a * c;
+
+    // Cylinder body (ray not parallel to the axis).
+    if (abs(a) > 1e-9 && h >= 0.0) {
+        float t = (-b - sqrt(h)) / a;
+        float y = baoa + t * bard;
+        if (t > 0.0 && y > 0.0 && y < baba)
+            tOut = t;
+    }
+    // Cap spheres (cover the parallel-axis and outside-body cases).
+    float tA = capsuleCapT(ro, rd, pa, r);
+    float tB = capsuleCapT(ro, rd, pb, r);
+    if (tA > 0.0 && (tOut < 0.0 || tA < tOut))
+        tOut = tA;
+    if (tB > 0.0 && (tOut < 0.0 || tB < tOut))
+        tOut = tB;
+    return tOut > 0.0;
+}
+
+[shader("intersection")]
+void CapsuleIntersection()
+{
+    uint instance_id = InstanceID();
+    uint prim_id = PrimitiveIndex();
+
+    uint mesh_id = instanceDescBuffer[instance_id].geometryID;
+    MeshDesc mesh_desc = meshDescBuffer[mesh_id];
+
+    // Read endpoints A (vbOffset) and B (normalOffset), radius (ibOffset).
+    float3 aLocal = asfloat(t_BindlessBuffers[mesh_desc.bindlessIndex].Load3(
+        mesh_desc.vbOffset + prim_id * 12));
+    float3 bLocal = asfloat(
+        t_BindlessBuffers[mesh_desc.bindlessIndex].Load3(
+            mesh_desc.normalOffset + prim_id * 12));
+    float radius = asfloat(
+        t_BindlessBuffers[mesh_desc.bindlessIndex].Load(
+            mesh_desc.ibOffset + prim_id * 4));
+
+    float4x3 objToWorld = ObjectToWorld4x3();
+    float3 aWorld = objToWorld[0] * aLocal.x + objToWorld[1] * aLocal.y +
+                    objToWorld[2] * aLocal.z + objToWorld[3];
+    float3 bWorld = objToWorld[0] * bLocal.x + objToWorld[1] * bLocal.y +
+                    objToWorld[2] * bLocal.z + objToWorld[3];
+
+    float3 rayOrigin = WorldRayOrigin();
+    float3 rayDir = WorldRayDirection();
+
+    float t;
+    if (capsuleIntersect(rayOrigin, rayDir, aWorld, bWorld, radius, t)) {
+        if (t >= RayTMin() && t <= RayTCurrent()) {
+            ReportHit(
+                t,
+                /*hitKind=*/0u,
+                BuiltInTriangleIntersectionAttributes(float2(0, 0)));
+        }
+    }
+}
+
+[shader("closesthit")]
+void CapsuleClosestHit(
+    inout RayPayload payload,
+    in BuiltInTriangleIntersectionAttributes attribs)
+{
+    payload.hit = true;
+    uint instance_id = InstanceID();
+    uint prim_id = PrimitiveIndex();
+
+    float3 worldRayOrigin = WorldRayOrigin();
+    float3 worldRayDirection = WorldRayDirection();
+    float t = RayTCurrent();
+    float3 hitPoint = worldRayOrigin + t * worldRayDirection;
+
+    uint mesh_id = instanceDescBuffer[instance_id].geometryID;
+    MeshDesc mesh_desc = meshDescBuffer[mesh_id];
+
+    float3 aLocal = asfloat(t_BindlessBuffers[mesh_desc.bindlessIndex].Load3(
+        mesh_desc.vbOffset + prim_id * 12));
+    float3 bLocal = asfloat(
+        t_BindlessBuffers[mesh_desc.bindlessIndex].Load3(
+            mesh_desc.normalOffset + prim_id * 12));
+    float3 debugColor = asfloat(
+        t_BindlessBuffers[mesh_desc.bindlessIndex].Load3(
+            mesh_desc.texCrdOffset + prim_id * 12));
+
+    float4x3 objToWorld = ObjectToWorld4x3();
+    float3 aWorld = objToWorld[0] * aLocal.x + objToWorld[1] * aLocal.y +
+                    objToWorld[2] * aLocal.z + objToWorld[3];
+    float3 bWorld = objToWorld[0] * bLocal.x + objToWorld[1] * bLocal.y +
+                    objToWorld[2] * bLocal.z + objToWorld[3];
+
+    // Capsule normal: direction from the closest point on the segment axis.
+    float3 ab = bWorld - aWorld;
+    float s = clamp(
+        dot(hitPoint - aWorld, ab) / max(dot(ab, ab), 1e-12), 0.0, 1.0);
+    float3 normal = normalize(hitPoint - (aWorld + s * ab));
+    if (dot(worldRayDirection, normal) >= 0.0)
+        normal = -normal;
+
+    payload.isVolume = true;  // emission composite path in RayGen
+    payload.volumeColor = debugShade(debugColor, normal);
+    payload.volumeScatter = false;
+    payload.volumeTransmittance = 0.0;
+}
+
+[shader("closesthit")]
+void CapsuleShadowHit(
+    inout ShadowPayload payload,
+    in BuiltInTriangleIntersectionAttributes attribs)
+{
+    // Bristles cast hard shadows — the brush's shadow on the paint is part
+    // of the debugging value. (Debug POINT clouds are the opposite: their
+    // SphereShadowHit stays transparent — tens of thousands of point-sphere
+    // shadows would speckle everything.)
+    payload.isVisible = false;
 }

@@ -87,7 +87,7 @@ void CloudVolumeImpl::fillVolumeDesc(VolumeDesc& vd) const
     vd.gridResX = 0;
     vd.gridResY = 0;
     vd.gridResZ = 0;
-    vd.cellSize = 0.0f;
+    vd.cellSize = float3(0.0f, 0.0f, 0.0f);
     vd.gridMin =
         float3(cloud_bounds_min[0], cloud_bounds_min[1], cloud_bounds_min[2]);
     vd.volumeKind = uint32_t(VolumeKind::Cloud);

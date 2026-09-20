@@ -2,7 +2,7 @@
 //
 // Hd_RUZINO_Volume is the single Hydra rprim for the `volume` token. At Sync
 // time it reads the `volumeType` primvar and selects a concrete VolumeImpl
-// (WetbrushVolumeImpl / CloudVolumeImpl / future FileVolumeImpl). The impl owns
+// (GridVolumeImpl / CloudVolumeImpl / future FileVolumeImpl). The impl owns
 // everything type-specific: the primvar parsing, the density/texture resource
 // build, the VolumeDesc fields, the hit-group index. The Hd_RUZINO_Volume shell
 // owns everything shared: the AABB/BLAS, the pool handles, the TLAS instance
@@ -41,7 +41,7 @@ class Hd_RUZINO_RenderParam;
 ///   resources
 ///     must be rebuilt this Sync
 ///   - buildDensityResource(): create/refresh the type-specific density/texture
-///     resource (e.g. the wetbrush Float4 buffer). Return false if resources
+///     resource (e.g. the grid volume Float4 buffer). Return false if resources
 ///     are invalid and the volume should be skipped this frame (no TLAS entry).
 ///   - fillVolumeDesc(): fill the type-specific VolumeDesc fields (the shell
 ///   fills
@@ -56,7 +56,7 @@ class VolumeImpl {
 
     /// Discriminator matching the shader-side VolumeKind enum.
     virtual VolumeKind kind() const = 0;
-    /// TLAS hit-group slot for radiance/shadow rays (wetbrush=4, cloud=6).
+    /// TLAS hit-group slot for radiance/shadow rays (grid volume=4, cloud=6/8).
     virtual uint32_t hitGroupIndex() const = 0;
     /// Debug name for the AABB buffer (e.g. "cloudVolumeAABB").
     virtual std::string debugName() const = 0;
@@ -80,7 +80,7 @@ class VolumeImpl {
 
     /// Fill the type-specific fields of the VolumeDesc. The shell has already
     /// filled boundsMin/boundsMax before calling this; the impl fills the rest
-    /// (grid metadata for wetbrush, cloud shaping params for cloud, etc.).
+    /// (grid metadata for grid volumes, shaping params for cloud, etc.).
     virtual void fillVolumeDesc(VolumeDesc& vd) const = 0;
 
     /// Factory: read the `volumeType` primvar and select/keep a concrete impl.
@@ -100,12 +100,12 @@ class VolumeImpl {
 /// Creates-or-reuses `aabbBuffer` (one nvrhi::rt::GeometryAABB), uploads the
 /// given bounds, and builds the BLAS once (on first call, when BLAS is null).
 /// On subsequent calls only the AABB buffer contents are refreshed; the accel
-/// struct is not rebuilt (matches the existing wetbrush/cloud behaviour — the
-/// TLAS only needs the bounds at build time, and the buffer contents stay
+/// struct is not rebuilt (matches the existing grid/cloud volume behaviour —
+/// the TLAS only needs the bounds at build time, and the buffer contents stay
 /// fresh).
 ///
 /// This centralizes the ~45 lines that were duplicated between the cloud and
-/// wetbrush branches of the old Hd_RUZINO_WetbrushVolume, and fixes an
+/// volume branches of the old Hd_RUZINO_WetbrushVolume, and fixes an
 /// inconsistency: the old BLAS-build submission was NOT under
 /// execution_launch_mutex, unlike every other rprim (mesh/points/light). This
 /// helper holds the lock across the upload + the BLAS build, matching the

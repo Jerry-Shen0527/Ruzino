@@ -33,17 +33,18 @@
          PHASE 2 ABSORB/EMIT → PHASE 3 粒子+流体解算+§5.2 移交；§30 合并）
        commit 每帧:
          1. pack_float4 dispatch: density + color_r/y/b → packed_paint (Float4)
-         2. SharedGPUBufferRegistry.register("wetbrush_paint_field", packed_paint, meta)
+         2. SharedGPUBufferRegistry.register(kGridFieldPaintKey="grid_field/paint",
+            packed_paint, GridFieldDesc meta)
          3. (readback 全 grid → Paint Field 3D 点云 → write_usd，仅诊断用)
   hydra.reset_accumulation()   ← 强制 reset（host escape hatch）
   hydra.render(t) × SPP
-    └─ Hd_RUZINO_WetbrushVolume rprim.Sync:
+    └─ Hd_RUZINO_Volume rprim (GridVolumeImpl).Sync:
          → 检测 registry version bump → create_gpu_resources
          → Phase 1: 直接复用 packed_paint GPU buffer（零拷贝，RawBuffer_SRV）
-         → gridRes/cellSize/gridMin 从 registry metadata 读
-    └─ wetbrush_render 节点 dispatch:
+         → res/spacing/origin 从 registry metadata (GridFieldDesc) 读
+    └─ path_tracing 节点 dispatch（wetbrush_render 已删，2026-09-18 合并）:
          → VolumeIntersection: 只在射线穿过 paint cell (density>0.012) 时 ReportHit
-         → VolumeClosestHit: first-cross + penetration blend + Lambertian + AO
+         → VolumeClosestHit: first-cross + penetration blend + AO（无 Lambertian）
          → 空 volume 段不 ReportHit，射线继续到 Paper mesh
 ```
 
@@ -99,8 +100,9 @@ canvas_commit（paper footnote 1 拒绝 2D height-field）。
 
 ### 4. §6 体积渲染（committed `06422279`）
 
-`Hd_RUZINO_WetbrushVolume` rprim + `wetbrush_render` 节点（path_tracing + 2 个
-procedural volume hit group）。
+`Hd_RUZINO_Volume` rprim 的 `GridVolumeImpl`（2026-09-18 由 WetbrushVolumeImpl
+通用化改名）+ 标准 `path_tracing` 节点（volume hit group 槽位 4/5 已并入；专用
+`wetbrush_render` 节点删除，云与颜料可同图渲染）。
 
 - `VolumeClosestHit`：first-cross（density > 0.02）→ normal from gradient →
   penetration blend（oil-density-proportional depth，加权平均 pigment）→
@@ -130,8 +132,9 @@ bristle_psi 进 is_solid 判定（paper §4.2 只用 dryness）。mode1 window m
 
 - `SharedGPUBufferRegistry`（`source/Core/RHI/`）：generic key→buffer+meta 注册表，
   语义无关（不知道 density/Wetbrush）。
-- commit 每帧 `pack_float4` dispatch 后注册 `"wetbrush_paint_field"`，metadata 带
-  `{resX,resY,resZ,cellSize,gridMinX,Y,Z}`。
+- commit 每帧 `pack_float4` dispatch 后注册 `"grid_field/paint"`（`kGridFieldPaintKey`），
+  metadata 是通用 `GridFieldDesc`（`RHI/grid_field_desc.hpp`：res、**per-axis spacing**、
+  origin、format=DensityColorRGBA；两侧共享受这一份头文件，不再是带外私约 POD）。
 - rprim `create_gpu_resources` Phase 1：查 registry，hit 则直接用外部 buffer
   （`RawBuffer_SRV`），从 metadata 读 grid 几何；miss 则走 primvar fallback。
 - **修复了之前的两个 blocker**：(1) `packed_paint` 加 `CanHaveRawViews` flag
@@ -152,10 +155,10 @@ bake_render_scene（不再需要）。
 帧更新 paint，但 `reset_accumulation` 没触发，path tracing 样本跨帧叠加。
 
 **双机制修复**（两个机制都保留）：
-1. **自动触发**（正确架构路径）：`renderer.cpp` 轮询 registry version bump → mark
-   `DirtyGeometry` → `wetbrush_render` 检测 `geom_dirty` → `reset_accumulation`。
-   `wetbrush_render.cpp` 在 geom_dirty 时设 reset；`renderer.cpp` fold
-   `pending_force_reset_accumulation` 进 global_payload。
+1. **自动触发**（正确架构路径）：`renderer.cpp` 轮询 `"grid_field/"` 前缀下所有
+   registry 键的 version bump（`list_versions`，通用，不认具体生产者）→ mark
+   `DirtyGeometry` → `path_tracing` 检测 `geom_dirty` → `reset_accumulation`。
+   `renderer.cpp` fold `pending_force_reset_accumulation` 进 global_payload。
 2. **强制打穿**（host escape hatch）：`HydraRenderer::reset_accumulation()` Python
    接口，host 显式要求。通过 renderParam 的 `pending_force_reset_accumulation` sticky
    flag，renderer.cpp 在每次 render 开头 fold 进 reset，node 执行后消费清除。
@@ -1565,13 +1568,12 @@ Lagrangian 的凸插值本身不产负值，来源是 §5.2 转移 clamp 的残�
 | Pen/粒子输入 mock | `source/Editor/geometry_nodes/BrushSimulation/node_mock_pen_motion.cpp`、`node_mock_point_emitter.cpp` | StrokeSample 生产者（2026-08-31 随迁） |
 | Shader indexing | `BrushSimulation/shaders/common.slangh` | window_map, bristle_gi/grid_gi |
 | Mock strokes | `source/Editor/geometry_nodes/node_mock_strokes.cpp` | 双色交叉笔画测试 fixture（留在根目录） |
-| Render rprim | `source/Runtime/renderer/source/geometries/volume_impl/wetbrush_volume_impl.{h,cpp}` | 零拷贝 lookup（VolumeImpl 子类） |
-| Render node | `source/Runtime/renderer/nodes/wetbrush_render.cpp` | geom_dirty reset |
+| Render rprim | `source/Runtime/renderer/source/geometries/volume_impl/grid_volume_impl.{h,cpp}` | 零拷贝 lookup（VolumeImpl 子类，2026-09-18 通用化改名） |
 | Renderer | `source/Runtime/renderer/source/renderer.cpp` | registry version poll, reset fold |
 | Render param | `source/Runtime/renderer/source/renderParam.h` | pending_force_reset, registry version |
 | Render delegate | `source/Runtime/renderer/source/renderDelegate.cpp` | HdRuzinoRenderParam setting |
 | Python binding | `source/Runtime/renderer/python/renderer.cpp` | reset_accumulation() API |
-| Volume shader | `source/Runtime/renderer/nodes/shaders/wetbrush_render.slang` | VolumeClosestHit/Intersection |
+| Volume shader | `source/Runtime/renderer/nodes/shaders/path_tracing.slang`（末段 volume hit groups，槽位 4/5） | VolumeClosestHit/Intersection |
 | Volume helpers | `source/Runtime/renderer/nodes/shaders/volume_intersection.slang` | samplePaintField, intersectSlab |
 | Test driver | `source/tests/render_wetbrush.py` | interleaved sim+render |
 | Cross test | `source/tests/render_wetbrush_cross.py` | 双色交叉混合 |

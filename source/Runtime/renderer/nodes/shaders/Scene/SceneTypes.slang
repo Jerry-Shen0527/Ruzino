@@ -152,19 +152,20 @@ struct GeometryInstanceData {
     }
 };
 
-/** Volume descriptor for a raymarchable 3D density grid (Wetbrush paper §6),
-  and for procedural path-traced clouds.
+/** Volume descriptor for a raymarchable 3D voxel grid, and for procedural
+  path-traced clouds.
 
   Carries everything the volume intersection / closest-hit shaders need to
-  sample the paint density + color: the bindless index of a Float4 buffer
-  storing per-voxel (density, r, g, b) -- one entry per voxel of a
-  gridResX x gridResY x gridResZ grid, laid out (z*gridResY + y)*gridResX + x --
-  plus the grid's world-space origin (gridMin) and voxel size (cellSize).
+  sample a per-voxel (density, r, g, b) field -- one Float4 entry per voxel
+  of a gridResX x gridResY x gridResZ grid, laid out (z*gridResY + y)*gridResX
+  + x -- plus the grid's world-space origin (gridMin) and per-axis voxel size
+  (cellSize). The canonical producer is a simulation node packing its fields
+  through SharedGPUBufferRegistry (see RHI/grid_field_desc.hpp); any node that
+  emits the same layout renders through the same hit group.
 
-  The grid is the paper's 3D density field (the brush-local active window,
-  accumulated by the render driver across frames into one large field). The
-  renderer raymarches the grid's world AABB, sampling the density every quarter
-  of cellSize (paper §6).
+  The paint shading (first-cross + penetration blend, Wetbrush paper §6)
+  raymarches the grid's world AABB, sampling the density every quarter of the
+  smallest cellSize axis.
 
   When volumeKind == Cloud, bindlessIndex/gridRes/cellSize/gridMin are unused:
   the cloud's density is procedural (fbm + Worley noise sampled in the
@@ -172,12 +173,13 @@ struct GeometryInstanceData {
   fields below drive rendering.
 */
 // Discriminator for which hit-group family a volume routes to.
-//   Wetbrush = the paint density slab (hit groups 4/5, emission+terminate).
-//   Cloud    = procedural path-traced cloud (hit groups 6/7, Beer-Lambert +
-//              Henyey-Greenstein + light-march NEE, transmits through).
+//   GridVolume  = generic voxel (density,rgb) grid, paint shading (hit groups
+//                 4/5, first-cross + penetration blend, absorbing surface).
+//   Cloud       = procedural path-traced cloud (hit groups 6/7, Beer-Lambert +
+//                 Henyey-Greenstein + light-march NEE, transmits through).
 enum class VolumeKind : uint32_t {
-    Wetbrush = 0,
-    Cloud    = 1,
+    GridVolume   = 0,  ///< historically "Wetbrush" — a paint density+color grid
+    Cloud        = 1,
     CloudUnbiased = 2,  ///< delta/ratio-tracking cloud (hit-group slots 8/9)
 };
 
@@ -187,11 +189,11 @@ struct VolumeDesc {
     uint gridResX;       ///< Grid resolution in X.
     uint gridResY;       ///< Grid resolution in Y.
     uint gridResZ;       ///< Grid resolution in Z.
-    float cellSize;      ///< World-space size of one voxel.
+    float3 cellSize;     ///< World-space size of one voxel, per axis.
     float3 gridMin;      ///< World-space min corner of the grid (voxel 0,0,0).
     float3 boundsMin;    ///< World-space grid AABB min (for intersection).
     float3 boundsMax;    ///< World-space grid AABB max.
-    uint volumeKind;     ///< VolumeKind (0=Wetbrush, 1=Cloud).
+    uint volumeKind;     ///< VolumeKind (0=GridVolume, 1=Cloud).
 
     // --- Cloud parameters (used only when volumeKind == Cloud) ---
     // Density shaping: noise is sampled in a NORMALIZED space [0,1]^3 over the

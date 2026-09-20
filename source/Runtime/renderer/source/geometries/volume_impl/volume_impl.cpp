@@ -7,17 +7,17 @@
 
 #include "../../hydra2Ingest.h"
 #include "cloud_volume_impl.h"
+#include "grid_volume_impl.h"
 #include "internal/memory/DeviceMemoryPool.hpp"  // execution_launch_mutex
 #include "nvrhi/nvrhi.h"
 #include "nvrhi/utils.h"
-#include "wetbrush_volume_impl.h"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 
 // Decide the concrete impl from the `volumeType` primvar.
 //   "cloud"            -> CloudVolumeImpl (biased quadrature, slots 6/7)
 //   "cloud_unbiased"   -> CloudVolumeImpl (delta tracking, slots 8/9)
-//   absent / "wetbrush" -> WetbrushVolumeImpl (default)
+//   absent / "grid" / "wetbrush" (legacy token) -> GridVolumeImpl (default)
 // If `previous` is already the right type, reuse it so cached primvars /
 // registry versions survive across dirty cycles; otherwise replace it.
 void VolumeImpl::resolve(
@@ -52,7 +52,7 @@ void VolumeImpl::resolve(
         }
         else if (
             !want_cloud && !want_unbiased &&
-            dynamic_cast<WetbrushVolumeImpl*>(previous.get())) {
+            dynamic_cast<GridVolumeImpl*>(previous.get())) {
             return;
         }
         // Type switched: drop the old impl, fall through to construct fresh.
@@ -62,7 +62,7 @@ void VolumeImpl::resolve(
     if (want_cloud || want_unbiased)
         previous = std::make_unique<CloudVolumeImpl>(want_unbiased);
     else
-        previous = std::make_unique<WetbrushVolumeImpl>();
+        previous = std::make_unique<GridVolumeImpl>();
 }
 
 void buildSingleAabbBlas(

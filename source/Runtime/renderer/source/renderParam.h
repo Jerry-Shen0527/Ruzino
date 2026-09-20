@@ -110,15 +110,15 @@ class Hd_RUZINO_RenderParam final : public HdRenderParam {
     // starts a fresh scene and the path tracer must not average across frames.
     bool pending_force_reset_accumulation = false;
 
-    // Last-seen version of the wetbrush zero-copy registry buffer
-    // ("wetbrush_paint_field"). #1 (auto-trigger) path: the sim bumps this every
-    // frame it packs a new paint field. Since that path bypasses USD primvars,
-    // Hydra never marks the volume prim dirty, so the geometry_version check
-    // above stays stale. renderer.cpp polls the registry and, on a bump, marks
-    // DirtyGeometry — which the wetbrush_render node reads as geom_dirty and
-    // turns into a reset_accumulation. This is the "correct" auto path; the
+    // Last-seen versions of the zero-copy grid-field registry buffers
+    // (every "grid_field/" key, e.g. a sim node's packed paint field).
+    // Those paths bypass USD primvars, so Hydra never marks the volume prim
+    // dirty and the geometry_version check above stays stale. renderer.cpp
+    // polls the registry prefix and, on any bump, marks DirtyGeometry —
+    // which the path_tracing node reads as geom_dirty and turns into a
+    // reset_accumulation. This is the "correct" auto path; the
     // pending_force_reset_accumulation above is the host escape hatch.
-    uint64_t last_wetbrush_registry_version = 0;
+    std::map<std::string, uint64_t> last_grid_field_versions;
 
     std::vector<std::thread> texture_loading_threads;
     std::vector<std::thread> material_loading_threads;

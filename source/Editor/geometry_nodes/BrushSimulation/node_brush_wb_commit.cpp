@@ -20,6 +20,7 @@
 #include "GCore/geom_payload.hpp"
 #include "GPUContext/compute_context.hpp"  // CommandListDesc
 #include "RHI/ResourceManager/resource_allocator.hpp"
+#include "RHI/grid_field_desc.hpp"
 #include "RHI/shared_buffer_registry.hpp"
 #include "brush_sim_common.hpp"  // WetbrushSimState, WetbrushZoneState, brush_* helpers
 #include "geom_node_base.h"
@@ -376,25 +377,26 @@ NODE_EXECUTION_FUNCTION(brush_wb_commit)
         }
 
         // Register the packed buffer for zero-copy render consumption.
-        // The metadata blob carries the grid geometry so the render rprim can
-        // build its AABB without reading USD primvars (both sides agree on this
-        // POD layout out-of-band — the registry treats it as opaque bytes).
-        struct PaintFieldMeta {
-            uint32_t resX, resY, resZ;
-            float cellSize;
-            float gridMinX, gridMinY, gridMinZ;
-        };
-        PaintFieldMeta meta;
+        // The metadata blob is the generic GridFieldDesc interchange contract
+        // (RHI/grid_field_desc.hpp) — the same header the render rprim parses,
+        // no out-of-band POD agreement. Z cells can be anisotropic (a thin Z
+        // stack when canvas_height was authored independently), hence per-axis
+        // spacing instead of the old single cellSize.
+        Ruzino::GridFieldDesc meta;
         meta.resX = static_cast<uint32_t>(field->grid_res);
         meta.resY = static_cast<uint32_t>(field->grid_res);
         meta.resZ = static_cast<uint32_t>(field->grid_res_z);
-        meta.cellSize = cell_sz;
-        meta.gridMinX = -field->grid_paper * 0.5f + field->grid_center.x;
-        meta.gridMinY = -field->grid_paper * 0.5f + field->grid_center.y;
-        meta.gridMinZ = field->grid_center_z - field->grid_height * 0.5f;
+        meta.spacingX = cell_sz;
+        meta.spacingY = cell_sz;
+        meta.spacingZ =
+            field->grid_height / static_cast<float>(field->grid_res_z);
+        meta.originX = -field->grid_paper * 0.5f + field->grid_center.x;
+        meta.originY = -field->grid_paper * 0.5f + field->grid_center.y;
+        meta.originZ = field->grid_center_z - field->grid_height * 0.5f;
+        meta.format = Ruzino::GridFieldFormat::DensityColorRGBA;
 
         Ruzino::SharedGPUBufferRegistry::get().register_buffer(
-            "wetbrush_paint_field",
+            Ruzino::kGridFieldPaintKey,
             field->packed_paint,
             static_cast<size_t>(grid_n3d) * sizeof(float) * 4,
             &meta,

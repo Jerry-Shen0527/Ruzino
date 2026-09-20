@@ -456,7 +456,7 @@ void Hd_RUZINO_Points::updateTLAS(
     rt_instance.blasDeviceAddress = BLAS->getDeviceAddress();
     rt_instance.instanceMask = 1;
     rt_instance.instanceContributionToHitGroupIndex =
-        debug_segments ? 6 : 2;  // sphere hit groups (2/3) or capsule (6/7)
+        debug_segments ? 10 : 2;  // sphere hit groups (2/3) or capsule (10/11)
     rt_instance.flags = nvrhi::rt::InstanceFlags::None;
 
     GfMatrix4f mat_transposed = transform.GetTranspose();

@@ -2,15 +2,16 @@
 
 #include <spdlog/spdlog.h>
 
+#include "RHI/grid_field_desc.hpp"         // kGridFieldKeyPrefix
+#include "RHI/shared_buffer_registry.hpp"  // zero-copy sim buffer version poll
 #include "camera.h"
+#include "geometries/points.h"  // debug points per-frame refresh
 #include "material/material.h"
 #include "node_exec_eager_render.hpp"
 #include "nodes/core/api.hpp"
 #include "nodes/system/node_system.hpp"
 #include "pxr/imaging/hd/renderBuffer.h"
 #include "pxr/imaging/hd/tokens.h"
-#include "RHI/shared_buffer_registry.hpp"  // zero-copy sim buffer version poll
-#include "geometries/points.h"  // debug points per-frame refresh
 #include "renderBuffer.h"
 #include "renderParam.h"
 
@@ -144,23 +145,25 @@ void Hd_RUZINO_Renderer::Render(HdRenderThread* renderThread)
             render_param->last_geometry_version = current_geometry_version;
         }
 
-        // #1 (auto-trigger): poll the wetbrush zero-copy registry buffer. The
-        // sim bumps its version every frame it packs a new paint field via a
-        // path that bypasses USD primvars, so Hydra never dirties the volume
-        // prim and the geometry_version check above stays stale. Detecting the
-        // bump here marks DirtyGeometry, which the wetbrush_render node turns
-        // into a reset_accumulation (see wetbrush_render.cpp). This is the
-        // correct auto path for interleaved sim+render.
+        // #1 (auto-trigger): poll every zero-copy grid-field registry buffer
+        // ("grid_field/" keys, see RHI/grid_field_desc.hpp). A sim node bumps
+        // its key's version every frame it packs a new field via a path that
+        // bypasses USD primvars, so Hydra never dirties the volume prim and
+        // the geometry_version check above stays stale. Detecting a bump here
+        // marks DirtyGeometry, which the path_tracing node turns into a
+        // reset_accumulation. This is the correct auto path for interleaved
+        // sim+render, generic over any grid-field producer (paint, future
+        // fluid sims, ...).
         {
-            nvrhi::BufferHandle _buf;
-            size_t _bytes;
-            uint64_t reg_ver;
-            if (SharedGPUBufferRegistry::get().lookup(
-                    "wetbrush_paint_field", _buf, _bytes, reg_ver) &&
-                reg_ver != render_param->last_wetbrush_registry_version) {
-                global_payload.mark_dirty(
-                    RenderGlobalPayload::SceneDirtyBits::DirtyGeometry);
-                render_param->last_wetbrush_registry_version = reg_ver;
+            for (auto& [key, ver] :
+                 SharedGPUBufferRegistry::get().list_versions(
+                     Ruzino::kGridFieldKeyPrefix)) {
+                auto& last = render_param->last_grid_field_versions[key];
+                if (ver != last) {
+                    global_payload.mark_dirty(
+                        RenderGlobalPayload::SceneDirtyBits::DirtyGeometry);
+                    last = ver;
+                }
             }
         }
 
@@ -187,13 +190,15 @@ void Hd_RUZINO_Renderer::Render(HdRenderThread* renderThread)
 
         global_payload.lens_system = render_param->lens_system;
 
-        // Fold any host-requested force-reset (HydraRenderer::reset_accumulation)
-        // into this frame's reset signal BEFORE clearing the auto-reset path.
-        // The accumulate node reads reset_accumulation during execute() below;
-        // setting it here ensures the request survives from the prior frame.
+        // Fold any host-requested force-reset
+        // (HydraRenderer::reset_accumulation) into this frame's reset signal
+        // BEFORE clearing the auto-reset path. The accumulate node reads
+        // reset_accumulation during execute() below; setting it here ensures
+        // the request survives from the prior frame.
         if (render_param->pending_force_reset_accumulation) {
             global_payload.reset_accumulation = true;
-        } else {
+        }
+        else {
             global_payload.reset_accumulation = false;
         }
 

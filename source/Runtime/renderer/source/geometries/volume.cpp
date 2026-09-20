@@ -6,7 +6,7 @@
 // VolumeImpl strategy. See volume.h for the architecture.
 //
 // Extracted from the old Hd_RUZINO_WetbrushVolume: the wetbrush-specific logic
-// moved to volume_impl/wetbrush_volume_impl.cpp, the cloud logic to
+// moved to volume_impl/grid_volume_impl.cpp, the cloud logic to
 // volume_impl/cloud_volume_impl.cpp, and the duplicated AABB/BLAS block to
 // volume_impl/volume_impl.cpp::buildSingleAabbBlas. What remains here is the
 // type-agnostic orchestration.
@@ -92,8 +92,8 @@ void Hd_RUZINO_Volume::create_gpu_resources(Hd_RUZINO_RenderParam* render_param)
         // ray-march will actually use this frame.
         spdlog::info(
             "[wb-vol-desc] bounds=[{:.4f},{:.4f}]x[{:.4f},{:.4f}]x[{:.4f},"
-            "{:.4f}] gridMin=({:.4f},{:.4f},{:.4f}) cell={:.6f} "
-            "res=({},{},{})",
+            "{:.4f}] gridMin=({:.4f},{:.4f},{:.4f}) "
+            "cell=({:.6f},{:.6f},{:.6f}) res=({},{},{})",
             vd.boundsMin.x,
             vd.boundsMax.x,
             vd.boundsMin.y,
@@ -103,7 +103,9 @@ void Hd_RUZINO_Volume::create_gpu_resources(Hd_RUZINO_RenderParam* render_param)
             vd.gridMin.x,
             vd.gridMin.y,
             vd.gridMin.z,
-            vd.cellSize,
+            vd.cellSize.x,
+            vd.cellSize.y,
+            vd.cellSize.z,
             vd.gridResX,
             vd.gridResY,
             vd.gridResZ);
@@ -117,7 +119,8 @@ void Hd_RUZINO_Volume::create_gpu_resources(Hd_RUZINO_RenderParam* render_param)
         volume_desc_buffer->read_data(&back);
         spdlog::info(
             "[wb-vol-desc-gpu] sizeof(C++)={} slot_index={} readback: "
-            "bindless={} res=({},{},{}) cell={:.6f} gridMin=({:.4f},{:.4f},"
+            "bindless={} res=({},{},{}) cell=({:.6f},{:.6f},{:.6f}) "
+            "gridMin=({:.4f},{:.4f},"
             "{:.4f}) boundsMin=({:.4f},{:.4f},{:.4f}) boundsMax=({:.4f},{:.4f},"
             "{:.4f}) kind={}",
             sizeof(VolumeDesc),
@@ -126,7 +129,9 @@ void Hd_RUZINO_Volume::create_gpu_resources(Hd_RUZINO_RenderParam* render_param)
             back.gridResX,
             back.gridResY,
             back.gridResZ,
-            back.cellSize,
+            back.cellSize.x,
+            back.cellSize.y,
+            back.cellSize.z,
             back.gridMin.x,
             back.gridMin.y,
             back.gridMin.z,
@@ -252,7 +257,8 @@ void Hd_RUZINO_Volume::Sync(
         GfMatrix4d xform;
         if (Ruzino_Hydra2::ReadTransform(sceneDelegate, id, &xform)) {
             transform = GfMatrix4f(xform);
-        } else {
+        }
+        else {
             transform = GfMatrix4f(sceneDelegate->GetTransform(id));
         }
     }
@@ -275,7 +281,8 @@ void Hd_RUZINO_Volume::Sync(
         SdfPath newMaterialId;
         if (Ruzino_Hydra2::ReadMaterialId(sceneDelegate, id, &newMaterialId)) {
             // served from the data-source path
-        } else {
+        }
+        else {
             newMaterialId = sceneDelegate->GetMaterialId(id);
         }
         if (GetMaterialId() != newMaterialId) {
