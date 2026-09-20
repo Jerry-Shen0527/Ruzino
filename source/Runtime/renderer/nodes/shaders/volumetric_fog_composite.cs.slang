@@ -34,6 +34,7 @@ import Scene.Lights.HosekSkyEval;
 // ---[ Inputs ]---
 StructuredBuffer<LightData> lightBuffer : register(t6);
 StructuredBuffer<HosekSkyState> hosekStateBuffer : register(t7);
+StructuredBuffer<uint> lightIndices : register(t8);  // dense active light slots
 
 Texture2D<float4> gSceneColor : register(t10);  // deferred DirectLight Color
 Texture2D<float4> gWorldPos : register(t11);     // rasterize Position (alpha = coverage)
@@ -85,7 +86,7 @@ float3 fogInscatterRadiance(float3 p, float3 vTowardCamera, float3 skyAmbient)
     float3 sum = float3(0.0);
 
     for (uint i = 0; i < lightCount; ++i) {
-        LightData light = lightBuffer[i];
+        LightData light = lightBuffer[lightIndices[i]];
 
         float3 L;  // direction from p toward the light
         float radianceScale;
@@ -141,7 +142,7 @@ void main(uint2 dispatchThreadID : SV_DispatchThreadID)
     bool hasHosek = false;
     LightData dome;
     for (uint i = 0; i < lightCount; ++i) {
-        LightData light = lightBuffer[i];
+        LightData light = lightBuffer[lightIndices[i]];
         if (light.type == uint(LightType::Dome) &&
             light.hosekStateIndex != 0) {  // 0 = dummy row = non-Hosek dome
             dome = light;

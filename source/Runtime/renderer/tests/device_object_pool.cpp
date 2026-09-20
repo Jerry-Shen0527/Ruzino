@@ -108,6 +108,119 @@ TEST_F(MemoryPoolTest, data_io)
     EXPECT_EQ(data, read_data);
 }
 
+// ---------------------------------------------------------------------------
+// Contract tests for the dense-read / cross-reference semantics that the
+// renderer relies on (see the SceneStore design discussion, 2026-09-20).
+//
+// The renderer consumes light_pool / draw_indirect_pool / rt_instance_pool
+// DENSELY: shaders loop [0..count), GraphicsContext::draw_indirect reads
+// args from offset 0, TLAS build reads instance descs from offset 0. Other
+// pools (instance_pool, mesh_pool, material pools) are pointed INTO by raw
+// indices stored in GPU bytes (rt_instance.instanceID, draw args
+// startInstanceLocation, MaterialHeader.material_blob_id).
+//
+// These tests document what those consumers need vs. what the pool provides.
+// ---------------------------------------------------------------------------
+
+static constexpr int val_a = 111;
+static constexpr int val_b = 222;
+static constexpr int val_c = 333;
+
+// A dense reader expects [0..count) to contain exactly the live values.
+// This FAILS on the current pool: erasing a middle handle leaves a hole with
+// stale GPU data inside the dense range — exactly why every render node
+// must call compress() before reading.
+//
+// DISABLED_ because it is an ACCEPTANCE TEST for the SceneArray/SceneStore
+// rework, not a regression of current behavior: it documents the defect we
+// proved real (2026-09-20, red when run). When the rework lands, remove the
+// DISABLED_ prefix — it must pass without any compaction step. Run with
+// --gtest_also_run_disabled_tests to verify the failure today.
+TEST_F(MemoryPoolTest, DISABLED_dense_read_after_erase)
+{
+    auto handle_a = pool.allocate(1);
+    auto handle_b = pool.allocate(1);
+    auto handle_c = pool.allocate(1);
+    handle_a->write_data(&val_a);
+    handle_b->write_data(&val_b);
+    handle_c->write_data(&val_c);
+
+    handle_b = nullptr;  // erase the middle entry (e.g. a light was deleted)
+
+    ASSERT_EQ(pool.count(), 2u);
+    auto content = pool.get_content();
+    ASSERT_GE(content.size(), pool.count());
+
+    for (size_t i = 0; i < pool.count(); ++i) {
+        EXPECT_TRUE(content[i] == val_a || content[i] == val_c)
+            << "dense slot " << i << " holds " << content[i]
+            << " (stale hole data " << val_b << "?) — dense readers see a "
+            << "deleted entry";
+    }
+}
+
+// The current system's answer to the hole problem: compress() before every
+// dense read. This PASSES today and documents that correctness of dense
+// consumers depends on each of them remembering to call compress().
+TEST_F(MemoryPoolTest, dense_read_requires_compress)
+{
+    auto handle_a = pool.allocate(1);
+    auto handle_b = pool.allocate(1);
+    auto handle_c = pool.allocate(1);
+    handle_a->write_data(&val_a);
+    handle_b->write_data(&val_b);
+    handle_c->write_data(&val_c);
+
+    handle_b = nullptr;
+
+    pool.compress();
+
+    ASSERT_EQ(pool.count(), 2u);
+    auto content = pool.get_content();
+    for (size_t i = 0; i < pool.count(); ++i) {
+        EXPECT_TRUE(content[i] == val_a || content[i] == val_c)
+            << "dense slot " << i << " holds " << content[i]
+            << " even after compress()";
+    }
+}
+
+// Cross-pool references (rt_instance.instanceID, draw args
+// startInstanceLocation, MaterialHeader.material_blob_id) store a pool index
+// inside OTHER GPU buffers. compress() moves live data, so a saved index no
+// longer resolves to the same entry. This is the reason no code path may
+// ever compress the pools that are pointed into (instance_pool, mesh_pool,
+// material pools) — a law that is currently enforced by convention only.
+//
+// DISABLED_ acceptance test for the rework (same policy as
+// DISABLED_dense_read_after_erase above): the rework must make cross-pool
+// references immune to any internal data movement.
+TEST_F(MemoryPoolTest, DISABLED_cross_reference_breaks_on_compress)
+{
+    auto handle_a = pool.allocate(1);
+    auto handle_b = pool.allocate(1);
+    auto handle_c = pool.allocate(1);
+    handle_a->write_data(&val_a);
+    handle_b->write_data(&val_b);
+    handle_c->write_data(&val_c);
+
+    // Simulate another GPU buffer storing a reference to C's slot
+    // (e.g. rt_instance.instanceID = instance_handle->index()).
+    const size_t saved_index_of_c = handle_c->index();
+    ASSERT_EQ(saved_index_of_c, 2u);
+
+    handle_b = nullptr;
+    pool.compress();
+
+    // The reference holder (GPU bytes) still reads the OLD index.
+    auto content = pool.get_content();
+    ASSERT_LT(saved_index_of_c, content.size())
+        << "saved index is out of bounds after compress — the reference now "
+        << "points past the live data";
+    EXPECT_EQ(content[saved_index_of_c], val_c)
+        << "saved index resolves to different data after compress — cross-"
+        << "pool reference silently corrupted";
+}
+
 TEST_F(MemoryPoolTest, multi_threaded_allocation)
 {
     // NOTE: this test exercises concurrent allocation on the two pools. The

@@ -41,6 +41,7 @@ Texture2D<float>   gMaterialID        : register(t15);
 // materialBlobBuffer(t3) / materialHeaderBuffer(t4) / materialTypeLUT(t5)
 // are declared by Scene.MaterialEvaluation (imported above); do not redeclare.
 StructuredBuffer<LightData> lightBuffer : register(t6);
+StructuredBuffer<uint> lightIndices : register(t7);  // dense active slots
 
 ConstantBuffer<PlanarViewConstants> viewConstant : register(b0);
 
@@ -104,7 +105,7 @@ void main(uint2 dispatchThreadID : SV_DispatchThreadID)
     // Direct lighting: loop over all lights.
     float3 lit = float3(0.0);
     for (uint i = 0; i < lightCount; ++i) {
-        LightData light = lightBuffer[i];
+        LightData light = lightBuffer[lightIndices[i]];
 
         // Compute light direction + attenuation.
         float3 L;
