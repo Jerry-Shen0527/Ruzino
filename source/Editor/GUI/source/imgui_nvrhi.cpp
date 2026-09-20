@@ -150,7 +150,7 @@ bool ImGui_NVRHI::createFontTexture(nvrhi::ICommandList* commandList)
             fontTexture, nvrhi::ResourceStates::ShaderResource);
         commandList->commitBarriers();
 
-        io.Fonts->TexID = fontTexture;
+        io.Fonts->SetTexID(reinterpret_cast<ImTextureID>(fontTexture.Get()));
     }
 
     {
@@ -477,8 +477,8 @@ bool ImGui_NVRHI::render(nvrhi::IFramebuffer* framebuffer)
                 pCmd->UserCallback(cmdList, pCmd);
             }
             else {
-                auto bindingSet =
-                    getBindingSet((nvrhi::ITexture*)pCmd->TextureId);
+                auto bindingSet = getBindingSet(
+                    reinterpret_cast<nvrhi::ITexture*>(pCmd->GetTexID()));
                 drawState.bindings = { bindingSet };
                 assert(drawState.bindings[0]);
 

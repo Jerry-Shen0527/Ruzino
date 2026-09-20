@@ -88,13 +88,13 @@ class NodeEditorWidget : public IWidget {
         // Handle keyboard shortcuts
         ImGuiIO& io = ImGui::GetIO();
         if (io.KeyCtrl) {
-            if (ImGui::IsKeyPressed(ImGui::GetKeyIndex(ImGuiKey_N))) {
+            if (ImGui::IsKeyPressed(ImGuiKey_N)) {
                 NewFile();
             }
-            else if (ImGui::IsKeyPressed(ImGui::GetKeyIndex(ImGuiKey_O))) {
+            else if (ImGui::IsKeyPressed(ImGuiKey_O)) {
                 OpenFile();
             }
-            else if (ImGui::IsKeyPressed(ImGui::GetKeyIndex(ImGuiKey_S))) {
+            else if (ImGui::IsKeyPressed(ImGuiKey_S)) {
                 if (io.KeyShift) {
                     SaveAsFile();
                 }

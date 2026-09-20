@@ -21,7 +21,7 @@ namespace NodeEditor {
         //------------------------------------------------------------------------------
         struct BlueprintNodeBuilder {
             BlueprintNodeBuilder(
-                ImTextureID texture = nullptr,
+                ImTextureID texture = 0,
                 int textureWidth = 0,
                 int textureHeight = 0);
 

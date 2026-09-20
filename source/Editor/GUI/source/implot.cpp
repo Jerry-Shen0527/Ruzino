@@ -528,11 +528,16 @@ void AddTextVertical(
     if (!text_end)
         text_end = text_begin + strlen(text_begin);
     ImGuiContext& g = *GImGui;
+#ifdef IMGUI_HAS_TEXTURES
+    ImFontBaked* font = g.Font->GetFontBaked(g.FontSize);
+    const float scale = g.FontSize / font->Size;
+#else
     ImFont* font = g.Font;
+    const float scale = g.FontSize / font->FontSize;
+#endif
     // Align to be pixel perfect
     pos.x = ImFloor(pos.x);
     pos.y = ImFloor(pos.y);
-    const float scale = g.FontSize / font->FontSize;
     const char* s = text_begin;
     int chars_exp = (int)(text_end - s);
     int chars_rnd = 0;
@@ -4214,7 +4219,7 @@ void EndPlot()
                 ImGui::SetKeyOwner(ImGuiKey_MouseWheelY, plot.Items.ID);
                 if (IO.MouseWheel != 0.0f) {
                     ImVec2 max_step = legend.Rect.GetSize() * 0.67f;
-                    float font_size = ImGui::GetCurrentWindow()->CalcFontSize();
+                    float font_size = ImGui::GetCurrentWindow()->FontRefSize;
                     float scroll_step =
                         ImFloor(ImMin(2 * font_size, max_step.x));
                     legend.Scroll.x += scroll_step * IO.MouseWheel;
@@ -4917,7 +4922,7 @@ void EndSubplots()
                 ImGui::SetKeyOwner(ImGuiKey_MouseWheelY, subplot.Items.ID);
                 if (IO.MouseWheel != 0.0f) {
                     ImVec2 max_step = legend.Rect.GetSize() * 0.67f;
-                    float font_size = ImGui::GetCurrentWindow()->CalcFontSize();
+                    float font_size = ImGui::GetCurrentWindow()->FontRefSize;
                     float scroll_step =
                         ImFloor(ImMin(2 * font_size, max_step.x));
                     legend.Scroll.x += scroll_step * IO.MouseWheel;

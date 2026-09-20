@@ -578,7 +578,7 @@ void UsdviewEngine::OnFrame(float delta_time)
     if (data_->nvrhi_texture.Get()) {
         persistent_texture = data_->nvrhi_texture;
         ImGui::Image(
-            static_cast<ImTextureID>(persistent_texture.Get()),
+            reinterpret_cast<ImTextureID>(persistent_texture.Get()),
             imgui_frame_size,
             ImVec2(0.0f, 1.0f),
             ImVec2(1.0f, 0.0f));
