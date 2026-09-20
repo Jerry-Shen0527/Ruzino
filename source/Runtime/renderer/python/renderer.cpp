@@ -4,19 +4,25 @@
 
 #include <entt/meta/meta.hpp>
 
+#include "RHI/grid_field_desc.hpp"
 #include "RHI/rhi.hpp"
+#include "RHI/shared_buffer_registry.hpp"
 #include "hd_RUZINO/render_global_payload.hpp"
 #include "nodes/core/api.hpp"
 #include "nodes/core/node_exec_eager.hpp"
 #include "nodes/system/node_system.hpp"
 #include "nodes/system/node_system_dl.hpp"
 #include "pxr/base/vt/array.h"
+#include "pxr/usd/usdGeom/primvarsAPI.h"
+#include "pxr/usd/usdVol/volume.h"
 #include "renderParam.h"  // Hd_RUZINO_RenderParam (for reset_accumulation host hook)
 #include "renderTLAS.h"
 
 // USD Imaging includes for Hydra rendering
 #include "pxr/base/gf/camera.h"
 #include "pxr/base/gf/frustum.h"
+#include "pxr/base/gf/vec3f.h"
+#include "pxr/base/gf/vec4f.h"
 #include "pxr/base/tf/token.h"
 #include "pxr/imaging/garch/glApi.h"
 #include "pxr/imaging/hd/driver.h"
@@ -24,6 +30,7 @@
 #include "pxr/imaging/hdx/tokens.h"
 #include "pxr/imaging/hgi/hgi.h"
 #include "pxr/imaging/hgi/tokens.h"
+#include "pxr/usd/usd/editContext.h"
 #include "pxr/usd/usd/primRange.h"
 #include "pxr/usd/usd/stage.h"
 #include "pxr/usd/usdGeom/camera.h"
@@ -157,6 +164,141 @@ class HydraRenderer {
             const_cast<void*>(rp_value.UncheckedGet<const void*>()));
         if (rp)
             rp->pending_force_reset_accumulation = true;
+    }
+
+    // Checkpoint a live simulation grid field into USD, so the stage
+    // reopens self-contained. Reads the SharedGPUBufferRegistry buffer
+    // registered by a producer node (metadata blob = Ruzino::GridFieldDesc,
+    // voxel payload = float4 (density, r, g, b)), reads it back to the CPU,
+    // and authors the grid metadata + paintField primvars on the
+    // UsdVolVolume prim at prim_path (defining the prim when absent). On
+    // reopen — without the simulation — GridVolumeImpl falls back to these
+    // primvars (its Phase 2 bake path) and renders the checkpointed paint.
+    //
+    // Returns the voxel count. Throws when the key is not registered or the
+    // buffer/metadata doesn't honor the GridFieldDesc contract.
+    //
+    // When export_path is non-empty, the stage's root layer is exported
+    // there after authoring (the primvars live on the root layer, so the
+    // export is a standalone checkpoint scene).
+    int64_t save_volume_checkpoint(
+        const std::string& prim_path,
+        const std::string& key = "grid_field/paint",
+        const std::string& export_path = "")
+    {
+        using namespace pxr;
+
+        nvrhi::BufferHandle buf;
+        size_t bytes = 0;
+        uint64_t version = 0;
+        const void* meta_ptr = nullptr;
+        size_t meta_bytes = 0;
+        if (!Ruzino::SharedGPUBufferRegistry::get().lookup(
+                key, buf, bytes, version, &meta_ptr, &meta_bytes) ||
+            !buf || meta_bytes < sizeof(Ruzino::GridFieldDesc)) {
+            throw std::runtime_error(
+                "save_volume_checkpoint: no GridFieldDesc-registered buffer "
+                "under key '" +
+                key + "'");
+        }
+        auto* meta = static_cast<const Ruzino::GridFieldDesc*>(meta_ptr);
+        if (meta->format != Ruzino::GridFieldFormat::DensityColorRGBA) {
+            throw std::runtime_error(
+                "save_volume_checkpoint: unsupported grid format " +
+                std::to_string(static_cast<uint32_t>(meta->format)));
+        }
+        const size_t count =
+            static_cast<size_t>(meta->resX) * meta->resY * meta->resZ;
+        const size_t payload_bytes = count * sizeof(GfVec4f);
+        if (count == 0 || bytes < payload_bytes) {
+            throw std::runtime_error(
+                "save_volume_checkpoint: buffer/vertex-count mismatch "
+                "(" +
+                std::to_string(bytes) + " bytes for " + std::to_string(count) +
+                " voxels)");
+        }
+
+        // GPU readback through a staging buffer (same idiom as
+        // node_brush_wb_commit.cpp's readback lambda).
+        auto device = RHI::get_device();
+        auto staging = device->createBuffer(
+            nvrhi::BufferDesc{}
+                .setByteSize(payload_bytes)
+                .setCpuAccess(nvrhi::CpuAccessMode::Read)
+                .setDebugName("volume_checkpoint_rb"));
+        if (!staging) {
+            throw std::runtime_error(
+                "save_volume_checkpoint: staging buffer creation failed");
+        }
+        {
+            auto cmd = device->createCommandList();
+            cmd->open();
+            cmd->copyBuffer(staging, 0, buf, 0, payload_bytes);
+            cmd->close();
+            device->executeCommandList(cmd);
+            device->waitForIdle();
+        }
+        std::vector<GfVec4f> voxels(count);
+        {
+            void* mapped =
+                device->mapBuffer(staging, nvrhi::CpuAccessMode::Read);
+            if (!mapped) {
+                throw std::runtime_error(
+                    "save_volume_checkpoint: staging map failed");
+            }
+            memcpy(voxels.data(), mapped, payload_bytes);
+            device->unmapBuffer(staging);
+        }
+
+        // Author the checkpoint on the ROOT layer — it is scene data (the
+        // paint state), not a non-destructive editing override.
+        SdfPath path(prim_path);
+        {
+            UsdEditContext edit_ctx(stage_, stage_->GetRootLayer());
+            UsdVolVolume vol(stage_->GetPrimAtPath(path));
+            if (!vol) {
+                vol = UsdVolVolume::Define(stage_, path);
+            }
+            UsdGeomPrimvarsAPI pv(vol.GetPrim());
+            pv.CreatePrimvar(TfToken("gridResX"), SdfValueTypeNames->Int)
+                .Set(static_cast<int>(meta->resX));
+            pv.CreatePrimvar(TfToken("gridResY"), SdfValueTypeNames->Int)
+                .Set(static_cast<int>(meta->resY));
+            pv.CreatePrimvar(TfToken("gridResZ"), SdfValueTypeNames->Int)
+                .Set(static_cast<int>(meta->resZ));
+            pv.CreatePrimvar(TfToken("cellSizeX"), SdfValueTypeNames->Float)
+                .Set(meta->spacingX);
+            pv.CreatePrimvar(TfToken("cellSizeY"), SdfValueTypeNames->Float)
+                .Set(meta->spacingY);
+            pv.CreatePrimvar(TfToken("cellSizeZ"), SdfValueTypeNames->Float)
+                .Set(meta->spacingZ);
+            pv.CreatePrimvar(TfToken("gridMin"), SdfValueTypeNames->Float3)
+                .Set(GfVec3f(meta->originX, meta->originY, meta->originZ));
+            VtVec4fArray arr(voxels.begin(), voxels.end());
+            pv.CreatePrimvar(
+                  TfToken("paintField"), SdfValueTypeNames->Float4Array)
+                .Set(arr);
+        }
+
+        if (!export_path.empty() &&
+            !stage_->GetRootLayer()->Export(export_path)) {
+            throw std::runtime_error(
+                "save_volume_checkpoint: root layer export to '" + export_path +
+                "' failed");
+        }
+
+        spdlog::info(
+            "save_volume_checkpoint: {} voxels ({}x{}x{}) from '{}' onto {}"
+            "{}",
+            count,
+            meta->resX,
+            meta->resY,
+            meta->resZ,
+            key,
+            path.GetString(),
+            export_path.empty() ? std::string()
+                                : (" -> exported to " + export_path));
+        return static_cast<int64_t>(count);
     }
 
     // Render one frame synchronously (waits for GPU idle). Renders the stage
@@ -421,6 +563,18 @@ NB_MODULE(hd_RUZINO_py, m)
             "Force the next render() to clear the accumulate node's running "
             "average. Call between sim frames in interleaved sim+render so "
             "path-tracer samples don't bleed across sim states.")
+        .def(
+            "save_volume_checkpoint",
+            &HydraRenderer::save_volume_checkpoint,
+            nb::arg("prim_path"),
+            nb::arg("key") = "grid_field/paint",
+            nb::arg("export_path") = "",
+            "Checkpoint the live grid-field registry buffer (key) into USD "
+            "primvars on the UsdVolVolume prim at prim_path (grid res / "
+            "per-axis spacing / origin / paintField Float4[]). Returns the "
+            "voxel count. On reopen without the simulation, the grid volume "
+            "rprim renders from these primvars (bake fallback path). "
+            "export_path: also write the stage's root layer to this file.")
         .def(
             "get_output_texture",
             [](HydraRenderer& self) -> std::vector<float> {
