@@ -6,15 +6,17 @@ Sets up paths and environment variables
 import sys
 import os
 
-# Get binary directory
-binary_dir = os.path.join(
-    os.path.dirname(__file__), "..", "..", "..", "..", "Binaries", "Release"
-)
-binary_dir = os.path.abspath(binary_dir)
-
 project_root = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
 )
+
+# RZ_BUILD_TYPE lets this suite run against Binaries/Debug (native debugging
+# with PDBs); fall back to Release when that build type isn't built. Mirrors
+# source/tests/conftest.py.
+_build_type = os.environ.get("RZ_BUILD_TYPE", "Release")
+binary_dir = os.path.abspath(os.path.join(project_root, "Binaries", _build_type))
+if not os.path.isdir(binary_dir):
+    binary_dir = os.path.abspath(os.path.join(project_root, "Binaries", "Release"))
 
 # Test output directory — mirrors source/tests/conftest.py. Tests in this
 # directory do `from conftest import TEST_OUTPUT_DIR`, which resolves to *this*

@@ -84,8 +84,14 @@ static bool write_instancer_over_spec(
             pxr::VtValue(positions))) {
         return false;
     }
-    // Single prototype: every instance points at index 0.
+    // Per-instance prototype selection when the component provides it;
+    // all zeros otherwise (prototype 0 = the own mesh, legacy mode).
     pxr::VtIntArray proto_indices(n, 0);
+    const auto& proto_idx_store = inst->get_proto_indices_storage();
+    if (proto_idx_store.size() == n) {
+        for (size_t i = 0; i < n; ++i)
+            proto_indices[i] = proto_idx_store[i];
+    }
     if (!set_attr(
             pxr::TfToken("protoIndices"),
             pxr::SdfValueTypeNames->IntArray,
@@ -122,7 +128,65 @@ static bool write_instancer_over_spec(
     if (!rel) {
         return false;
     }
-    rel->GetTargetPathList().Add(proto_path);
+    // Multi-prototype: author each inline prototype as a child mesh
+    // over-spec and target all of them. Legacy: target the single
+    // own-mesh prototype path handed in by the caller.
+    const auto& prototypes = inst->get_prototypes();
+    if (!prototypes.empty()) {
+        for (size_t pi = 0; pi < prototypes.size(); ++pi) {
+            const auto& proto = prototypes[pi];
+            auto proto_child = instancer_path.AppendChild(
+                pxr::TfToken("Prototype_" + std::to_string(pi)));
+            if (!pxr::SdfJustCreatePrimInLayer(modifier_layer, proto_child)) {
+                return false;
+            }
+            auto child_spec = modifier_layer->GetPrimAtPath(proto_child);
+            if (!child_spec) {
+                return false;
+            }
+            child_spec->SetSpecifier(pxr::SdfSpecifierOver);
+            child_spec->SetTypeName(pxr::TfToken("Mesh"));
+
+            pxr::VtVec3fArray pts(proto.vertices.size());
+            for (size_t i = 0; i < proto.vertices.size(); ++i)
+                pts[i] = pxr::GfVec3f(
+                    proto.vertices[i].x,
+                    proto.vertices[i].y,
+                    proto.vertices[i].z);
+            pxr::VtIntArray fvc(
+                proto.face_vertex_counts.begin(),
+                proto.face_vertex_counts.end());
+            pxr::VtIntArray fvi(
+                proto.face_vertex_indices.begin(),
+                proto.face_vertex_indices.end());
+            auto set_child_attr = [&child_spec](
+                                      const pxr::TfToken& name,
+                                      const pxr::SdfValueTypeName& type,
+                                      const pxr::VtValue& value) {
+                auto attr_spec = pxr::SdfAttributeSpec::New(
+                    child_spec, name, type, pxr::SdfVariabilityVarying);
+                return attr_spec && attr_spec->SetDefaultValue(value);
+            };
+            if (!set_child_attr(
+                    pxr::TfToken("points"),
+                    pxr::SdfValueTypeNames->Point3fArray,
+                    pxr::VtValue(pts)) ||
+                !set_child_attr(
+                    pxr::TfToken("faceVertexCounts"),
+                    pxr::SdfValueTypeNames->IntArray,
+                    pxr::VtValue(fvc)) ||
+                !set_child_attr(
+                    pxr::TfToken("faceVertexIndices"),
+                    pxr::SdfValueTypeNames->IntArray,
+                    pxr::VtValue(fvi))) {
+                return false;
+            }
+            rel->GetTargetPathList().Add(proto_child);
+        }
+    }
+    else {
+        rel->GetTargetPathList().Add(proto_path);
+    }
 
     spdlog::info(
         "[write_usd] instancer: {} instances of {} at {}",
@@ -209,9 +273,15 @@ NODE_EXECUTION_FUNCTION(write_usd)
 
     if (modifier_layer) {
         // Curves and points use direct write (modifier over spec doesn't
-        // handle them)
+        // handle them). A multi-prototype instancer carries its own
+        // meshes, so it goes through the over-spec path without an
+        // own-mesh to park.
         bool is_mesh = geometry.get_component<MeshComponent>() != nullptr;
-        if (!is_mesh) {
+        const bool multi_proto_inst = [&]() -> bool {
+            auto inst = geometry.get_const_component<InstancerComponent>();
+            return inst && !inst->get_prototypes().empty();
+        }();
+        if (!is_mesh && !multi_proto_inst) {
             spdlog::info(
                 "[write_usd] non-mesh, direct write to '{}'",
                 sdf_path.GetString());
@@ -219,6 +289,13 @@ NODE_EXECUTION_FUNCTION(write_usd)
                 write_geometry_to_usd(geometry, stage, sdf_path, time);
             spdlog::info(
                 "[write_usd] write_geometry_to_usd result: {}", write_success);
+        }
+        else if (multi_proto_inst) {
+            write_success = write_instancer_over_spec(
+                geometry, modifier_layer, sdf_path, sdf_path);
+            spdlog::info(
+                "[write_usd] multi-proto instancer over-spec result: {}",
+                write_success);
         }
         else {
             pxr::SdfPath output_path =
