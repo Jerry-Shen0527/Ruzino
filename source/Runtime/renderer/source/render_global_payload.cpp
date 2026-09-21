@@ -59,6 +59,7 @@ RenderGlobalPayload::RenderGlobalPayload(const RenderGlobalPayload& rhs)
       lights(rhs.lights),
       materials(rhs.materials),
       nvrhi_device(rhs.nvrhi_device),
+      node_profiler(rhs.node_profiler),
       shader_factory(&resource_allocator)
 {
     shader_factory.set_search_path(
@@ -76,6 +77,7 @@ RenderGlobalPayload& RenderGlobalPayload::operator=(
     lights = rhs.lights;
     materials = rhs.materials;
     nvrhi_device = rhs.nvrhi_device;
+    node_profiler = rhs.node_profiler;
     shader_factory = ShaderFactory(&resource_allocator);
 
     shader_factory.set_search_path(

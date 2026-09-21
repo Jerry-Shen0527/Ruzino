@@ -2,6 +2,7 @@
 #include "GPUContext/compute_context.hpp"
 #include "hd_RUZINO/render_node_base.h"
 #include "nodes/core/def/node_def.hpp"
+#include "spdlog/spdlog.h"
 #include "utils/cam_to_view_contants.h"
 #include "utils/view_cb.h"
 
@@ -132,10 +133,12 @@ NODE_EXECUTION_FUNCTION(accumulate)
     }
 
     // Update the constant buffer using CPU mapping
+    spdlog::info("[hangprobe] acc exec begin (spp={})", storage.current_spp);
     auto ptr = resource_allocator.device->mapBuffer(
         storage.cached_spp_cb, nvrhi::CpuAccessMode::Write);
     memcpy(ptr, &storage.current_spp, sizeof(int));
     resource_allocator.device->unmapBuffer(storage.cached_spp_cb);
+    spdlog::info("[hangprobe] acc cb mapped");
 
     // Execute compute shader using cached context
     storage.cached_compute_context->begin();

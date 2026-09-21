@@ -164,10 +164,12 @@ NODE_EXECUTION_FUNCTION(node_render_ray_generation)
         ComputeContext& context = *storage.cached_compute_context;
         context.finish_setting_pso();
     }
+    spdlog::info("[hangprobe] raygen exec begin");
     storage.cached_compute_context->begin();
     storage.cached_compute_context->dispatch(
         {}, *storage.cached_program_vars, image_size[0], 32, image_size[1], 32);
     storage.cached_compute_context->finish();
+    spdlog::info("[hangprobe] raygen exec done");
 
     params.set_output("Rays", storage.ray_buffer);
     params.set_output("Pixel Target", storage.pixel_target_buffer);

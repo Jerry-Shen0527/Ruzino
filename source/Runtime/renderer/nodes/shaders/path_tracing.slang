@@ -247,7 +247,7 @@ void RayGen()
 
                 for (uint lightIdx = 0; lightIdx < ptConstants.lightCount;
                      lightIdx++) {
-                    LightData light = lightBuffer[lightIndices[lightIdx]];
+                    LightData light = lightBuffer[lightIdx];
                     if (light.type == uint(LightType::Dome)) {
                         hasDomeLight = true;
                         domeLight = light;
@@ -696,7 +696,7 @@ float3 debugShade(float3 albedo, float3 n)
 {
     float3 result = albedo * 0.3;  // ambient floor
     for (uint li = 0; li < ptConstants.lightCount; ++li) {
-        LightData light = lightBuffer[lightIndices[li]];
+        LightData light = lightBuffer[li];
         if (light.type == uint(LightType::Distant)) {
             float3 L = -light.dirW;  // direction to the light (NEE convention)
             float ndotl = max(0.0, dot(n, L));
@@ -1124,7 +1124,7 @@ bool findSun(out float3 sunDirW, out float3 sunColor)
     sunColor = float3(0);
     bool found = false;
     for (uint i = 0; i < ptConstants.lightCount; ++i) {
-        LightData light = lightBuffer[lightIndices[i]];
+        LightData light = lightBuffer[i];
         if (light.type == uint(LightType::Distant) ||
             light.type == uint(LightType::Directional)) {
             // dirW is the direction the light points TOWARD (from the scene).

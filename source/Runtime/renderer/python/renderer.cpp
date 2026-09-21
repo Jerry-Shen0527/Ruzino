@@ -15,6 +15,7 @@
 #include "pxr/base/vt/array.h"
 #include "pxr/usd/usdGeom/primvarsAPI.h"
 #include "pxr/usd/usdVol/volume.h"
+#include "spdlog/spdlog.h"
 #include "renderParam.h"  // Hd_RUZINO_RenderParam (for reset_accumulation host hook)
 #include "renderTLAS.h"
 
@@ -325,13 +326,18 @@ class HydraRenderer {
         params.colorCorrectionMode = pxr::HdxColorCorrectionTokens->disabled;
         params.clearColor = pxr::GfVec4f(0.2f, 0.2f, 0.2f, 1.0f);
 
+        spdlog::info("[hangprobe] py render() begin");
         pxr::UsdPrim root = stage_->GetPseudoRoot();
         engine_->Render(root, params);
+        spdlog::info("[hangprobe] py engine Render returned");
 
         // Wait for GPU work to complete, matching headless_render.cpp flow
         RHI::get_device()->waitForIdle();
+        spdlog::info("[hangprobe] py waitForIdle done");
         RHI::get_device()->runGarbageCollection();
+        spdlog::info("[hangprobe] py GC done");
         engine_->StopRenderer();
+        spdlog::info("[hangprobe] py StopRenderer done");
     }
 
     // Stop the render thread and wait for completion

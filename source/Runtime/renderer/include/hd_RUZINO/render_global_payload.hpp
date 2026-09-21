@@ -1,6 +1,7 @@
 #pragma once
 #include "RHI/ResourceManager/resource_allocator.hpp"
 #include "api.h"
+#include "hd_RUZINO/node_profiler.hpp"
 #include "pxr/usd/sdf/path.h"
 
 namespace Ruzino {
@@ -33,6 +34,7 @@ struct HD_RUZINO_API RenderGlobalPayload {
     nvrhi::IDevice* nvrhi_device;
     Hd_RUZINO_RenderInstanceCollection* InstanceCollection;
     bool reset_accumulation = false;
+    NodeProfiler node_profiler;
 
     // Scene dirty flags for tracking changes
     enum class SceneDirtyBits : uint32_t {

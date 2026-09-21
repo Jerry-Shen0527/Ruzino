@@ -20,6 +20,7 @@
 #ifdef _WIN32
 #include <gl/GL.h>
 #include <windows.h>
+#include <d3d12.h>
 // WGL_ARB_create_context entry point + attribute tokens (defined locally so we
 // don't depend on GL/wglext.h, which isn't in every Windows SDK).
 #ifndef WGL_CONTEXT_MAJOR_VERSION_ARB
@@ -119,6 +120,37 @@ int init(bool with_window, bool use_dx12)
             if (auto logger = cached_logger.lock()) {
                 logger->info(
                     "RHI validation layer enabled (RZ_RHI_VALIDATION=1)");
+            }
+        }
+    }
+    // GPU-based validation + DRED auto-recording, for hangs whose fault
+    // happens long before the crash surfaces (deferred GPU faults). GBV
+    // validates every descriptor access on the GPU timeline and reports the
+    // offending operation through the info queue instead of hanging.
+    if (const char* v = std::getenv("RZ_GPU_VALIDATION")) {
+        if (std::string(v) == "1") {
+            params.enableDebugRuntime = true;
+            ID3D12Debug1* debug1 = nullptr;
+            if (SUCCEEDED(D3D12GetDebugInterface(
+                    __uuidof(ID3D12Debug1),
+                    reinterpret_cast<void**>(&debug1)))) {
+                debug1->SetEnableGPUBasedValidation(TRUE);
+                ID3D12DeviceRemovedExtendedDataSettings* dred = nullptr;
+                if (SUCCEEDED(D3D12GetDebugInterface(
+                        __uuidof(ID3D12DeviceRemovedExtendedDataSettings),
+                        reinterpret_cast<void**>(&dred)))) {
+                    dred->SetAutoBreadcrumbsEnablement(
+                        D3D12_DRED_ENABLEMENT_FORCED_ON);
+                    dred->SetPageFaultEnablement(
+                        D3D12_DRED_ENABLEMENT_FORCED_ON);
+                    dred->Release();
+                }
+                debug1->Release();
+                if (auto logger = cached_logger.lock()) {
+                    logger->info(
+                        "D3D12 GPU-based validation + DRED enabled "
+                        "(RZ_GPU_VALIDATION=1)");
+                }
             }
         }
     }

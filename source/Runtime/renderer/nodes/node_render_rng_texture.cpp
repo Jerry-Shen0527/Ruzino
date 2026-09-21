@@ -90,6 +90,7 @@ NODE_EXECUTION_FUNCTION(rng_texture)
             div_ceil(texture_info.height, 16));
         command_list->close();
         resource_allocator.device->executeCommandList(command_list);
+        spdlog::info("[hangprobe] rng dispatch submitted");
 
         resource_allocator.destroy(compute_shader);
         for (int i = 0; i < binding_layouts.size(); ++i) {
