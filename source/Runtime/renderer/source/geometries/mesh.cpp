@@ -480,6 +480,8 @@ void Hd_RUZINO_Mesh::updateTLAS(
 
     render_param->InstanceCollection->set_require_rebuild_tlas();
 
+    draw_indirect =
+        render_param->InstanceCollection->draw_indirect_pool.allocate(1);
     nvrhi::DrawIndirectArguments args;
 
     args.vertexCount = triangulatedIndices.size() * 3;
@@ -487,9 +489,7 @@ void Hd_RUZINO_Mesh::updateTLAS(
     args.startVertexLocation = 0;
     args.startInstanceLocation = instanceBuffer->index();
 
-    // Re-assigning the handle releases the previous entry first (RAII),
-    // matching the old pool's allocate-per-sync pattern.
-    draw_indirect = render_param->InstanceCollection->draw_indirects.add(args);
+    draw_indirect->write_data(&args);
 
     // Register emissive geometry for NEE sampling. This registers only
     // lightweight metadata (instanceSlot, meshDescIndex, triangleCount,

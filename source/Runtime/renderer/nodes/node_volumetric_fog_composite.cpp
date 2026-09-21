@@ -153,8 +153,9 @@ NODE_EXECUTION_FUNCTION(volumetric_fog_composite)
     auto view_cb = get_free_camera_planarview_cb(params);
     MARK_DESTROY_NVRHI_RESOURCE(view_cb);
 
-    instance_collection->scene_lights.flush();
-    uint32_t lightCount = instance_collection->scene_lights.count();
+    instance_collection->light_pool.compress();
+    uint32_t lightCount =
+        static_cast<uint32_t>(instance_collection->light_pool.count());
 
     VolumetricFogConstants constants{ density,
                                       height_falloff,
@@ -187,14 +188,11 @@ NODE_EXECUTION_FUNCTION(volumetric_fog_composite)
     // in volumetric_fog_composite.cs.slang) ---
     nvrhi::BindingSetDesc binding_set_desc;
     binding_set_desc.bindings = {
-        // Light buffer (t6) + Hosek state buffer (t7) + dense light index
-        // list (t8)
+        // Light buffer (t6) + Hosek state buffer (t7)
         nvrhi::BindingSetItem::StructuredBuffer_SRV(
-            6, instance_collection->scene_lights.get_slots_buffer()),
+            6, instance_collection->light_pool.get_device_buffer()),
         nvrhi::BindingSetItem::StructuredBuffer_SRV(
             7, hosek_pool.get_device_buffer()),
-        nvrhi::BindingSetItem::StructuredBuffer_SRV(
-            8, instance_collection->scene_lights.get_indices_buffer()),
         // Scene color (t10) + G-Buffer position (t11)
         nvrhi::BindingSetItem::Texture_SRV(10, scene_color),
         nvrhi::BindingSetItem::Texture_SRV(11, g_pos),
@@ -225,10 +223,7 @@ NODE_EXECUTION_FUNCTION(volumetric_fog_composite)
     command_list->setTextureState(
         output, nvrhi::AllSubresources, nvrhi::ResourceStates::UnorderedAccess);
     command_list->setBufferState(
-        instance_collection->scene_lights.get_slots_buffer(),
-        nvrhi::ResourceStates::ShaderResource);
-    command_list->setBufferState(
-        instance_collection->scene_lights.get_indices_buffer(),
+        instance_collection->light_pool.get_device_buffer(),
         nvrhi::ResourceStates::ShaderResource);
     command_list->setBufferState(
         hosek_pool.get_device_buffer(), nvrhi::ResourceStates::ShaderResource);

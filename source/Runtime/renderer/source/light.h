@@ -2,7 +2,6 @@
 #include "DescriptorTableManager.h"
 #include "api.h"
 #include "internal/memory/DeviceMemoryPool.hpp"
-#include "internal/memory/SceneArray.hpp"
 #include "nvrhi/nvrhi.h"
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/imaging/garch/glApi.h"
@@ -46,7 +45,8 @@ class HD_RUZINO_API Hd_RUZINO_Light : public HdLight {
         return _lightType;
     }
 
-    [[nodiscard]] SceneArray<LightData>::Handle GetLightBuffer() const
+    [[nodiscard]] typename DeviceMemoryPool<LightData>::MemoryHandle
+    GetLightBuffer() const
     {
         return light_buffer;
     }
@@ -58,8 +58,8 @@ class HD_RUZINO_API Hd_RUZINO_Light : public HdLight {
     TfToken _lightType;
     // Cached states.
     TfHashMap<TfToken, VtValue, TfToken::HashFunctor> _params;
-    // Light table entry (SceneArray: stable slot, RAII removal)
-    SceneArray<LightData>::Handle light_buffer;
+    // GPU buffer for light data
+    typename DeviceMemoryPool<LightData>::MemoryHandle light_buffer;
 };
 
 // Simple light (directional, point light)

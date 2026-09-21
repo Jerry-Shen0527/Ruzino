@@ -4,11 +4,6 @@ __exported import Scene.Lights.HosekSkyState;
 __exported import Scene.Lights.LightCollectionShared;
 import utils.Math.PackedFormats;
 StructuredBuffer<LightData> lightBuffer;
-// Dense list of active light slots (SceneArray mirror). Iterating
-// lights must go through this list: lightBuffer[lightIndices[i]],
-// i < lightCount. Direct indexing lightBuffer[slot] is only valid for
-// stable slot references (e.g. GeometryInstanceData.geometryID).
-StructuredBuffer<uint> lightIndices;
 
 // PackedNode: 32B = 2× uint4. We define it locally (not via
 // import Scene.Lights.LightBVHTypes) because importing the full module
@@ -88,7 +83,7 @@ uint getEmissiveTriangleIndex(
 
 // Per-Hosek-dome-light cooked polynomial state (CPU-cooked from turbidity,
 // albedo, solar elevation). Indexed by LightData.hosekStateIndex. Bound by
-// path_tracing.cpp alongside lightBuffer. Stays empty
+// path_tracing.cpp / wetbrush_render.cpp alongside lightBuffer. Stays empty
 // (one dummy row) in scenes with no Hosek sky.
 StructuredBuffer<HosekSkyState> hosekStateBuffer;
 
@@ -454,7 +449,7 @@ LightSample sampleLights(float3 hitPos, float3 hitNormal, inout uint seed)
     // Count non-dome lights (dome lights are handled by miss shader)
     uint sampleableLightCount = 0;
     for (uint i = 0; i < ptConstants.lightCount; i++) {
-        if (lightBuffer[lightIndices[i]].type != uint(LightType::Dome)) {
+        if (lightBuffer[i].type != uint(LightType::Dome)) {
             sampleableLightCount++;
         }
     }
@@ -467,7 +462,7 @@ LightSample sampleLights(float3 hitPos, float3 hitNormal, inout uint seed)
     uint lightIndex = 0;
     uint nonDomeCount = 0;
     for (uint i = 0; i < ptConstants.lightCount; i++) {
-        if (lightBuffer[lightIndices[i]].type != uint(LightType::Dome)) {
+        if (lightBuffer[i].type != uint(LightType::Dome)) {
             if (nonDomeCount == targetLight) {
                 lightIndex = i;
                 break;
@@ -476,7 +471,7 @@ LightSample sampleLights(float3 hitPos, float3 hitNormal, inout uint seed)
         }
     }
 
-    LightData light = lightBuffer[lightIndices[lightIndex]];
+    LightData light = lightBuffer[lightIndex];
     float lightPdf =
         1.0 / float(sampleableLightCount);  // PDF for light selection
     float3 lightDir;
@@ -793,7 +788,7 @@ float lightPdfForDir(float3 hitPos, float3 dir)
     // Count non-dome lights to match sampleLights' selection probability.
     uint sampleableLightCount = 0;
     for (uint i = 0; i < ptConstants.lightCount; i++) {
-        if (lightBuffer[lightIndices[i]].type != uint(LightType::Dome))
+        if (lightBuffer[i].type != uint(LightType::Dome))
             sampleableLightCount++;
     }
     if (sampleableLightCount == 0) return 0.0;
@@ -802,7 +797,7 @@ float lightPdfForDir(float3 hitPos, float3 dir)
     float totalPdf = 0.0;
 
     for (uint j = 0; j < ptConstants.lightCount; j++) {
-        LightData light = lightBuffer[lightIndices[j]];
+        LightData light = lightBuffer[j];
         if (light.type == uint(LightType::Dome)) continue;
 
         if (light.type == uint(LightType::Rect) ||

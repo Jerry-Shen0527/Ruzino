@@ -25,7 +25,8 @@ NODE_DECLARATION_FUNCTION(rasterize)
 // Persistent per-node state. The material-type LUT is rebuilt only when the
 // scene's material version changes (mirrors how path_tracing.cpp rebuilds its
 // RT program on DirtyMaterials).
-struct RasterizeStorage {
+struct RasterizeStorage
+{
     static constexpr bool has_storage = false;
 
     nvrhi::BufferHandle materialTypeLUT;
@@ -62,8 +63,7 @@ NODE_EXECUTION_FUNCTION(rasterize)
     auto view_cb = get_free_camera_planarview_cb(params);
     MARK_DESTROY_NVRHI_RESOURCE(view_cb);
 
-    auto output_position =
-        create_default_render_target(params, nvrhi::Format::RGBA32_FLOAT);
+    auto output_position = create_default_render_target(params, nvrhi::Format::RGBA32_FLOAT);
     auto output_depth = create_default_depth_stencil(params);
     auto output_texcoords =
         create_default_render_target(params, nvrhi::Format::RG8_UNORM);
@@ -73,8 +73,7 @@ NODE_EXECUTION_FUNCTION(rasterize)
     auto output_diffuse_color =
         create_default_render_target(params, nvrhi::Format::RGBA32_FLOAT);
     auto output_metallic_roughness = create_default_render_target(params);
-    auto output_normal =
-        create_default_render_target(params, nvrhi::Format::RGBA32_FLOAT);
+    auto output_normal = create_default_render_target(params, nvrhi::Format::RGBA32_FLOAT);
     // Per-pixel material id (pool index into materialHeaderBuffer), so the
     // deferred pass can run the real per-material BSDF. We use R32_FLOAT and
     // pack the id with asfloat/asuint (lossless) instead of R32_UINT, because
@@ -86,8 +85,8 @@ NODE_EXECUTION_FUNCTION(rasterize)
     // ----------------------------------------------------------------------
     // Build / refresh the material-type LUT.
     //
-    // MaterialHeader.material_type_id (stored on the GPU) is a *pool index*,
-    // not the eval-callable enum (0=standard_surface, 1=UsdPreviewSurface,
+    // MaterialHeader.material_type_id (stored on the GPU) is a *pool index*, not
+    // the eval-callable enum (0=standard_surface, 1=UsdPreviewSurface,
     // 2=fallback, 3+=custom). The path tracer resolves pool-index -> enum via
     // the DXR fetch callables at runtime; the raster pipeline cannot CallShader
     // so it uploads a parallel LUT here instead.
@@ -105,12 +104,14 @@ NODE_EXECUTION_FUNCTION(rasterize)
         instance_collection->material_header_pool.pool_size();
 
     if (mat_version != storage.cached_material_version ||
-        !storage.materialTypeLUT || lut_capacity == 0) {
+        !storage.materialTypeLUT || lut_capacity == 0)
+    {
         std::vector<uint32_t> cpu_lut(
             std::max<size_t>(lut_capacity, 1), 2u /* fallback */);
 
         auto& materials = global_payload.get_materials();
-        for (auto& [path, mat] : materials) {
+        for (auto& [path, mat] : materials)
+        {
             if (!mat)
                 continue;
             unsigned location = mat->GetMaterialLocation();
@@ -119,7 +120,8 @@ NODE_EXECUTION_FUNCTION(rasterize)
 
             // Custom callable materials are not decodeable by the raster path's
             // shared functions; treat them as fallback for now.
-            if (mat->HasValidShader()) {
+            if (mat->HasValidShader())
+            {
                 cpu_lut[location] = 2u;
                 continue;
             }
@@ -131,15 +133,12 @@ NODE_EXECUTION_FUNCTION(rasterize)
                 cpu_lut[location] = 0u;  // standard_surface
             else
                 cpu_lut[location] = 2u;  // fallback
-            spdlog::info(
-                "[rasterize LUT] mat='{}' location={} -> type={} "
-                "(pool_size={}, src_has_t1={} src_has_t0={})",
-                path.GetText(),
-                location,
-                cpu_lut[location],
-                lut_capacity,
-                src.find("shader_type_id = 1") != std::string::npos,
-                src.find("shader_type_id = 0") != std::string::npos);
+            spdlog::info("[rasterize LUT] mat='{}' location={} -> type={} "
+                         "(pool_size={}, src_has_t1={} src_has_t0={})",
+                         path.GetText(), location, cpu_lut[location],
+                         lut_capacity,
+                         src.find("shader_type_id = 1") != std::string::npos,
+                         src.find("shader_type_id = 0") != std::string::npos);
         }
 
         nvrhi::BufferDesc lut_desc;
@@ -158,11 +157,8 @@ NODE_EXECUTION_FUNCTION(rasterize)
         auto lut_cl = resource_allocator.create(CommandListDesc{});
         MARK_DESTROY_NVRHI_RESOURCE(lut_cl);
         lut_cl->open();
-        lut_cl->writeBuffer(
-            storage.materialTypeLUT,
-            cpu_lut.data(),
-            cpu_lut.size() * sizeof(uint32_t),
-            0);
+        lut_cl->writeBuffer(storage.materialTypeLUT, cpu_lut.data(),
+                            cpu_lut.size() * sizeof(uint32_t), 0);
         lut_cl->close();
         resource_allocator.device->executeCommandList(lut_cl);
 
@@ -195,8 +191,7 @@ NODE_EXECUTION_FUNCTION(rasterize)
     // BindlessMaterial.slang to dodge the VS+PS root-signature overlap), so do
     // NOT bind it — a second finish_setting_vars() here previously destroyed
     // and rebuilt all binding sets, and binding a name absent from reflection
-    // (t_BindlessTextures) is silently dropped. One finish, matching
-    // path_tracing.
+    // (t_BindlessTextures) is silently dropped. One finish, matching path_tracing.
     program_vars.set_descriptor_table(
         "t_BindlessBuffers",
         instance_collection->bindlessData.bufferDescriptorTableManager
@@ -218,11 +213,10 @@ NODE_EXECUTION_FUNCTION(rasterize)
     auto size = get_size(params);
     context.set_viewport(pxr::GfVec2f(size[0], size[1])).finish_setting_pso();
 
-    // SceneArray dense-output table: flush re-packs live draw args into a
-    // contiguous buffer; ExecuteIndirect reads [0..count()) from offset 0.
-    instance_collection->draw_indirects.flush();
+    instance_collection->draw_indirect_pool.compress();
 
-    auto device_buffer = instance_collection->draw_indirects.get_dense_buffer();
+    auto device_buffer =
+        instance_collection->draw_indirect_pool.get_device_buffer();
 
     GraphicsRenderState state;
 
@@ -236,8 +230,7 @@ NODE_EXECUTION_FUNCTION(rasterize)
     // may race ahead of the copy and read uninitialized (zero) data. The
     // buffers have keepInitialState=true so this is a one-way transition.
     auto blob_buf = instance_collection->material_pool.get_device_buffer();
-    auto hdr_buf =
-        instance_collection->material_header_pool.get_device_buffer();
+    auto hdr_buf = instance_collection->material_header_pool.get_device_buffer();
     if (blob_buf)
         context.set_resource_state(blob_buf, ResourceStates::ShaderResource);
     if (hdr_buf)
@@ -251,14 +244,14 @@ NODE_EXECUTION_FUNCTION(rasterize)
     context.set_resource_state(
         instance_collection->volume_pool.get_device_buffer(),
         ResourceStates::ShaderResource);
-    context.set_resource_state(
-        storage.materialTypeLUT, ResourceStates::ShaderResource);
+    context.set_resource_state(storage.materialTypeLUT,
+                               ResourceStates::ShaderResource);
 
     context.draw_indirect(
         state,
         program_vars,
         device_buffer,
-        instance_collection->draw_indirects.count());
+        instance_collection->draw_indirect_pool.count());
 
     context.finish();
 

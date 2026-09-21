@@ -5,11 +5,10 @@
 //   rasterize (G-Buffer) ──► deferred_direct_lighting ──► present_color
 //
 // Uses the manual binding path (shader_factory.compile_shader + explicit
-// BindingSetDesc + ComputePipelineDesc + command_list->setComputeState),
-// mirroring the proven pattern in node_render_taa.cpp. The reflection-driven
-// ProgramVars + ComputeContext path crashed on dispatch (device removed) even
-// for a constant- output CS, so we use the explicit-slot approach that TAA/RNG
-// nodes use.
+// BindingSetDesc + ComputePipelineDesc + command_list->setComputeState), mirroring
+// the proven pattern in node_render_taa.cpp. The reflection-driven ProgramVars +
+// ComputeContext path crashed on dispatch (device removed) even for a constant-
+// output CS, so we use the explicit-slot approach that TAA/RNG nodes use.
 //
 // Registration: add_nodes() globs this into node_deferred_direct_lighting.dll
 // and regenerates render_nodes.json automatically (AddNodes.cmake).
@@ -27,7 +26,8 @@
 
 NODE_DEF_OPEN_SCOPE
 
-struct DeferredLightingConstants {
+struct DeferredLightingConstants
+{
     uint32_t lightCount;
     uint32_t pad0;
     uint32_t pad1;
@@ -58,7 +58,8 @@ NODE_EXECUTION_FUNCTION(deferred_direct_lighting)
 
     auto g_texcoord = params.get_input<nvrhi::TextureHandle>("Texcoords");
     auto g_diffuse = params.get_input<nvrhi::TextureHandle>("DiffuseColor");
-    auto g_mr = params.get_input<nvrhi::TextureHandle>("MetallicRoughness");
+    auto g_mr =
+        params.get_input<nvrhi::TextureHandle>("MetallicRoughness");
     auto g_matid = params.get_input<nvrhi::TextureHandle>("MaterialID");
 
     auto size = get_size(params);
@@ -88,8 +89,8 @@ NODE_EXECUTION_FUNCTION(deferred_direct_lighting)
         error_string);
     MARK_DESTROY_NVRHI_RESOURCE(cs_shader);
     if (!cs_shader || !error_string.empty()) {
-        spdlog::error(
-            "deferred_direct_lighting CS compile failed: {}", error_string);
+        spdlog::error("deferred_direct_lighting CS compile failed: {}",
+                      error_string);
         return false;
     }
 
@@ -108,8 +109,9 @@ NODE_EXECUTION_FUNCTION(deferred_direct_lighting)
     auto view_cb = get_free_camera_planarview_cb(params);
     MARK_DESTROY_NVRHI_RESOURCE(view_cb);
 
-    instance_collection->scene_lights.flush();
-    uint32_t lightCount = instance_collection->scene_lights.count();
+    instance_collection->light_pool.compress();
+    uint32_t lightCount =
+        static_cast<uint32_t>(instance_collection->light_pool.count());
     DeferredLightingConstants constants{ lightCount, 0, 0, 0 };
     auto constants_cb = create_constant_buffer(params, constants);
     MARK_DESTROY_NVRHI_RESOURCE(constants_cb);
@@ -157,8 +159,8 @@ NODE_EXECUTION_FUNCTION(deferred_direct_lighting)
     // --- Binding set (explicit slots, TAA-style) ---
     // Slot numbers MUST match the register() annotations in
     // deferred_direct_lighting.cs.slang (G-Buffer textures at t10-t15) and
-    // Scene.MaterialEvaluation.slang (materialBlobBuffer t3,
-    // materialHeaderBuffer t4, materialTypeLUT t5). lightBuffer is at t6.
+    // Scene.MaterialEvaluation.slang (materialBlobBuffer t3, materialHeaderBuffer
+    // t4, materialTypeLUT t5). lightBuffer is at t6.
     nvrhi::BindingSetDesc binding_set_desc;
     binding_set_desc.bindings = {
         // MaterialEvaluation-declared buffers (t3/t4/t5)
@@ -167,11 +169,9 @@ NODE_EXECUTION_FUNCTION(deferred_direct_lighting)
         nvrhi::BindingSetItem::StructuredBuffer_SRV(
             4, instance_collection->material_header_pool.get_device_buffer()),
         nvrhi::BindingSetItem::StructuredBuffer_SRV(5, material_type_lut),
-        // Light buffer (t6) + dense index list (t7)
+        // Light buffer (t6)
         nvrhi::BindingSetItem::StructuredBuffer_SRV(
-            6, instance_collection->scene_lights.get_slots_buffer()),
-        nvrhi::BindingSetItem::StructuredBuffer_SRV(
-            7, instance_collection->scene_lights.get_indices_buffer()),
+            6, instance_collection->light_pool.get_device_buffer()),
         // G-Buffer texture SRVs (t10-t15)
         nvrhi::BindingSetItem::Texture_SRV(10, g_pos),
         nvrhi::BindingSetItem::Texture_SRV(11, g_texcoord),
@@ -197,34 +197,24 @@ NODE_EXECUTION_FUNCTION(deferred_direct_lighting)
     // rasterize node's graphics pass) into ShaderResource, and the output UAV
     // into UnorderedAccess. The textures are created with keepInitialState=true
     // so nvrhi won't auto-transition; an explicit texture-state barrier is
-    // required or the GPU reads a stale resource state and the device is
-    // removed.
-    command_list->setTextureState(
-        g_pos, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
-    command_list->setTextureState(
-        g_texcoord,
-        nvrhi::AllSubresources,
-        nvrhi::ResourceStates::ShaderResource);
-    command_list->setTextureState(
-        g_diffuse,
-        nvrhi::AllSubresources,
-        nvrhi::ResourceStates::ShaderResource);
-    command_list->setTextureState(
-        g_mr, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
-    command_list->setTextureState(
-        g_normal,
-        nvrhi::AllSubresources,
-        nvrhi::ResourceStates::ShaderResource);
-    command_list->setTextureState(
-        g_matid, nvrhi::AllSubresources, nvrhi::ResourceStates::ShaderResource);
-    command_list->setTextureState(
-        output, nvrhi::AllSubresources, nvrhi::ResourceStates::UnorderedAccess);
+    // required or the GPU reads a stale resource state and the device is removed.
+    command_list->setTextureState(g_pos, nvrhi::AllSubresources,
+                                  nvrhi::ResourceStates::ShaderResource);
+    command_list->setTextureState(g_texcoord, nvrhi::AllSubresources,
+                                  nvrhi::ResourceStates::ShaderResource);
+    command_list->setTextureState(g_diffuse, nvrhi::AllSubresources,
+                                  nvrhi::ResourceStates::ShaderResource);
+    command_list->setTextureState(g_mr, nvrhi::AllSubresources,
+                                  nvrhi::ResourceStates::ShaderResource);
+    command_list->setTextureState(g_normal, nvrhi::AllSubresources,
+                                  nvrhi::ResourceStates::ShaderResource);
+    command_list->setTextureState(g_matid, nvrhi::AllSubresources,
+                                  nvrhi::ResourceStates::ShaderResource);
+    command_list->setTextureState(output, nvrhi::AllSubresources,
+                                  nvrhi::ResourceStates::UnorderedAccess);
     // Also transition the scratch/scene buffers the CS reads.
     command_list->setBufferState(
-        instance_collection->scene_lights.get_slots_buffer(),
-        nvrhi::ResourceStates::ShaderResource);
-    command_list->setBufferState(
-        instance_collection->scene_lights.get_indices_buffer(),
+        instance_collection->light_pool.get_device_buffer(),
         nvrhi::ResourceStates::ShaderResource);
     command_list->setBufferState(
         instance_collection->material_header_pool.get_device_buffer(),

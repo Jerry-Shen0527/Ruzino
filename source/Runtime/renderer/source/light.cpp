@@ -249,7 +249,7 @@ void Hd_RUZINO_Simple_Light::Sync(
         auto* render_param = static_cast<Hd_RUZINO_RenderParam*>(renderParam);
         if (!this->light_buffer) {
             this->light_buffer =
-                render_param->InstanceCollection->scene_lights.add(LightData{});
+                render_param->InstanceCollection->light_pool.allocate(1);
         }
 
         const SdfPath& id = this->GetId();
@@ -278,8 +278,7 @@ void Hd_RUZINO_Simple_Light::Sync(
         lightData.intensity =
             float3(color[0], color[1], color[2]) * diffuse * finalIntensity;
 
-        render_param->InstanceCollection->scene_lights.update(
-            this->light_buffer, lightData);
+        this->light_buffer->write_data(&lightData);
     }
 
     // Clear dirty bits
@@ -316,7 +315,7 @@ void Hd_RUZINO_Distant_Light::Sync(
         auto* render_param = static_cast<Hd_RUZINO_RenderParam*>(renderParam);
         if (!this->light_buffer) {
             this->light_buffer =
-                render_param->InstanceCollection->scene_lights.add(LightData{});
+                render_param->InstanceCollection->light_pool.allocate(1);
         }
 
         LightData lightData;
@@ -340,8 +339,7 @@ void Hd_RUZINO_Distant_Light::Sync(
         lightData.intensity =
             float3(color[0], color[1], color[2]) * diffuse * finalIntensity;
 
-        render_param->InstanceCollection->scene_lights.update(
-            this->light_buffer, lightData);
+        this->light_buffer->write_data(&lightData);
     }
 
     // Clear dirty bits
@@ -372,7 +370,7 @@ void Hd_RUZINO_Sphere_Light::Sync(
         auto* render_param = static_cast<Hd_RUZINO_RenderParam*>(renderParam);
         if (!this->light_buffer) {
             this->light_buffer =
-                render_param->InstanceCollection->scene_lights.add(LightData{});
+                render_param->InstanceCollection->light_pool.allocate(1);
         }
 
         LightData lightData;
@@ -404,8 +402,7 @@ void Hd_RUZINO_Sphere_Light::Sync(
         // Compute surface area for future use in importance sampling
         lightData.surfaceArea = 4.0f * 3.14159265359f * _radius * _radius;
 
-        render_param->InstanceCollection->scene_lights.update(
-            this->light_buffer, lightData);
+        this->light_buffer->write_data(&lightData);
     }
 
     // Clear dirty bits
@@ -442,7 +439,7 @@ void Hd_RUZINO_Rect_Light::Sync(
         auto* render_param = static_cast<Hd_RUZINO_RenderParam*>(renderParam);
         if (!this->light_buffer) {
             this->light_buffer =
-                render_param->InstanceCollection->scene_lights.add(LightData{});
+                render_param->InstanceCollection->light_pool.allocate(1);
         }
 
         LightData lightData;
@@ -512,14 +509,13 @@ void Hd_RUZINO_Rect_Light::Sync(
             }
         }
 
-        render_param->InstanceCollection->scene_lights.update(
-            this->light_buffer, lightData);
+        this->light_buffer->write_data(&lightData);
 
         // Build (or rebuild) the intersectable light geometry so that
         // BSDF-sampled rays can hit this RectLight and return its Le. The quad
         // is built in world space from posW/tangent/bitangent (already
         // world-space, scaled by width/height), so the TLAS instance transform
-        // is identity. light_buffer->slot() is the stable LightData slot used
+        // is identity. light_buffer->index() is the stable LightData slot used
         // by the ClosestHit shader to read Le.
         BuildLightGeometry(
             render_param,
@@ -652,12 +648,12 @@ void Hd_RUZINO_Rect_Light::BuildLightGeometry(
     }
     light_mesh_desc_buffer->write_data(&mesh_desc);
 
-    // Write the TLAS instance. geometryID = light_buffer->slot() so the
+    // Write the TLAS instance. geometryID = light_buffer->index() so the
     // ClosestHit shader can look up Le. materialID = -1 (lights have no
     // material). flags marks this as GeometryType::Light (top kTypeBits). The
     // quad is already in world space, so the instance transform is identity.
     GeometryInstanceData instance_data(GeometryType::Light);
-    instance_data.geometryID = light_buffer->slot();
+    instance_data.geometryID = light_buffer->index();
     instance_data.materialID = uint(-1);
     GfMatrix4f identity(1.0f);
     memcpy(
@@ -725,7 +721,7 @@ void Hd_RUZINO_Disk_Light::Sync(
         auto* render_param = static_cast<Hd_RUZINO_RenderParam*>(renderParam);
         if (!this->light_buffer) {
             this->light_buffer =
-                render_param->InstanceCollection->scene_lights.add(LightData{});
+                render_param->InstanceCollection->light_pool.allocate(1);
         }
 
         LightData lightData;
@@ -778,8 +774,7 @@ void Hd_RUZINO_Disk_Light::Sync(
         // Disk area
         lightData.surfaceArea = 3.14159265359f * _radius * _radius;
 
-        render_param->InstanceCollection->scene_lights.update(
-            this->light_buffer, lightData);
+        this->light_buffer->write_data(&lightData);
     }
 
     // Clear dirty bits
@@ -816,7 +811,7 @@ void Hd_RUZINO_Cylinder_Light::Sync(
         auto* render_param = static_cast<Hd_RUZINO_RenderParam*>(renderParam);
         if (!this->light_buffer) {
             this->light_buffer =
-                render_param->InstanceCollection->scene_lights.add(LightData{});
+                render_param->InstanceCollection->light_pool.allocate(1);
         }
 
         LightData lightData;
@@ -849,8 +844,7 @@ void Hd_RUZINO_Cylinder_Light::Sync(
         // Cylinder surface area (without caps)
         lightData.surfaceArea = 2.0f * 3.14159265359f * _radius * _length;
 
-        render_param->InstanceCollection->scene_lights.update(
-            this->light_buffer, lightData);
+        this->light_buffer->write_data(&lightData);
     }
 
     // Clear dirty bits
@@ -968,7 +962,7 @@ void Hd_RUZINO_Dome_Light::Sync(
         // Allocate light buffer if needed
         if (!this->light_buffer) {
             this->light_buffer =
-                render_param->InstanceCollection->scene_lights.add(LightData{});
+                render_param->InstanceCollection->light_pool.allocate(1);
         }
 
         LightData lightData;
@@ -1200,8 +1194,7 @@ void Hd_RUZINO_Dome_Light::Sync(
                 radiance[2]);
         }
 
-        render_param->InstanceCollection->scene_lights.update(
-            this->light_buffer, lightData);
+        this->light_buffer->write_data(&lightData);
     }
 
     // Clear dirty bits

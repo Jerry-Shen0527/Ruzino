@@ -10,7 +10,6 @@
 #include "../nodes/shaders/Scene/Lights/LightData.slang"
 #include "../nodes/shaders/Scene/SceneTypes.slang"
 #include "internal/memory/DeviceMemoryPool.hpp"
-#include "internal/memory/SceneArray.hpp"
 
 RUZINO_NAMESPACE_OPEN_SCOPE
 
@@ -37,24 +36,8 @@ class HD_RUZINO_API Hd_RUZINO_RenderInstanceCollection {
     DeviceMemoryPool<VolumeDesc> volume_pool;
     DeviceMemoryPool<MaterialDataBlob> material_pool;
     DeviceMemoryPool<MaterialHeader> material_header_pool;
-    // Draw-indirect args table. Pure leaf (nothing references an args
-    // slot — args are self-contained; startInstanceLocation points INTO
-    // instance_pool, which is a stable-slot arena), so it uses the dense
-    // output layout: flush() re-packs live args contiguously and
-    // ExecuteIndirect reads them from offset 0. Replaces
-    // DeviceMemoryPool<DrawIndirectArguments> draw_indirect_pool + its
-    // compress() call in the rasterize node.
-    SceneArray<nvrhi::DrawIndirectArguments, true> draw_indirects{
-        nvrhi::BufferDesc{}.setIsDrawIndirectArgs(true)
-    };
-    // Light table. CPU-authoritative SceneArray: data lives in stable
-    // slots (so GeometryInstanceData.geometryID = handle->slot() stays
-    // valid forever), dense iteration goes through the indices buffer
-    // (lightIndices[i]), removal is swap-remove on the index list. This
-    // replaces DeviceMemoryPool<LightData> light_pool, whose compress()
-    // both moved data (breaking geometryID references) and was required
-    // before every dense read (holes otherwise showed stale lights).
-    SceneArray<LightData> scene_lights;
+    DeviceMemoryPool<nvrhi::DrawIndirectArguments> draw_indirect_pool;
+    DeviceMemoryPool<LightData> light_pool;
     // Per-Hosek-dome-light cooked sky state (CPU-cooked turbidity/albedo/
     // elevation -> 30 floats). Indexed by LightData.hosekStateIndex. Row 0 is
     // reserved as a zeroed dummy ("hosekStateIndex = 0" = no Hosek sky). The
@@ -126,9 +109,6 @@ class HD_RUZINO_API Hd_RUZINO_RenderInstanceCollection {
 
    private:
     nvrhi::rt::AccelStructHandle TLAS;
-    // Dense staging for the TLAS build input (gathered live instance
-    // descs; see rebuild_tlas).
-    nvrhi::BufferHandle tlas_instance_staging;
 
     bool require_rebuild_tlas = true;
     void rebuild_tlas();
