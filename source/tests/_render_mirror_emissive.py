@@ -10,7 +10,9 @@ import sys, os
 from pathlib import Path
 import numpy as np
 
-binary_dir = Path(r"C:\Users\Jerry\WorkSpace\Ruzino\Binaries\Release")
+_tests_dir = Path(__file__).resolve().parent          # .../source/tests
+project_root = _tests_dir.parent.parent               # repo root
+binary_dir = project_root / "Binaries" / "Release"
 os.environ['PATH'] = str(binary_dir) + os.pathsep + os.environ.get('PATH', '')
 os.environ.setdefault('PXR_USD_WINDOWS_DLL_PATH', str(binary_dir))
 mtlx = binary_dir / 'libraries'
@@ -22,7 +24,7 @@ if hasattr(os, 'add_dll_directory'):
     except Exception:
         pass
 sys.path.insert(0, str(binary_dir))
-sys.path.insert(0, r"C:\Users\Jerry\WorkSpace\Ruzino\source\tests")
+sys.path.insert(0, str(_tests_dir))
 import nodes_core_py as core
 import hd_RUZINO_py as renderer
 from PIL import Image

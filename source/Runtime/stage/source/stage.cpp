@@ -94,8 +94,9 @@ Stage::Stage(const std::string& stage_path)
     }
     abs_path = abs_path.lexically_normal();
     m_stage_path = abs_path.string();
-    // if stage.usda exists, load it
-    stage = pxr::UsdStage::Open(abs_path.string());
+    if (std::filesystem::exists(abs_path)) {
+        stage = pxr::UsdStage::Open(abs_path.string());
+    }
     if (stage) {
         initialize_ecs_systems();
         load_modifier_layer();

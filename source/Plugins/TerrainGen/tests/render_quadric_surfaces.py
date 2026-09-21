@@ -20,7 +20,7 @@ Environment knobs:
     QUADRIC_W/H    render size (1920 x 1080)
     QUADRIC_SPP    accumulation samples (96)
 
-Outputs in Binaries/Release/test_output/:
+Outputs in Binaries/Release/test_output/terrain_quadric/:
     quadric_<surface>_source.usdc     analytic input grid (read_usd eats this)
     quadric_<surface>_test.usdc       adaptive mesh written by write_usd
     quadric_<surface>_albedo.png      baked by terrain_texture_bake
@@ -59,7 +59,7 @@ SPP = int(os.environ.get("QUADRIC_SPP", "96"))
 SCALE = 0.1  # render at 1/10 size: keeps the camera inside the ray-tMax
              # range that burned the treegen/terrain renders
 
-OUT_DIR = BIN / "test_output"
+OUT_DIR = BIN / "test_output" / "terrain_quadric"
 
 
 def make_heights(kind):
@@ -414,7 +414,7 @@ def main():
     kinds = (["paraboloid", "saddle"] if args.surface == "both"
              else [args.surface])
 
-    OUT_DIR.mkdir(exist_ok=True)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
     for kind in kinds:
         prefix = f"quadric_{kind}{args.tag}"
         source = OUT_DIR / f"{prefix}_source.usdc"

@@ -33,8 +33,10 @@ os.chdir(str(BIN))
 import numpy as np  # noqa: E402
 from pxr import Usd, UsdGeom, UsdLux, UsdShade, Sdf, Gf, Vt  # noqa: E402
 
-OUT_DIR = BIN / "test_output"
-SRC_MOD = OUT_DIR / "terrain_preview_modifiers.usdc"
+PREVIEW_DIR = BIN / "test_output" / "terrain_preview"
+OUT_DIR = BIN / "test_output" / "terrain_gbuffer"
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+SRC_MOD = PREVIEW_DIR / "terrain_preview_modifiers.usdc"
 SCENE = OUT_DIR / "terrain_gbuffer_scene.usdc"
 SCALE = 0.1
 WIDTH, HEIGHT = 960, 540

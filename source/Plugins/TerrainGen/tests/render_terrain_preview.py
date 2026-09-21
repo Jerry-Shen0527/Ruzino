@@ -32,7 +32,8 @@ NRM_STR = float(os.environ.get("TERRAIN_NRM", "1.0"))
 # Optional thermal relaxation after hydraulic (kills the pipes solver's
 # 2-cell checkerboard); iterations, 0 = off.
 THERMAL_IT = int(os.environ.get("TERRAIN_THERMAL", "0"))
-OUT_USD = os.path.join(BINARY_DIR, "test_output", "terrain_preview.usdc")
+OUT_DIR = os.path.join(BINARY_DIR, "test_output", "terrain_preview")
+OUT_USD = os.path.join(OUT_DIR, "terrain_preview.usdc")
 
 
 def build_and_execute():
@@ -92,10 +93,9 @@ def build_and_execute():
         (bake, "Sediment Strength"): 0.5,
         # Absolute: the node resolves relative paths against the process
         # executable, which under headless python is the interpreter dir.
-        (bake, "Output Path"): os.path.join(
-            BINARY_DIR, "test_output", "terrain_albedo.png"),
+        (bake, "Output Path"): os.path.join(OUT_DIR, "terrain_albedo.png"),
         (bake, "Normal Output Path"): os.path.join(
-            BINARY_DIR, "test_output", "terrain_normal.png"),
+            OUT_DIR, "terrain_normal.png"),
         (bake, "Normal Strength"): NRM_STR,
         (bake, "Detail Strength"): 0.0,
         (create_mat, "Roughness"): 0.95,

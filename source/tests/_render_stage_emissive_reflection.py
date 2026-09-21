@@ -17,8 +17,8 @@ import sys, os
 from pathlib import Path
 import numpy as np
 
-binary_dir = Path(r"C:\Users\Jerry\WorkSpace\Ruzino\Binaries\Release")
-project_root = r"C:\Users\Jerry\WorkSpace\Ruzino"
+project_root = Path(__file__).resolve().parent.parent.parent  # repo root
+binary_dir = project_root / "Binaries" / "Release"
 # The app runs with cwd = Binaries/Release; the shader compiler and the
 # MaterialX generator resolve several paths (generated_shaders/, libraries/,
 # usd/hd_RUZINO/resources) relative to it, so match that.

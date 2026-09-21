@@ -22,9 +22,11 @@ from ruzino_graph import RuzinoGraph
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 BINARY_DIR = os.path.abspath(
     os.path.join(TESTS_DIR, "..", "..", "..", "..", "Binaries", "Release"))
-OUT_USD = os.path.join(BINARY_DIR, "test_output", "terrain_adaptive_test.usdc")
-ALBEDO = os.path.join(BINARY_DIR, "test_output", "terrain_adaptive_albedo.png")
-NORMAL = os.path.join(BINARY_DIR, "test_output", "terrain_adaptive_normal.png")
+OUT_DIR = os.path.join(BINARY_DIR, "test_output", "terrain_adaptive")
+os.makedirs(OUT_DIR, exist_ok=True)
+OUT_USD = os.path.join(OUT_DIR, "terrain_adaptive_test.usdc")
+ALBEDO = os.path.join(OUT_DIR, "terrain_adaptive_albedo.png")
+NORMAL = os.path.join(OUT_DIR, "terrain_adaptive_normal.png")
 
 RES = 241  # (RES-1) % 16 == 0: the adaptive tiling contract
 

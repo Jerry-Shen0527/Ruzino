@@ -310,7 +310,7 @@ for f in range(FRAMES):
 # ---- 4. Encode the video ----------------------------------------------------
 import subprocess
 
-mp4 = BIN / "test_output" / "treegen_grid_orbit.mp4"
+mp4 = OUT_DIR / "treegen_grid_orbit.mp4"
 subprocess.run([
     "ffmpeg", "-y", "-framerate", str(FPS),
     "-i", str(OUT_DIR / "frame_%03d.png"),

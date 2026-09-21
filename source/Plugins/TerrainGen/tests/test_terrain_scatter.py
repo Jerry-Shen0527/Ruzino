@@ -20,7 +20,8 @@ from ruzino_graph import RuzinoGraph
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 BINARY_DIR = os.path.abspath(
     os.path.join(TESTS_DIR, "..", "..", "..", "..", "Binaries", "Release"))
-OUT_DIR = Path(BINARY_DIR) / "test_output"
+OUT_DIR = Path(BINARY_DIR) / "test_output" / "terrain_scatter"
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 RES = 128
 WORLD = 100.0
@@ -73,9 +74,9 @@ def _run_scatter(masked=False):
     if masked:
         inputs.update({
             (bake, "Texture Resolution"): 256,
-            (bake, "Output Path"): "test_output/scatter_mask_albedo.png",
+            (bake, "Output Path"): "test_output/terrain_scatter/scatter_mask_albedo.png",
             (bake, "Normal Output Path"):
-                "test_output/scatter_mask_normal.png",
+                "test_output/terrain_scatter/scatter_mask_normal.png",
             (scatter, "Count"): 400,
             (scatter, "Min Distance"): 3.0,
             (scatter, "Mask Field"): "biome",

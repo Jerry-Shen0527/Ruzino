@@ -23,7 +23,9 @@ def test_terrain_grid_3x3():
     print("="*70)
 
     binary_dir = get_binary_dir()
-    output_file = os.path.join(binary_dir, "terrain_grid_3x3.usdc")
+    out_dir = os.path.join(binary_dir, "test_output", "terrain_usd")
+    os.makedirs(out_dir, exist_ok=True)
+    output_file = os.path.join(out_dir, "terrain_grid_3x3.usdc")
 
     g = RuzinoGraph("TerrainGrid3x3")
 

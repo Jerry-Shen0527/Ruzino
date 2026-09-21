@@ -30,8 +30,8 @@ TAG = sys.argv[1] if len(sys.argv) > 1 else "tree"
 import stage_py
 from ruzino_graph import RuzinoGraph
 
-OUT_DIR = BIN / "test_output"
-OUT_DIR.mkdir(exist_ok=True)
+OUT_DIR = BIN / "test_output" / "treegen"
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 LEAF_ATLAS = os.environ.get(
     "TREEGEN_LEAF_ATLAS",
     str((ROOT / "source" / "Plugins" / "TreeGen" / "assets" /

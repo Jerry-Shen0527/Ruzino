@@ -21,7 +21,9 @@ def test_single_terrain():
     print("="*70)
 
     binary_dir = get_binary_dir()
-    output_file = os.path.join(binary_dir, "terrain_single.usdc")
+    out_dir = os.path.join(binary_dir, "test_output", "terrain_usd")
+    os.makedirs(out_dir, exist_ok=True)
+    output_file = os.path.join(out_dir, "terrain_single.usdc")
 
     g = RuzinoGraph("SingleTerrain")
 

@@ -40,11 +40,12 @@ RuzinoInstall/
 report/
 report.md
 shader_cache/
-# Test output artifacts. All test output goes to Binaries/Release/test_output/
-# (covered by Binaries/ above). These rules are a defensive backstop in case a
-# test still writes into the source tree. The one exception is
-# source/tests/data/reference/ — committed reference anchors are intentionally
-# tracked and must NOT be ignored.
+# Test output artifacts. All test output goes to
+# Binaries/<Build>/test_output/<feature>/ (covered by Binaries/ above; one
+# subdir per writer, no loose files at the root). These rules are a defensive
+# backstop in case a test still writes into the source tree. The one exception
+# is source/tests/data/reference/ — committed reference anchors are
+# intentionally tracked and must NOT be ignored.
 source/tests/data/output/
 **/tests/output/
 **/tests/data/output/

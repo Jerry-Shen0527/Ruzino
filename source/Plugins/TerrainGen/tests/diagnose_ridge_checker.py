@@ -23,7 +23,9 @@ from pxr import Usd, UsdGeom  # noqa: E402
 
 RES = 2049
 SIZE = 200.0
-HF_ONLY = os.path.join(BIN, "test_output", "diagnose_hf_only.usdc")
+OUT_DIR = os.path.join(BIN, "test_output", "terrain_diagnose")
+os.makedirs(OUT_DIR, exist_ok=True)
+HF_ONLY = os.path.join(OUT_DIR, "diagnose_hf_only.usdc")
 
 
 def build_heightfield_only():
@@ -60,7 +62,7 @@ def build_thermal_field(iters=30):
     import stage_py
     from ruzino_graph import RuzinoGraph
 
-    path = os.path.join(BIN, "test_output", "diagnose_hf_thermal.usdc")
+    path = os.path.join(OUT_DIR, "diagnose_hf_thermal.usdc")
     g = RuzinoGraph("DiagnoseThermal")
     g.loadConfiguration(os.path.join(
         BIN, "Plugins", "TerrainGen_geometry_nodes.json"))
@@ -146,7 +148,8 @@ if __name__ == "__main__":
     if thermal:
         b_path = build_thermal_field(30)
     else:
-        b_path = os.path.join(BIN, "test_output", "terrain_preview.usdc")
+        b_path = os.path.join(
+            BIN, "test_output", "terrain_preview", "terrain_preview.usdc")
     h_eroded = load_field(b_path)
     tag = "B: hydraulic 250 + thermal 30" if thermal \
         else "B: after 250 hydraulic iterations"

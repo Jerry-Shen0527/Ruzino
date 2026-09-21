@@ -133,9 +133,9 @@ NODE_DECLARATION_FUNCTION(terrain_texture_bake)
     // Relative paths resolve against the executable directory, matching
     // set_material's convention.
     b.add_input<std::string>("Output Path")
-        .default_val("test_output/terrain_albedo.png");
+        .default_val("test_output/terrain_preview/terrain_albedo.png");
     b.add_input<std::string>("Normal Output Path")
-        .default_val("test_output/terrain_normal.png");
+        .default_val("test_output/terrain_preview/terrain_normal.png");
 
     b.add_output<Geometry>("Height Field");
     b.add_output<std::string>("Texture Path");

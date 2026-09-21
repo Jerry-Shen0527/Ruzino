@@ -39,8 +39,8 @@ os.chdir(str(BIN))
 import numpy as np  # noqa: E402
 from pxr import Usd, UsdGeom, UsdLux, UsdShade, Sdf, Gf, Vt  # noqa: E402
 
-OUT_DIR = BIN / "test_output"
-OUT_DIR.mkdir(exist_ok=True)
+OUT_DIR = BIN / "test_output" / "terrain_forest"
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 TAG = sys.argv[1] if len(sys.argv) > 1 else "forest"
 TREES = int(os.environ.get("FOREST_TREES", "300"))

@@ -4,12 +4,12 @@ Render the eroded terrain preview to a real PNG via the in-process
 HydraRenderer (path tracer), following render_treegen.py's proven recipe.
 
 Reads the mesh written by render_terrain_preview.py from
-test_output/terrain_preview_modifiers.usda, bakes it into a fresh scene at
-1/10 scale (keeps the camera well inside the ray-tMax range that burned the
-treegen renders), and saves:
+test_output/terrain_preview/terrain_preview_modifiers.usdc, bakes it into
+a fresh scene at 1/10 scale (keeps the camera well inside the ray-tMax
+range that burned the treegen renders), and saves:
 
-    test_output/terrain_render.png         full view
-    test_output/terrain_render_closeup.png drainage-channel close-up
+    test_output/terrain_render/terrain_render.png         full view
+    test_output/terrain_render/terrain_render_closeup.png drainage close-up
 
 Run from anywhere: python source/Plugins/TerrainGen/tests/render_terrain_image.py
 """
@@ -32,9 +32,11 @@ os.chdir(str(BIN))
 import numpy as np  # noqa: E402
 from pxr import Usd, UsdGeom, UsdLux, UsdShade, Sdf, Gf, Vt  # noqa: E402
 
-OUT_DIR = BIN / "test_output"
-SRC_MOD = OUT_DIR / "terrain_preview_modifiers.usdc"
-SRC_MAIN = OUT_DIR / "terrain_preview.usdc"
+PREVIEW_DIR = BIN / "test_output" / "terrain_preview"
+OUT_DIR = BIN / "test_output" / "terrain_render"
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+SRC_MOD = PREVIEW_DIR / "terrain_preview_modifiers.usdc"
+SRC_MAIN = PREVIEW_DIR / "terrain_preview.usdc"
 SCENE = OUT_DIR / "terrain_render_scene.usdc"
 SCALE = 0.1
 

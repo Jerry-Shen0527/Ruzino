@@ -93,6 +93,17 @@ python scripts/run_all_tests.py rhi_test        # filter by name
 - C++ tests: `Binaries/Release/*_test.exe`, 300s timeout each.
 - Exit code 0 = all pass, 1 = any failure; failures print their last 50 lines.
 
+### Test output layout
+
+All test/render/diagnostic artifacts go to `Binaries/<Build>/test_output/<feature>/`
+— **one subdirectory per writer** (pytest suite, render script, or debug node);
+no loose files at the `test_output/` root, and nothing in `Binaries/<Build>/`
+itself. `source/tests/conftest.py` is the canonical path source (`TEST_OUTPUT_DIR`,
+honors `RZ_BUILD_TYPE`); other conftests mirror it. TAG-parameterized scripts
+(`render_treegen.py <TAG>`, `render_terrain_forest.py`, ...) write into their own
+subdir (`treegen/`, `terrain_forest/`, ...). Rendered PNGs are regenerable
+debug output — never commit them (Binaries/ is gitignored anyway).
+
 ## Commit
 
 `format_and_commit_manager.py` formats modified C/C++ files and commits recursively across the repo and submodules (depth-first, submodules before root), **always skipping nvrhi**.
