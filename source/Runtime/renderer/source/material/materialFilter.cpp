@@ -553,11 +553,18 @@ void _FixOmittedConnections(
     mx::DocumentPtr const& mxDoc,
     const std::vector<mx::TypedElementPtr>& renderableElements)
 {
-    // Static cache for NodeDef lookups - persists across all material
-    // processing
-    static std::unordered_map<std::string, mx::NodeDefPtr> nodedef_cache;
-    static std::unordered_map<std::string, mx::NodeDefPtr> rough_nodedef_cache;
-    static std::mutex cache_mutex;
+    // NOTE: no cross-node nodedef cache here, deliberately. The strict
+    // getNodeDef result depends on the node's AUTHORED INPUTS (see the
+    // legacy-alias comment below), so a category:type cache key shares
+    // results between nodes with different input sets: one material's
+    // failed (null) lookup cached under "UsdPreviewSurface:surfaceshader"
+    // made later materials' CLEAN nodes enter this repair pass and get
+    // mangled, and shader generation then threw "Could not find a nodedef
+    // for node '<...>_Surface'" — the cold-start black-frame root cause
+    // (order-dependent because material processing order varies per run).
+    // The lookups are millisecond-scale; correctness wins.
+    // (A static cache would also dangle: NodeDefPtr points into
+    // shared_document, which reset_shared_state() rebuilds per delegate.)
 
     // Recursively checks and fixes nodes and their upstream connections
     std::function<void(mx::NodePtr, std::set<mx::NodePtr>&)>
@@ -570,43 +577,10 @@ void _FixOmittedConnections(
         }
         visitedNodes.insert(node);
 
-        // Create cache key from node category and type
-        std::string cache_key = node->getCategory() + ":" + node->getType();
-
-        // Check cache first before expensive getNodeDef call
-        mx::NodeDefPtr node_def;
-        {
-            std::lock_guard<std::mutex> lock(cache_mutex);
-            auto cache_it = nodedef_cache.find(cache_key);
-            if (cache_it != nodedef_cache.end()) {
-                node_def = cache_it->second;
-            }
-            else {
-                spdlog::info(
-                    "NodeDef cache miss for '{}', searching 3000+ "
-                    "definitions...",
-                    cache_key);
-                node_def = node->getNodeDef(mx::EMPTY_STRING);
-                nodedef_cache[cache_key] = node_def;
-            }
-        }
-
-        mx::NodeDefPtr rough_node_def;
-        {
-            std::lock_guard<std::mutex> lock(cache_mutex);
-            auto rough_cache_it = rough_nodedef_cache.find(cache_key);
-            if (rough_cache_it != rough_nodedef_cache.end()) {
-                rough_node_def = rough_cache_it->second;
-            }
-            else {
-                spdlog::info(
-                    "Rough NodeDef cache miss for '{}', searching 3000+ "
-                    "definitions...",
-                    cache_key);
-                rough_node_def = node->getNodeDef(mx::EMPTY_STRING, true);
-                rough_nodedef_cache[cache_key] = rough_node_def;
-            }
-        }
+        // Strict lookup first, then the rough (version-tolerant) fallback.
+        mx::NodeDefPtr node_def = node->getNodeDef(mx::EMPTY_STRING);
+        mx::NodeDefPtr rough_node_def =
+            node->getNodeDef(mx::EMPTY_STRING, true);
 
         if (rough_node_def && !node_def) {
             // Process each input on this node. getInputs() returns a vector
