@@ -97,6 +97,10 @@ auto showLabel = [](const char* label, ImColor color) {
     auto drawList = ImGui::GetWindowDrawList();
     drawList->AddRectFilled(rectMin, rectMax, color, size.y * 0.15f);
     ImGui::TextUnformatted(label);
+    // imgui >= 1.92: submit one item so IsSetPos does not leak to the
+    // end-of-frame boundary check when the label is drawn in a suspended
+    // editor flow (currently unused, kept for parity with the base class).
+    ImGui::Dummy(ImVec2(0.0f, 0.0f));
 };
 
 bool MaterialXNodeTreeWidget::checkPosition(UiNodePtr node)
