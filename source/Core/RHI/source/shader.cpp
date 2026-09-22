@@ -1032,6 +1032,26 @@ void ShaderFactory::SlangCompile(
         CHECK_REPORTED_ERROR();
         assert(ppResultBlob);
         assert(result == SLANG_OK);
+
+        // PT-DXIL-DUMP: capture the exact target code the driver JITs, for
+        // forensic diffing (env-gated, no cost when unset).
+        {
+            const char* dump_dir = std::getenv("RZ_DUMP_DXIL_DIR");
+            if (dump_dir && ppResultBlob) {
+                std::string safe = module_name + "_" + entryPoint;
+                for (auto& c : safe)
+                    if (!isalnum(static_cast<unsigned char>(c)) && c != '_' &&
+                        c != '-')
+                        c = '_';
+                std::filesystem::path out =
+                    std::filesystem::path(dump_dir) / (safe + ".dxil");
+                std::ofstream f(out, std::ios::binary);
+                f.write(
+                    static_cast<const char*>(ppResultBlob->getBufferPointer()),
+                    ppResultBlob->getBufferSize());
+                spdlog::info("[dxil-dump] wrote {}", out.string());
+            }
+        }
     }
 
     releaseGlobalSession();
