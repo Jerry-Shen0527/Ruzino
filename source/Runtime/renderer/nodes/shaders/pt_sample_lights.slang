@@ -101,40 +101,26 @@ struct LightSample {
     bool delta;
 };
 
-// Result of the pure light-SELECTION pass (selectLight below): everything NEE
-// needs except visibility. The shadow-ray TraceRay itself is deliberately NOT
-// traced here — the raygen shader inlines it (see path_tracing.slang). Passing
-// a second payload type (ShadowPayload) through a function call compiled into
-// the raygen stage miscompiles the whole entry point on current slang/NVIDIA
-// (GPU hang / TDR even when the call is never executed); inlined in raygen it
-// is fine. Semantics are identical to the former trace-inside version.
-struct LightSampleRequest {
-    // true  -> `sample` is final; no shadow test needed (emissive-BVH path,
-    //          sphere-light interior, or "nothing sampleable").
-    // false -> if sample.valid, trace `ray` and adopt `sample` only when the
-    //          shadow ray is unoccluded.
-    bool complete;
-    LightSample sample;
-    RayDesc ray;            // shadow ray to trace (when !complete && sample.valid)
-    uint rayFlags;          // per-light-type flags (Point skips procedural prims)
-    uint geomMultiplier;    // geometry-contribution multiplier (Point: 0, rest: 1)
-    bool applyTransmittance; // Distant: multiply intensity by payload.transmittance
-};
-
-// Dedicated shadow-ray payload. NOTE: this exact layout (and RayPayload's
-// trailing 4 fields in path_tracing.slang) is empirically vetted against a
-// slang/NVIDIA raygen miscompile that GPU-hangs the path tracer — see the
-// padding comment on RayPayload before touching either struct.
+// DO NOT rename this struct casually: with the historical name
+// 'ShadowPayload', NVIDIA's DXIL JIT mis-lays-out the second ray payload in
+// the raygen stage and the path tracer GPU-hangs (TDR) — even when the
+// shadow trace never executes. 'ShadowRayPayload' and 'ShadowPayloadX' are
+// vetted good (cold-cache x3); arbitrary names hang. Before renaming, run
+// Binaries/Debug/test_output/pt_bisect/pt_run.sh (SURVIVED required) and
+// source/Runtime/renderer/tests/test_rendering.py.
 struct ShadowRayPayload {
-    float3 hitPos;   // legacy: reserved for continuation rays
-    float3 rayDir;   // legacy: reserved for continuation
-    uint shadowVisible;  // 1 = visible, 0 = occluded (32-bit on purpose — see RayPayload)
-    float shadowTransmittance = 1.0;
-    float shadowRayTMax;
-    uint shadowRecursionDepth;
+    float3 hitPos;        // Hit position for continuation rays
+    float3 rayDir;        // Ray direction for continuation
+    float rayTMax;        // Maximum ray distance
+    uint recursionDepth;  // Current recursion depth for opacity testing
     uint seed;
+    bool isVisible;  // Whether light is visible or occluded
+    // Volumetric Beer-Lambert transmittance accumulated by a cloud shadow
+    // hit (CloudShadowHit). Defaults to 1.0 (fully transparent) for surface
+    // shadow rays, so existing surface lighting is unaffected; cloud segments
+    // multiply it down. Read by the NEE path to attenuate direct light.
+    float transmittance = 1.0;
 };
-
 
 // Cosine-weighted hemisphere sampling around normal
 float3 cosineSampleHemisphere(float xi1, float xi2, float3 normal)
@@ -443,44 +429,29 @@ float evalEmissivePdf(
     return solidAnglePdf;
 }
 
-// Select a light for NEE and build the shadow ray — WITHOUT tracing it.
-// Returns the pre-visibility sample plus the ray/flags the caller must trace
-// inline (see LightSampleRequest). Consumes RNG in the same order as the old
-// trace-inside version so per-frame random sequences are unchanged.
-LightSampleRequest selectLight(float3 hitPos, float3 hitNormal, inout uint seed)
+// Sample a random light and return its direction, intensity, and PDF
+LightSample sampleLights(float3 hitPos, float3 hitNormal, inout uint seed)
 {
-    LightSampleRequest req;
-    req.complete = true;          // default: nothing to trace
-    req.sample.direction = float3(0.0);
-    req.sample.intensity = float3(0.0);
-    req.sample.pdf = 0.0;
-    req.sample.valid = false;
-    req.sample.delta = false;
-    req.rayFlags = 0;
-    req.geomMultiplier = 1;
-    req.applyTransmittance = false;
     LightSample sample;
     sample.valid = false;
 
     bool hasAnalytic = ptConstants.lightCount > 0;
     bool hasEmissive = ptConstants.emissiveTriangleCount > 0;
-    if (!hasAnalytic && !hasEmissive) { req.sample = sample; return req; }
+    if (!hasAnalytic && !hasEmissive) return sample;
 
     // When both exist, flip a coin (50/50). When only one exists, use it.
-    // The emissive-BVH path performs no visibility test (unchanged behavior),
-    // so its result is complete as-is.
     if (hasAnalytic && hasEmissive) {
         if (random_float(seed) >= 0.5) {
             sample = sampleEmissiveLight(hitPos, hitNormal, seed);
-            if (sample.valid) { sample.pdf *= 0.5; req.sample = sample; return req; }
+            if (sample.valid) { sample.pdf *= 0.5; return sample; }
         }
     } else if (hasEmissive) {
-        req.sample = sampleEmissiveLight(hitPos, hitNormal, seed);
-        return req;
+        return sampleEmissiveLight(hitPos, hitNormal, seed);
     }
 
     // Analytic light path (existing code below).
-    if (ptConstants.lightCount == 0) { req.sample = sample; return req; }
+    if (ptConstants.lightCount == 0)
+        return sample;
 
     // Count non-dome lights (dome lights are handled by miss shader)
     uint sampleableLightCount = 0;
@@ -490,7 +461,8 @@ LightSampleRequest selectLight(float3 hitPos, float3 hitNormal, inout uint seed)
         }
     }
 
-    if (sampleableLightCount == 0) { req.sample = sample; return req; }
+    if (sampleableLightCount == 0)
+        return sample;
 
     // Randomly select a non-dome light
     uint targetLight = uint(random_float(seed) * sampleableLightCount);
@@ -527,16 +499,29 @@ LightSampleRequest selectLight(float3 hitPos, float3 hitNormal, inout uint seed)
             shadowRay.TMin = 0.0;
             shadowRay.TMax = lightDistance - 0.0001;
 
-            req.complete = false;
-            req.ray = shadowRay;
-            req.rayFlags = RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES;
-            req.geomMultiplier = 0;
-            float attenuation = 1.0 / (lightDistance * lightDistance);
-            sample.direction = lightDir;
-            sample.intensity = light.intensity * attenuation;
-            sample.pdf = lightPdf;
-            sample.valid = true;
-            sample.delta = true;  // point light: no BSDF-hit estimator
+            ShadowRayPayload shadowPayload;
+            shadowPayload.isVisible = true;
+            shadowPayload.rayTMax = lightDistance - 0.0001;
+            shadowPayload.recursionDepth = 0;
+            shadowPayload.seed = seed;
+            TraceRay(
+                SceneBVH,
+                RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES,
+                0xFD,  // exclude light instances (mask 0x2) -- lights don't occlude
+                1,
+                0,
+                1,
+                shadowRay,
+                shadowPayload);
+            seed = shadowPayload.seed;
+            if (shadowPayload.isVisible) {
+                float attenuation = 1.0 / (lightDistance * lightDistance);
+                sample.direction = lightDir;
+                sample.intensity = light.intensity * attenuation;
+                sample.pdf = lightPdf;
+                sample.valid = true;
+                sample.delta = true;  // point light: no BSDF-hit estimator
+            }
         }
     }
     else if (light.type == uint(LightType::Sphere)) {
@@ -551,7 +536,6 @@ LightSampleRequest selectLight(float3 hitPos, float3 hitNormal, inout uint seed)
         float3 sphereRadiance = light.intensity / 3.14159265359;
 
         if (dist <= radius) {
-            // Interior of the sphere light: no occlusion possible — complete.
             float3 dir = cosineSampleHemisphere(
                 random_float(seed), random_float(seed), hitNormal);
             sample.direction = dir;
@@ -602,15 +586,31 @@ LightSampleRequest selectLight(float3 hitPos, float3 hitNormal, inout uint seed)
                 shadowRay.TMin = 0.0;
                 shadowRay.TMax = max(0.001, lightDistance - 0.001);
 
-                req.complete = false;
-                req.ray = shadowRay;
-                req.rayFlags = RAY_FLAG_NONE;
-                req.geomMultiplier = 1;
-                sample.direction = lightDir;
-                sample.intensity = sphereRadiance;
-                sample.pdf = lightPdf * conePdf;
-                sample.valid = true;
-                sample.delta = false;
+                ShadowRayPayload shadowPayload;
+                shadowPayload.isVisible = true;
+                shadowPayload.rayTMax = shadowRay.TMax;
+                shadowPayload.recursionDepth = 0;
+                shadowPayload.seed = seed;
+
+                TraceRay(
+                    SceneBVH,
+                    RAY_FLAG_NONE,
+                    0xFD,  // exclude light instances (mask 0x2) -- lights don't occlude
+                    1,
+                    1,
+                    1,
+                    shadowRay,
+                    shadowPayload);
+
+                seed = shadowPayload.seed;
+
+                if (shadowPayload.isVisible) {
+                    sample.direction = lightDir;
+                    sample.intensity = sphereRadiance;
+                    sample.pdf = lightPdf * conePdf;
+                    sample.valid = true;
+                    sample.delta = false;
+                }
             }
         }
     }
@@ -626,21 +626,35 @@ LightSampleRequest selectLight(float3 hitPos, float3 hitNormal, inout uint seed)
             shadowRay.TMin = 0.001;
             shadowRay.TMax = lightDistance;
 
-            req.complete = false;
-            req.ray = shadowRay;
-            req.rayFlags = RAY_FLAG_NONE;
-            req.geomMultiplier = 1;
-            // CloudShadowHit attenuates the shadow payload's transmittance by
-            // Beer-Lambert through any cloud segment the shadow ray crosses
-            // (defaults to 1.0 = no cloud). The caller applies it after the
-            // inline trace, turning the previously-binary cloud shadow into a
-            // soft one.
-            req.applyTransmittance = true;
-            sample.direction = lightDir;
-            sample.intensity = light.intensity;
-            sample.pdf = lightPdf;
-            sample.valid = true;
-            sample.delta = true;  // distant light: no BSDF-hit estimator
+            ShadowRayPayload shadowPayload;
+            shadowPayload.isVisible = true;
+            shadowPayload.transmittance = 1.0;  // cloud-free until CloudShadowHit multiplies it down
+            shadowPayload.rayTMax = lightDistance;
+            shadowPayload.recursionDepth = 0;
+            shadowPayload.seed = seed;
+            TraceRay(
+                SceneBVH,
+                RAY_FLAG_NONE,
+                0xFD,  // exclude light instances (mask 0x2) -- lights don't occlude
+                1,
+                1,
+                1,
+                shadowRay,
+                shadowPayload);
+            seed = shadowPayload.seed;
+
+            if (shadowPayload.isVisible) {
+                sample.direction = lightDir;
+                // CloudShadowHit attenuates shadowPayload.transmittance by
+                // Beer-Lambert through any cloud segment the shadow ray
+                // crossed (defaults to 1.0 = no cloud, so cloud-free hits are
+                // unaffected). Applying it here turns the previously-binary
+                // cloud shadow into a soft one.
+                sample.intensity = light.intensity * shadowPayload.transmittance;
+                sample.pdf = lightPdf;
+                sample.valid = true;
+                sample.delta = true;  // distant light: no BSDF-hit estimator
+            }
         }
     }
     else if (light.type == uint(LightType::Rect)) {
@@ -665,11 +679,23 @@ LightSampleRequest selectLight(float3 hitPos, float3 hitNormal, inout uint seed)
             shadowRay.TMin = 0.0;
             shadowRay.TMax = lightDistance - 0.0001;
 
-            req.complete = false;
-            req.ray = shadowRay;
-            req.rayFlags = RAY_FLAG_NONE;
-            req.geomMultiplier = 1;
+            ShadowRayPayload shadowPayload;
+            shadowPayload.isVisible = true;
+            shadowPayload.rayTMax = lightDistance - 0.0001;
+            shadowPayload.recursionDepth = 0;
+            shadowPayload.seed = seed;
+            TraceRay(
+                SceneBVH,
+                RAY_FLAG_NONE,
+                0xFD,  // exclude light instances (mask 0x2) -- lights don't occlude
+                1,
+                1,
+                1,
+                shadowRay,
+                shadowPayload);
+            seed = shadowPayload.seed;
 
+            if (shadowPayload.isVisible) {
                 // Solid-angle measure: intensity is the raw emitted radiance
                 // Le, and pdf is the solid-angle pdf p_A * dist^2 / LdotN
                 // (converting the area sampling to solid angle). NEE estimator
@@ -685,8 +711,9 @@ LightSampleRequest selectLight(float3 hitPos, float3 hitNormal, inout uint seed)
                 sample.direction = lightDir;
                 sample.intensity = light.intensity;
                 sample.pdf = solidAnglePdf;
-            sample.valid = true;
-            sample.delta = false;
+                sample.valid = true;
+                sample.delta = false;
+            }
         }
     }
     else if (light.type == uint(LightType::Disc)) {
@@ -711,19 +738,34 @@ LightSampleRequest selectLight(float3 hitPos, float3 hitNormal, inout uint seed)
             shadowRay.TMin = 0.0;
             shadowRay.TMax = max(0.0, lightDistance - 0.0001);
 
-            req.complete = false;
-            req.ray = shadowRay;
-            req.rayFlags = RAY_FLAG_NONE;
-            req.geomMultiplier = 1;
-            // Solid-angle measure (see Rect branch for the rationale).
-            areaPdf = 1.0 / light.surfaceArea;
-            float solidAnglePdf =
-                lightPdf * areaPdf * (lightDistance * lightDistance) / LdotN;
-            sample.direction = lightDir;
-            sample.intensity = light.intensity;
-            sample.pdf = solidAnglePdf;
-            sample.valid = true;
-            sample.delta = false;
+            ShadowRayPayload shadowPayload;
+            shadowPayload.isVisible = true;
+            shadowPayload.rayTMax = max(0.0, lightDistance - 0.0001);
+            shadowPayload.recursionDepth = 0;
+            shadowPayload.seed = seed;
+            TraceRay(
+                SceneBVH,
+                RAY_FLAG_NONE,
+                0xFD,  // exclude light instances (mask 0x2) -- lights don't occlude
+                1,
+                1,
+                1,
+                shadowRay,
+                shadowPayload);
+
+            seed = shadowPayload.seed;
+
+            if (shadowPayload.isVisible) {
+                // Solid-angle measure (see Rect branch for the rationale).
+                areaPdf = 1.0 / light.surfaceArea;
+                float solidAnglePdf =
+                    lightPdf * areaPdf * (lightDistance * lightDistance) / LdotN;
+                sample.direction = lightDir;
+                sample.intensity = light.intensity;
+                sample.pdf = solidAnglePdf;
+                sample.valid = true;
+                sample.delta = false;
+            }
         }
     }
 
@@ -733,8 +775,7 @@ LightSampleRequest selectLight(float3 hitPos, float3 hitNormal, inout uint seed)
         sample.pdf *= 0.5;
     }
 
-    req.sample = sample;
-    return req;
+    return sample;
 }
 
 // Evaluate the light-sampling pdf for an arbitrary direction `dir` (the
