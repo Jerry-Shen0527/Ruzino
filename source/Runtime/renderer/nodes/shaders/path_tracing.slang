@@ -32,7 +32,10 @@ struct RayPayload {
     // Ray state
     uint depth;
     uint seed;
-    bool hit;  // Whether ray hit geometry (false means miss)
+    uint hit;  // 1 = hit, 0 = miss. uint (not bool): payload structs must
+              // keep all scalar leaves 32-bit — slang's register ABI for
+              // ray payloads mishandles i1 (bool) leaves, GPU-hanging the
+              // raygen entry (see slang issue #13047's bug class).
 
     // Emitted radiance from the hit surface (Le). Non-zero only when the ray
     // hit a light-geometry instance; the main loop adds it to accumulated_color
@@ -74,7 +77,7 @@ struct RayPayload {
     // sky behind the cloud shows through (attenuated). The same channels also
     // serve the grid-volume paint slab (hit groups 4/5), which sets
     // transmittance=0 (absorbing surface).
-    bool isVolume;
+    uint isVolume;
     float3 volumeColor;
     float volumeTransmittance;
     float volumeTEnd;
@@ -86,9 +89,10 @@ struct RayPayload {
     // and the phase direction was sampled exactly — so volumeTransmittance is
     // 1.0 in this case (the transmittance channel is only used when the ray
     // escapes the cloud without scattering).
-    bool volumeScatter;
+    uint volumeScatter;
     float3 scatterDir;
     float _volumePad;
+
 };
 
 [shader("raygeneration")]
@@ -128,9 +132,9 @@ void RayGen()
         // Iterative path tracing loop
         for (int depth = 0; depth < max_depth; depth++) {
             payload.depth = depth;
-            payload.hit = false;
-            payload.isVolume = false;
-            payload.volumeScatter = false;
+            payload.hit = 0u;
+            payload.isVolume = 0u;
+            payload.volumeScatter = 0u;
             // Reset BSDF-hit-emissive triangle index before tracing; ClosestHit
             // sets it only when the new hit is an emissive mesh triangle. A
             // stale value from a previous bounce would corrupt the MIS weight.
@@ -324,8 +328,48 @@ void RayGen()
             // under dome-only lighting and received no indirect light.)
             if (material_id == uint(-1)) {
                 // Sample a light source for direct lighting
-                LightSample lightSample =
-                    sampleLights(vertex.posW, vertex.faceNormalW, payload.seed);
+                uint pt_seed = payload.seed;
+                LightSampleRequest req =
+                    selectLight(vertex.posW, vertex.faceNormalW, pt_seed);
+                LightSample lightSample;
+                lightSample.direction = float3(0.0);
+                lightSample.intensity = float3(0.0);
+                lightSample.pdf = 0.0;
+                lightSample.valid = false;
+                lightSample.delta = false;
+                if (req.complete) {
+                    lightSample = req.sample;
+                }
+                else if (req.sample.valid) {
+                    // Shadow ray traced INLINE in raygen: passing a second
+                    // payload type through a called function miscompiles the
+                    // raygen stage (GPU hang / TDR); inline it is safe.
+                    ShadowRayPayload shadowPayload;
+                    shadowPayload.shadowVisible = 1u;
+                    shadowPayload.shadowTransmittance = 1.0;
+                    shadowPayload.shadowRayTMax = req.ray.TMax;
+                    shadowPayload.shadowRecursionDepth = 0;
+                    shadowPayload.seed = pt_seed;
+                    TraceRay(
+                        SceneBVH,
+                        req.rayFlags,
+                        0xFD,  // exclude light instances -- lights don't occlude
+                        1,
+                        req.geomMultiplier,
+                        1,
+                        req.ray,
+                        shadowPayload);
+                    pt_seed = shadowPayload.seed;
+                    if (shadowPayload.shadowVisible) {
+                        lightSample = req.sample;
+                        if (req.applyTransmittance) {
+                            lightSample.intensity =
+                                lightSample.intensity *
+                                shadowPayload.shadowTransmittance;
+                        }
+                    }
+                }
+                payload.seed = pt_seed;
 
                 // Fallback BRDF eval (Lambertian albedo=0.8)
                 EvalCallableData evalData;
@@ -415,8 +459,48 @@ void RayGen()
             var material_header = materialHeaderBuffer[material_id];
 
             // Sample a light source for direct lighting
-            LightSample lightSample =
-                sampleLights(vertex.posW, vertex.faceNormalW, payload.seed);
+            uint pt_seed = payload.seed;
+            LightSampleRequest req =
+                selectLight(vertex.posW, vertex.faceNormalW, pt_seed);
+            LightSample lightSample;
+            lightSample.direction = float3(0.0);
+            lightSample.intensity = float3(0.0);
+            lightSample.pdf = 0.0;
+            lightSample.valid = false;
+            lightSample.delta = false;
+            if (req.complete) {
+                lightSample = req.sample;
+            }
+            else if (req.sample.valid) {
+                // Shadow ray traced INLINE in raygen: passing a second
+                // payload type through a called function miscompiles the
+                // raygen stage (GPU hang / TDR); inline it is safe.
+                ShadowRayPayload shadowPayload;
+                shadowPayload.shadowVisible = 1u;
+                shadowPayload.shadowTransmittance = 1.0;
+                shadowPayload.shadowRayTMax = req.ray.TMax;
+                shadowPayload.shadowRecursionDepth = 0;
+                shadowPayload.seed = pt_seed;
+                TraceRay(
+                    SceneBVH,
+                    req.rayFlags,
+                    0xFD,  // exclude light instances -- lights don't occlude
+                    1,
+                    req.geomMultiplier,
+                    1,
+                    req.ray,
+                    shadowPayload);
+                pt_seed = shadowPayload.seed;
+                if (shadowPayload.shadowVisible) {
+                    lightSample = req.sample;
+                    if (req.applyTransmittance) {
+                        lightSample.intensity =
+                            lightSample.intensity *
+                            shadowPayload.shadowTransmittance;
+                    }
+                }
+            }
+            payload.seed = pt_seed;
 
             // Step 1: Call material data fetch callable
             FetchCallableData fetchData;
@@ -623,7 +707,7 @@ void ClosestHit(
     inout RayPayload payload,
     in BuiltInTriangleIntersectionAttributes attribs)
 {
-    payload.hit = true;
+    payload.hit = 1u;
 
     uint instance_id = InstanceID();
     uint prim_id = PrimitiveIndex();
@@ -711,7 +795,7 @@ void SphereClosestHit(
     inout RayPayload payload,
     in BuiltInTriangleIntersectionAttributes attribs)
 {
-    payload.hit = true;
+    payload.hit = 1u;
     uint instance_id = InstanceID();
     uint prim_id = PrimitiveIndex();
 
@@ -768,7 +852,7 @@ void SphereClosestHit(
         float3 debugColor = asfloat(
             t_BindlessBuffers[mesh_desc.bindlessIndex].Load3(
                 mesh_desc.texCrdOffset + position_offset));
-        payload.isVolume = true;  // emission composite path in RayGen
+        payload.isVolume = 1u;  // emission composite path in RayGen
         payload.volumeColor = debugShade(debugColor, vertex.normalW);
         return;
     }
@@ -855,21 +939,21 @@ void SphereIntersection()
 [shader("miss")]
 void Miss(inout RayPayload payload)
 {
-    payload.hit = false;
+    payload.hit = 0u;
 }
 
 [shader("closesthit")]
 void ShadowHit(
-    inout ShadowPayload payload,
+    inout ShadowRayPayload payload,
     in BuiltInTriangleIntersectionAttributes attribs)
 {
-    payload.isVisible = true;
-    // payload.isVisible = false;
+    payload.shadowVisible = 1u;
+    // payload.shadowVisible = 0u;
     // return;
     // Limit recursion depth to prevent infinite loops
     const uint MAX_SHADOW_OPACITY = 4;
-    if (payload.recursionDepth >= MAX_SHADOW_OPACITY) {
-        payload.isVisible = false;
+    if (payload.shadowRecursionDepth >= MAX_SHADOW_OPACITY) {
+        payload.shadowVisible = 0u;
         return;
     }
 
@@ -888,7 +972,7 @@ void ShadowHit(
 
     // No material — treat as opaque (shadow ray is blocked)
     if (material_id == uint(-1)) {
-        payload.isVisible = false;
+        payload.shadowVisible = 0u;
         return;
     }
 
@@ -926,9 +1010,9 @@ void ShadowHit(
         // toward the light. If there's no distance left, the light is
         // effectively unobstructed.
         float3 rayOrigin = vertex.posW;
-        float remainingDist = payload.rayTMax - RayTCurrent();
+        float remainingDist = payload.shadowRayTMax - RayTCurrent();
         if (remainingDist <= 0.001) {
-            payload.isVisible = true;
+            payload.shadowVisible = 1u;
             return;
         }
 
@@ -938,10 +1022,10 @@ void ShadowHit(
         continuationRay.TMin = 0.001;
         continuationRay.TMax = remainingDist;
 
-        ShadowPayload continuationPayload;
-        continuationPayload.isVisible = true;
-        continuationPayload.rayTMax = remainingDist;
-        continuationPayload.recursionDepth = payload.recursionDepth + 1;
+        ShadowRayPayload continuationPayload;
+        continuationPayload.shadowVisible = 1u;
+        continuationPayload.shadowRayTMax = remainingDist;
+        continuationPayload.shadowRecursionDepth = payload.shadowRecursionDepth + 1;
         continuationPayload.seed = payload.seed;
 
         TraceRay(
@@ -954,21 +1038,21 @@ void ShadowHit(
             continuationRay,
             continuationPayload);
         payload.seed = continuationPayload.seed;
-        payload.isVisible = continuationPayload.isVisible;
+        payload.shadowVisible = continuationPayload.shadowVisible;
         return;
     }
     // Surface blocks the shadow ray (random draw fell in the opaque fraction).
-    payload.isVisible = false;
+    payload.shadowVisible = 0u;
 }
 
 [shader("closesthit")]
 void SphereShadowHit(
-    inout ShadowPayload payload,
+    inout ShadowRayPayload payload,
     in BuiltInTriangleIntersectionAttributes attribs)
 {
     // For shadow rays hitting spheres, check opacity similar to triangle shadow
     // hit
-    payload.isVisible = true;
+    payload.shadowVisible = 1u;
 
     // Debug point clouds (MeshFlags::HasPerPointColor — sim particles /
     // voxels) are shadow-TRANSPARENT: tens of thousands of point spheres each
@@ -986,8 +1070,8 @@ void SphereShadowHit(
 
     // Limit recursion depth
     const uint MAX_SHADOW_OPACITY = 4;
-    if (payload.recursionDepth >= MAX_SHADOW_OPACITY) {
-        payload.isVisible = false;
+    if (payload.shadowRecursionDepth >= MAX_SHADOW_OPACITY) {
+        payload.shadowVisible = 0u;
         return;
     }
 
@@ -998,7 +1082,7 @@ void SphereShadowHit(
 
     if (material_id == uint(-1)) {
         // No material, assume opaque
-        payload.isVisible = false;
+        payload.shadowVisible = 0u;
         return;
     }
 
@@ -1031,9 +1115,9 @@ void SphereShadowHit(
         // Surface is transparent to this shadow ray — continue tracing.
         float3 hitPoint =
             WorldRayOrigin() + RayTCurrent() * WorldRayDirection();
-        float remainingDist = payload.rayTMax - RayTCurrent();
+        float remainingDist = payload.shadowRayTMax - RayTCurrent();
         if (remainingDist <= 0.001) {
-            payload.isVisible = true;
+            payload.shadowVisible = 1u;
             return;
         }
 
@@ -1043,10 +1127,10 @@ void SphereShadowHit(
         continuationRay.TMin = 0.001;
         continuationRay.TMax = remainingDist;
 
-        ShadowPayload continuationPayload;
-        continuationPayload.isVisible = true;
-        continuationPayload.rayTMax = remainingDist;
-        continuationPayload.recursionDepth = payload.recursionDepth + 1;
+        ShadowRayPayload continuationPayload;
+        continuationPayload.shadowVisible = 1u;
+        continuationPayload.shadowRayTMax = remainingDist;
+        continuationPayload.shadowRecursionDepth = payload.shadowRecursionDepth + 1;
         continuationPayload.seed = payload.seed;
 
         TraceRay(
@@ -1059,17 +1143,17 @@ void SphereShadowHit(
             continuationRay,
             continuationPayload);
         payload.seed = continuationPayload.seed;
-        payload.isVisible = continuationPayload.isVisible;
+        payload.shadowVisible = continuationPayload.shadowVisible;
         return;
     }
     // Surface blocks the shadow ray.
-    payload.isVisible = false;
+    payload.shadowVisible = 0u;
 }
 
 [shader("miss")]
-void ShadowMiss(inout ShadowPayload payload)
+void ShadowMiss(inout ShadowRayPayload payload)
 {
-    payload.isVisible = true;
+    payload.shadowVisible = 1u;
 }
 
 // ============================================================================
@@ -1080,7 +1164,6 @@ void ShadowMiss(inout ShadowPayload payload)
 // - callables/eval_standard_surface.slang
 // - callables/eval_preview_surface.slang
 // They are linked via add_source_code() in the C++ code.
-
 
 // ============================================================================
 // Volumetric Cloud hit groups (SBT slots 6/7)
@@ -1244,7 +1327,7 @@ void CloudClosestHit(inout RayPayload payload, in CloudHitAttributes attr)
             break;
     }
 
-    payload.isVolume = true;
+    payload.isVolume = 1u;
     payload.volumeColor = L;
     payload.volumeTransmittance = T_view;
     payload.volumeTEnd = attr.tExit;
@@ -1252,14 +1335,14 @@ void CloudClosestHit(inout RayPayload payload, in CloudHitAttributes attr)
 }
 
 [shader("closesthit")]
-void CloudShadowHit(inout ShadowPayload payload, in CloudHitAttributes attr)
+void CloudShadowHit(inout ShadowRayPayload payload, in CloudHitAttributes attr)
 {
     uint instance_id = InstanceID();
     GeometryInstanceData inst = instanceDescBuffer[instance_id];
     VolumeDesc vd = volumeDescBuffer[inst.geometryID];
 
     // Accumulate Beer-Lambert transmittance for soft cloud shadows on the
-    // terrain below. payload.transmittance starts at 1.0 (set by the NEE
+    // terrain below. payload.shadowTransmittance starts at 1.0 (set by the NEE
     // launcher); multiply it down through the cloud segment.
     float3 rayOrg = WorldRayOrigin();
     float3 rayDir = WorldRayDirection();
@@ -1272,7 +1355,7 @@ void CloudShadowHit(inout ShadowPayload payload, in CloudHitAttributes attr)
     // (Local seed copy: SV_RayPayload members cannot be inout params.)
     uint seed = payload.seed;
     float jitter = random_float(seed);
-    float T = payload.transmittance;
+    float T = payload.shadowTransmittance;
     for (int i = 0; i < STEPS; ++i) {
         float t = attr.tEnter + (float(i) + jitter) * step;
         float3 p = rayOrg + rayDir * t;
@@ -1281,7 +1364,7 @@ void CloudShadowHit(inout ShadowPayload payload, in CloudHitAttributes attr)
         if (T < 1e-3)
             break;
     }
-    payload.transmittance = T;
+    payload.shadowTransmittance = T;
     payload.seed = seed;
     // Leave isVisible=true so the NEE path applies the (possibly small)
     // transmittance as a soft Beer-Lambert shadow. Previously this flipped
@@ -1383,11 +1466,11 @@ void UnbiasedCloudClosestHit(inout RayPayload payload, in CloudHitAttributes att
             // pinned the direct term, so it was removed to keep the
             // estimator lean.)
 
-            payload.isVolume = true;
+            payload.isVolume = 1u;
             payload.volumeColor = li;
             payload.volumeTransmittance = 1.0;  // attenuation absorbed by the pdf
             payload.volumeTEnd = t;
-            payload.volumeScatter = true;
+            payload.volumeScatter = 1u;
             payload.scatterDir = cloudSampleHG(
                 rayDir, g, random_float(seed), random_float(seed));
             payload.seed = seed;
@@ -1402,16 +1485,16 @@ void UnbiasedCloudClosestHit(inout RayPayload payload, in CloudHitAttributes att
     float3 segStart = rayOrg + rayDir * attr.tEnter;
     float T = cloudRatioTrack(vd, segStart, rayDir, attr.tExit - attr.tEnter,
                               seed, T_SS, CLOUD_TRACK_TAIL_DIST);
-    payload.isVolume = true;
+    payload.isVolume = 1u;
     payload.volumeColor = float3(0.0);
     payload.volumeTransmittance = T;
     payload.volumeTEnd = attr.tExit;
-    payload.volumeScatter = false;
+    payload.volumeScatter = 0u;
     payload.seed = seed;
 }
 
 [shader("closesthit")]
-void UnbiasedCloudShadowHit(inout ShadowPayload payload, in CloudHitAttributes attr)
+void UnbiasedCloudShadowHit(inout ShadowRayPayload payload, in CloudHitAttributes attr)
 {
     uint instance_id = InstanceID();
     GeometryInstanceData inst = instanceDescBuffer[instance_id];
@@ -1427,14 +1510,14 @@ void UnbiasedCloudShadowHit(inout ShadowPayload payload, in CloudHitAttributes a
     // no fixed step grid, no early-out threshold.
     float sigmaBar = vd.densityScale * float(SHADOW_SS);
     float invSs = 1.0 / float(SHADOW_SS);
-    float T = payload.transmittance;
+    float T = payload.shadowTransmittance;
     float t = attr.tEnter;
     while (t < attr.tExit) {
         float d = cloudDensity(vd, rayOrg + rayDir * t) * invSs;
         T *= (1.0 - d);
         t += -log(max(1.0 - random_float(seed), 1e-9)) / sigmaBar;
     }
-    payload.transmittance = T;
+    payload.shadowTransmittance = T;
     payload.seed = seed;
 }
 
@@ -1565,10 +1648,10 @@ void VolumeClosestHit(inout RayPayload payload, in VolumeHitAttributes attr)
     // IS the radiance (RayGen composites volume hits as pure emission), and
     // paper §6 AO darkens crevices — that is the paper's complete shading
     // model: pigment × (1 − AO).
-    payload.hit = true;
-    payload.isVolume = true;
+    payload.hit = 1u;
+    payload.isVolume = 1u;
     payload.volumeColor = float3(0.0);
-    payload.volumeScatter = false;
+    payload.volumeScatter = 0u;
     uint instance_id = InstanceID();
     uint vol_id = instanceDescBuffer[instance_id].geometryID;
     VolumeDesc vd = volumeDescBuffer[vol_id];
@@ -1601,8 +1684,8 @@ void VolumeClosestHit(inout RayPayload payload, in VolumeHitAttributes attr)
     // future regression in the intersection shader can never re-introduce the
     // "opaque black box" bug.
     if (tCross < 0.0) {
-        payload.hit = false;
-        payload.isVolume = false;
+        payload.hit = 0u;
+        payload.isVolume = 0u;
         return;
     }
 
@@ -1654,7 +1737,7 @@ void VolumeClosestHit(inout RayPayload payload, in VolumeHitAttributes attr)
 }
 
 [shader("closesthit")]
-void VolumeShadowHit(inout ShadowPayload payload, in VolumeHitAttributes attr)
+void VolumeShadowHit(inout ShadowRayPayload payload, in VolumeHitAttributes attr)
 {
     // Paper §6 shadow handling for the paint surface: a shadow ray that first
     // crosses a cell above the surface threshold is blocked (the paint surface
@@ -1677,7 +1760,7 @@ void VolumeShadowHit(inout ShadowPayload payload, in VolumeHitAttributes attr)
         float3 p = origin + t * dir;
         float d = sampleDensity(vd, p);
         if (d > kDensitySurface) {
-            payload.isVisible = false;
+            payload.shadowVisible = 0u;
             return;
         }
     }
@@ -1793,7 +1876,7 @@ void CapsuleClosestHit(
     inout RayPayload payload,
     in BuiltInTriangleIntersectionAttributes attribs)
 {
-    payload.hit = true;
+    payload.hit = 1u;
     uint instance_id = InstanceID();
     uint prim_id = PrimitiveIndex();
 
@@ -1828,20 +1911,20 @@ void CapsuleClosestHit(
     if (dot(worldRayDirection, normal) >= 0.0)
         normal = -normal;
 
-    payload.isVolume = true;  // emission composite path in RayGen
+    payload.isVolume = 1u;  // emission composite path in RayGen
     payload.volumeColor = debugShade(debugColor, normal);
-    payload.volumeScatter = false;
+    payload.volumeScatter = 0u;
     payload.volumeTransmittance = 0.0;
 }
 
 [shader("closesthit")]
 void CapsuleShadowHit(
-    inout ShadowPayload payload,
+    inout ShadowRayPayload payload,
     in BuiltInTriangleIntersectionAttributes attribs)
 {
     // Bristles cast hard shadows — the brush's shadow on the paint is part
     // of the debugging value. (Debug POINT clouds are the opposite: their
     // SphereShadowHit stays transparent — tens of thousands of point-sphere
     // shadows would speckle everything.)
-    payload.isVisible = false;
+    payload.shadowVisible = 0u;
 }
