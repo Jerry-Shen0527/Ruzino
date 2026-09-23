@@ -27,6 +27,7 @@
 #include "../DescriptorTableManager.h"
 #include "../api.h"
 #include "internal/memory/DeviceMemoryPool.hpp"
+#include "internal/memory/SceneArray.hpp"
 #include "nvrhi/nvrhi.h"
 #include "pxr/base/gf/matrix4f.h"
 #include "pxr/imaging/garch/glApi.h"
@@ -66,7 +67,9 @@ class HD_RUZINO_API Hd_RUZINO_Mesh final : public HdMesh {
     DeviceMemoryPool<GeometryInstanceData>::MemoryHandle instanceBuffer;
     DeviceMemoryPool<nvrhi::rt::InstanceDesc>::MemoryHandle rt_instanceBuffer;
     DeviceMemoryPool<MeshDesc>::MemoryHandle mesh_desc_buffer;
-    DeviceMemoryPool<nvrhi::DrawIndirectArguments>::MemoryHandle draw_indirect;
+    // Dense-output SceneArray handle (see RenderInstanceCollection);
+    // re-assigning releases the previous entry (RAII).
+    SceneArray<nvrhi::DrawIndirectArguments, true>::Handle draw_indirect;
 
     GfMatrix4f transform;
     VtArray<GfVec3i> triangulatedIndices;

@@ -70,12 +70,16 @@ executor.prepare_tree(tree, present)
 
 for _ in range(frames):
     hydra.render()
-hydra.stop()
 
+# Read back BEFORE stop: get_output_texture() after stop() hands back a
+# released buffer, which usually still holds the last frame but reads as
+# garbage whenever the driver has reused the memory (seen as means like
+# -9.8e+32 in sweeps under GPU memory pressure).
 if out_npy:
     import numpy as np
     img = np.array(hydra.get_output_texture(), dtype=np.float32).reshape(64, 64, 4)
     np.save(out_npy, img)
+hydra.stop()
 print('RENDER_DONE')
 """
 

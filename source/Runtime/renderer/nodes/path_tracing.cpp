@@ -453,13 +453,17 @@ void fetch_)" + material.second->GetMaterialName() +
             }
         }
 
-        // Use pool count so shader iterates all allocated light entries
-        instance_collection->light_pool.compress();
-        uint32_t lightCount =
-            static_cast<uint32_t>(instance_collection->light_pool.count());
+        // SceneArray light table: flush pending CPU edits to the GPU
+        // mirrors, then bind. The shader iterates lightIndices[i]
+        // (hole-free dense list) and indexes lightBuffer by stable slot.
+        // flush() returns the count consistent with the uploaded mirrors,
+        // so a concurrent sync-worker add/remove can't desync them.
+        uint32_t lightCount = instance_collection->scene_lights.flush();
 
         program_vars["lightBuffer"] =
-            instance_collection->light_pool.get_device_buffer();
+            instance_collection->scene_lights.get_slots_buffer();
+        program_vars["lightIndices"] =
+            instance_collection->scene_lights.get_indices_buffer();
         // hosekStateBuffer: per-Hosek-dome cooked sky state. Declared
         // unconditionally in pt_sample_lights.slang (like lightBuffer), so it
         // must always be bound; the pool always has a dummy zero row at index
