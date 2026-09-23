@@ -663,10 +663,9 @@ void ClosestHit(
     // Single-sided (USD spec): RectLight emits along -Z in local space, so
     // light.dirW is the world-space emission direction. A ray can only see the
     // emission when it arrives from the emitting side, i.e. its direction is
-    // opposite to dirW (dot(WorldRayDirection(), dirW) < 0). Hits from the back
-    // face see no emission (black) -- the quad is opaque geometry that the ray
-    // still stops at (it just carries no Le), so the path terminates there
-    // without contributing light.
+    // opposite to dirW (dot(WorldRayDirection(), dirW) < 0). Back-face hits
+    // are discarded by LightBackfaceAnyHit (see-through), so this branch only
+    // serves degenerate edge-on rays.
     GeometryInstanceData geomInstance = instanceDescBuffer[instance_id];
     if (geomInstance.getType() == GeometryType::Light) {
         LightData light = lightBuffer[geomInstance.geometryID];
@@ -685,6 +684,28 @@ void ClosestHit(
     // bounce's surface), which ClosestHit cannot access.
     payload.hitEmissiveTriIdx = getEmissiveTriangleIndex(
         instance_id, prim_id, ptConstants.emissiveTriangleCount);
+}
+
+// Back-face culling for light-geometry proxy quads (RectLight / DiscLight).
+// The quad is single-sided per the USD spec: front-face hits fall through to
+// ClosestHit and return Le; back-face hits are discarded here so the ray
+// continues to whatever is behind the light. Without this the quad acts as a
+// black opaque slab when seen from its back side.
+[shader("anyhit")]
+void LightBackfaceAnyHit(
+    inout RayPayload payload,
+    in BuiltInTriangleIntersectionAttributes attribs)
+{
+    uint instance_id = InstanceID();
+    GeometryInstanceData geomInstance = instanceDescBuffer[instance_id];
+    if (geomInstance.getType() == GeometryType::Light) {
+        LightData light = lightBuffer[geomInstance.geometryID];
+        // Same facing test as ClosestHit's emission branch, inverted: a ray
+        // traveling along dirW is looking at the quad's back.
+        if (dot(WorldRayDirection(), light.dirW) > 0.0) {
+            IgnoreHit();
+        }
+    }
 }
 
 // Debug-draw shading (sim debug point clouds: particles / voxels / bristles
@@ -959,6 +980,22 @@ void ShadowHit(
     }
     // Surface blocks the shadow ray (random draw fell in the opaque fraction).
     payload.isVisible = false;
+}
+
+// Shadow rays pass through light-geometry proxy quads entirely (both faces):
+// area lights are emitters, not occluders, and ShadowHit would otherwise
+// treat the quad as opaque (materialID == -1). Discarding the candidate here
+// lets the traversal continue to real occluders behind the light.
+[shader("anyhit")]
+void LightShadowAnyHit(
+    inout ShadowRayPayload payload,
+    in BuiltInTriangleIntersectionAttributes attribs)
+{
+    uint instance_id = InstanceID();
+    GeometryInstanceData geomInstance = instanceDescBuffer[instance_id];
+    if (geomInstance.getType() == GeometryType::Light) {
+        IgnoreHit();
+    }
 }
 
 [shader("closesthit")]

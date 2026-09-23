@@ -559,14 +559,16 @@ void fetch_)" + material.second->GetMaterialName() +
         context.announce_raygeneration("RayGen");
         context.announce_hitgroup(
             "ClosestHit",
+            "LightBackfaceAnyHit",
             "",
-            "",
-            0);  // Primary ray hit group at index 0 (triangles)
+            0);  // Primary ray hit group at index 0 (triangles); the anyhit
+                 // culls back-face hits of light proxy quads (see-through)
         context.announce_hitgroup(
             "ShadowHit",
+            "LightShadowAnyHit",
             "",
-            "",
-            1);  // Shadow ray hit group at index 1 (triangles)
+            1);  // Shadow ray hit group at index 1 (triangles); the anyhit
+                 // lets shadow rays pass through light proxy quads entirely
         context.announce_hitgroup(
             "SphereClosestHit",
             "",
