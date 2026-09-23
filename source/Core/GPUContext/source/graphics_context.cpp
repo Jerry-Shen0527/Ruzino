@@ -116,6 +116,13 @@ void GraphicsContext::draw_indirect(
     nvrhi::IBuffer* indirect_buffer,
     uint32_t draw_count)
 {
+    // Same guard as draw_indexed_indirect: a zero-count draw must skip
+    // setGraphicsState entirely, or a null indirect_buffer (empty args
+    // table) reaches nvrhi's drawIndirect, which dereferences it even
+    // for count 0 (assert in Debug, null-deref in Release).
+    if (draw_count == 0) {
+        return;
+    }
     nvrhi::GraphicsState graphics_state;
     graphics_state.vertexBuffers = state.vertexBuffers;
     graphics_state.indexBuffer = state.indexBuffer;
