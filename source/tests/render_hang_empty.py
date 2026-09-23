@@ -114,15 +114,23 @@ def main():
     # TdrDelay=60 elapses, so the driver never has to reset.
     watchdog_armed = threading.Event()
     hang_frame = [-1]
+    armed_at = [0.0]
 
     def watchdog():
         while True:
             if watchdog_armed.is_set():
-                frame = hang_frame[0]
-                print(f"[hang-empty] HANG: render() call {frame} did not "
-                      f"return within 25s -- killing process before TDR",
-                      flush=True)
-                os._exit(3)
+                # Frame 0 legitimately spends ~8s compiling the PT shader
+                # program, so only fire once the render has actually
+                # exceeded the budget (the old version killed as soon as
+                # it observed the flag, hanging any render > 0.5s).
+                if armed_at[0] and time.perf_counter() - armed_at[0] > 25.0:
+                    frame = hang_frame[0]
+                    print(f"[hang-empty] HANG: render() call {frame} did not "
+                          f"return within 25s -- killing process before TDR",
+                          flush=True)
+                    os._exit(3)
+            else:
+                armed_at[0] = 0.0
             time.sleep(0.5)
 
     t = threading.Thread(target=watchdog, daemon=True)
@@ -134,6 +142,7 @@ def main():
     for i in range(frames):
         hang_frame[0] = i
         watchdog_armed.set()
+        armed_at[0] = time.perf_counter()
         f0 = time.perf_counter()
         hydra.render(0.0)
         dt = time.perf_counter() - f0
