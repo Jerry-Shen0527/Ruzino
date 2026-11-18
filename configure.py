@@ -204,6 +204,9 @@ def _find_system_python():
     Returns the directory of a complete Python installation, or None.
     """
     candidates = []
+    if is_windows() and sys.version_info[:2] == (3, 13):
+        # Prefer the Python selected by the caller (including setup-python in CI).
+        candidates.append(sys.prefix)
 
     # 1. Windows py launcher — most reliable, skips venvs.
     # 3.13 first: the project standardizes on 3.13 for both the app pyd
@@ -961,6 +964,8 @@ def run_cmake_build(src_dir, install_prefix, build_type, extra_args=None, dry_ru
         check=True,
     )
     print(f"  Installed: {dep_name}")
+    if os.environ.get("RUZINO_SDK_CLEAN_INTERMEDIATES") == "1":
+        _rmtree_readonly(build_dir)
 
 
 # ============================================================
@@ -1158,6 +1163,8 @@ def build_boost(install_prefix, src_base, build_type, dry_run=False):
         ]
         print(f"  Building Boost (variant={variant}, toolset=msvc)...")
         subprocess.run(b2_args, cwd=src_dir_win, env=env, check=True)
+        if os.environ.get("RUZINO_SDK_CLEAN_INTERMEDIATES") == "1":
+            _rmtree_readonly(build_dir)
     else:
         subprocess.run(
             ["./bootstrap.sh", f"--prefix={install_prefix}"],
@@ -1333,6 +1340,9 @@ def build_openvdb(install_prefix, src_base, build_type, cuda=False, dry_run=Fals
             "-DNANOVDB_USE_CUDA=ON",
             "-DCMAKE_CUDA_FLAGS=-allow-unsupported-compiler",
         ])
+        cuda_architectures = os.environ.get("CUDAARCHS")
+        if cuda_architectures:
+            extra_args.append(f"-DCMAKE_CUDA_ARCHITECTURES={cuda_architectures}")
 
     run_cmake_build(
         src_dir, install_prefix, build_type,

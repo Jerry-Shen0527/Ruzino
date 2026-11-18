@@ -2,343 +2,203 @@ name: Build
 
 on:
   push:
-    branches: [ main, dev ]
+    branches: [main, dev]
   pull_request:
-    branches: [ main, dev ]
+    branches: [main, dev]
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: Build the SDK even if a matching release exists
+        type: boolean
+        default: false
+      gpu_tests:
+        description: Also run Ruzino GPU tests on a self-hosted Windows runner
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
 
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  verify-credentials:
-    name: Verify GitHub Credentials
-    runs-on: [self-hosted, windows]
-    steps:
-      - name: Check GH_PAT token
-        shell: powershell
-        run: |
-          try {
-            $token = "${{ secrets.GH_PAT }}"
-            if ([string]::IsNullOrEmpty($token)) {
-              Write-Output "ERROR: GH_PAT secret is not set"
-              exit 1
-            }
-
-            Write-Output "✓ GH_PAT token is configured"
-
-            # Test token validity and permissions using gh CLI
-            $env:GH_TOKEN = $token
-
-            try {
-              # Try to get current user info - this tests token validity
-              $output = & gh auth status --show-token 2>&1
-              if ($LASTEXITCODE -eq 0) {
-                Write-Output "✓ Token authentication successful"
-                Write-Output $output
-              } else {
-                Write-Output "⚠ Token validation returned: $output"
-              }
-            } catch {
-              Write-Output "⚠ Could not validate token with gh CLI, but it may still be valid"
-            }
-
-            # Try to get repo info as additional test
-            try {
-              & gh api user --jq '.login' 2>$null
-              if ($LASTEXITCODE -eq 0) {
-                Write-Output "✓ Token has valid permissions"
-              }
-            } catch {
-              Write-Output "⚠ Could not verify API permissions"
-            }
-
-            Write-Output "✓ Credentials check passed"
-          } catch {
-            Write-Output "ERROR: Failed to verify credentials - $_"
-            exit 1
-          }
-
-  check-sdk:
-    name: Check if SDK needs rebuild
-    needs: verify-credentials
-    runs-on: [self-hosted, windows]
+  sdk:
+    name: Windows CUDA Release SDK
+    runs-on: windows-2022
+    timeout-minutes: 360
+    permissions:
+      contents: write
     outputs:
-      needs-rebuild: ${{ steps.check.outputs.needs-rebuild }}
-      configure-hash: ${{ steps.check.outputs.configure-hash }}
+      sdk-tag: ${{ steps.sdk-key.outputs.tag }}
+      built: ${{ steps.sdk-key.outputs.build }}
+    env:
+      MSVC_VERSION: '14.44'
+      PYTHON_VERSION: '3.13'
+      CUDA_VERSION: '12.9.1'
+      CUDAARCHS: '75;86;89'
+      SDK_VARIANT: Release
+      RUZINO_SDK_CLEAN_INTERMEDIATES: '1'
+      CMAKE_BUILD_PARALLEL_LEVEL: '4'
+      PYTHONUNBUFFERED: '1'
+      PYTHONUTF8: '1'
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          persist-credentials: false
 
-      - name: Check SDK status
-        id: check
-        shell: powershell
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          architecture: x64
+
+      - name: Select MSVC v143 x64
+        shell: pwsh
         run: |
-          $ErrorActionPreference = "Continue"
-          $WarningPreference = "SilentlyContinue"
-          $VerbosePreference = "SilentlyContinue"
-
-          $configureHash = (Get-FileHash configure.py).Hash
-          Write-Output "configure-hash=$configureHash" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-
-          $needsRebuild = $false
-
-          # First check if configure.py changed
-          $sdkDir = "SDK"
-          $hashFile = Join-Path $sdkDir ".configure_hash"
-
-          if (Test-Path -Path $hashFile) {
-            $storedHash = (Get-Content $hashFile -Raw).Trim()
-            if ($storedHash -ne $configureHash) {
-              Write-Output "configure.py changed, SDK rebuild required"
-              $needsRebuild = $true
-            } else {
-              Write-Output "configure.py unchanged, checking if SDK exists in remote Release..."
-
-              # Check if SDK exists in GitHub Release
-              $tagName = "sdk-$configureHash"
-              $releaseExists = $false
-
-              # Try to view the release
-              $output = & gh release view $tagName --repo ${{ github.repository }} 2>$null
-              $exitCode = $?
-              if ($exitCode) {
-                Write-Output "Found release with tag: $tagName"
-                $releaseExists = $true
-              } else {
-                Write-Output "Release not found with tag: $tagName"
-              }
-
-              if ($releaseExists) {
-                Write-Output "SDK exists in remote Release, no rebuild needed"
-                $needsRebuild = $false
-              } else {
-                Write-Output "SDK not found in remote Release, will rebuild and upload"
-                $needsRebuild = $true
-              }
-            }
-          } else {
-            Write-Output "No hash file found, will check if SDK exists in remote Release..."
-
-            # Check if SDK exists in GitHub Release with current hash
-            $tagName = "sdk-$configureHash"
-            $releaseExists = $false
-
-            # Try to view the release
-            $output = & gh release view $tagName --repo ${{ github.repository }} 2>$null
-            $exitCode = $?
-            if ($exitCode) {
-              Write-Output "Found release with tag: $tagName"
-              $releaseExists = $true
-            } else {
-              Write-Output "Release not found with tag: $tagName"
-            }
-
-            if ($releaseExists) {
-              Write-Output "SDK exists in remote Release, will download instead of rebuild"
-              $needsRebuild = $false
-            } else {
-              Write-Output "SDK not found in remote Release, will rebuild and upload"
-              $needsRebuild = $true
-            }
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -version '[17.0,18.0)' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'Visual Studio 2022 with x64 C++ tools was not found' }
+          $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvarsall.bat'
+          $setup = Join-Path $env:RUNNER_TEMP 'ruzino-v143.cmd'
+          @(
+            '@echo off'
+            ('call "{0}" x64 -vcvars_ver={1} >nul || exit /b 1' -f $vcvars, $env:MSVC_VERSION)
+            'set'
+          ) | Set-Content -LiteralPath $setup -Encoding ascii
+          $variables = & cmd.exe /d /c $setup
+          if ($LASTEXITCODE -ne 0) { throw 'Could not initialize v143' }
+          $developerEnv = @{}
+          foreach ($line in $variables) {
+            if ($line -match '^([^=]+)=(.*)$') { $developerEnv[$Matches[1]] = $Matches[2] }
           }
-
-          if ($needsRebuild) {
-            Write-Output "needs-rebuild=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-            Write-Output "SDK rebuild needed"
-          } else {
-            Write-Output "needs-rebuild=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-            Write-Output "SDK is up to date, will restore from Release"
+          if ($developerEnv.VCToolsVersion -notlike "$env:MSVC_VERSION.*") {
+            throw "Could not select MSVC $env:MSVC_VERSION x64"
           }
+          foreach ($name in 'INCLUDE', 'LIB', 'LIBPATH', 'VCToolsVersion', 'WindowsSDKVersion', 'VCINSTALLDIR') {
+            "$name=$($developerEnv[$name])" >> $env:GITHUB_ENV
+          }
+          "V143_PATH=$($developerEnv.Path)" >> $env:GITHUB_ENV
 
-          exit 0
+      - name: Check for an SDK built with these inputs
+        id: sdk-key
+        shell: pwsh
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
-
-  build-sdk:
-    name: Build SDK
-    needs: [verify-credentials, check-sdk]
-    if: needs.check-sdk.outputs.needs-rebuild == 'true'
-    outputs:
-      configure-hash: ${{ needs.check-sdk.outputs.configure-hash }}
-    runs-on: [self-hosted, windows]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 1
-
-      - name: Setup MSVC Build Tools
-        shell: cmd
+          GH_TOKEN: ${{ github.token }}
+          FORCE_SDK_BUILD: ${{ inputs.force_rebuild || false }}
         run: |
-          REM Try to find and initialize Visual Studio environment
-          if exist "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat" (
-            call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
-          ) else if exist "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat" (
-            call "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat"
-          ) else if exist "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" (
-            call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-          ) else (
-            echo Visual Studio not found at expected locations
-            exit /b 1
-          )
+          $key = python .github/scripts/windows-sdk-key.py
+          if ($LASTEXITCODE -ne 0 -or $key -cnotmatch '^[0-9a-f]{64}$') { throw 'Could not compute SDK key' }
+          $tag = "sdk-win-x64-release-cuda-$key"
+          "tag=$tag" >> $env:GITHUB_OUTPUT
 
-      - name: Enable Windows long path support
-        shell: powershell
+          $assets = & gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[] | select(.name == "SDK.zip" and .size > 0) | .name' 2>&1
+          $lookupExit = $LASTEXITCODE
+          if ($lookupExit -ne 0 -and "$assets" -notmatch 'release not found|HTTP 404') { throw "$assets" }
+          $build = $env:FORCE_SDK_BUILD -eq 'true' -or $lookupExit -ne 0 -or $assets -notcontains 'SDK.zip'
+          "build=$($build.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "SDK release: $tag (rebuild: $build)"
+
+      - name: Install CUDA Toolkit components
+        if: steps.sdk-key.outputs.build == 'true'
+        shell: pwsh
+        run: ./.github/scripts/install-windows-cuda.ps1 -Version $env:CUDA_VERSION
+
+      - name: Initialize NVAPI headers
+        if: steps.sdk-key.outputs.build == 'true'
+        shell: pwsh
         run: |
-          try {
-            # Enable Git long path support
-            & git config --global core.longpaths true
-            Write-Output "Git long path support enabled"
+          git -c core.longpaths=true submodule update --init -- external/nvapi
+          if ($LASTEXITCODE -ne 0) { throw 'Could not check out NVAPI' }
 
-            # Enable Windows long path support in registry (if running with admin)
-            # This is commented out as it requires admin, but Git long path should be sufficient
-            # New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -Force
-          } catch {
-            Write-Output "Warning: Could not enable long path support: $_"
-          }
-
-      - name: Install Python dependencies
-        shell: powershell
+      - name: Build and package Release SDK
+        if: steps.sdk-key.outputs.build == 'true'
+        shell: pwsh
         run: |
-          Write-Output "Installing Python dependencies..."
-          python -m pip install --upgrade pip
+          $env:Path = "$env:pythonLocation;$env:pythonLocation\Scripts;$env:CUDA_PATH\bin;$env:V143_PATH"
           python -m pip install requests tqdm
-          Write-Output "✓ Dependencies installed"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not install SDK build requirements' }
 
-      - name: Install project requirements
-        shell: powershell
-        run: |
-          Write-Output "Installing project requirements from requirements.txt..."
-          python -m pip install -r requirements.txt
-          Write-Output "✓ Project requirements installed"
+          $probe = Join-Path $env:RUNNER_TEMP 'cuda-probe.cu'
+          '#include <cuda_runtime.h>', '__global__ void probe() {}', 'int main() { probe<<<1, 1>>>(); }' |
+            Set-Content -LiteralPath $probe -Encoding ascii
+          nvcc -std=c++17 -arch=sm_86 $probe -o "$env:RUNNER_TEMP\cuda-probe.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'nvcc could not compile and link with the selected v143 compiler' }
 
-      - name: Build SDK - Debug
-        shell: cmd
-        run: |
-          REM Initialize Visual Studio environment
-          if exist "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat" (
-            call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
-          ) else if exist "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat" (
-            call "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat"
-          ) else if exist "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" (
-            call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-          )
+          function Write-FreeDisk {
+            $drive = Get-PSDrive -Name (Get-Item -LiteralPath .).PSDrive.Name
+            Write-Host ('Workspace disk free: {0:N2} GiB' -f ($drive.Free / 1GB))
+          }
 
-          REM Enable Git long path support
-          git config --global core.longpaths true
-
-          REM Build SDK - All libraries for Debug variant
-          echo Building SDK with all libraries for Debug variant
-          python configure.py --all --build_variant Debug
-          if %ERRORLEVEL% neq 0 (
-            echo Build failed with error code %ERRORLEVEL%
-            exit /b %ERRORLEVEL%
-          )
-
-      - name: Build SDK - Release
-        shell: cmd
-        run: |
-          REM Initialize Visual Studio environment
-          if exist "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat" (
-            call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
-          ) else if exist "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat" (
-            call "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat"
-          ) else if exist "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" (
-            call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-          )
-
-          REM Enable Git long path support
-          git config --global core.longpaths true
-
-          REM Build SDK - All libraries for Release variant
-          echo Building SDK with all libraries for Release variant
-          python configure.py --all --build_variant Release
-          if %ERRORLEVEL% neq 0 (
-            echo Build failed with error code %ERRORLEVEL%
-            exit /b %ERRORLEVEL%
-          )
-
-      - name: Verify SDK build output
-        shell: powershell
-        run: |
+          Write-FreeDisk
+          $timer = [Diagnostics.Stopwatch]::StartNew()
           try {
-            # Check if SDK directory exists and has some content
-            $sdkExists = Test-Path -Path "SDK"
-            $sdkFiles = 0
-            if ($sdkExists) {
-              $sdkFiles = (Get-ChildItem -Path "SDK" -Recurse -ErrorAction SilentlyContinue | Measure-Object).Count
-            }
-
-            Write-Output "SDK directory exists: $sdkExists"
-            Write-Output "SDK files count: $sdkFiles"
-
-            if (-not $sdkExists -or $sdkFiles -eq 0) {
-              Write-Output "ERROR: SDK directory is empty or not found!"
-              exit 1
-            }
-          } catch {
-            Write-Error "Error verifying SDK: $_"
-            exit 1
+            python configure.py --all --build_variant $env:SDK_VARIANT
+            if ($LASTEXITCODE -ne 0) { throw 'SDK compilation failed' }
+            Write-FreeDisk
+            python configure.py --pack
+            if ($LASTEXITCODE -ne 0) { throw 'SDK packaging failed' }
+          } finally {
+            Write-FreeDisk
+            "SDK build and packaging elapsed: $($timer.Elapsed)" >> $env:GITHUB_STEP_SUMMARY
           }
 
-      - name: Pack SDK
-        shell: powershell
-        run: |
-          Write-Output "Packing SDK..."
-          python configure.py --pack
+          $checkZip = @'
+          import zipfile
+          with zipfile.ZipFile("SDK/SDK.zip") as archive:
+              names = set(archive.namelist())
+              required = {
+                  "OpenUSD/Release/include/pxr/pxr.h",
+                  "OpenUSD/Release/include/openvdb/openvdb.h",
+                  "OpenUSD/Release/include/nanovdb/cuda/DeviceBuffer.h",
+                  "python/python313.dll",
+                  "slang/include/nvHLSLExtns.h",
+              }
+              missing = required - names
+              if not any(name in names for name in (
+                  "OpenUSD/Release/bin/usd_ms.dll", "OpenUSD/Release/lib/usd_ms.dll"
+              )):
+                  missing.add("usd_ms.dll")
+              if missing:
+                  raise SystemExit(f"SDK is missing: {sorted(missing)}")
+          '@
+          $checkZip | python -
+          if ($LASTEXITCODE -ne 0) { throw 'SDK archive is incomplete' }
 
-          if (Test-Path -Path "SDK/SDK.zip") {
-            $size = (Get-Item "SDK/SDK.zip").Length / 1GB
-            Write-Output "SDK.zip packed successfully - Size: $([Math]::Round($size, 2)) GB"
-          } else {
-            Write-Output "ERROR: SDK.zip not created!"
-            exit 1
-          }
-
-      - name: Store configure hash
-        shell: powershell
-        run: |
-          try {
-            $configureHash = (Get-FileHash configure.py).Hash
-            $hashFile = "SDK/.configure_hash"
-            if (-not (Test-Path -Path "SDK")) {
-              New-Item -ItemType Directory -Path "SDK" -Force | Out-Null
-            }
-            $configureHash | Out-File -FilePath $hashFile -Encoding UTF8 -NoNewline
-            Write-Output "Hash saved: $configureHash"
-          } catch {
-            Write-Error "Error storing hash: $_"
-            exit 1
-          }
-
-      - name: Upload SDK for workflow
+      - name: Upload SDK for this workflow
+        if: steps.sdk-key.outputs.build == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: sdk-build
           path: SDK/SDK.zip
+          if-no-files-found: error
+          compression-level: 0
           retention-days: 7
 
-      - name: Upload SDK to GitHub Release
-        if: success()
-        uses: softprops/action-gh-release@v1
-        with:
-          files: SDK/SDK.zip
-          tag_name: sdk-${{ needs.check-sdk.outputs.configure-hash }}
-          body: "SDK build for configure.py hash: ${{ needs.check-sdk.outputs.configure-hash }}"
-          draft: false
-          prerelease: true
-          fail_on_unmatched_files: false
-          token: ${{ secrets.GH_PAT }}
+      - name: Publish SDK to GitHub Releases
+        if: steps.sdk-key.outputs.build == 'true' && github.event_name != 'pull_request'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SDK_TAG: ${{ steps.sdk-key.outputs.tag }}
+        run: |
+          $pythonVersion = python -c "import sys; print(sys.version.split()[0])"
+          $notes = "Windows x64 Release | MSVC $env:VCToolsVersion | Python $pythonVersion | CUDA $env:CUDA_VERSION | SM $env:CUDAARCHS"
+          $existing = & gh release view $env:SDK_TAG --repo $env:GITHUB_REPOSITORY --json tagName 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:SDK_TAG SDK/SDK.zip --clobber --repo $env:GITHUB_REPOSITORY
+          } elseif ("$existing" -match 'release not found|HTTP 404') {
+            gh release create $env:SDK_TAG SDK/SDK.zip --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --prerelease --title $env:SDK_TAG --notes $notes
+          } else {
+            throw "$existing"
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Could not publish SDK release' }
 
   build-without-cuda:
     name: Build Project (No CUDA)
-    needs: [check-sdk, build-sdk]
-    if: always()
-    runs-on: [self-hosted, windows]
+    needs: sdk
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: windows-2022
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -346,38 +206,33 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Download SDK from workflow artifact (if rebuilt)
-        if: needs.check-sdk.outputs.needs-rebuild == 'true'
+      - name: Download SDK from this workflow
+        if: needs.sdk.outputs.built == 'true'
         uses: actions/download-artifact@v4
         with:
           name: sdk-build
           path: SDK/
 
-      - name: Download SDK from GitHub Release (if not rebuilt)
-        if: needs.check-sdk.outputs.needs-rebuild == 'false'
-        shell: powershell
+      - name: Download SDK from GitHub Release
+        if: needs.sdk.outputs.built == 'false'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SDK_TAG: ${{ needs.sdk.outputs.sdk-tag }}
         run: |
-          try {
-            $configureHash = "${{ needs.check-sdk.outputs.configure-hash }}"
-            $tagName = "sdk-$configureHash"
-            $sdkZip = "SDK/SDK.zip"
+          New-Item -ItemType Directory -Path SDK -Force | Out-Null
+          gh release download $env:SDK_TAG --repo $env:GITHUB_REPOSITORY -p SDK.zip -O SDK/SDK.zip --clobber
+          if ($LASTEXITCODE -ne 0) { throw "Could not download SDK from $env:SDK_TAG" }
 
-            Write-Output "Attempting to download SDK from release with tag: $tagName"
-            New-Item -ItemType Directory -Path "SDK" -Force -ErrorAction SilentlyContinue | Out-Null
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          architecture: x64
 
-            # Use GH CLI with personal token
-            $env:GH_TOKEN = "${{ secrets.GH_PAT }}"
-            & gh release download $tagName --repo ${{ github.repository }} -p "SDK.zip" -O $sdkZip
-
-            if ($LASTEXITCODE -eq 0 -and (Test-Path -Path $sdkZip)) {
-              $size = (Get-Item $sdkZip).Length / 1GB
-              Write-Output "SDK downloaded successfully - Size: $([Math]::Round($size, 2)) GB"
-            } else {
-              Write-Output "WARNING: Failed to download SDK from Release, will use existing binaries if available"
-            }
-          } catch {
-            Write-Output "WARNING: Download error - $_"
-          }
+      - name: Install Python dependencies
+        run: |
+          python -m pip install requests tqdm
+          if ($LASTEXITCODE -ne 0) { throw 'Could not install Python dependencies' }
 
       - name: Extract SDK and setup structure for builds
         shell: cmd
@@ -460,8 +315,8 @@ jobs:
 
   build-and-test-with-cuda:
     name: Build & Test Project (With CUDA)
-    needs: [check-sdk, build-sdk]
-    if: always()
+    needs: sdk
+    if: github.event_name == 'workflow_dispatch' && inputs.gpu_tests
     runs-on: [self-hosted, windows]
     steps:
       - name: Checkout code
@@ -470,38 +325,29 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Download SDK from workflow artifact (if rebuilt)
-        if: needs.check-sdk.outputs.needs-rebuild == 'true'
+      - name: Download SDK from this workflow
+        if: needs.sdk.outputs.built == 'true'
         uses: actions/download-artifact@v4
         with:
           name: sdk-build
           path: SDK/
 
-      - name: Download SDK from GitHub Release (if not rebuilt)
-        if: needs.check-sdk.outputs.needs-rebuild == 'false'
+      - name: Download SDK from GitHub Release
+        if: needs.sdk.outputs.built == 'false'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SDK_TAG: ${{ needs.sdk.outputs.sdk-tag }}
+        run: |
+          New-Item -ItemType Directory -Path SDK -Force | Out-Null
+          gh release download $env:SDK_TAG --repo $env:GITHUB_REPOSITORY -p SDK.zip -O SDK/SDK.zip --clobber
+          if ($LASTEXITCODE -ne 0) { throw "Could not download SDK from $env:SDK_TAG" }
+
+      - name: Install SDK script dependencies
         shell: powershell
         run: |
-          try {
-            $configureHash = "${{ needs.check-sdk.outputs.configure-hash }}"
-            $tagName = "sdk-$configureHash"
-            $sdkZip = "SDK/SDK.zip"
-
-            Write-Output "Attempting to download SDK from release with tag: $tagName"
-            New-Item -ItemType Directory -Path "SDK" -Force -ErrorAction SilentlyContinue | Out-Null
-
-            # Use GH CLI with personal token
-            $env:GH_TOKEN = "${{ secrets.GH_PAT }}"
-            & gh release download $tagName --repo ${{ github.repository }} -p "SDK.zip" -O $sdkZip
-
-            if ($LASTEXITCODE -eq 0 -and (Test-Path -Path $sdkZip)) {
-              $size = (Get-Item $sdkZip).Length / 1GB
-              Write-Output "SDK downloaded successfully - Size: $([Math]::Round($size, 2)) GB"
-            } else {
-              Write-Output "WARNING: Failed to download SDK from Release, will use existing binaries if available"
-            }
-          } catch {
-            Write-Output "WARNING: Download error - $_"
-          }
+          python -m pip install requests tqdm
+          if ($LASTEXITCODE -ne 0) { throw 'Could not install Python dependencies' }
 
       - name: Extract SDK and setup structure for Release build
         shell: cmd
@@ -659,52 +505,5 @@ jobs:
           } else {
             Write-Output "test-status=failed" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
             Write-Output "✗ Some tests failed"
-            exit 1
-          }
-
-  summary:
-    name: Build & Test Summary
-    needs: [build-without-cuda, build-and-test-with-cuda]
-    if: always()
-    runs-on: [self-hosted, windows]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Print summary
-        shell: powershell
-        run: |
-          try {
-            Write-Output ""
-            Write-Output "======================================"
-            Write-Output "       BUILD & TEST SUMMARY"
-            Write-Output "======================================"
-            Write-Output "No CUDA build: ${{ needs.build-without-cuda.result }}"
-            Write-Output "CUDA build & test: ${{ needs.build-and-test-with-cuda.result }}"
-            Write-Output "======================================"
-            Write-Output ""
-
-            $buildSuccess = ("${{ needs.build-without-cuda.result }}" -eq "success" -and "${{ needs.build-and-test-with-cuda.result }}" -eq "success")
-
-            if ($buildSuccess) {
-              Write-Output "✓ Both builds and tests completed successfully"
-            } else {
-              Write-Output "✗ Some builds or tests failed"
-            }
-
-            Write-Output "======================================"
-            Write-Output ""
-
-            if ($buildSuccess) {
-              Write-Output "✓ OVERALL: SUCCESS - All builds and tests passed!"
-              exit 0
-            } else {
-              Write-Output "✗ OVERALL: FAILED"
-              exit 1
-            }
-          } catch {
-            Write-Error "Error in summary: $_"
             exit 1
           }
