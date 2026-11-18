@@ -134,10 +134,12 @@ jobs:
           Write-FreeDisk
           $timer = [Diagnostics.Stopwatch]::StartNew()
           try {
-            python configure.py --all --build_variant $env:SDK_VARIANT
+            Write-Host 'Compiling SDK dependencies'
+            python .github/scripts/run-sdk-command.py "$env:RUNNER_TEMP/sdk-logs/compile.log" python configure.py --all --build_variant $env:SDK_VARIANT
             if ($LASTEXITCODE -ne 0) { throw 'SDK compilation failed' }
             Write-FreeDisk
-            python configure.py --pack
+            Write-Host 'Packing SDK.zip'
+            python .github/scripts/run-sdk-command.py "$env:RUNNER_TEMP/sdk-logs/pack.log" python configure.py --pack
             if ($LASTEXITCODE -ne 0) { throw 'SDK packaging failed' }
           } finally {
             Write-FreeDisk
@@ -165,6 +167,15 @@ jobs:
           '@
           $checkZip | python -
           if ($LASTEXITCODE -ne 0) { throw 'SDK archive is incomplete' }
+
+      - name: Upload detailed SDK logs
+        if: always() && steps.sdk-key.outputs.build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-logs
+          path: ${{ runner.temp }}/sdk-logs/*.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload SDK for this workflow
         if: steps.sdk-key.outputs.build == 'true'
