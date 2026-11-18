@@ -19,6 +19,9 @@ on:
 permissions:
   contents: read
 
+env:
+  PYTHONUTF8: '1'
+
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: false
@@ -42,7 +45,6 @@ jobs:
       RUZINO_SDK_CLEAN_INTERMEDIATES: '1'
       CMAKE_BUILD_PARALLEL_LEVEL: '4'
       PYTHONUNBUFFERED: '1'
-      PYTHONUTF8: '1'
     steps:
       - uses: actions/checkout@v4
         with:
