@@ -98,6 +98,7 @@ jobs:
           $build = $env:FORCE_SDK_BUILD -eq 'true' -or $lookupExit -ne 0 -or $assets -notcontains 'SDK.zip'
           "build=$($build.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "SDK release: $tag (rebuild: $build)"
+          exit 0
 
       - name: Install CUDA Toolkit components
         if: steps.sdk-key.outputs.build == 'true'
