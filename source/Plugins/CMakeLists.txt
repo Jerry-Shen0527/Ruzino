@@ -5,7 +5,6 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/TerrainGen)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/TreeGen)
 
 # add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/light_field)
-# add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/optimization)
 
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/scripts/
     DESTINATION bin/scripts

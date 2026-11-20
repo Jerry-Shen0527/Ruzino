@@ -7,9 +7,65 @@ import platform
 import stat
 import subprocess
 import tarfile
+import tempfile
 import requests
 from tqdm import tqdm
 import argparse
+import importlib.util
+from pathlib import Path, PurePosixPath
+
+
+# Both Ruzino MaterialX tests read this document. MaterialX libraries/ are
+# runtime shader definitions and are packaged separately from resources/.
+MATERIALX_TEST_MATERIAL = "Materials/Examples/StandardSurface/standard_surface_marble_solid.mtlx"
+NVAPI_SHADER_HEADERS = ("nvHLSLExtns.h", "nvHLSLExtnsInternal.h", "nvShaderExtnEnums.h")
+
+
+def keep_materialx_resource(relative_path):
+    return relative_path == MATERIALX_TEST_MATERIAL
+
+
+def is_regenerable_python_cache(path):
+    if path.parent.name != "__pycache__" or path.suffix != ".pyc":
+        return False
+    try:
+        return Path(importlib.util.source_from_cache(str(path))).is_file()
+    except ValueError:
+        return False
+
+
+def ignore_python_cache(directory, names):
+    return [name for name in names if is_regenerable_python_cache(Path(directory, name))]
+
+
+def keep_windows_dxc_file(relative_path):
+    parts = PurePosixPath(relative_path).parts
+    if parts[0] in ("bin", "lib"):
+        return len(parts) >= 2 and parts[1] == "x64"
+    return True
+
+
+def prebuilt_sdk_variant(build_type):
+    return "Debug" if build_type == "Debug" else "Release"
+
+
+def mesh_sdk_manifest(build_type):
+    prefix = f"Geometry/{prebuilt_sdk_variant(build_type)}"
+    return (
+        f"{prefix}/share/OpenMesh/cmake/OpenMeshConfig.cmake",
+        f"{prefix}/lib/cmake/OpenVolumeMesh/OpenVolumeMeshConfig.cmake",
+    )
+
+
+def third_party_sdk_manifest(build_type):
+    prefix = f"ThirdParty/{prebuilt_sdk_variant(build_type)}"
+    files = (
+        f"{prefix}/lib/cmake/glfw3/glfw3Config.cmake",
+        f"{prefix}/lib/cmake/spdlog/spdlogConfig.cmake",
+    )
+    if is_windows():
+        files += ("NVAPI/include/nvapi.h", "NVAPI/lib/nvapi64.lib")
+    return files
 
 
 def get_platform():
@@ -86,6 +142,10 @@ def copytree_common_to_binaries(folder, target="Debug", dst=None, dry_run=False)
             dst_dir = os.path.join(dst_path, relative_path)
             os.makedirs(dst_dir, exist_ok=True)
             for file in files:
+                if dst == "resources" and not keep_materialx_resource(
+                    (Path(relative_path) / file).as_posix()
+                ):
+                    continue
                 # Skip static/import libraries (not needed at runtime)
                 # Windows: .lib (import libraries), Linux/macOS: .a (static archives)
                 if file.endswith(".lib") or file.endswith(".a"):
@@ -123,31 +183,16 @@ def copy_imgui_ini_to_binaries(targets, dry_run=False):
 
 
 def copy_nvapi_header_to_slang(dry_run=False):
-    """Copy nvapi headers (nvHLSLExtns.h, nvHLSLExtnsInternal.h, nvShaderExtnEnums.h) from external/nvapi/ to SDK/slang/include/"""
-    nvapi_headers = ["nvHLSLExtns.h", "nvHLSLExtnsInternal.h", "nvShaderExtnEnums.h"]
-
-    src_dir = os.path.join(os.path.dirname(__file__), "external", "nvapi")
-    dst_dir = os.path.join(os.path.dirname(__file__), "SDK", "slang", "include")
-
+    sdk = Path(__file__).resolve().parent / "SDK"
+    source = sdk / "NVAPI" / "include"
+    destination = sdk / "slang" / "include"
     if dry_run:
-        print(f"  [DRY RUN] Would copy nvapi headers to SDK/slang/include/")
+        print("[DRY RUN] Would copy SDK NVAPI shader headers to SDK/slang/include/")
         return
-
-    os.makedirs(dst_dir, exist_ok=True)
-
-    for header in nvapi_headers:
-        src_file = os.path.join(src_dir, header)
-        dst_file = os.path.join(dst_dir, header)
-
-        if not os.path.exists(src_file):
-            print(f"  ⚠ {header} not found at {src_file}, skipping")
-            continue
-
-        try:
-            shutil.copy2(src_file, dst_file)
-            print(f"  ✓ Copied {header} to SDK/slang/include/")
-        except Exception as e:
-            print(f"  ✗ Failed to copy {header} to SDK/slang/include/: {e}")
+    if not source.is_dir() or not destination.is_dir():
+        return
+    for header in NVAPI_SHADER_HEADERS:
+        shutil.copy2(source / header, destination)
 
 
 def _python_include_dir(python_dir):
@@ -334,7 +379,7 @@ def _copy_python_installation(python_dir, dst_python_dir, dry_run=False):
         os.makedirs(dst_lib_dir, exist_ok=True)
 
         standard_lib_items = []
-        exclude_dirs = {"site-packages", "dist-packages", "__pycache__"}
+        exclude_dirs = {"site-packages", "dist-packages", "__pycache__", "test"}
 
         for item in os.listdir(lib_dir):
             item_path = os.path.join(lib_dir, item)
@@ -349,7 +394,9 @@ def _copy_python_installation(python_dir, dst_python_dir, dry_run=False):
             src_item = os.path.join(lib_dir, item)
             dst_item = os.path.join(dst_lib_dir, item)
             if os.path.isdir(src_item):
-                shutil.copytree(src_item, dst_item, dirs_exist_ok=True)
+                shutil.copytree(
+                    src_item, dst_item, dirs_exist_ok=True, ignore=ignore_python_cache
+                )
             else:
                 shutil.copy2(src_item, dst_item)
 
@@ -486,17 +533,8 @@ def copy_cuda_runtime_dlls_to_binaries(targets, dry_run=False):
 
 
 def _copy_runtime_bin_dlls_to_binaries(targets, dry_run=False):
-    """Always copy prebuilt third-party runtime DLLs (slang/dxc/embree/d3d12)
-    into Binaries/{target}/.
-
-    These come from upstream prebuilt archives (no compile step), so the copy
-    is fast and idempotent. Running it unconditionally — independent of which
-    ``--library`` was selected — ensures a plain ``--library openusd`` run
-    still yields a runnable Binaries dir instead of missing slang/dxc/d3d12/
-    embree DLLs. Source SDK subdirs that don't exist yet are skipped.
-    """
-    # Mirror the `folders` mapping used in main()'s per-library branches.
-    runtime_bins = ["slang/bin", "dxc/bin/x64", "embree/bin"]
+    """Copy available Slang, DXC and Agility runtime binaries."""
+    runtime_bins = ["slang/bin", "dxc/bin/x64"]
     if is_windows():
         runtime_bins.append("d3d12/bin")
     for folder in runtime_bins:
@@ -505,6 +543,41 @@ def _copy_runtime_bin_dlls_to_binaries(targets, dry_run=False):
             continue  # not extracted yet (run --library <lib> or --all first)
         for target in targets:
             copytree_common_to_binaries(folder, target=target, dry_run=dry_run)
+
+
+def copy_prebuilt_runtime_to_binaries(targets, dry_run=False):
+    project_root = Path(__file__).resolve().parent
+    sdk_dir = project_root / "SDK"
+    platform_dir = "bin" if is_windows() else "lib"
+    library_pattern = "*.dll" if is_windows() else "*.dylib" if is_macos() else "*.so*"
+    for target in targets:
+        destination = project_root / "Binaries" / target
+        for component in ("Geometry", "ThirdParty"):
+            source = sdk_dir / component / prebuilt_sdk_variant(target) / platform_dir
+            for library in source.glob(library_pattern):
+                if dry_run:
+                    print(f"[DRY RUN] Would copy {library} to {destination}")
+                else:
+                    destination.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(library, destination)
+
+
+def extract_dxc_sdk(url, dry_run=False):
+    sdk_dir = Path(__file__).resolve().parent / "SDK"
+    archive = sdk_dir / "cache" / "dxc.zip"
+    if not archive.is_file():
+        download_with_progress(url, str(archive), dry_run)
+    if dry_run:
+        print(f"[DRY RUN] Would extract DXC from {archive}")
+        return
+    with zipfile.ZipFile(archive) as zip_ref:
+        zip_ref.extractall(
+            sdk_dir / "dxc",
+            members=(
+                name for name in zip_ref.namelist()
+                if not is_windows() or keep_windows_dxc_file(name)
+            ),
+        )
 
 
 def download_with_progress(url, zip_path, dry_run=False):
@@ -523,41 +596,6 @@ def download_with_progress(url, zip_path, dry_run=False):
                 if chunk:
                     file_handle.write(chunk)
                     pbar.update(len(chunk))
-
-
-def download_and_extract(url, extract_path, folder, targets, dry_run=False):
-    """
-    Download and extract an archive file (supports .zip and .tar.gz).
-    Cross-platform: handles both Windows .zip and Linux .tar.gz archives.
-    """
-    import tarfile
-    
-    archive_path = os.path.join(os.path.dirname(__file__), "SDK", "cache", url.split("/")[-1])
-    if os.path.exists(archive_path):
-        print(f"Using cached file {archive_path}")
-    else:
-        if not dry_run:
-            print(f"Downloading from {url}...")
-        download_with_progress(url, archive_path, dry_run)
-
-    if dry_run:
-        print(f"[DRY RUN] Would extract {archive_path} to {extract_path}")
-        return
-
-    print(f"Extracting to {extract_path}...")
-    try:
-        # Detect archive type and extract accordingly
-        if archive_path.endswith('.tar.gz') or archive_path.endswith('.tgz'):
-            with tarfile.open(archive_path, "r:gz") as tar_ref:
-                tar_ref.extractall(extract_path)
-        else:
-            with zipfile.ZipFile(archive_path, "r") as zip_ref:
-                zip_ref.extractall(extract_path)
-        print(f"Downloaded and extracted successfully.")
-        for target in targets:
-            copytree_common_to_binaries(folder, target=target, dry_run=dry_run)
-    except Exception as e:
-        print(f"Error extracting {archive_path}: {e}")
 
 
 openusd_version = "26.08"
@@ -930,8 +968,6 @@ def run_cmake_build(src_dir, install_prefix, build_type, extra_args=None, dry_ru
     parent = os.path.dirname(src_dir)
     dep_name = os.path.basename(src_dir)
     build_dir = os.path.join(parent, f"{dep_name}-build-{build_type.lower()}")
-    os.makedirs(build_dir, exist_ok=True)
-
     cmake_args = [
         "cmake",
         "-G",
@@ -954,6 +990,7 @@ def run_cmake_build(src_dir, install_prefix, build_type, extra_args=None, dry_ru
         print(f"[DRY RUN] CMake build & install in {build_dir}")
         return
 
+    os.makedirs(build_dir, exist_ok=True)
     print(f"  Configuring: {dep_name} ({build_type})...")
     subprocess.run(cmake_args, cwd=build_dir, check=True)
 
@@ -971,6 +1008,161 @@ def run_cmake_build(src_dir, install_prefix, build_type, extra_args=None, dry_ru
 # ============================================================
 # Individual dependency build functions
 # ============================================================
+
+
+def checkout_sdk_source(sdk_dir, name, url, revision, dry_run):
+    source = sdk_dir / "src" / f"{name}-{revision[:12]}"
+    if dry_run:
+        print(f"[DRY RUN] Would check out {name} at {revision}")
+        return source
+    source.parent.mkdir(parents=True, exist_ok=True)
+    if not (source / ".git").is_dir():
+        subprocess.run(["git", "clone", "--no-checkout", url, str(source)], check=True)
+    git = ["git", "-C", str(source)]
+    subprocess.run([*git, "checkout", "--detach", revision], check=True)
+    if (source / ".gitmodules").is_file():
+        subprocess.run([*git, "submodule", "update", "--init", "--recursive"], check=True)
+    return source
+
+
+def build_mesh_sdk(targets, dry_run=False):
+    sdk_dir = Path(__file__).resolve().parent / "SDK"
+    dependencies = (
+        (
+            "OpenMesh",
+            "https://gitlab.vci.rwth-aachen.de:9000/OpenMesh/OpenMesh.git",
+            "9493b65dfb951f918910190b7c3c57aa257ded02",
+            "LICENSE",
+            [
+                "-DBUILD_APPS=OFF",
+                "-DOPENMESH_BUILD_SHARED=OFF",
+            ],
+        ),
+        (
+            "OpenVolumeMesh",
+            "https://gitlab.vci.rwth-aachen.de:9000/OpenVolumeMesh/OpenVolumeMesh.git",
+            "32bde6662e21c58cd49a571681eef2675127e58f",
+            "LICENSE.md",
+            [
+                "-DBUILD_SHARED_LIBS=ON",
+                "-DOVM_CXX_STANDARD=20",
+                "-DOVM_ENABLE_APPLICATIONS=OFF",
+                "-DOVM_ENABLE_UNITTESTS=OFF",
+                "-DOVM_ENABLE_EXAMPLES=OFF",
+                "-DOVM_BUILD_DOCUMENTATION=OFF",
+                "-DCMAKE_INSTALL_INCLUDEDIR=include",
+                "-DCMAKE_INSTALL_LIBDIR=lib",
+            ],
+        ),
+    )
+    for name, url, revision, license_file, options in dependencies:
+        source = checkout_sdk_source(sdk_dir, name, url, revision, dry_run)
+        for variant in dict.fromkeys(map(prebuilt_sdk_variant, targets)):
+            prefix = sdk_dir / "Geometry" / variant
+            run_cmake_build(
+                str(source), str(prefix), variant,
+                [
+                    "-DCMAKE_CXX_STANDARD=20",
+                    "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
+                    *options,
+                ],
+                dry_run=dry_run,
+            )
+            if not dry_run:
+                license_dir = prefix / "share" / "licenses" / name
+                license_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source / license_file, license_dir)
+                if name == "OpenVolumeMesh":
+                    shutil.copytree(source / "license", license_dir / "license", dirs_exist_ok=True)
+                elif name == "OpenMesh":
+                    pkg_config = prefix / "libdata" / "pkgconfig" / "openmesh.pc"
+                    if pkg_config.is_file():
+                        text = pkg_config.read_text(encoding="utf-8")
+                        original_prefix, newline, rest = text.partition("\n")
+                        if original_prefix.startswith("prefix="):
+                            pkg_config.write_text(
+                                "prefix=${pcfiledir}/../.." + newline + rest,
+                                encoding="utf-8",
+                            )
+
+    if not dry_run:
+        for target in targets:
+            missing = [item for item in mesh_sdk_manifest(target) if not (sdk_dir / item).is_file()]
+            if missing:
+                raise RuntimeError(f"Missing installed mesh packages: {', '.join(missing)}")
+
+
+def build_third_party_sdk(targets, dry_run=False):
+    sdk_dir = Path(__file__).resolve().parent / "SDK"
+    dependencies = (
+        (
+            "glfw", "https://github.com/glfw/glfw.git",
+            "e7ea71be039836da3a98cea55ae5569cb5eb885c", "LICENSE.md",
+            [
+                "-DGLFW_BUILD_DOCS=OFF",
+                "-DGLFW_BUILD_EXAMPLES=OFF",
+                "-DGLFW_BUILD_TESTS=OFF",
+                "-DGLFW_INSTALL=ON",
+            ],
+        ),
+        (
+            "spdlog", "https://github.com/gabime/spdlog.git",
+            "9ecdf5c8a1a3ace5673f9fd1857da1b6375b5114", "LICENSE",
+            [
+                "-DCMAKE_CXX_STANDARD=20",
+                "-DSPDLOG_BUILD_EXAMPLE=OFF",
+                "-DSPDLOG_BUILD_TESTS=OFF",
+                "-DSPDLOG_BUILD_BENCH=OFF",
+                "-DSPDLOG_INSTALL=ON",
+            ],
+        ),
+    )
+    for name, url, revision, license_file, options in dependencies:
+        source = checkout_sdk_source(sdk_dir, name, url, revision, dry_run)
+        for variant in dict.fromkeys(map(prebuilt_sdk_variant, targets)):
+            prefix = sdk_dir / "ThirdParty" / variant
+            run_cmake_build(
+                str(source), str(prefix), variant,
+                ["-DBUILD_SHARED_LIBS=ON", "-DCMAKE_INSTALL_LIBDIR=lib", *options],
+                dry_run=dry_run,
+            )
+            if not dry_run:
+                license_dir = prefix / "share" / "licenses" / name
+                license_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source / license_file, license_dir)
+
+                # GLFW writes absolute include and lib paths into glfw3.pc.
+                # Base both packages on the actual install location instead.
+                pc_name = "glfw3.pc" if name == "glfw" else "spdlog.pc"
+                pc_file = prefix / "lib" / "pkgconfig" / pc_name
+                contents = pc_file.read_text(encoding="utf-8")
+                contents = contents.replace(
+                    f"prefix={prefix.as_posix()}\n", "prefix=${pcfiledir}/../..\n", 1
+                ).replace(f"{prefix.as_posix()}/", "${prefix}/")
+                pc_file.write_text(contents, encoding="utf-8")
+
+    if is_windows():
+        source = checkout_sdk_source(
+            sdk_dir, "NVAPI", "https://github.com/NVIDIA/nvapi.git",
+            "d08488fcc82eef313b0464db37d2955709691e94", dry_run,
+        )
+        if not dry_run:
+            prefix = sdk_dir / "NVAPI"
+            include_dir = prefix / "include"
+            library_dir = prefix / "lib"
+            license_dir = prefix / "share" / "licenses" / "NVAPI"
+            for directory in (include_dir, library_dir, license_dir):
+                directory.mkdir(parents=True, exist_ok=True)
+            for header in source.glob("*.h"):
+                shutil.copy2(header, include_dir)
+            shutil.copy2(source / "amd64" / "nvapi64.lib", library_dir)
+            shutil.copy2(source / "License.txt", license_dir)
+
+    if not dry_run:
+        for target in targets:
+            missing = [item for item in third_party_sdk_manifest(target) if not (sdk_dir / item).is_file()]
+            if missing:
+                raise RuntimeError(f"Missing installed dependencies: {', '.join(missing)}")
 
 
 def build_zlib(install_prefix, src_base, build_type, dry_run=False):
@@ -1249,7 +1441,9 @@ def build_ptex(install_prefix, src_base, build_type, dry_run=False):
 
 def build_materialx(install_prefix, src_base, build_type, dry_run=False):
     """Build MaterialX 1.39.3"""
-    if dep_is_installed(install_prefix, "include/MaterialXCore/Library.h"):
+    installed = dep_is_installed(install_prefix, "include/MaterialXCore/Library.h")
+    destination = Path(install_prefix, "resources", MATERIALX_TEST_MATERIAL)
+    if installed and destination.is_file():
         return
     url = (
         "https://github.com/AcademySoftwareFoundation/"
@@ -1258,14 +1452,18 @@ def build_materialx(install_prefix, src_base, build_type, dry_run=False):
     src_dir = download_dep(url, src_base, folder_name="MaterialX-1.39.3", dry_run=dry_run)
     if dry_run:
         return
-    run_cmake_build(
-        src_dir, install_prefix, build_type,
-        extra_args=[
-            "-DMATERIALX_BUILD_SHARED_LIBS=ON",
-            "-DMATERIALX_BUILD_TESTS=OFF",
-        ],
-        dry_run=dry_run,
-    )
+    if not installed:
+        run_cmake_build(
+            src_dir, install_prefix, build_type,
+            extra_args=[
+                "-DMATERIALX_BUILD_SHARED_LIBS=ON",
+                "-DMATERIALX_BUILD_TESTS=OFF",
+                "-DMATERIALX_INSTALL_RESOURCES=OFF",
+            ],
+            dry_run=dry_run,
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(Path(src_dir, "resources", MATERIALX_TEST_MATERIAL), destination)
 
 
 def build_opencolorio(install_prefix, src_base, build_type, dry_run=False):
@@ -1760,8 +1958,13 @@ def extract_and_setup_sdk(sdk_zip_path, targets=None, dry_run=False):
         print(f"Extracting {sdk_zip} to {sdk_dir}...")
 
         if not dry_run:
-            os.makedirs(sdk_dir, exist_ok=True)
             with zipfile.ZipFile(sdk_zip, "r") as zip_ref:
+                missing = {
+                    item for target in targets
+                    for item in mesh_sdk_manifest(target) + third_party_sdk_manifest(target)
+                } - set(zip_ref.namelist())
+                if missing:
+                    raise ValueError(f"SDK archive lacks dependencies: {', '.join(sorted(missing))}")
                 zip_ref.extractall(sdk_dir)
             print("✓ SDK extracted successfully")
         else:
@@ -1806,34 +2009,8 @@ def extract_and_setup_sdk(sdk_zip_path, targets=None, dry_run=False):
                 dry_run=dry_run,
             )
 
-        # Copy Slang
-        folders = {
-            "slang": "slang/bin",
-            "d3d12": "d3d12/bin",
-            "dxc": "dxc/bin/x64",
-            "embree": "embree/bin",
-        }
-        for target in targets:
-            copytree_common_to_binaries(
-                folders["slang"], target=target, dry_run=dry_run
-            )
-
-        # Copy D3D12 (Windows only)
-        if is_windows():
-            for target in targets:
-                copytree_common_to_binaries(
-                    folders["d3d12"], target=target, dry_run=dry_run
-                )
-
-        # Copy DXC
-        for target in targets:
-            copytree_common_to_binaries(folders["dxc"], target=target, dry_run=dry_run)
-
-        # Copy Embree
-        for target in targets:
-            copytree_common_to_binaries(
-                folders["embree"], target=target, dry_run=dry_run
-            )
+        _copy_runtime_bin_dlls_to_binaries(targets, dry_run=dry_run)
+        copy_prebuilt_runtime_to_binaries(targets, dry_run=dry_run)
 
         # Copy Python DLLs
         copy_python_dlls_to_binaries(targets, dry_run=dry_run)
@@ -1843,9 +2020,6 @@ def extract_and_setup_sdk(sdk_zip_path, targets=None, dry_run=False):
 
         # Copy imgui.ini to Binaries
         copy_imgui_ini_to_binaries(targets, dry_run=dry_run)
-
-        # Copy nvHLSLExtns.h to SDK/slang/include/
-        copy_nvapi_header_to_slang(dry_run=dry_run)
 
         print("✓ SDK structure setup complete")
         return True
@@ -1857,20 +2031,13 @@ def extract_and_setup_sdk(sdk_zip_path, targets=None, dry_run=False):
 
 def pack_sdk(dry_run=False):
     src_dir = os.path.join(os.path.dirname(__file__), "SDK")
-    dst_dir = os.path.join(os.path.dirname(__file__), "SDK", "SDK_pack_temp")
-
-    # Find Python installation path using platform-appropriate command
-    if is_windows():
-        where_python = (
-            subprocess.check_output(["where", "python"]).decode("utf-8").split("\n")[0].strip()
-        )
-    else:
-        where_python = (
-            subprocess.check_output(["which", "python3"]).decode("utf-8").strip()
-        )
-
-    python_dir = os.path.dirname(where_python)
-    framework3d_dir = os.getcwd()
+    dst_dir = (
+        os.path.join(src_dir, "SDK_pack_dry_run")
+        if dry_run
+        else tempfile.mkdtemp(prefix="SDK_pack_", dir=src_dir)
+    )
+    python_dir = _find_system_python() or sys.base_prefix
+    framework3d_dir = os.path.abspath(os.path.dirname(__file__))
 
 
     # Define replacements for GridBuilder.h
@@ -1937,22 +2104,34 @@ def pack_sdk(dry_run=False):
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = []
-        # Platform-specific directory separators for skip detection
-        sep = os.sep
-        skip_patterns = [f"{sep}build", f"{sep}cache", f"{sep}src", f"{sep}source"]
-        
         for root, dirs, files in os.walk(src_dir):
-            # Skip build, cache directories and anything under */src/
-            if any(skip_pattern in root for skip_pattern in skip_patterns):
-                continue
-
-            # Create corresponding directory in destination
-            relative_path = os.path.relpath(root, src_dir)
-            dst_path = os.path.join(dst_dir, relative_path)
-            if not dry_run:
-                os.makedirs(dst_path, exist_ok=True)
+            relative_path = Path(root).relative_to(src_dir)
+            location = relative_path.parts
+            python_stdlib = location == ("python", "Lib") or (
+                len(location) == 3 and location[:2] == ("python", "lib")
+                and location[2].startswith("python3.")
+            )
+            dirs[:] = [
+                name for name in dirs
+                if not name.startswith(("build", "cache", "src", "source", "SDK_pack_"))
+                and not (root == src_dir and name == "embree")
+                and not (python_stdlib and name == "test")
+            ]
 
             for file in files:
+                relative_file = relative_path / file
+                parts = relative_file.parts
+                if len(parts) == 1 and (file == "SDK.zip" or file.startswith("SDK_pack_")):
+                    continue
+                if parts[0] == "dxc" and is_windows() and not keep_windows_dxc_file(
+                    relative_file.relative_to("dxc").as_posix()
+                ):
+                    continue
+                if parts[0] == "OpenUSD" and len(parts) >= 4 and parts[2] == "resources":
+                    if not keep_materialx_resource(PurePosixPath(*parts[3:]).as_posix()):
+                        continue
+                if parts[0] == "python" and is_regenerable_python_cache(Path(root) / file):
+                    continue
                 # Skip PDB files (Windows-only debug symbols)
                 if is_windows() and file.endswith(".pdb"):
                     print(f"Skipping {os.path.join(root, file)}")
@@ -1962,22 +2141,22 @@ def pack_sdk(dry_run=False):
                     continue
 
                 src_file = os.path.join(root, file)
-                dst_file = os.path.join(dst_path, file)
+                dst_file = os.path.join(dst_dir, relative_file)
+                if not dry_run:
+                    os.makedirs(os.path.dirname(dst_file), exist_ok=True)
                 futures.append(executor.submit(copy_file, src_file, dst_file))
 
-        # Wait for all threads to complete
-        concurrent.futures.wait(futures)
+        for future in concurrent.futures.as_completed(futures):
+            future.result()
 
-        # Copy Python installation
-        python_dst_dir = os.path.join(dst_dir, "python")
-        _copy_python_installation(python_dir, python_dst_dir, dry_run)
+        if not _python_install_is_complete(os.path.join(src_dir, "python")):
+            _copy_python_installation(python_dir, os.path.join(dst_dir, "python"), dry_run)
 
-        # Pack the SDK_temp directory into SDK.zip
-        sdk_archive_path = os.path.join(os.path.dirname(__file__), "SDK", "SDK")
         if dry_run:
             print(f"[DRY RUN] Would pack {dst_dir} into SDK.zip")
         else:
-            shutil.make_archive(sdk_archive_path, "zip", dst_dir)
+            archive = shutil.make_archive(dst_dir + "-archive", "zip", dst_dir)
+            os.replace(archive, os.path.join(src_dir, "SDK.zip"))
             print(f"Packed {dst_dir} into SDK.zip")
 
         # Delete the SDK_temp directory with retry logic
@@ -2042,7 +2221,7 @@ def main():
     )
     parser.add_argument(
         "--library",
-        choices=["slang", "openusd", "d3d12", "dxc", "embree"],
+        choices=["slang", "openusd", "mesh", "thirdparty", "d3d12", "dxc"],
         help="Specify the library to configure.",
     )
     parser.add_argument("--all", action="store_true", help="Configure all libraries.")
@@ -2098,7 +2277,7 @@ def main():
             exit(1)
 
     if args.all:
-        args.library = ["openusd", "slang", "dxc", "embree"]
+        args.library = ["mesh", "thirdparty", "openusd", "slang", "dxc"]
         if is_windows():
             args.library.append("d3d12")
     elif not args.library:
@@ -2120,38 +2299,40 @@ def main():
             "slang": "https://github.com/shader-slang/slang/releases/download/v2025.22.1/slang-2025.22.1-windows-x86_64.zip",
             "d3d12": "https://globalcdn.nuget.org/packages/microsoft.direct3d.d3d12.1.616.1.nupkg",
             "dxc": "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2505.1/dxc_2025_07_14.zip",
-            "embree": "https://github.com/RenderKit/embree/releases/download/v4.4.0/embree-4.4.0.x64.windows.zip",
         }
     elif plat == 'linux':
         urls = {
             "slang": "https://github.com/shader-slang/slang/releases/download/v2025.22.1/slang-2025.22.1-linux-x86_64.zip",
             "dxc": "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2505.1/dxc_2025_07_14.zip",
-            "embree": "https://github.com/RenderKit/embree/releases/download/v4.4.0/embree-4.4.0.x86_64.linux.tar.gz",
         }
     elif plat == 'macos':
         urls = {
             "slang": "https://github.com/shader-slang/slang/releases/download/v2025.22.1/slang-2025.22.1-macos-x86_64.zip",
             "dxc": "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2505.1/dxc_2025_07_14.zip",
-            "embree": "https://github.com/RenderKit/embree/releases/download/v4.4.0/embree-4.4.0.x64.macos.zip",
         }
     else:
         print(f"Warning: Unsupported platform '{plat}', using Linux URLs as fallback")
         urls = {
             "slang": "https://github.com/shader-slang/slang/releases/download/v2025.22.1/slang-2025.22.1-linux-x86_64.zip",
             "dxc": "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2505.1/dxc_2025_07_14.zip",
-            "embree": "https://github.com/RenderKit/embree/releases/download/v4.4.0/embree-4.4.0.x64.linux.tar.gz",
         }
     folders = {
         "slang": "slang/bin",
         "d3d12": "d3d12/bin",
-        "dxc": "dxc/bin/x64",
-        "embree": "embree/bin",
     }
 
     for lib in args.library:
         if lib == "openusd":
             process_usd(targets, dry_run, keep_original_files, copy_only)
-        elif lib == "d3d12" and is_windows():
+        elif lib == "mesh":
+            if not copy_only:
+                build_mesh_sdk(targets, dry_run)
+        elif lib == "thirdparty":
+            if not copy_only:
+                build_third_party_sdk(targets, dry_run)
+        elif lib == "d3d12":
+            if not is_windows():
+                parser.error("--library d3d12 is only supported on Windows")
             if not copy_only:
                 # Download the nupkg file
                 nupkg_path = os.path.join(os.path.dirname(__file__), "SDK", "cache", "d3d12.nupkg")
@@ -2203,59 +2384,7 @@ def main():
                 )
         elif lib == "dxc":
             if not copy_only:
-                # Download and extract DXC
-                extract_path = os.path.join(os.path.dirname(__file__), "SDK", "dxc")
-                zip_path = os.path.join(os.path.dirname(__file__), "SDK", "cache", "dxc.zip")
-                download_with_progress(urls[lib], zip_path, dry_run)
-
-                if dry_run:
-                    print(f"[DRY RUN] Would extract {zip_path} to {extract_path}")
-                else:
-                    try:
-                        # Ensure bin directory exists
-                        bin_dir = os.path.join(extract_path, "bin")
-                        os.makedirs(bin_dir, exist_ok=True)
-
-                        # Extract DXC files
-                        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-                            zip_ref.extractall(extract_path)
-                        print(f"Downloaded and extracted DXC successfully.")
-
-                        # Find and move binaries to bin directory (cross-platform)
-                        for root, _, files in os.walk(extract_path):
-                            for file in files:
-                                # Check for platform-specific binary extensions
-                                bin_exts = (".exe", ".dll", ".lib") if is_windows() else (".so", ".a", "")
-                                if any(file.endswith(ext) for ext in bin_exts if ext) or (not is_windows() and not os.path.splitext(file)[1]):
-                                    # On Linux, also consider extensionless files as potential binaries
-                                    src_file = os.path.join(root, file)
-                                    dst_file = os.path.join(bin_dir, file)
-                                    if src_file != dst_file:
-                                        shutil.copy2(src_file, bin_dir)
-
-                        print(f"DXC files prepared in {bin_dir}")
-                    except Exception as e:
-                        print(
-                            f"Error extracting DXC: {e}"
-                        )  # Copy the DXC files to the binaries folder
-            for target in targets:
-                copytree_common_to_binaries(
-                    folders[lib], target=target, dry_run=dry_run
-                )
-        elif lib == "embree":
-            if not copy_only:
-                download_and_extract(
-                    urls[lib],
-                    os.path.join(os.path.dirname(__file__), "SDK", "embree"),
-                    folders[lib],
-                    targets,
-                    dry_run,
-                )
-            # Copy the embree bin files to the binaries folder
-            for target in targets:
-                copytree_common_to_binaries(
-                    folders[lib], target=target, dry_run=dry_run
-                )
+                extract_dxc_sdk(urls[lib], dry_run)
         elif lib == "slang":
             # Slang needs special handling on Linux for symlink issues
             extract_path = os.path.join(os.path.dirname(__file__), "SDK", "slang")
@@ -2312,33 +2441,14 @@ def main():
             # On Linux/macOS: copy resolved library files to Binaries
             if is_linux() or is_macos():
                 setup_slang_libs_for_binaries(targets, dry_run=dry_run)
-        else:
-            if not copy_only:
-                download_and_extract(
-                    urls[lib],
-                    os.path.dirname(__file__) + f"/SDK/{lib}",
-                    folders[lib],
-                    targets,
-                    dry_run,
-                )
-            else:
-                for target in targets:
-                    copytree_common_to_binaries(
-                        folders[lib], target=target, dry_run=dry_run
-                    )
-
     # Always copy Python DLLs from SDK to Binaries for each target. Python is
     # a pure runtime dependency (no Debug/Release ABI split), so copying it
     # unconditionally keeps Binaries/{target} runnable regardless of which
     # --library was built.
     copy_python_dlls_to_binaries(targets, dry_run=dry_run)
 
-    # Always copy third-party runtime DLLs (slang/dxc/embree/d3d12 bin) to
-    # Binaries/{target}. These are prebuilt upstream archives (no compile),
-    # so copying is fast and side-effect-free; doing it unconditionally means
-    # a plain `--library openusd` run still produces a runnable Binaries dir
-    # instead of leaving slang/dxc/d3d12/embree DLLs missing.
     _copy_runtime_bin_dlls_to_binaries(targets, dry_run=dry_run)
+    copy_prebuilt_runtime_to_binaries(targets, dry_run=dry_run)
 
     # Always copy CUDA runtime DLLs if available
     copy_cuda_runtime_dlls_to_binaries(targets, dry_run=dry_run)

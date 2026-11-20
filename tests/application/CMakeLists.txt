@@ -17,7 +17,6 @@ if(pxr_FOUND)
     add_dependencies(Ruzino geometry_nodes)
 endif()
 add_dependencies(Ruzino basic_nodes)
-# add_dependencies(Ruzino optimization)
 # add back the renderer
 
 # add_dependencies(Ruzino gl_based_render_nodes)

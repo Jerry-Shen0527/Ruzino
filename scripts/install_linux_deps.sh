@@ -19,6 +19,9 @@ apt install -y \
     libxxf86vm-dev \
     libxt-dev \
     libxmu-dev \
+    libxkbcommon-dev \
+    libwayland-dev \
+    wayland-protocols \
     libgl1-mesa-dev
 
 # Build tools (required for OpenUSD compilation)

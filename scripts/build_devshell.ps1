@@ -118,7 +118,14 @@ if ($Clean) {
 }
 
 Write-Host "✓ 构建中..." -ForegroundColor Cyan
-# 若指定了 -LogFile，把 ninja 输出同时写入终端和日志文件（合并 stdout/stderr）。
+$buildArgs = @('--build', '.')
+if ($Target) { $buildArgs += @('--target', $Target) }
+# Windows 符号构建同时运行大量编译器进程时可能出现瞬时失败。
+# 优先接受调用方设置的 CMAKE_BUILD_PARALLEL_LEVEL。
+if ($BuildType -eq 'RelWithDebInfo' -and -not $env:CMAKE_BUILD_PARALLEL_LEVEL) {
+    $buildArgs += @('--parallel', '8')
+}
+# 若指定了 -LogFile，把构建输出同时写入终端和日志文件（合并 stdout/stderr）。
 # 这样既保留交互式可见性，又满足无头场景的日志落盘需求（取代旧 _build_one.bat）。
 # 注意：本脚本顶部设了 $ErrorActionPreference = "Stop"，而 ninja 即使在构建成功时
 # 也会向 stderr 写警告/进度，PowerShell 会把 native command 的 stderr 当作 ErrorRecord，
@@ -132,17 +139,9 @@ try {
         if ($LogFileDir -and -not (Test-Path $LogFileDir)) {
             New-Item -ItemType Directory -Path $LogFileDir -Force | Out-Null
         }
-        if ($Target) {
-            ninja $Target 2>&1 | Tee-Object -FilePath $LogFileAbs
-        } else {
-            ninja 2>&1 | Tee-Object -FilePath $LogFileAbs
-        }
+        cmake @buildArgs 2>&1 | Tee-Object -FilePath $LogFileAbs
     } else {
-        if ($Target) {
-            ninja $Target
-        } else {
-            ninja
-        }
+        cmake @buildArgs
     }
 } finally {
     $ErrorActionPreference = $prevEAP

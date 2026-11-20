@@ -5,13 +5,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 import sysconfig
-
-
-def command(*args):
-    return subprocess.check_output(args, text=True).strip()
 
 
 root = Path(__file__).resolve().parents[2]
@@ -23,7 +18,6 @@ inputs = {
     # whitespace, or checkout-specific line endings.
     "recipe": ast.dump(ast.parse(recipe.read_text(encoding="utf-8"))),
     "cuda_installer": cuda_installer.read_text(encoding="utf-8"),
-    "nvapi": command("git", "-C", str(root), "rev-parse", "HEAD:external/nvapi"),
     "target": "windows-x64",
     "toolchain": {
         name: os.environ[name].rstrip("\\")

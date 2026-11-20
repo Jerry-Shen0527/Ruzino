@@ -35,8 +35,6 @@ class Hd_RUZINO_Renderer {
     std::atomic<int> _completedSamples;
 
     int _ambientOcclusionSamples = 16;
-    // A callback that interprets embree error codes and injects them into
-    // the hydra logging system.
 
     // The bound aovs for this renderer.
     HdRenderPassAovBindingVector _aovBindings;

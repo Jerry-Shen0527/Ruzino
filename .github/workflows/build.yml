@@ -107,13 +107,6 @@ jobs:
         shell: pwsh
         run: ./.github/scripts/install-windows-cuda.ps1 -Version $env:CUDA_VERSION
 
-      - name: Initialize NVAPI headers
-        if: steps.sdk-key.outputs.build == 'true'
-        shell: pwsh
-        run: |
-          git -c core.longpaths=true submodule update --init -- external/nvapi
-          if ($LASTEXITCODE -ne 0) { throw 'Could not check out NVAPI' }
-
       - name: Build and package Release SDK
         if: steps.sdk-key.outputs.build == 'true'
         shell: pwsh
@@ -156,8 +149,15 @@ jobs:
                   "OpenUSD/Release/include/pxr/pxr.h",
                   "OpenUSD/Release/include/openvdb/openvdb.h",
                   "OpenUSD/Release/include/nanovdb/cuda/DeviceBuffer.h",
+                  "OpenUSD/Release/resources/Materials/Examples/StandardSurface/standard_surface_marble_solid.mtlx",
                   "python/python313.dll",
                   "slang/include/nvHLSLExtns.h",
+                  "ThirdParty/Release/bin/glfw3.dll",
+                  "ThirdParty/Release/bin/spdlog.dll",
+                  "ThirdParty/Release/lib/cmake/glfw3/glfw3Config.cmake",
+                  "ThirdParty/Release/lib/cmake/spdlog/spdlogConfig.cmake",
+                  "NVAPI/include/nvapi.h",
+                  "NVAPI/lib/nvapi64.lib",
               }
               missing = required - names
               if not any(name in names for name in (

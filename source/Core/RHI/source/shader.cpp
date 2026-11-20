@@ -800,9 +800,9 @@ void ShaderFactory::SlangCompile(
                     .parent_path()
                     .parent_path() /
                 "resources" / "nvapi",
-            // External folder
+            // Source checkout with a deployed SDK
             // shader_search_path is: .../source/Runtime/renderer/nodes/shaders/
-            // we need: .../external/nvapi
+            // we need: .../SDK/NVAPI/include
             std::filesystem::path(shader_search_path)
                     .parent_path()
                     .parent_path()
@@ -810,7 +810,7 @@ void ShaderFactory::SlangCompile(
                     .parent_path()
                     .parent_path()
                     .parent_path() /
-                "external" / "nvapi"
+                "SDK" / "NVAPI" / "include"
         };
 
         for (const auto& nvapi_path : potential_nvapi_paths) {

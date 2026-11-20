@@ -141,6 +141,41 @@ endif()
 
 message("CMAKE_BUILD_TYPE is ${CMAKE_BUILD_TYPE}. Selecting SDK from ${SDK_FOLDER}")
 
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+  set(_prebuilt_sdk_variant Debug)
+else()
+  set(_prebuilt_sdk_variant Release)
+endif()
+set(RUZINO_MESH_SDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/SDK/Geometry/${_prebuilt_sdk_variant}")
+set(RUZINO_THIRD_PARTY_SDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/SDK/ThirdParty/${_prebuilt_sdk_variant}")
+if(NOT EXISTS "${RUZINO_MESH_SDK_DIR}/share/OpenMesh/cmake/OpenMeshConfig.cmake"
+   OR NOT EXISTS "${RUZINO_MESH_SDK_DIR}/lib/cmake/OpenVolumeMesh/OpenVolumeMeshConfig.cmake")
+  message(FATAL_ERROR
+    "Mesh libraries are missing from ${RUZINO_MESH_SDK_DIR}. "
+    "Deploy a current SDK archive with configure.py --extract-sdk, "
+    "or build the mesh SDK with configure.py --library mesh --build_variant ${_prebuilt_sdk_variant}.")
+endif()
+find_package(OpenMesh CONFIG REQUIRED PATHS "${RUZINO_MESH_SDK_DIR}" NO_DEFAULT_PATH)
+find_package(OpenVolumeMesh CONFIG REQUIRED PATHS "${RUZINO_MESH_SDK_DIR}" NO_DEFAULT_PATH)
+if(NOT EXISTS "${RUZINO_THIRD_PARTY_SDK_DIR}/lib/cmake/glfw3/glfw3Config.cmake"
+   OR NOT EXISTS "${RUZINO_THIRD_PARTY_SDK_DIR}/lib/cmake/spdlog/spdlogConfig.cmake")
+  message(FATAL_ERROR
+    "GLFW and spdlog are missing from ${RUZINO_THIRD_PARTY_SDK_DIR}. "
+    "Deploy a current SDK archive with configure.py --extract-sdk, "
+    "or build these libraries with configure.py --library thirdparty --build_variant ${_prebuilt_sdk_variant}.")
+endif()
+find_package(glfw3 CONFIG REQUIRED PATHS "${RUZINO_THIRD_PARTY_SDK_DIR}" NO_DEFAULT_PATH)
+find_package(spdlog CONFIG REQUIRED PATHS "${RUZINO_THIRD_PARTY_SDK_DIR}" NO_DEFAULT_PATH)
+
+foreach(_sdk_prefix IN ITEMS "${RUZINO_MESH_SDK_DIR}" "${RUZINO_THIRD_PARTY_SDK_DIR}")
+  install(DIRECTORY "${_sdk_prefix}/" DESTINATION .)
+  # Installed Ruzino executables and libraries resolve sibling shared libraries.
+  if(UNIX)
+    install(DIRECTORY "${_sdk_prefix}/lib/" DESTINATION bin
+            FILES_MATCHING PATTERN "*.so*" PATTERN "*.dylib")
+  endif()
+endforeach()
+
 if(RUZINO_WITH_TORCH)
   set(Torch_DIR SDK/${SDK_FOLDER}/libtorch/share/cmake/Torch)
   find_package(Torch REQUIRED)
@@ -185,7 +220,9 @@ endif()
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 if(WIN32)
+  set(NVAPI_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/SDK/NVAPI")
   find_package(NVAPI REQUIRED)
+  install(DIRECTORY "${NVAPI_ROOT_DIR}/" DESTINATION .)
   set(AgilitySDK_ROOT_DIR SDK/d3d12)
   find_package(AgilitySDK REQUIRED)
 endif()
@@ -208,12 +245,12 @@ option(USTC_HOMEWORK_PLUGINS "Enable USTC Homework Plugins" OFF)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/source/Core)
 
 # Prevent MSVC-only flags from spdlog propagating into CUDA compilations
-if(MSVC AND TARGET spdlog_header_only)
-  get_target_property(_spdlog_opts spdlog_header_only INTERFACE_COMPILE_OPTIONS)
+if(MSVC)
+  get_target_property(_spdlog_opts spdlog::spdlog_header_only INTERFACE_COMPILE_OPTIONS)
   if(_spdlog_opts)
     list(TRANSFORM _spdlog_opts REPLACE "/Zc:__cplusplus"
          "$<$<COMPILE_LANGUAGE:C,CXX>:/Zc:__cplusplus>")
-    set_target_properties(spdlog_header_only PROPERTIES
+    set_target_properties(spdlog::spdlog_header_only PROPERTIES
       INTERFACE_COMPILE_OPTIONS "${_spdlog_opts}")
   endif()
 endif()

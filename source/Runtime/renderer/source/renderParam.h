@@ -54,8 +54,7 @@ using namespace pxr;
 /// \class Hd_RUZINO_RenderParam
 ///
 /// The render delegate can create an object of type HdRenderParam, to pass
-/// to each prim during Sync(). Hd_RUZINO uses this class to pass top-level
-/// embree state around.
+/// to each prim during Sync(). Hd_RUZINO uses this class to share render state.
 ///
 class Hd_RUZINO_RenderParam final : public HdRenderParam {
    public:

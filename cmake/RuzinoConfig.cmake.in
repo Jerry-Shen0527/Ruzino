@@ -50,9 +50,10 @@ set(RUZINO_OUTPUT_DIR
 list(APPEND CMAKE_PREFIX_PATH "${PACKAGE_PREFIX_DIR}")
 find_dependency(Eigen3 QUIET)
 find_dependency(EnTT QUIET)
-find_dependency(autodiff QUIET)
-find_dependency(OpenVolumeMesh QUIET)
-# Note: glfw3 is not a public dependency, so we don't search for it here
+find_dependency(OpenMesh CONFIG)
+find_dependency(OpenVolumeMesh CONFIG)
+find_dependency(glfw3 CONFIG)
+find_dependency(spdlog CONFIG)
 
 # Create IMPORTED targets for all installed Ruzino libraries
 if(WIN32)
@@ -173,13 +174,16 @@ endif()
 
 # Add external dependency include paths for specific libraries
 if(TARGET Ruzino::nodes_core)
+    set(_nodes_core_libraries spdlog::spdlog spdlog::spdlog_header_only)
     # nodes_core depends on TBB
     set(_tbb_lib "${RUZINO_LIB_DIR}/tbb${_ruzino_lib_suffix}")
     if(EXISTS "${_tbb_lib}")
-        set_target_properties(Ruzino::nodes_core PROPERTIES
-            INTERFACE_LINK_LIBRARIES "${_tbb_lib}"
-        )
+        list(APPEND _nodes_core_libraries "${_tbb_lib}")
     endif()
+    set_target_properties(Ruzino::nodes_core PROPERTIES
+        INTERFACE_LINK_LIBRARIES "${_nodes_core_libraries}"
+    )
+    unset(_nodes_core_libraries)
     unset(_tbb_lib)
 endif()
 
@@ -196,7 +200,7 @@ if(TARGET Ruzino::RHI)
     # RHI depends on nvrhi and imgui
     if(TARGET Ruzino::nvrhi)
         set_target_properties(Ruzino::RHI PROPERTIES
-            INTERFACE_LINK_LIBRARIES "Ruzino::nvrhi;Ruzino::imgui"
+            INTERFACE_LINK_LIBRARIES "Ruzino::nvrhi;Ruzino::imgui;glfw;spdlog::spdlog"
         )
     endif()
     unset(_slang_include_dir)
@@ -215,7 +219,6 @@ if(TARGET Ruzino::GUI)
         "${RUZINO_INCLUDE_DIR}/imgui"
         "${RUZINO_INCLUDE_DIR}/imgui/backends"
         "${RUZINO_INCLUDE_DIR}/imgui/misc/cpp"
-        "${RUZINO_INCLUDE_DIR}/ImGuiFileDialog"
         "${RUZINO_INCLUDE_DIR}/user_imgui"
     )
     get_target_property(_gui_includes Ruzino::GUI INTERFACE_INCLUDE_DIRECTORIES)
@@ -257,9 +260,9 @@ if(TARGET Ruzino::geometry)
 
     # Add Python import library for linking
     set(_python_lib "${RUZINO_LIB_DIR}/python311${_ruzino_lib_suffix}")
-    set(_geometry_link_libs "")
+    set(_geometry_link_libs OpenMeshCore OpenVolumeMesh::OpenVolumeMesh)
     if(EXISTS "${_python_lib}")
-        set(_geometry_link_libs "${_python_lib}")
+        list(APPEND _geometry_link_libs "${_python_lib}")
     endif()
 
     # Add pxr/usd libraries needed for usd_extension.h
@@ -280,7 +283,7 @@ if(TARGET Ruzino::geometry)
 
     set_target_properties(Ruzino::geometry PROPERTIES
         INTERFACE_INCLUDE_DIRECTORIES "${_geometry_includes}"
-        INTERFACE_COMPILE_DEFINITIONS "NOMINMAX;WIN32_LEAN_AND_MEAN"
+        INTERFACE_COMPILE_DEFINITIONS "NOMINMAX;WIN32_LEAN_AND_MEAN;_USE_MATH_DEFINES"
         INTERFACE_LINK_LIBRARIES "${_geometry_link_libs}"
     )
     unset(_geometry_includes)

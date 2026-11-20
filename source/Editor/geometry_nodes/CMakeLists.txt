@@ -11,7 +11,7 @@ add_nodes(
 	TARGET_NAME geometry_nodes
 	SRC_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
 		${CMAKE_CURRENT_SOURCE_DIR}/BrushSimulation
-	DEP_LIBS stage nodes_system geometry Eigen3::Eigen autodiff igl::core igl_restricted::triangle RZFemBem usd_ms
+	DEP_LIBS stage nodes_system geometry Eigen3::Eigen igl::core igl_restricted::triangle RZFemBem usd_ms
 	COMPILE_DEFS ${GEOMETRY_NODES_COMPILE_DEFS}
 	EXTRA_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}
 )
@@ -33,10 +33,4 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/TerrainGen/shaders/
 	PATTERN ".git" EXCLUDE
 )
 
-add_library(tetgen STATIC ${CMAKE_CURRENT_SOURCE_DIR}/tetgen/tetgen.cxx ${CMAKE_CURRENT_SOURCE_DIR}/tetgen/tetgen.h ${CMAKE_CURRENT_SOURCE_DIR}/tetgen/predicates.cxx)
-set_target_properties(tetgen PROPERTIES ${OUTPUT_DIR})
-if(MSVC)
-	target_compile_options(tetgen PRIVATE /wd4477)
-endif()
-target_link_libraries(node_tetgen PRIVATE tetgen)
-target_include_directories(node_tetgen PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tetgen)
+target_link_libraries(node_tetgen PRIVATE tetgen_geom)

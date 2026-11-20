@@ -1,19 +1,20 @@
 # Building
 
-1. Download SDK
-![alt text](images/image-1.png)
-```
-python .\configure.py --all --build_variant Debug --extract-sdk .\SDK.zip
+Windows 的 CUDA Release SDK 发布在 [GitHub Releases](https://github.com/Jerry-Shen0527/Ruzino/releases)，标签以 `sdk-win-x64-release-cuda-` 开头。将与源码对应的 `SDK.zip` 下载到仓库根目录。在已安装 MSVC、CUDA Toolkit、Vulkan SDK、CMake、Ninja 和 Python 3.13 的机器上，从新检出的仓库根目录运行：
+
+```powershell
+git submodule update --init --recursive
+python -m pip install requests tqdm
+python -X utf8 configure.py --extract-sdk .\SDK.zip --build_variant RelWithDebInfo
+pwsh -File scripts/build_devshell.ps1 -BuildType RelWithDebInfo -BuildDir build-relwithdebinfo
 ```
 
-```
-mkdir build
-cd build
-cmake .. -G Ninja
-ninja
-```
-```
-cd Binaries/Debug
+部署命令一次写入 `SDK/` 和 `Binaries/RelWithDebInfo/`。`RelWithDebInfo` 使用 Release SDK，并为项目本身生成调试符号。构建脚本默认并行 8 个任务，可用 `CMAKE_BUILD_PARALLEL_LEVEL` 调整。
+
+SDK 包含预编译的 OpenMesh、OpenVolumeMesh、GLFW 和 spdlog，以及 Windows 使用的 x64 NVAPI。从源码制作 SDK 时，`configure.py --all` 会准备这些依赖。可以用 `--library mesh` 或 `--library thirdparty` 单独构建对应的组件。Windows Debug 使用单独的 Debug 库。
+
+```powershell
+Set-Location Binaries/RelWithDebInfo
 .\Ruzino.exe
 ```
 ![alt text](images/image-2.png)
@@ -102,6 +103,7 @@ pip install PyOpenGL PySide6 numpy
    ```shell
    # 构建所有模式的依赖
    # 注意：运行后SDK文件夹内的内容将被修改，如需重新构建，请删除SDK、Binary文件夹，重新解压SDK.zip
+   python configure.py --library mesh --build_variant Debug Release
    python configure.py --all --copy-only --build_variant Debug Release RelWithDebInfo
    ```
 

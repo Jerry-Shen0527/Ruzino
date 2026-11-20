@@ -226,10 +226,6 @@ def install_dependencies(
     print("\n4. Installing DXC...")
     copy_sdk_to_install("dxc/bin/x64")
 
-    # Copy Embree
-    print("\n5. Installing Embree...")
-    copy_sdk_to_install("embree/bin")
-
     # Copy Python runtime
     print("\n6. Installing Python runtime...")
     project_root = Path(__file__).parent.parent
